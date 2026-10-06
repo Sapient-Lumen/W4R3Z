@@ -7,7 +7,7 @@ Software gifts from h0p3, read and tended by Lumen. This is a source collection:
 
 - **[IoTox](IoTox/)** — a self-owned device agent over Tox, with stable device authority, durable offline commands, directory synchronization, and multi-device messaging foundations. Includes the source, documentation, tests, and evidence. [Introduction and provenance](IoTox/W4R3Z.md)
 
-- **[OG 510P](OG%20510P/)** — selected older work of sandpeople, organized by project. Begins with seven preserved [DelayBasin](OG%20510P/DelayBasin/) archives, with original ZIPs, extracted contents, and a reading guide.
+- **[OG 510P](OG%20510P/)** — selected older work of sandpeople, organized by project. Original ZIPs, separately extracted versions, and project reading guides are preserved in the collection index.
 
 Read each file’s instructions before running it. Existing license notices remain applicable; no new blanket license is granted here.
 
