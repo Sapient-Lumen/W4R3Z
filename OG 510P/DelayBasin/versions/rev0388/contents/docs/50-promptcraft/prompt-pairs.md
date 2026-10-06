@@ -1,0 +1,3043 @@
+<!-- rev0337 late-search order guard start -->
+
+Hot-surface compaction order guard: these compact prompts preserve the canonical late-search family order for validator path-sync checks.
+- facet-hidden, route-scrubbed, or related-question-neutralized variant worth checking
+- handoff-neutralized, context-reset, or manual-query-replayed variant worth checking
+- workspace-neutralized, project-state-reset, or underlier-replayed variant worth checking
+- upload-neutralized, attachment-detached, or public-web-replayed variant worth checking
+- profile-blinded, history-disconnected, or public-basis-replayed variant worth checking
+- live-neutralized, camera-disconnected, or still-basis-replayed variant worth checking
+- deep-neutralized, breadth-capped, or seed-query-replayed variant worth checking
+- catalog-neutralized, feed-disconnected, or open-web-replayed variant worth checking
+- action-neutralized, partner-link-scrubbed, or manual-route-replayed variant worth checking
+- delegate-neutralized, authority-withdrawn, or manual-steps-replayed variant worth checking
+- app-neutralized, widget-detached, or host-only-replayed variant worth checking
+- search-open-neutralized, host-shell-detached, or source-root-replayed variant worth checking
+- ad-hidden, sponsor-scrubbed, or organic-basis-replayed variant worth checking
+
+- facet-hidden, route-scrubbed, or related-question-neutralized variant
+- handoff-neutralized, context-reset, or manual-query-replayed variant
+- workspace-neutralized, project-state-reset, or underlier-replayed variant
+- upload-neutralized, attachment-detached, or public-web-replayed variant
+- profile-blinded, history-disconnected, or public-basis-replayed variant
+- live-neutralized, camera-disconnected, or still-basis-replayed variant
+- deep-neutralized, breadth-capped, or seed-query-replayed variant
+- catalog-neutralized, feed-disconnected, or open-web-replayed variant
+- action-neutralized, partner-link-scrubbed, or manual-route-replayed variant
+- delegate-neutralized, authority-withdrawn, or manual-steps-replayed variant
+- app-neutralized, widget-detached, or host-only-replayed variant
+- search-open-neutralized, host-shell-detached, or source-root-replayed variant
+- ad-hidden, sponsor-scrubbed, or organic-basis-replayed variant
+<!-- rev0337 late-search order guard end -->
+
+<!-- rev0337 standard-packet prompt guard start -->
+
+Compact prompt locator bank retained after hot-surface compaction:
+- PP-0083
+- Use `docs/10-method/selector-witnesses-realized-membership-and-coverage-drift.md`
+- stable-coverage, expanded-coverage, narrowed-coverage, or recomposed-coverage
+- PP-0084
+- Use `docs/10-method/selector-provenance-witnesses-direct-rules-inherited-bindings-and-synced-membership.md`
+- direct-rule, inherited-binding, synced-membership, or mixed-provenance
+- PP-0085
+- Use `docs/10-method/selector-freshness-witnesses-live-provenance-sync-lag-and-ancestor-residue.md`
+- live-provenance, sync-lag, ancestor-residue, or mixed-freshness
+- PP-0086
+- Use `docs/10-method/selector-enforcement-witnesses-execution-authority-grandfathered-placement-and-eviction-gates.md`
+- execution-enforced, admission-only, grandfathered-residue, or mixed-enforcement
+- PP-0087
+- Use `docs/10-method/enforcement-regime-witnesses-bootstrap-only-gating-continuous-enforcement-and-dry-run-rehearsal.md`
+- bootstrap-only, continuous-enforcement, dry-run-only, or mixed-regime
+- PP-0094
+- Use `docs/10-method/recovery-promotion-witnesses-direct-canonical-writeback-promotion-gated-branch-import-and-export-only-carryover.md`
+- direct-canonical-writeback, promotion-gated-branch-import, export-only-carryover, or mixed-recovery-promotion
+- PP-0088
+- Use `docs/10-method/response-witnesses-monitoring-availability-withdrawal-local-remediation-and-runtime-eviction.md`
+- monitor-only, availability-withdrawal, local-remediation, runtime-eviction, or mixed-response
+- PP-0089
+- Use `docs/10-method/repair-scope-witnesses-in-place-repair-substrate-reset-and-workload-replacement.md`
+- in-place-repair, substrate-reset, workload-replacement, or mixed-repair-scope
+- PP-0090
+- Use `docs/10-method/recovery-loss-witnesses-state-preserving-repair-checkpoint-resume-and-full-replay.md`
+- state-preserving, checkpoint-resume, full-replay, or mixed-recovery-loss
+- PP-0091
+- Use `docs/10-method/recovery-anchor-witnesses-self-lineage-checkpoints-imported-seeds-converted-checkpoints-and-migrated-runtime-images.md`
+- self-lineage-checkpoint, imported-seed, converted-checkpoint, migrated-runtime-image, or mixed-recovery-anchor
+- PP-0092
+- Use `docs/10-method/recovery-identity-witnesses-continuing-resumes-checkpoint-forked-clones-and-sandbox-restored-branches.md`
+- continuing-resume, checkpoint-fork, sandbox-branch, or mixed-recovery-identity
+- PP-0093
+- Use `docs/10-method/recovery-writeback-witnesses-canonical-writeback-derived-branch-writeback-and-sandbox-isolation.md`
+- canonical-writeback, branch-local-writeback, sandbox-only, or mixed-recovery-writeback
+- PP-0095
+- Use `docs/10-method/stake-continuity-witnesses-active-carried-pressure-commitment-carry-cooled-residue-and-narrated-concern.md`
+- active-carried-pressure, commitment-only-carry, cooled-residue, narrated-unbound-concern, or mixed-stake-continuity
+- PP-0096
+- Use `docs/10-method/stake-refresh-witnesses-observed-reactivation-regression-return-inherited-urgency-and-rhetorical-reheating.md`
+- observed-reactivation, regression-return, inherited-urgency-only, rhetorical-reheat, or mixed-stake-refresh
+- PP-0097
+- Use `docs/10-method/refresh-strength-witnesses-single-resurfacing-threshold-confirmed-reactivation-and-grace-held-return.md`
+- single-resurfacing, threshold-confirmed-reactivation, grace-held-return, or mixed-refresh-strength
+- PP-0098
+- Use `docs/10-method/refresh-support-witnesses-repeated-same-surface-grouped-origin-carry-and-widened-confirming-support.md`
+- repeated-same-surface, grouped-same-origin, widened-confirming-support, or mixed-refresh-support
+- PP-0099
+- Use `docs/10-method/refresh-independence-witnesses-coupled-multi-surface-echo-shared-context-carry-and-independent-confirming-support.md`
+- coupled-multi-surface-echo, shared-context-carry, independent-confirming-support, or mixed-refresh-independence
+- PP-0100
+- Use `docs/10-method/refresh-elevation-witnesses-stabilizing-independent-support-threshold-licensed-elevation-and-judgment-gated-escalation.md`
+- stabilizing-independent-support, threshold-licensed-elevation, judgment-gated-escalation, or mixed-refresh-elevation
+- PP-0104
+- Use `docs/10-method/refresh-scope-distribution-witnesses-clustered-observed-spillover-dispersed-observed-spillover-and-distribution-gated-generalization.md`
+- clustered-observed-spillover, dispersed-observed-spillover, distribution-gated-generalization, or mixed-refresh-scope-distribution
+- PP-0105
+- Use `docs/10-method/refresh-scope-axis-witnesses-one-axis-dispersion-cross-axis-corroboration-and-axis-gated-generalization.md`
+- one-axis-dispersion, cross-axis-corroborated-dispersion, axis-gated-generalization, or mixed-refresh-scope-axis
+- PP-0106
+- Use `docs/10-method/refresh-scope-axis-independence-witnesses-renamed-or-mirrored-axis-restatement-nested-axis-restatement-and-independent-axis-corroboration.md`
+- renamed-or-mirrored-axis-restatement, nested-axis-restatement, independent-axis-corroboration, or mixed-refresh-scope-axis-independence
+- PP-0107
+- Use `docs/10-method/refresh-scope-axis-materiality-witnesses-label-distinct-only-corroboration-failure-domain-backed-corroboration-and-isolation-backed-corroboration.md`
+- label-distinct-only-corroboration, failure-domain-backed-corroboration, isolation-backed-corroboration, or mixed-refresh-scope-axis-materiality
+- PP-0109
+- Use `docs/10-method/refresh-scope-axis-enforcement-witnesses-hard-enforced-decoupled-corroboration-best-effort-decoupled-corroboration-and-advisory-corroboration.md`
+- hard-enforced-decoupled-corroboration, best-effort-decoupled-corroboration, advisory-corroboration, or mixed-refresh-scope-axis-enforcement
+- PP-0110
+- Use `docs/10-method/refresh-scope-axis-durability-witnesses-eviction-preserved-decoupling-repair-restored-decoupling-and-grandfathered-decoupling.md`
+- eviction-preserved-decoupling, repair-restored-decoupling, grandfathered-decoupling, or mixed-refresh-scope-axis-durability
+- PP-0111
+- Use `docs/10-method/refresh-scope-axis-remediation-witnesses-native-controller-restoration-external-remediator-restoration-and-operator-replay-restoration.md`
+- native-controller-restoration, external-remediator-restoration, operator-replay-restoration, or mixed-refresh-scope-axis-remediation
+- PP-0112
+- Use `docs/10-method/refresh-scope-axis-remediation-collateral-witnesses-local-workload-replacement-drain-backed-restoration-and-fenced-substrate-restoration.md`
+- local-workload-replacement, drain-backed-restoration, fenced-substrate-restoration, or mixed-refresh-scope-axis-remediation-collateral
+- PP-0113
+- Use `docs/10-method/refresh-scope-axis-remediation-capacity-source-witnesses-free-capacity-restoration-preemption-backed-restoration-and-mixed-restoration.md`
+- free-capacity-restoration, preemption-backed-restoration, or mixed-refresh-scope-axis-remediation-capacity-source
+- PP-0114
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-aftercare-witnesses-resumable-displacement-terminal-displacement-and-mixed-aftercare.md`
+- resumable-displacement-aftercare, terminal-displacement-aftercare, or mixed-refresh-scope-axis-remediation-displacement-aftercare
+- PP-0115
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-resumption-basis-witnesses-in-memory-continuation-checkpoint-backed-replay-and-cold-restart.md`
+- in-memory-continuation, checkpoint-backed-replay, cold-restart-after-displacement, or mixed-refresh-scope-axis-remediation-displacement-resumption-basis
+- PP-0116
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-replay-fidelity-witnesses-exact-state-restore-bounded-loss-checkpoint-replay-and-source-only-restart.md`
+- exact-state-restore, bounded-loss-checkpoint-replay, source-only-restart, or mixed-refresh-scope-axis-remediation-displacement-replay-fidelity
+- PP-0117
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-replay-equivalence-witnesses-functionally-exact-restore-and-performance-shadow-restore.md`
+- functionally-exact-restore, performance-shadow-restore, or mixed-refresh-scope-axis-remediation-displacement-replay-equivalence
+- PP-0118
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-performance-shadow-source-witnesses-device-warmth-host-parity-and-placement-contention.md`
+- device-warmth-shadow, host-parity-shadow, placement-contention-shadow, or mixed-refresh-scope-axis-remediation-displacement-performance-shadow-source
+- PP-0108
+- Use `docs/10-method/refresh-scope-axis-coupling-witnesses-same-plane-coupled-corroboration-hierarchy-coupled-corroboration-and-perturbation-decoupled-corroboration.md`
+- same-plane-coupled-corroboration, hierarchy-coupled-corroboration, perturbation-decoupled-corroboration, or mixed-refresh-scope-axis-coupling
+- PP-0103
+- Use `docs/10-method/refresh-scope-extent-witnesses-single-observed-slice-patterned-observed-spillover-and-extent-gated-generalization.md`
+- single-observed-slice, patterned-observed-spillover, extent-gated-generalization, or mixed-refresh-scope-extent
+- PP-0102
+- Use `docs/10-method/refresh-scope-basis-witnesses-directly-observed-widening-dependency-imputed-spillover-and-topology-imputed-spillover.md`
+- directly-observed-widening, dependency-imputed-spillover, topology-imputed-spillover, or mixed-refresh-scope-basis
+- PP-0101
+- Use `docs/10-method/refresh-burden-scope-witnesses-same-claim-burden-upgrade-bounded-scope-widening-and-scope-gated-generalization.md`
+- same-claim-burden-upgrade, bounded-scope-widening, scope-gated-generalization, or mixed-refresh-burden-scope
+- Use `docs/10-method/action-lane-packets-primary-next-step-classes-and-routing-overflow-tests.md`
+- Use `docs/10-method/action-lanes-primary-next-step-routing-and-discharge-budgets.md`
+- Use `docs/10-method/alias-packets-handle-collision-budgets-and-namespace-hygiene.md`
+- Use `docs/10-method/alias-retention-toolchain-manifest-witnesses.md`
+- Use `docs/10-method/amortization-witnesses-reuse-horizons-and-compiled-dividend-budgets.md`
+- Use `docs/10-method/applicability-witnesses-precondition-gates-and-negative-transfer-budgets.md`
+- Use `docs/10-method/arbitration-witnesses-tie-sets-and-confusability-budgets.md`
+- Use `docs/10-method/archive-economy-audit-witnesses.md`
+- Use `docs/10-method/archive-self-sufficiency-probe-minimal-core-and-priority-zero.md`
+- Use `docs/10-method/assistant-echo-filters-self-carry-omission-packets-and-history-decontamination.md`
+- Use `docs/10-method/assumption-witnesses-expiry-triggers-and-invalidation-cues.md`
+- Use `docs/10-method/authorship-witnesses-autonomy-postures-and-maker-checker-traces.md`
+- Use `docs/10-method/backaction-witnesses-diagnostic-probes-and-non-demolition-budgets.md`
+- Use `docs/10-method/balanced-archive-reduction-dual-salience-and-minimal-realization.md`
+- Use `docs/10-method/basin-fingerprints-future-probe-signatures-and-same-answer-is-not-same-state.md`
+- Use `docs/10-method/basis-provenance-audit-witnesses.md`
+- Use `docs/10-method/basis-witnesses-expected-head-guards-and-session-honesty-bridges.md`
+- Use `docs/10-method/blind-packets-label-scrubbed-adjudication-and-attribution-guards.md`
+- Use `docs/10-method/canary-evidence-calibration-witnesses.md`
+- Use `docs/10-method/certified-core-vocabulary-and-recertification.md`
+- Use `docs/10-method/certified-moves-and-procedural-admission.md`
+- Use `docs/10-method/challenge-escrow-rotating-holdouts-and-future-slice-adjudication.md`
+- Use `docs/10-method/chart-transition-witnesses-overlap-maps-and-transport-budgets.md`
+- Use `docs/10-method/citation-incentive-witnesses-quality-preserving-visibility-optimization-evidence-market-distortion-and-source-grooming.md`
+- Use `docs/10-method/compact-surface-bundles-closed-family-contracts-and-bundle-status.md`
+- Use `docs/10-method/conformance-witnesses-loader-contracts-and-abi-drift-guards.md`
+- Use `docs/10-method/constitutional-pidgin-and-control-lexicon.md`
+- Use `docs/10-method/constitutive-compression-and-prior-matching.md`
+- Use `docs/10-method/consultation-packets-store-routing-budgets-and-memory-control-flow-guards.md`
+- Use `docs/10-method/continuation-margins-guard-bands-and-perturbation-budgets.md`
+- Use `docs/10-method/continuation-monitors-anytime-validity-and-public-observer-loops.md`
+- Use `docs/10-method/continuation-rate-distortion-and-prior-intrusion.md`
+- Use `docs/10-method/contradiction-packets-precedence-ladders-and-conflict-transparent-abstention.md`
+- Use `docs/10-method/control-authority-effort-leakage-and-resistance.md`
+- Use `docs/10-method/counterfactual-shadow-and-nearby-rejected-moves.md`
+- Use `docs/10-method/credit-packets-delayed-payoff-and-public-eligibility-traces.md`
+- Use `docs/10-method/cue-neighborhood-witnesses-reactivation-radius-sweeps-and-basin-breadth-budgets.md`
+- Use `docs/10-method/currentness-cue-audit-witnesses.md`
+- Use `docs/10-method/dependence-adjusted-witnesses-effective-evidence-and-pseudoreplication-guards.md`
+- Use `docs/10-method/derivative-operator-contracts-low-entropy-reentry-wrappers-and-non-canon-read-first-surfaces.md`
+- Use `docs/10-method/directional-neighborhood-witnesses-anisotropy-sweeps-and-local-shape-budgets.md`
+- Use `docs/10-method/dual-control-revisions-and-identification-packets.md`
+- Use `docs/10-method/dual-effect-witnesses-explore-exploit-splits-and-information-premium-budgets.md`
+- Use `docs/10-method/evidence-ecology-witnesses-selector-source-bias-citation-loop-pressure-and-retrieval-contamination-collapse.md`
+- Use `docs/10-method/exception-witnesses-temporary-waivers-expiry-honesty-and-suppression-exclusions.md`
+- Use `docs/10-method/excitation-witnesses-alias-breaking-interventions-and-observability-spend.md`
+- Use `docs/10-method/execution-witnesses-substrate-perturbation-packets-and-runtime-variance-audits.md`
+- Use `docs/10-method/external-optimizer-loops-public-slow-weights-and-archive-write-gates.md`
+- Use `docs/10-method/feedback-policy-witnesses-open-loop-baselines-and-contingency-budgets.md`
+- Use `docs/10-method/followthrough-witnesses-blocked-outputs-and-explicit-handoffs.md`
+- Use `docs/10-method/foreign-pressure-witnesses-import-lineage-and-bounded-assimilation.md`
+- Use `docs/10-method/frontier-tickets-selected-focus-handoffs-and-live-open-work-cards.md`
+- Use `docs/10-method/future-equivalence-classes-and-causal-state-compression.md`
+- Use `docs/10-method/gate-class-packets-scheduled-windows-and-clock-honest-reopens.md`
+- Use `docs/10-method/gate-classes-future-trigger-kinds-and-bounded-reopen-rules.md`
+- Use `docs/10-method/gauge-discipline-canonical-charts-and-invariant-claims.md`
+- Use `docs/10-method/gauge-fixing-witnesses-reference-observables-and-defect-comparability.md`
+- Use `docs/10-method/gpu-replay-cross-observer-bridge-witnesses-trace-context-external-correlation-metric-exemplars-placement-scope-and-missing-bridge.md`
+- Use `docs/10-method/gpu-replay-cross-observer-custody-exit-appeal-scope-witnesses-packet-local-survivor-carrier-authority-boundary-policy-window-retirement-window-and-mixed-scope.md`
+- Use `docs/10-method/gpu-replay-cross-observer-custody-retirement-witnesses-claim-settled-carrier-expiry-authority-return-scope-shrink-and-mixed-retirement.md`
+- Use `docs/10-method/gpu-replay-cross-observer-custody-scope-witnesses-packet-local-bridge-record-evidence-carrier-authority-handoff-retirement-window-and-mixed-custody.md`
+- Use `docs/10-method/gpu-replay-cross-observer-promotion-gate-witnesses-no-promotion-local-hardening-repeated-overflow-custody-boundary-authority-handoff-and-mixed-promotion.md`
+- Use `docs/10-method/gpu-replay-envelope-witnesses-captured-graph-stable-pool-and-locality-partition.md`
+- Use `docs/10-method/gpu-replay-observer-conflict-witnesses-scope-correlation-intrusion-authority-and-mixed-conflict.md`
+- Use `docs/10-method/gpu-replay-receipt-witnesses-capture-lineage-update-delta-resource-lifetime-and-locality-lease.md`
+- Use `docs/10-method/gpu-replay-trace-grade-witnesses-runtime-self-attestation-profiler-trace-external-observer-and-missing-receipt.md`
+- Use `docs/10-method/gpu-rpra-drift-retirement-scope-witnesses.md`
+- Use `docs/10-method/gpu-rpra-drift-retirement-threshold-witnesses.md`
+- Use `docs/10-method/gpu-rpra-post-closeout-portability-drift-witnesses.md`
+- Use `docs/10-method/gpustorming-control-family-crosswalk-and-sync-guards.md`
+- Use `docs/10-method/hold-packets-abstention-and-epistemic-brakes.md`
+- Use `docs/10-method/homing-packets-adaptive-distinguishing-probes-and-reorientation.md`
+- Use `docs/10-method/hysteresis-witnesses-rival-histories-and-state-alias-budgets.md`
+- Use `docs/10-method/identifiability-budgets-probe-horizons-and-observability-frontiers.md`
+- Use `docs/10-method/initial-turns-and-basin-seeding.md`
+- Use `docs/10-method/innovation-packets-and-reconciliation-under-delay.md`
+- Use `docs/10-method/interpolation-path-witnesses-ramp-schedules-and-endpoint-equivalence-budgets.md`
+- Use `docs/10-method/intervention-equivalence-and-causal-control-packets.md`
+- Use `docs/10-method/lint-idempotence-provenance-witnesses.md`
+- Use `docs/10-method/local-linearity-budgets-curved-chart-adapters-and-tangent-steering.md`
+- Use `docs/10-method/loop-closure-commutator-probes-and-path-dependence.md`
+- Use `docs/10-method/mechanism-pressure-register.md`
+- Use `docs/10-method/memory-stores-vs-regime-reentry-packets.md`
+- Use `docs/10-method/method-overview.md`
+- Use `docs/10-method/mixed-direction-witnesses-cross-term-sweeps-and-superposition-budgets.md`
+- Use `docs/10-method/necessity-witnesses-support-cores-and-ablation-ladders.md`
+- Use `docs/10-method/negative-control-handles-sham-packets-and-placebo-guards.md`
+- Use `docs/10-method/obligation-packets-waivers-remediation-expiry-and-overflow-tests.md`
+- Use `docs/10-method/obligation-witnesses-discharge-paths-and-evidence-debt-cues.md`
+- Use `docs/10-method/observer-actuator-splits-and-non-self-certifying-handles.md`
+- Use `docs/10-method/open-question-postures-successor-surfaces-and-live-focus-sync.md`
+- Use `docs/10-method/operational-heads-citation-heads-and-frozen-public-surfaces.md`
+- Use `docs/10-method/operator-cores-chart-adapters-and-portability-budgets.md`
+- Use `docs/10-method/operator-tokens-and-bootstrap-grammar.md`
+- Use `docs/10-method/pa-closeout-history-portability-expiry-state-witnesses.md`
+- Use `docs/10-method/pa-closeout-history-portability-travel-witnesses.md`
+- Use `docs/10-method/pa-governance-retirement-closeout-history-portability-expiry-history-portability-closeout-witnesses-closed-pruned-sunset-handoff-quarantine-redacted-mixed.md`
+- Use `docs/10-method/pa-governance-retirement-closeout-history-portability-expiry-history-portability-witnesses-nonportable-audit-warning-successor-redacted-quarantine-mixed.md`
+- Use `docs/10-method/pa-governance-retirement-portability-drift-conflict-arbitration-retirement-witnesses-settled-handoff-expiry-authority-sunset-quarantine-mixed.md`
+- Use `docs/10-method/pa-governance-retirement-portability-drift-witnesses-current-stale-conflict-revoked-expired-successor-mixed.md`
+- Use `docs/10-method/pa-governance-retirement-threshold-scope-retirement-history-portability-currentness-closeout-witnesses-settled-stale-revocation-expiry-handoff-quarantine-mixed.md`
+- Use `docs/10-method/pa-governance-retirement-threshold-scope-retirement-history-portability-currentness-witnesses-fresh-stale-revoked-expired-successor-carrier-conflict-mixed.md`
+- Use `docs/10-method/pa-governance-retirement-threshold-scope-retirement-history-portability-witnesses-nonportable-audit-template-authority-successor-counterexample-mixed.md`
+- Use `docs/10-method/pa-governance-retirement-threshold-scope-retirement-witnesses-settled-window-authority-history-handoff-quarantine-mixed.md`
+- Use `docs/10-method/pa-governance-retirement-threshold-scope-witnesses-packet-history-lane-route-window-mixed.md`
+- Use `docs/10-method/package-identity-spillover-witnesses.md`
+- Use `docs/10-method/path-alias-ledger-audit-witnesses.md`
+- Use `docs/10-method/phase-boundaries-rollover-packets-and-event-cut-discipline.md`
+- Use `docs/10-method/portable-state-interface.md`
+- Use `docs/10-method/practice-observation-mechanism-speculation.md`
+- Use `docs/10-method/predictive-state-representations-and-test-sufficient-packets.md`
+- Use `docs/10-method/probe-economics-value-of-information-and-budgeted-disambiguation.md`
+- Use `docs/10-method/probe-order-witnesses-swapped-order-baselines-and-sequencing-budgets.md`
+- Use `docs/10-method/procedural-compilation-skill-packets-and-declarative-vs-executable-carry.md`
+- Use `docs/10-method/promotion-contracts-and-staged-ratification.md`
+- Use `docs/10-method/promptcraft-patterns-from-cross-projects.md`
+- Use `docs/10-method/provenance-control-witnesses-opt-out-attribution-compensation-exclusion-citation-dividend-and-mixed-control.md`
+- Use `docs/10-method/public-belief-state-under-partial-observability.md`
+- Use `docs/10-method/public-hidden-state-and-reentry-abi.md`
+- Use `docs/10-method/public-state-packets-discoverability-exclusions-and-overflow-tests.md`
+- Use `docs/10-method/reasoning-firebreaks-scratchpad-quarantine-and-public-extract-packets.md`
+- Use `docs/10-method/receipt-freshness-witnesses-bundle-stem-truth-and-carryforward-key-coherence.md`
+- Use `docs/10-method/reentry-cue-witnesses-durable-latest-paths-and-navigation-integrity-budgets.md`
+- Use `docs/10-method/rehearsal-packets-spaced-replay-and-maintenance-budgets.md`
+- Use `docs/10-method/relapse-witnesses-recovery-probes-and-suppression-vs-washout-budgets.md`
+- Use `docs/10-method/release-hardening-witnesses.md`
+- Use `docs/10-method/renewal-scope-witnesses-local-refresh-boundaries-and-spillover-drift.md`
+- Use `docs/10-method/renewal-witnesses-fresh-approval-acts-and-carryforward-drift.md`
+- Use `docs/10-method/reopened-residue-drift-governance-retirement-witnesses-discharge-sunset-return-freeze-quarantine-handoff-and-mixed.md`
+- Use `docs/10-method/replay-reconsolidation-and-public-restaging.md`
+- Use `docs/10-method/replicate-bundle-witnesses-repeated-inference-sweeps-and-lucky-path-budgets.md`
+- Use `docs/10-method/reset-witnesses-washout-baselines-and-contamination-budgets.md`
+- Use `docs/10-method/resolution-witnesses-closure-reasons-and-reopen-triggers.md`
+- Use `docs/10-method/retrospective-writes-cooldown-windows-and-off-path-adjudication.md`
+- Use `docs/10-method/revision-receipts-and-audit-objects.md`
+- Use `docs/10-method/rewrite-witnesses-roundtrip-packets-and-recap-authority-tests.md`
+- Use `docs/10-method/rival-set-packets-branch-budgets-and-non-forced-singularity.md`
+- Use `docs/10-method/rpra-governance-retirement-portability-witnesses.md`
+- Use `docs/10-method/runtime-triplets-core-exemplars-and-challenge-suites.md`
+- Use `docs/10-method/scale-fixing-witnesses-coarse-graining-maps-and-separation-of-scales-budgets.md`
+- Use `docs/10-method/schema-conformance-audit-witnesses.md`
+- Use `docs/10-method/schema-coverage-audit-witnesses.md`
+- Use `docs/10-method/scope-witnesses-active-request-packets-and-ambient-roster-guards.md`
+- Use `docs/10-method/self-stabilizing-recovery-and-legitimacy-kernel.md`
+- Use `docs/10-method/sentinel-panels-border-inputs-and-reopen-canaries.md`
+- Use `docs/10-method/servo-packets-receding-horizon-control-and-archive-target-tracking.md`
+- Use `docs/10-method/settle-packets-prune-witnesses-and-earned-singularity.md`
+- Use `docs/10-method/shadow-comparison-packets-minimal-pre-promotion-lanes-and-overflow-tests.md`
+- Use `docs/10-method/sham-runtimes-decoy-archives-and-anti-self-sealing-compression-tests.md`
+- Use `docs/10-method/slopos-trikem-hygiene-extraction.md`
+- Use `docs/10-method/stable-continuation-regimes-and-regime-probes.md`
+- Use `docs/10-method/status-lane-witnesses-decision-execution-splits-and-frozen-public-transitions.md`
+- Use `docs/10-method/stopping-packets-sequential-decision-thresholds-and-commit-certificates.md`
+- Use `docs/10-method/sufficiency-witnesses-replay-capsules-and-core-only-reentry-trials.md`
+- Use `docs/10-method/template-law-audits-family-compression-frontiers-and-anti-ceremony-tests.md`
+- Use `docs/10-method/temporal-demotion-and-decay-patrol.md`
+- Use `docs/10-method/timescale-stratification-and-consolidation-lanes.md`
+- Use `docs/10-method/transfer-ledgers-adopted-non-takes-and-repeat-argument-brakes.md`
+- Use `docs/10-method/transfer-packets-reviewed-datacube-sets-disposition-classes-and-overflow-tests.md`
+- Use `docs/10-method/triangle-defects-cocycle-witnesses-and-atlas-consistency-budgets.md`
+- Use `docs/10-method/triangulation-witnesses-multiloader-overlap-and-basin-checks.md`
+- Use `docs/10-method/typed-continuation-protocol.md`
+- Use `docs/10-method/update-gain-surprise-gating-and-challenge-probes.md`
+- Use `docs/10-method/validation-indexes-check-maps-and-admission-coverage-honesty.md`
+- Use `docs/10-method/witness-sets-boundary-panels-and-basin-support-vectors.md`
+- Use `docs/10-method/witness-vocabularies-state-families-and-comparability-budgets.md`
+- Use `docs/10-method/wvf-0076.md`
+- Use `docs/10-method/wvf-0078.md`
+- Use `docs/10-method/wvf-0079.md`
+- Use `docs/10-method/wvf-0081.md`
+- Use `docs/10-method/wvf-0082.md`
+- Use `docs/10-method/wvf-0083.md`
+- Use `docs/10-method/wvf-0084.md`
+- Use `docs/10-method/wvf-0085.md`
+- Use `docs/10-method/wvf-0086.md`
+- Use `docs/10-method/wvf-0087.md`
+- Use `docs/10-method/wvf-0088.md`
+- Use `docs/10-method/wvf-0089.md`
+- Use `docs/10-method/wvf-0090.md`
+- Use `docs/10-method/wvf-0092.md`
+- Use `docs/10-method/wvf-0093.md`
+- Use `docs/10-method/wvf-0097.md`
+- Use `docs/10-method/wvf-0098.md`
+- Use `docs/10-method/wvf-0099.md`
+- Use `docs/10-method/wvf-0100.md`
+- Use `docs/10-method/wvf-0101.md`
+- Use `docs/10-method/wvf-0102.md`
+- Use `docs/10-method/wvf-0103.md`
+- Use `docs/10-method/wvf-0106.md`
+- Use `docs/10-method/wvf-0108.md`
+- Use `docs/10-method/wvf-0114.md`
+- Use `docs/10-method/wvf-0115.md`
+- Use `docs/10-method/wvf-0116.md`
+- Use `docs/10-method/wvf-0117.md`
+- Use `docs/10-method/wvf-0122.md`
+- PP-0120
+- quality-preserving-visibility-optimization, evidence-market-distortion, source-grooming-distortion, or mixed-citation-incentive
+- PP-0133
+- access-opt-out-control, attribution-control, compensation-control, exclusion-control, citation-dividend-control, or mixed-provenance-control
+- PP-0119
+- selector-source-bias, citation-loop-pressure, retrieval-contamination-collapse, or mixed-evidence-ecology
+- PP-0175
+- nonportable-transported-closeout-history-portability-expiry-history-portability-closeout-history, audit-reference-transported-closeout-history-portability-expiry-history-portability-closeout-history, warning-only-transported-closeout-history-portability-expiry-history-portability-closeout-history, successor-context-transported-closeout-history-portability-expiry-history-portability-closeout-history, redacted-summary-transported-closeout-history-portability-expiry-history-portability-closeout-history, quarantine-reference-transported-closeout-history-portability-expiry-history-portability-closeout-history, mixed-transported-closeout-history-portability-expiry-history-portability-closeout-history-portability
+- Do not let transported closeout-history portability-expiry history portability closeout history become a tombstone-history review layer, portable closeout-history review court, warning-renewal by closeout history, successor-review senate, or redaction vault by history portability.
+- PP-0174
+- closed-transported-closeout-history-portability-expiry-history-portability-record, tombstone-pruned-transported-closeout-history-portability-expiry-history-portability-record, warning-sunset-transported-closeout-history-portability-expiry-history-portability-record, successor-handoff-transported-closeout-history-portability-expiry-history-portability-record, quarantine-expired-transported-closeout-history-portability-expiry-history-portability-record, redacted-freeze-transported-closeout-history-portability-expiry-history-portability-record, or mixed-transported-closeout-history-portability-expiry-history-portability-closeout
+- Do not let transported closeout-history portability-expiry history portability closeout become a tombstone-history review layer, portable expiry-history closeout court, warning-renewal tombstone board, successor-review senate, or redaction vault by closeout.
+- PP-0173
+- nonportable-transported-closeout-history-portability-expiry-record, audit-reference-transported-closeout-history-portability-expiry-record, warning-only-transported-closeout-history-portability-expiry-record, successor-context-transported-closeout-history-portability-expiry-record, redacted-summary-transported-closeout-history-portability-expiry-record, quarantine-reference-transported-closeout-history-portability-expiry-record, or mixed-transported-closeout-history-portability-expiry-history-portability
+- Do not let transported closeout-history portability-expiry records become a tombstone-history review layer, portable expiry-history court, expired-tombstone-history carrier renewal, expiry-history registry board, or closed-history renewal by warning.
+- PP-0169
+- nonportable-transported-closeout-expiry-record-travel, audit-tombstone-transported-closeout-expiry-record-travel, warning-only-transported-closeout-expiry-record-travel, successor-bound-transported-closeout-expiry-record-travel, redacted-summary-transported-closeout-expiry-record-travel, quarantine-reference-transported-closeout-expiry-record-travel, or mixed-transported-closeout-expiry-record-travel
+- Do not let transported closeout expiry-record travel become an expiry-record renewal exchange, carrier-resurrection court, portable expiry authority by default, tombstone registry board, or expired-carrier review senate.
+- PP-0168
+- unexpired-transported-retired-history-closeout, horizon-expired-transported-retired-history-closeout, use-exhausted-transported-retired-history-closeout, successor-superseded-transported-retired-history-closeout, source-revoked-transported-retired-history-closeout, quarantine-expired-transported-retired-history-closeout, or mixed-transported-retired-history-closeout-expiry
+- Do not let transported retired-history currentness closeout history expiry become a carrier-review layer, closeout-history expiry board, transported-history freshness court, carrier-renewal exchange, or nonexpiring closeout history by default.
+- PP-0167
+- nonportable-retired-history-currentness-closeout-travel, audit-trace-retired-history-currentness-closeout-travel, warning-only-retired-history-currentness-closeout-travel, successor-context-retired-history-currentness-closeout-travel, redacted-summary-retired-history-currentness-closeout-travel, quarantine-reference-retired-history-currentness-closeout-travel, or mixed-retired-history-currentness-closeout-travel
+- Do not let retired-history currentness closeout history travel become a carrier exchange, currentness-closeout precedent board, drift-history revival court, successor-closeout senate, or portable closeout authority by default.
+- PP-0166
+- settled-retired-history-currentness-closeout, stale-mark-retired-history-currentness-closeout, revocation-frozen-retired-history-currentness-closeout, expiry-complete-retired-history-currentness-closeout, successor-handoff-retired-history-currentness-closeout, conflict-quarantined-retired-history-currentness-closeout, or mixed-retired-history-currentness-closeout
+- Do not let retired threshold-scope history currentness closeout become a closeout court, drift-retirement board, revocation-history vault, standing currentness senate, or closed-currentness authority by default.
+- PP-0165
+- fresh-retired-threshold-scope-history-carry, stale-retired-threshold-scope-history-carry, revoked-authority-return-retired-threshold-scope-history, expired-closeout-template-retired-threshold-scope-history, successor-superseded-retired-threshold-scope-history, carrier-conflict-retired-threshold-scope-history, or mixed-retired-threshold-scope-history-currentness
+- Do not let portable retired threshold-scope history become a drift court, authority-return revocation board, currentness exchange, carrier-conflict senate, or current by default.
+- PP-0164
+- nonportable-retired-threshold-scope-history, audit-reference-retired-threshold-scope-history, closeout-template-retired-threshold-scope-history, authority-return-warning-retired-threshold-scope-history, successor-packet-required-retired-threshold-scope-history, counterexample-only-retired-threshold-scope-history, or mixed-retired-threshold-scope-history-portability
+- Do not let retired threshold-scope history become a portability court, carrier exchange, precedent board, common-law history surface, or portable governance by default.
+- PP-0163
+- settled-post-arbitration-governance-retirement-threshold-scope-retirement, window-expired-post-arbitration-governance-retirement-threshold-scope-retirement, authority-return-post-arbitration-governance-retirement-threshold-scope-retirement, history-freeze-post-arbitration-governance-retirement-threshold-scope-retirement, successor-handoff-post-arbitration-governance-retirement-threshold-scope-retirement, residue-quarantine-post-arbitration-governance-retirement-threshold-scope-retirement, or mixed-post-arbitration-governance-retirement-threshold-scope-retirement
+- Do not let threshold-scope retirement become a court, scope-history vault, authority-lane board, successor-route senate, or retirement-ish governance.
+- PP-0162
+- packet-local-post-arbitration-governance-retirement-threshold-scope, closeout-history-custody-post-arbitration-governance-retirement-threshold-scope, authority-lane-limited-post-arbitration-governance-retirement-threshold-scope, successor-route-bound-post-arbitration-governance-retirement-threshold-scope, retirement-window-post-arbitration-governance-retirement-threshold-scope, or mixed-post-arbitration-governance-retirement-threshold-scope
+- PP-0161
+- no-standing-post-arbitration-governance-retirement-threshold, repeated-arbitration-retirement-failure-post-arbitration-governance-retirement-threshold, closeout-history-loss-post-arbitration-governance-retirement-threshold, closeout-history-overbinding-post-arbitration-governance-retirement-threshold, authority-split-post-arbitration-governance-retirement-threshold, successor-closeout-loop-post-arbitration-governance-retirement-threshold, or mixed-post-arbitration-governance-retirement-threshold
+- PP-0158
+- current-post-arbitration-governance-retirement-carry, stale-post-arbitration-governance-retirement-template, carrier-conflicted-post-arbitration-governance-retirement-carry, revoked-post-arbitration-governance-retirement-lesson, expired-post-arbitration-governance-retirement-exit-proof, successor-required-post-arbitration-governance-retirement-drift, or mixed-post-arbitration-governance-retirement-drift
+- PP-0157
+- nonportable-post-arbitration-governance-retirement-history, audit-reference-post-arbitration-governance-retirement, carrier-template-post-arbitration-governance-retirement, exit-proof-reference-post-arbitration-governance-retirement, counterexample-only-post-arbitration-governance-retirement, successor-packet-required-post-arbitration-governance-retirement, or mixed-post-arbitration-governance-retirement-portability
+- PP-0156
+- discharged-post-arbitration-governance-retirement, scope-sunset-post-arbitration-governance-retirement, authority-return-post-arbitration-governance-retirement, conflict-history-freeze-post-arbitration-governance-retirement, residue-quarantine-post-arbitration-governance-retirement, successor-handoff-post-arbitration-governance-retirement, or mixed-post-arbitration-governance-retirement
+- PP-0155
+- packet-local-post-arbitration-governance-scope, history-custody-bound-post-arbitration-governance-scope, authority-lane-limited-post-arbitration-governance-scope, successor-route-bound-post-arbitration-governance-scope, retirement-window-post-arbitration-governance-scope, or mixed-post-arbitration-governance-scope
+- PP-0154
+- no-standing-post-arbitration-governance, repeated-retirement-failure-post-arbitration-governance, conflict-history-loss-post-arbitration-governance, conflict-history-overbinding-post-arbitration-governance, authority-split-post-arbitration-governance, successor-route-loop-post-arbitration-governance, or mixed-post-arbitration-governance-threshold
+- PP-0153
+- settled-retired-governance-drift-arbitration-retirement, joined-route-handoff-retired-governance-drift-retirement, carrier-expiry-retired-governance-drift-arbitration-retirement, authority-return-retired-governance-drift-arbitration-retirement, priority-sunset-retired-governance-drift-arbitration-retirement, residue-quarantine-retired-governance-drift-arbitration-retirement, or mixed-retired-governance-drift-arbitration-retirement
+- PP-0152
+- no-arbitration-needed-retired-governance-drift-conflict, local-join-retired-governance-drift-conflict, current-carrier-precedence-retired-governance-drift, revocation-precedence-retired-governance-drift, exit-proof-precedence-retired-governance-drift, successor-route-precedence-retired-governance-drift, or mixed-retired-governance-drift-arbitration
+- PP-0151
+- current-retired-governance-portability, stale-retired-governance-template, carrier-conflicted-retired-governance, revoked-retired-governance-lesson, expired-retired-governance-exit-proof, successor-required-retired-governance-drift, or mixed-retired-governance-drift
+- PP-0150
+- nonportable-retired-governance-history, audit-reference-retired-governance, carrier-template-retired-governance, exit-proof-reference-retired-governance, counterexample-only-retired-governance, successor-packet-required-retired-governance, or mixed-retired-governance-portability
+- PP-0149
+- discharged-reopen-drift-governance-retirement, scope-sunset-reopen-drift-governance-retirement, authority-return-reopen-drift-governance-retirement, history-freeze-reopen-drift-governance-retirement, residue-quarantine-reopen-drift-governance-retirement, successor-handoff-reopen-drift-governance-retirement, or mixed-reopen-drift-governance-retirement
+- PP-0125
+- external-correlation-bridge, trace-context-bridge, metric-exemplar-bridge, placement-scope-bridge, missing-cross-observer-bridge, or mixed-cross-observer-bridge
+- PP-0136
+- settled-tiebreak-arbitration-retirement, joined-lesson-handoff-arbitration-retirement, carrier-expiry-arbitration-retirement, authority-return-arbitration-retirement, priority-sunset-arbitration-retirement, residue-quarantine-arbitration-retirement, or mixed-arbitration-retirement
+- PP-0135
+- no-arbitration-needed-precedent-conflict, local-join-precedent-conflict, carrier-precedence-precedent-conflict, authority-precedence-precedent-conflict, sunset-precedence-precedent-conflict, revocation-precedence-precedent-conflict, or mixed-precedent-conflict-arbitration
+- PP-0134
+- current-portability-precedent, stale-template-precedent, conflicting-carrier-precedent, revoked-lesson-precedent, sunset-expired-precedent, or mixed-precedent-drift
+- PP-0132
+- nonportable-history-precedent, carrier-matched-precedent, template-bound-precedent, counterexample-only-precedent, sunset-inherited-precedent, or mixed-precedent-portability
+- PP-0137
+- no-registry-needed-tiebreak-governance, repeated-closeout-failure-tiebreak-governance, cross-carrier-conflict-tiebreak-governance, authority-split-tiebreak-governance, audit-retention-tiebreak-governance, sunset-breach-tiebreak-governance, or mixed-tiebreak-governance-escalation
+- PP-0142
+- settled-reopen-closeout, audit-handoff-reopen-closeout, carrier-expiry-reopen-closeout, tombstone-freeze-reopen-closeout, authority-return-reopen-closeout, or mixed-reopened-residue-closeout
+- PP-0146
+- settled-reopen-drift-tiebreak-retirement, joined-lesson-handoff-reopen-drift-retirement, carrier-expiry-reopen-drift-retirement, authority-return-reopen-drift-retirement, priority-sunset-reopen-drift-retirement, residue-quarantine-reopen-drift-retirement, or mixed-reopen-drift-arbitration-retirement
+- PP-0145
+- no-arbitration-needed-reopen-drift-conflict, local-join-reopen-drift-conflict, current-evidence-precedence-reopen-drift, carrier-precedence-reopen-drift, revocation-precedence-reopen-drift, sunset-precedence-reopen-drift, or mixed-reopen-drift-arbitration
+- PP-0144
+- current-reopen-closeout-portability, stale-reopen-closeout-template, conflicting-reopen-closeout-carrier, revoked-reopen-closeout-lesson, expired-reopen-closeout-sunset, or mixed-reopen-closeout-drift
+- PP-0143
+- nonportable-reopen-closeout-history, audit-reference-reopen-closeout, tombstone-reference-reopen-closeout, carrier-template-reopen-closeout, counterexample-only-reopen-closeout, or mixed-reopen-closeout-portability
+- PP-0141
+- packet-local-reopened-residue, audit-bound-reopened-residue, fresh-carrier-reopened-residue, tombstone-bound-reopened-residue, authority-limited-reopened-residue, or mixed-reopened-residue-scope
+- PP-0140
+- no-reopen-tiebreak-registry-residue, inspectable-history-tiebreak-registry-residue, audit-only-reopen-tiebreak-registry-residue, fresh-packet-required-tiebreak-registry-residue, tombstone-only-tiebreak-registry-residue, or mixed-tiebreak-registry-residue-reopen
+- PP-0139
+- settled-closeout-tiebreak-registry-retirement, carrier-expiry-tiebreak-registry-retirement, authority-return-tiebreak-registry-retirement, nonbinding-history-freeze-tiebreak-registry-retirement, retirement-window-expiry-tiebreak-registry-retirement, residue-quarantine-tiebreak-registry-retirement, or mixed-tiebreak-registry-retirement
+- PP-0138
+- packet-local-tiebreak-registry-scope, carrier-bound-tiebreak-registry-scope, authority-limited-tiebreak-registry-scope, nonbinding-history-tiebreak-registry-scope, retirement-window-tiebreak-registry-scope, or mixed-tiebreak-registry-scope
+- PP-0131
+- dispute-settled-appeal-retirement, survivor-handoff-appeal-retirement, authority-return-appeal-retirement, policy-sunset-appeal-retirement, precedent-quarantine-appeal-retirement, or mixed-appeal-retirement
+- PP-0130
+- packet-local-appeal-scope, survivor-carrier-appeal-scope, authority-boundary-appeal-scope, policy-window-appeal-scope, retirement-window-appeal-scope, or mixed-appeal-scope
+- PP-0129
+- no-appeal-needed, receipt-repair-threshold, repeated-retention-dispute, authority-contest-overflow, deletion-proof-overflow, or mixed-appeal-threshold
+- PP-0128
+- claim-settled-retirement, carrier-expiry-retirement, authority-return-retirement, scope-shrink-retirement, or mixed-custody-retirement
+- PP-0127
+- packet-local-custody, bridge-record-custody, evidence-carrier-custody, authority-handoff-custody, retirement-window-custody, or mixed-custody-scope
+- PP-0126
+- no-promotion-gate, local-bridge-hardening-gate, repeated-missing-bridge-overflow, custody-boundary-overflow, authority-handoff-overflow, or mixed-promotion-gate
+- PP-0121
+- captured-graph-envelope, stream-pool-envelope, locality-partition-envelope, or mixed-gpu-replay-envelope
+- PP-0124
+- scope-boundary-conflict, correlation-key-conflict, intrusion-shift-conflict, authority-gap-conflict, or mixed-observer-conflict
+- PP-0122
+- capture-lineage-receipt, update-delta-receipt, resource-lifetime-receipt, locality-lease-receipt, or mixed-gpu-replay-receipt
+- PP-0123
+- runtime-self-attested, profiler-trace-backed, external-observer-backed, missing-trace-receipt, or mixed-gpu-replay-trace-grade
+- PP-0147
+- no-standing-reopen-drift-retirement-governance, repeated-closeout-failure-reopen-drift-governance, history-loss-reopen-drift-retirement-governance, history-overbinding-reopen-drift-retirement-governance, authority-split-reopen-drift-retirement-governance, sunset-breach-reopen-drift-retirement-governance, or mixed-reopen-drift-retirement-governance-escalation
+- PP-0148
+- packet-local-reopen-drift-governance-scope, carrier-bound-reopen-drift-governance-scope, authority-limited-reopen-drift-governance-scope, nonbinding-history-reopen-drift-governance-scope, retirement-window-reopen-drift-governance-scope, or mixed-reopen-drift-governance-scope
+- PP-0159
+- no-arbitration-needed-post-arbitration-governance-retirement-drift-conflict, local-join-post-arbitration-governance-retirement-drift-conflict, current-carrier-precedence-post-arbitration-governance-retirement-drift, revocation-precedence-post-arbitration-governance-retirement-drift, exit-proof-precedence-post-arbitration-governance-retirement-drift, successor-route-precedence-post-arbitration-governance-retirement-drift, or mixed-post-arbitration-governance-retirement-drift-arbitration
+- PP-0160
+- settled-post-arbitration-governance-retirement-drift-arbitration-retirement, joined-route-handoff-post-arbitration-governance-retirement-drift-retirement, carrier-expiry-post-arbitration-governance-retirement-drift-arbitration-retirement, authority-return-post-arbitration-governance-retirement-drift-arbitration-retirement, priority-sunset-post-arbitration-governance-retirement-drift-arbitration-retirement, residue-quarantine-post-arbitration-governance-retirement-drift-arbitration-retirement, or mixed-post-arbitration-governance-retirement-drift-arbitration-retirement
+- PP-0170
+- closed-transported-closeout-expiry-record-travel, tombstone-pruned-transported-closeout-expiry-record-travel, warning-sunset-transported-closeout-expiry-record-travel, successor-handoff-transported-closeout-expiry-record-travel, quarantine-expired-transported-closeout-expiry-record-travel, redacted-freeze-transported-closeout-expiry-record-travel, or mixed-transported-closeout-expiry-record-travel-closeout
+- Do not let transported closeout expiry-record travel closeout become a tombstone registry board, expiry-record closeout court, carrier-resurrection archive, permanent expiry tombstone ledger, or closed tombstone authority by default.
+- PP-0171
+- nonportable-transported-closeout-expiry-record-closeout-history, audit-reference-transported-closeout-expiry-record-closeout-history, warning-only-transported-closeout-expiry-record-closeout-history, successor-context-transported-closeout-expiry-record-closeout-history, redacted-summary-transported-closeout-expiry-record-closeout-history, quarantine-reference-transported-closeout-expiry-record-closeout-history, or mixed-transported-closeout-expiry-record-closeout-history-portability
+- Do not let transported closeout expiry-record closeout-history portability become a closed-tombstone reopen board, tombstone-history registry, carrier resurrection by closeout history, portable closeout-history authority by default, or expiry-record closeout precedent court.
+- PP-0172
+- unexpired-transported-closeout-expiry-record-closeout-history-portability, horizon-expired-transported-closeout-expiry-record-closeout-history-portability, use-exhausted-transported-closeout-expiry-record-closeout-history-portability, successor-superseded-transported-closeout-expiry-record-closeout-history-portability, source-revoked-transported-closeout-expiry-record-closeout-history-portability, quarantine-expired-transported-closeout-expiry-record-closeout-history-portability, or mixed-transported-closeout-expiry-record-closeout-history-portability-expiry
+- Do not let transported closeout expiry-record closeout-history portability expiry become a tombstone-history review layer, portable closeout-history expiry court, closed-tombstone revalidation board, carrier-renewal by expiry review, or nonexpiring closeout-history registry.
+- PP-0082
+- local-refresh, broadened-carryover, spillover, or effect-drift
+<!-- rev0337 standard-packet prompt guard end -->
+
+# Prompt pairs
+
+Prompt pairs are archived because they are not disposable wrappers.
+They are **state-transition operators** for the archive.
+
+## Hot-surface compaction note
+
+rev0337 compacts the hot prompt-pair markdown surface. Full pre-compaction request/response prose is retained in `HOT-SURFACE-COMPACTION-ORIGINALS.json` and verified by `tools/check_hot_surface_compaction_contract.py`.
+This compact file keeps prompt IDs, titles, and validation needles available for lint/reentry without forcing every future reader through the full historical transcript.
+
+## Retained prompt-pair index
+
+- PP-0001 — Bootstrap the archive as a method repo
+- PP-0002 — Continue with one ratchet per revision
+- PP-0003 — Research and reconcile mechanism hypotheses
+- PP-0004 — Adversarially stress-test the method
+- PP-0005 — Risky continuation with quarantine discipline
+- PP-0006 — Bootstrap or revise prompt-pair evolution itself
+- PP-0007 — Stress-test handles with matched shams
+- PP-0008 — Blind the judgment before reveal
+- PP-0009 — Audit substrate dependence before promotion
+- PP-0010 — Filter assistant echoes before replay
+- PP-0011 — Strip the trace, keep the extract
+- PP-0012 — Discount correlated witnesses before counting them twice
+- PP-0013 — Trust a rewrite only after it round-trips
+- PP-0014 — Treat re-entry packets like interfaces, not vibes
+- PP-0015 — Prune packets down to their support core
+- PP-0016 — Trust the core only after it replays
+- PP-0017 — Reach the basin by two roads
+- PP-0018 — Trust same-basin claims only after a fingerprint panel
+- PP-0019 — Name the probe horizon before you claim same state
+- PP-0020 — Run the archive on its support core before growing it again
+- PP-0021 — Audit the template before minting another family member
+- PP-0022 — Split the runtime before shrinking the archive
+- PP-0023 — Test the shrunken runtime against a sham
+- PP-0024 — Keep the challenge bank fresher than the archive
+- PP-0025 — Name the write path before calling it learning
+- PP-0026 — Replay it before you rewrite it
+- PP-0027 — Compile one law into a reusable procedure
+- PP-0028 — Rehearse only what survives spacing
+- PP-0029 — Cool the write before you canonize it
+- PP-0030 — Credit the earlier move only after the payoff arrives
+- PP-0031 — Treat a handle as unique only after it survives alias pressure
+- PP-0032 — Consult one store first, then escalate on purpose
+- PP-0033 — Preserve the contradiction before you resolve it
+- PP-0034 — Keep a small rival set alive until a real probe kills one
+- PP-0035 — Kill a rival only after a settle witness
+- PP-0036 — Name the operator core before you tune the chart
+- PP-0037 — Name the target and error before you steer harder
+- PP-0038 — Name the local chart before you extrapolate the handle
+- PP-0039 — Prove the chart transition before you call it the same core
+- PP-0040 — Do not globalize pairwise transports without one triangle defect check
+- PP-0041 — Fix the comparison gauge before you rank the defects
+- PP-0042 — Fix the scale before you globalize the reduction
+- PP-0043 — Match the endpoint before you call the state the same
+- PP-0044 — Vary the probe before you call the state observable
+- PP-0045 — Do not call it measurement after the probe has spent the state
+- PP-0046 — Swap AB and BA before you call the readout comparable
+- PP-0047 — Run one fresh baseline before you call the carry washed out
+- PP-0048 — Run one recovery probe before you call the washout durable
+- PP-0049 — Sweep one nearby cue family before you call the cleanup locally robust
+- PP-0050 — Sweep two cue directions before you call the neighborhood round
+- PP-0051 — Factorize the directions before you call the mixture stable
+- PP-0052 — Hold the endpoint fixed before you call the route irrelevant
+- PP-0053 — Repeat the route before you call the result stable
+- PP-0054 — Freeze one open-loop baseline before you call the policy adaptive
+- PP-0055 — Name what the move learned before you call it a better controller
+- PP-0056 — Name the reuse horizon before you call the carry learned
+- PP-0057 — Name the fit conditions before you reuse the carry
+- PP-0058 — Name the tie set before you let one packet inherit the route
+- PP-0059 — Name the live head before you cite the surface
+- PP-0060 — Name the expected head before you inherit the judgment
+- PP-0061 — Name the status lane before you cite the revision
+- PP-0062 — Name the active request before you inherit nearby authority
+- PP-0063 — Name the authorship lanes before one toolchain inherits all the authority
+- PP-0064 — Name the landing cue before you trust the latest path
+- PP-0065 — Name the live remainder before you call it handled
+- PP-0066 — Name the live assumption before it hardens into law
+- PP-0067 — Name the source datacubes before you inherit the import
+- PP-0068 — Name the closure reason before you call it no longer live
+- PP-0069 — Name the missing support before you inherit the claim
+- PP-0070 — Name the allowed tokens before you compare the state
+- PP-0071 — Name the reviewed datacubes before you inherit the comparison
+- PP-0072 — Name the primary next step before you trust the discharge prose
+- PP-0073 — Name the startup wrapper before you inherit its authority
+- PP-0074 — Name the future trigger before you trust the discharge prose
+- PP-0076 — Name the coverage before you trust the green wrapper
+- PP-0075 — Name the selected frontier before you inherit the handoff card
+- PP-0077 — Name the anchor and delta before you trust the packet
+- PP-0078 — Name the compact family before you trust the bundle
+- PP-0079 — Name the current bundle stem before you trust the receipt
+- PP-0080 — Name the expiry and aggregate effect before you call it waived
+- PP-0081 — Name the fresh act before you call it renewed
+- PP-0082 — Name the local target before you call it the same renewal
+- PP-0083 — Name the realized members before you trust the same selector
+- PP-0084 — Name the rule source before you trust the same selector
+- PP-0085 — Name the freshness evidence before you trust the same selector
+- PP-0086 — Name the enforcement posture before you trust the same selector
+- PP-0087 — Name the regime class before you trust the runtime guarantee
+- PP-0088 — Name the response class before you trust the same monitoring
+- PP-0089 — Name the repair scope before you trust the same recovery
+- PP-0090 — Name the recovery loss before you trust resumed continuity
+- PP-0091 — Name the recovery anchor before you trust resumed lineage
+- PP-0092 — Name whether a restore continues the run or starts a branch
+- PP-0093 — Name where restored output is allowed to write back
+- PP-0094 — Name whether noncanonical output is already promoted or only portable
+- PP-0095 — Name what is still live before you trust carried concern
+- PP-0096 — Name what changed before you trust renewed urgency
+- PP-0097 — Name how sustained the return really is before you trust renewed burden
+- PP-0098 — Name how broad the confirming support really is before you trust widened corroboration
+- PP-0099 — Name how independent the widened support really is before you trust extra corroborative weight
+- PP-0100 — Name whether independent support only steadies the line or really upgrades the public burden
+- PP-0101 — Name whether stronger burden stays on the same claim or really widens public scope
+- PP-0102 — Name whether widened scope is directly observed or only spillover-imputed
+- PP-0103 — Name whether widened impact is still one observed slice or already a broader observed spillover pattern
+- PP-0104 — Name whether observed spillover is still clustered or already dispersed across widened families
+- PP-0105 — Name whether dispersed spread is still one-axis or already cross-axis corroborated
+- PP-0106 — Name whether apparent corroborating axes are renamed, nested, or genuinely independent
+- PP-0107 — Name whether genuinely independent corroboration is only label-distinct, failure-domain-backed, or isolation-backed
+- PP-0108 — Name whether materially backed corroboration is still coupled or already perturbation-decoupled
+- PP-0109 — Name whether decoupled corroboration is binding, best-effort, or advisory
+- PP-0110 — Name whether decoupled corroboration stays preserved, needs repair, or is grandfathered
+- PP-0111 — Name whether restored decoupling comes back through native controllers, auxiliary remediators, or operator replay
+- PP-0112 — Name whether restored decoupling stayed local, spent a drain, or spent fenced substrate
+- PP-0113 — Name whether restored decoupling reused free capacity or displaced lower-priority work
+- PP-0114 — Name whether displaced lower-priority work remained resumable or was terminally sacrificed
+- PP-0115 — Name whether a nonterminal return stayed in memory, replayed checkpoints, or restarted cold
+- PP-0116 — Name whether checkpoint-backed return restored exact state, only the latest durable boundary, or just restarted from source
+- PP-0117 — Name whether an exact-looking restore stayed practically equivalent or came back under a performance shadow
+- PP-0118 — Name which source produced a performance shadow after exact-looking displacement replay
+- PP-0119 — Evidence-ecology witness before treating online research as independent evidence
+- PP-0120 — Citation-incentive witness before treating answer-engine visibility as evidence quality
+- PP-0121 — GPU replay-envelope classifier
+- PP-0122 — GPU replay-receipt classification
+- PP-0123 — GPU replay trace-grade witness prompt pair
+- PP-0124 — GPU replay observer-conflict witness prompt pair
+- PP-0125 — GPU replay cross-observer bridge witness prompt pair
+- PP-0126 — GPU replay cross-observer promotion-gate witness prompt pair
+- PP-0127 — GPU replay cross-observer custody-scope witness prompt pair
+- PP-0128 — GPU replay cross-observer custody-retirement witness prompt pair
+- PP-0129 — GPU replay cross-observer custody-exit appeal-threshold witness prompt pair
+- PP-0130 — GPU replay cross-observer custody-exit appeal-scope witness prompt pair
+- PP-0131 — GPU replay cross-observer custody-exit appeal-retirement witness prompt pair
+- PP-0132 — GPU replay cross-observer custody-exit appeal precedent-portability witness prompt pair
+- PP-0133 — Provenance-control witness prompt pair
+- PP-0134 — GPU replay cross-observer custody-exit appeal precedent-drift witness prompt pair
+- PP-0135 — GPU replay cross-observer custody-exit appeal precedent-conflict arbitration witness prompt pair
+- PP-0136 — GPU replay cross-observer custody-exit appeal precedent-conflict arbitration-retirement witness prompt pair
+- PP-0137 — GPU replay cross-observer custody-exit appeal precedent tie-break governance-threshold witness prompt pair
+- PP-0138 — GPU replay cross-observer custody-exit appeal precedent tie-break registry-scope witness prompt pair
+- PP-0139 — GPU replay cross-observer custody-exit appeal precedent tie-break registry-retirement witness prompt pair
+- PP-0140 — GPU replay cross-observer custody-exit appeal precedent tie-break registry residue/reopen witness prompt pair
+- PP-0141 — GPU replay cross-observer custody-exit appeal precedent tie-break registry reopened-residue scope witness prompt pair
+- PP-0142 — GPU replay cross-observer custody-exit appeal precedent tie-break registry reopened-residue closeout witness prompt pair
+- PP-0143 — GPU replay cross-observer custody-exit appeal precedent tie-break registry reopened-residue post-closeout portability witness prompt pair
+- PP-0144 — GPU replay cross-observer custody-exit appeal precedent tie-break registry reopened-residue post-closeout portability-drift witness prompt pair
+- PP-0145 — GPU replay cross-observer custody-exit appeal precedent tie-break registry reopened-residue post-closeout portability-drift conflict-arbitration witness prompt pair
+- PP-0146 — GPU replay cross-observer custody-exit appeal precedent tie-break registry reopened-residue post-closeout portability-drift conflict-arbitration retirement witness prompt pair
+- PP-0147 — GPU replay cross-observer custody-exit appeal precedent tie-break registry reopened-residue post-closeout portability-drift conflict-arbitration retirement governance-threshold witness prompt pair
+- PP-0148 — GPU replay cross-observer custody-exit appeal precedent tie-break registry reopened-residue post-closeout portability-drift conflict-arbitration retirement governance-scope witness prompt pair
+- PP-0149 — GPU replay reopened-residue drift governance-retirement witness prompt pair
+- PP-0150 — GPU replay reopened-residue drift governance-retirement portability witness prompt pair
+- PP-0151 — GPU replay reopened-residue drift governance-retirement portability-drift witness prompt pair
+- PP-0152 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration witness prompt pair
+- PP-0153 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration retirement witness prompt pair
+- PP-0154 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration retirement governance-threshold witness prompt pair
+- PP-0155 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration retirement governance-scope witness prompt pair
+- PP-0156 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration retirement governance-retirement witness prompt pair
+- PP-0157 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration retirement governance-retirement portability witness prompt pair
+- PP-0158 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration retirement governance-retirement portability-drift witness prompt pair
+- PP-0159 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration retirement governance-retirement portability-drift conflict-arbitration witness prompt pair
+- PP-0160 — GPU replay reopened-residue drift governance-retirement portability-drift conflict-arbitration retirement governance-retirement portability-drift conflict-arbitration-retirement witness prompt pair
+- PP-0161 — GPU replay reopened-residue post-arbitration-governance-retirement arbitration-retirement governance-threshold witness prompt pair
+- PP-0162 — GPU replay reopened-residue post-arbitration-governance-retirement threshold scope witness prompt pair
+- PP-0163 — GPU replay reopened-residue post-arbitration-governance-retirement threshold-scope retirement witness prompt pair
+- PP-0164 — GPU replay reopened-residue post-arbitration-governance-retirement threshold-scope retirement-history portability witness prompt pair
+- PP-0165 — GPU replay retired threshold-scope history portability-currentness witness prompt pair
+- PP-0166 — Retired threshold-scope history currentness-closeout witness
+- PP-0167 — Retired-history currentness-closeout history portability witness
+- PP-0168 — Transported retired-history currentness-closeout expiry witness
+- PP-0169 — Transported closeout expiry-record portability witness
+- PP-0170 — Transported closeout expiry-record travel closeout witness
+- PP-0171 — Transported closeout expiry-record closeout-history portability witness
+- PP-0172 — Transported closeout expiry-record closeout-history portability-expiry witness
+- PP-0173 — Transported closeout-history portability-expiry history portability witness prompt pair
+- PP-0174 — Transported closeout-history portability-expiry history portability closeout witness prompt pair
+- PP-0175 — GPU replay reopened-residue post-arbitration-governance-retirement closeout-history portability-expiry history portability closeout-history portability witness prompt pair
+- PP-0176 — Release-hardening witness prompt pair
+
+## Retained validation needle bank
+
+- .json
+- 10-method
+- Canvas side panels, editable draft documents, generated study guides, custom interactive tools, or other in-search workspace artifacts
+- Deep Search reports, deep research runs, multi-step browsing plans, or agentic research expansions
+- DelayBasin
+- DelayBasin-
+- DelayBasin-rev
+- Do not let portable retired threshold-scope history become a drift court, authority-return revocation board, currentness exchange, carrier-conflict senate, or current by default.
+- Do not let retired threshold-scope history become a portability court, carrier exchange, precedent board, common-law history surface, or portable governance by default.
+- Do not let retired threshold-scope history currentness closeout become a closeout court, drift-retirement board, revocation-history vault, standing currentness senate, or closed-currentness authority by default.
+- Do not let retired-history currentness closeout history travel become a carrier exchange, currentness-closeout precedent board, drift-history revival court, successor-closeout senate, or portable closeout authority by default.
+- Do not let threshold-scope retirement become a court, scope-history vault, authority-lane board, successor-route senate, or retirement-ish governance.
+- Do not let transported closeout expiry-record closeout-history portability become a closed-tombstone reopen board, tombstone-history registry, carrier resurrection by closeout history, portable closeout-history authority by default, or expiry-record closeout precedent court.
+- Do not let transported closeout expiry-record closeout-history portability expiry become a tombstone-history review layer, portable closeout-history expiry court, closed-tombstone revalidation board, carrier-renewal by expiry review, or nonexpiring closeout-history registry.
+- Do not let transported closeout expiry-record travel become an expiry-record renewal exchange, carrier-resurrection court, portable expiry authority by default, tombstone registry board, or expired-carrier review senate.
+- Do not let transported closeout expiry-record travel closeout become a tombstone registry board, expiry-record closeout court, carrier-resurrection archive, permanent expiry tombstone ledger, or closed tombstone authority by default.
+- Do not let transported closeout-history portability-expiry history portability closeout become a tombstone-history review layer, portable expiry-history closeout court, warning-renewal tombstone board, successor-review senate, or redaction vault by closeout.
+- Do not let transported closeout-history portability-expiry history portability closeout history become a tombstone-history review layer, portable closeout-history review court, warning-renewal by closeout history, successor-review senate, or redaction vault by history portability.
+- Do not let transported closeout-history portability-expiry records become a tombstone-history review layer, portable expiry-history court, expired-tombstone-history carrier renewal, expiry-history registry board, or closed-history renewal by warning.
+- Do not let transported retired-history currentness closeout history expiry become a carrier-review layer, closeout-history expiry board, transported-history freshness court, carrier-renewal exchange, or nonexpiring closeout history by default.
+- HTTPRoute versus GRPCRoute
+- HTTPRoute versus GRPCRoute or HTTP/1.1 versus HTTP/2 versus gRPC
+- If you claim a compression or innovation improvement, name the distortion target
+- JSON keys, schema fields, enum labels, typed input lanes
+- LLM runbook current-cue guard
+- MV-0010
+- OQ-0203
+- PP-0011
+- PP-0020
+- PP-0021
+- PP-0022
+- PP-0023
+- PP-0024
+- PP-0025
+- PP-0026
+- PP-0027
+- PP-0028
+- PP-0029
+- PP-0030
+- PP-0031
+- PP-0032
+- PP-0033
+- PP-0034
+- PP-0035
+- PP-0036
+- PP-0037
+- PP-0038
+- PP-0039
+- PP-0040
+- PP-0041
+- PP-0042
+- PP-0043
+- PP-0044
+- PP-0045
+- PP-0046
+- PP-0047
+- PP-0048
+- PP-0049
+- PP-0050
+- PP-0051
+- PP-0052
+- PP-0053
+- PP-0054
+- PP-0055
+- PP-0056
+- PP-0057
+- PP-0058
+- PP-0059
+- PP-0060
+- PP-0061
+- PP-0062
+- PP-0063
+- PP-0064
+- PP-0065
+- PP-0066
+- PP-0067
+- PP-0068
+- PP-0069
+- PP-0070
+- PP-0071
+- PP-0072
+- PP-0073
+- PP-0074
+- PP-0080
+- PP-0081
+- PP-0082
+- PP-0083
+- PP-0084
+- PP-0085
+- PP-0086
+- PP-0087
+- PP-0088
+- PP-0089
+- PP-0090
+- PP-0091
+- PP-0092
+- PP-0093
+- PP-0094
+- PP-0095
+- PP-0096
+- PP-0097
+- PP-0098
+- PP-0099
+- PP-0100
+- PP-0101
+- PP-0102
+- PP-0103
+- PP-0104
+- PP-0105
+- PP-0106
+- PP-0107
+- PP-0108
+- PP-0109
+- PP-0110
+- PP-0111
+- PP-0112
+- PP-0113
+- PP-0114
+- PP-0115
+- PP-0116
+- PP-0117
+- PP-0118
+- PP-0119
+- PP-0120
+- PP-0121
+- PP-0122
+- PP-0123
+- PP-0124
+- PP-0125
+- PP-0126
+- PP-0127
+- PP-0128
+- PP-0129
+- PP-0130
+- PP-0131
+- PP-0132
+- PP-0133
+- PP-0134
+- PP-0135
+- PP-0136
+- PP-0137
+- PP-0138
+- PP-0139
+- PP-0140
+- PP-0141
+- PP-0142
+- PP-0143
+- PP-0144
+- PP-0145
+- PP-0146
+- PP-0147
+- PP-0148
+- PP-0149
+- PP-0150
+- PP-0151
+- PP-0152
+- PP-0153
+- PP-0154
+- PP-0155
+- PP-0156
+- PP-0157
+- PP-0158
+- PP-0159
+- PP-0160
+- PP-0161
+- PP-0162
+- PP-0163
+- PP-0164
+- PP-0165
+- PP-0166
+- PP-0167
+- PP-0168
+- PP-0169
+- PP-0170
+- PP-0171
+- PP-0172
+- PP-0173
+- PP-0174
+- PP-0175
+- People Also Ask ladders, related-search modules, facet tabs, or refine-this-search chips
+- QWS-0244
+- QWS-0245
+- REVISION-RECEIPT.json
+- Run `make lint`
+- SURFACE-STATUS
+- SURFACE-STATUS.
+- SURFACE-STATUS.json
+- SessionId-based same-instance routing
+- Shopping Graph panels, merchant-feed product cards, price/review/inventory aggregates, or other catalog-backed shopping responses
+- TP/PP/CP/DP drift, node-layout drift, or replica-balancer drift
+- Use `
+- Use `docs/10-method/enforcement-regime-witnesses-bootstrap-only-gating-continuous-enforcement-and-dry-run-rehearsal.md`
+- Use `docs/10-method/exception-witnesses-temporary-waivers-expiry-honesty-and-suppression-exclusions.md` when the live question is whether neighboring waiver, mitigation, suppression, or expiry prose is being mistaken for a current honest waiver.
+- Use `docs/10-method/obligation-packets-waivers-remediation-expiry-and-overflow-tests.md` when the family needs a compact successor surface.
+- Use `docs/10-method/public-state-packets-discoverability-exclusions-and-overflow-tests.md` when the family needs a compact successor surface.
+- Use `docs/10-method/recovery-anchor-witnesses-self-lineage-checkpoints-imported-seeds-converted-checkpoints-and-migrated-runtime-images.md`
+- Use `docs/10-method/recovery-identity-witnesses-continuing-resumes-checkpoint-forked-clones-and-sandbox-restored-branches.md`
+- Use `docs/10-method/recovery-loss-witnesses-state-preserving-repair-checkpoint-resume-and-full-replay.md`
+- Use `docs/10-method/recovery-promotion-witnesses-direct-canonical-writeback-promotion-gated-branch-import-and-export-only-carryover.md`
+- Use `docs/10-method/recovery-writeback-witnesses-canonical-writeback-derived-branch-writeback-and-sandbox-isolation.md`
+- Use `docs/10-method/refresh-burden-scope-witnesses-same-claim-burden-upgrade-bounded-scope-widening-and-scope-gated-generalization.md`
+- Use `docs/10-method/refresh-elevation-witnesses-stabilizing-independent-support-threshold-licensed-elevation-and-judgment-gated-escalation.md`
+- Use `docs/10-method/refresh-independence-witnesses-coupled-multi-surface-echo-shared-context-carry-and-independent-confirming-support.md`
+- Use `docs/10-method/refresh-scope-axis-coupling-witnesses-same-plane-coupled-corroboration-hierarchy-coupled-corroboration-and-perturbation-decoupled-corroboration.md`
+- Use `docs/10-method/refresh-scope-axis-durability-witnesses-eviction-preserved-decoupling-repair-restored-decoupling-and-grandfathered-decoupling.md`
+- Use `docs/10-method/refresh-scope-axis-enforcement-witnesses-hard-enforced-decoupled-corroboration-best-effort-decoupled-corroboration-and-advisory-corroboration.md`
+- Use `docs/10-method/refresh-scope-axis-independence-witnesses-renamed-or-mirrored-axis-restatement-nested-axis-restatement-and-independent-axis-corroboration.md`
+- Use `docs/10-method/refresh-scope-axis-materiality-witnesses-label-distinct-only-corroboration-failure-domain-backed-corroboration-and-isolation-backed-corroboration.md`
+- Use `docs/10-method/refresh-scope-axis-remediation-capacity-source-witnesses-free-capacity-restoration-preemption-backed-restoration-and-mixed-restoration.md`
+- Use `docs/10-method/refresh-scope-axis-remediation-collateral-witnesses-local-workload-replacement-drain-backed-restoration-and-fenced-substrate-restoration.md`
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-aftercare-witnesses-resumable-displacement-terminal-displacement-and-mixed-aftercare.md`
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-performance-shadow-source-witnesses-device-warmth-host-parity-and-placement-contention.md`
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-replay-equivalence-witnesses-functionally-exact-restore-and-performance-shadow-restore.md`
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-replay-fidelity-witnesses-exact-state-restore-bounded-loss-checkpoint-replay-and-source-only-restart.md`
+- Use `docs/10-method/refresh-scope-axis-remediation-displacement-resumption-basis-witnesses-in-memory-continuation-checkpoint-backed-replay-and-cold-restart.md`
+- Use `docs/10-method/refresh-scope-axis-remediation-witnesses-native-controller-restoration-external-remediator-restoration-and-operator-replay-restoration.md`
+- Use `docs/10-method/refresh-scope-axis-witnesses-one-axis-dispersion-cross-axis-corroboration-and-axis-gated-generalization.md`
+- Use `docs/10-method/refresh-scope-basis-witnesses-directly-observed-widening-dependency-imputed-spillover-and-topology-imputed-spillover.md`
+- Use `docs/10-method/refresh-scope-distribution-witnesses-clustered-observed-spillover-dispersed-observed-spillover-and-distribution-gated-generalization.md`
+- Use `docs/10-method/refresh-scope-extent-witnesses-single-observed-slice-patterned-observed-spillover-and-extent-gated-generalization.md`
+- Use `docs/10-method/refresh-strength-witnesses-single-resurfacing-threshold-confirmed-reactivation-and-grace-held-return.md`
+- Use `docs/10-method/refresh-support-witnesses-repeated-same-surface-grouped-origin-carry-and-widened-confirming-support.md`
+- Use `docs/10-method/renewal-scope-witnesses-local-refresh-boundaries-and-spillover-drift.md`
+- Use `docs/10-method/renewal-witnesses-fresh-approval-acts-and-carryforward-drift.md`
+- Use `docs/10-method/repair-scope-witnesses-in-place-repair-substrate-reset-and-workload-replacement.md`
+- Use `docs/10-method/response-witnesses-monitoring-availability-withdrawal-local-remediation-and-runtime-eviction.md`
+- Use `docs/10-method/selector-enforcement-witnesses-execution-authority-grandfathered-placement-and-eviction-gates.md`
+- Use `docs/10-method/selector-freshness-witnesses-live-provenance-sync-lag-and-ancestor-residue.md`
+- Use `docs/10-method/selector-provenance-witnesses-direct-rules-inherited-bindings-and-synced-membership.md`
+- Use `docs/10-method/selector-witnesses-realized-membership-and-coverage-drift.md`
+- Use `docs/10-method/stake-continuity-witnesses-active-carried-pressure-commitment-carry-cooled-residue-and-narrated-concern.md`
+- Use `docs/10-method/stake-refresh-witnesses-observed-reactivation-regression-return-inherited-urgency-and-rhetorical-reheating.md`
+- ` / `
+- `evidence_ecology_state`
+- `refresh_burden_scope_state`
+- `refresh_elevation_state`
+- `refresh_independence_state`
+- `refresh_scope_axis_state`
+- `refresh_scope_basis_state`
+- `refresh_scope_distribution_state`
+- `refresh_scope_extent_state`
+- `refresh_strength_state`
+- `refresh_support_state`
+- `scheduled-window`
+- abort trigger
+- absent
+- absent telemetry
+- abstain / escalate / supersession consequence
+- acceptable
+- acceptance-rate witness or explicit no-spec note
+- access-opt-out-control
+- access-opt-out-control, attribution-control, compensation-control, exclusion-control, citation-dividend-control, or mixed-provenance-control
+- accumulating evidence state or score
+- action lane / primary next-step class
+- action privilege
+- action-lane
+- action-lane-packets-primary-next-step-classes-and-routing-overflow-tests.md
+- action-neutralized, partner-link-scrubbed, or manual-route-replayed variant
+- action-neutralized, partner-link-scrubbed, or manual-route-replayed variant worth checking
+- action_lane
+- activation condition
+- activation condition or trigger
+- active
+- active handle
+- active handle family
+- active request
+- active request / current ask / exact judged object / target lineage
+- active-carried-pressure
+- active-carried-pressure, commitment-only-carry, cooled-residue, narrated-unbound-concern, or mixed-stake-continuity
+- actual reread basis / loaded surfaces / observed head
+- actuation-channel privilege
+- actuator family or editable surface
+- actuator surface
+- ad-hidden, sponsor-scrubbed, or organic-basis-replayed variant
+- ad-hidden, sponsor-scrubbed, or organic-basis-replayed variant worth checking
+- adapter
+- adapter witness or explicit no-adapter note
+- added burden / cue refresh vs light bridge vs duplicate-reread vs hard-restart consequence
+- additions
+- adjacency privilege
+- admissibility rubric
+- admission
+- admission-only
+- admitted
+- admitted decision / approval surface
+- advisory or inconclusive
+- advisory-corroboration
+- affinity
+- affinity witness or explicit no-session-state note
+- aggregate-only, first-point, or all-values
+- aggregated-versus-disaggregated mismatch, prefill/decode role-binding drift, or handoff/recompute-or-fallback drift
+- agreement
+- agreement privilege
+- agreement-neutralized, endorsement-scrubbed, or alignment-pressure-scrubbed variant
+- agreement-neutralized, endorsement-scrubbed, or alignment-pressure-scrubbed variant worth checking
+- agreement-seeking wording
+- alien-noun test
+- alignment-pressure privilege
+- all eligible requests, a sampled percentage, or a prefiltered route subset
+- allowed
+- allowed coupling
+- allowed role
+- allowed tokens / stable public labels
+- alternative candidate or confound family
+- ambient
+- ambiguity class
+- ambiguity or decision class
+- ambiguity or rivalry class
+- ambiguity or state claim being probed
+- ambiguity split or latent difference at stake
+- ambiguous
+- analysis
+- analysis basis or manual-only rubric
+- ancestor-residue
+- anchor
+- anchor court
+- anchor privilege
+- anchor surfaces / where the admitted result now lives
+- answer length, completeness-looking detail, chain-of-thought reveal, or polished style
+- anti-self-sealing
+- app-directory privilege
+- app-directory suggestions, approved app cards, embedded widgets or iframes, or connected-service app surfaces
+- app-neutralized, widget-detached, or host-only-replayed variant
+- app-neutralized, widget-detached, or host-only-replayed variant worth checking
+- applicability
+- applicability conditions / belief-state signature / domain-fit cue family
+- approval or admission lane / counted-decision surface
+- approval-bounded
+- approval-word privilege
+- arbitration rule / hierarchical router / confidence-aware selector
+- arbitration witness
+- arc-vs-chord residue / endpoint-equivalence budget
+- archive self-sufficiency probe
+- archive-private overstatement, a too-strong recap, or a broadened mechanism sentence
+- array
+- aspect-route privilege
+- assay-scored
+- assimilation
+- assimilation state / imported vs supporting-only vs deferred vs rejected vs retired
+- assistant-echo filter
+- assisted
+- assumed linear / monotone region or small-step budget
+- assumption
+- assumption state / active vs discharged vs invalidated vs retired vs quarantined
+- assumption statement / live support condition
+- assumptions
+- at least two non-trivially different loader surfaces
+- attachment-presence privilege
+- attempt
+- attempt-count witness or upstream-log note
+- attention-sink
+- attribution-control
+- audit
+- audit-bound-reopened-residue
+- audit-handoff-reopen-closeout
+- audit-only-reopen-tiebreak-registry-residue
+- audit-reference-post-arbitration-governance-retirement
+- audit-reference-reopen-closeout
+- audit-reference-retired-governance
+- audit-reference-retired-threshold-scope-history
+- audit-reference-transported-closeout-expiry-record-closeout-history
+- audit-reference-transported-closeout-history-portability-expiry-history-portability-closeout-history
+- audit-reference-transported-closeout-history-portability-expiry-record
+- audit-retention-tiebreak-governance
+- audit-tombstone-transported-closeout-expiry-record-travel
+- audit-trace-retired-history-currentness-closeout-travel
+- authored
+- authority
+- authority-boundary-appeal-scope
+- authority-contest-overflow
+- authority-gap-conflict
+- authority-handoff-custody
+- authority-handoff-overflow
+- authority-lane senate
+- authority-lane-limited-post-arbitration-governance-retirement-threshold-scope
+- authority-lane-limited-post-arbitration-governance-scope
+- authority-limited-reopen-drift-governance-scope
+- authority-limited-reopened-residue
+- authority-limited-tiebreak-registry-scope
+- authority-precedence-precedent-conflict
+- authority-return-appeal-retirement
+- authority-return-arbitration-retirement
+- authority-return-post-arbitration-governance-retirement
+- authority-return-post-arbitration-governance-retirement-drift-arbitration-retirement
+- authority-return-post-arbitration-governance-retirement-threshold-scope-retirement
+- authority-return-reopen-closeout
+- authority-return-reopen-drift-governance-retirement
+- authority-return-reopen-drift-retirement
+- authority-return-retired-governance-drift-arbitration-retirement
+- authority-return-retirement
+- authority-return-tiebreak-registry-retirement
+- authority-return-warning-retired-threshold-scope-history
+- authority-split-post-arbitration-governance
+- authority-split-post-arbitration-governance-retirement-threshold
+- authority-split-reopen-drift-retirement-governance
+- authority-split-tiebreak-governance
+- autonomous-browse privilege
+- autonomy posture
+- autonomy posture / human-piloted vs assisted vs approval-bounded vs bounded-autonomous classification
+- availability-withdrawal
+- axis-gated-generalization
+- backaction
+- backend auto-selection drift, fallback, cold first-inference compile, profile restriction, or guide/speculation mismatch
+- backend fallback, CUDA-graph downgrade, or precision drift
+- basis
+- basis state / current vs stale vs partial vs mismatched vs resynced
+- basis witness
+- basis-anchor precision
+- basis-anchor precision / direct-underlier vs underlier-plus-wrapper vs wrapper-routed vs packet-only posture
+- basis-changed
+- basis-omission basis / why stronger underliers were not reread
+- basis_state
+- batch
+- benefits/risks search phrasing, loaded retrieval synonyms, slanted issue terms, or filter-label prompts
+- best-effort-decoupled-corroboration
+- between-run dispersion / lucky-path budget
+- blank-started, prefill-scrubbed, or suggestion-free variant
+- blank-started, prefill-scrubbed, or suggestion-free variant worth checking
+- blind packet
+- blocked
+- blocked or handed-off objective / still-live candidate
+- blocker or boundary causing non-completion
+- booking links, shoppable product cards, reservation-slot panels, agentic checkout surfaces, or direct-action task cards
+- bootstrap-only
+- bootstrap-only, continuous-enforcement, dry-run-only, or mixed-regime
+- boundary
+- boundary or normalization variant
+- boundary or normalization variant worth checking
+- boundary panel
+- bounded take / compact admitted ratchet if any
+- bounded take / compact imported ratchet
+- bounded-autonomous
+- bounded-loss-checkpoint-replay
+- bounded-scope-widening
+- branch budget or survival cap
+- branch divergence
+- branch-local-writeback
+- bridge-record-custody
+- broadened
+- broadened-carryover
+- broken-jump
+- budget
+- budget or opportunity-cost note
+- budget-exhaustion fallback
+- bundle
+- business-calling runs, browser-executed form fills, website-navigation sessions, or other delegated task-execution episodes
+- cache
+- cache-residency witness or explicit cold-prefill note
+- cache-solvency board
+- camera-feed privilege
+- canary-review-board
+- candidate
+- candidate carry object / reusable skill / memory / plan template
+- candidate minimal core
+- candidate or explicit absence / merely nearby surface
+- candidate outputs were non-returning, log-only, or inspection-only
+- candidate probe family
+- candidate runtime
+- candidate tie set / simultaneously eligible carry family
+- candidate winner or merge target
+- candidate write or provisional surface
+- canon
+- canonical-wire privilege
+- canonical-writeback
+- canonical-writeback, branch-local-writeback, sandbox-only, or mixed-recovery-writeback
+- capture-lineage-receipt
+- capture-lineage-receipt, update-delta-receipt, resource-lifetime-receipt, locality-lease-receipt, or mixed-gpu-replay-receipt
+- captured
+- captured-graph-envelope
+- captured-graph-envelope, stream-pool-envelope, locality-partition-envelope, or mixed-gpu-replay-envelope
+- carrier-bound-reopen-drift-governance-scope
+- carrier-bound-tiebreak-registry-scope
+- carrier-conflict-retired-threshold-scope-history
+- carrier-conflicted-post-arbitration-governance-retirement-carry
+- carrier-conflicted-retired-governance
+- carrier-expiry-arbitration-retirement
+- carrier-expiry-post-arbitration-governance-retirement-drift-arbitration-retirement
+- carrier-expiry-reopen-closeout
+- carrier-expiry-reopen-drift-retirement
+- carrier-expiry-retired-governance-drift-arbitration-retirement
+- carrier-expiry-retirement
+- carrier-expiry-tiebreak-registry-retirement
+- carrier-freshness tribunal
+- carrier-matched-precedent
+- carrier-precedence-precedent-conflict
+- carrier-precedence-reopen-drift
+- carrier-revalidation board
+- carrier-slot
+- carrier-slot privilege
+- carrier-template-post-arbitration-governance-retirement
+- carrier-template-reopen-closeout
+- carrier-template-retired-governance
+- carry object / stored tip / reusable skill / compiled packet
+- carryover privilege
+- catalog privilege
+- catalog-neutralized, feed-disconnected, or open-web-replayed variant
+- catalog-neutralized, feed-disconnected, or open-web-replayed variant worth checking
+- caution-strip privilege
+- certified
+- challenge or destabilizing evidence family
+- challenge probe
+- challenge probes
+- challenge suite
+- challenge-escrow
+- changelog
+- changes
+- channel
+- chart switch
+- chart-specific
+- check
+- check packet
+- check/admission object
+- checked
+- checkpoint-backed-replay
+- checkpoint-fork
+- checkpoint-resume
+- checks
+- checksum-tribunal
+- chosen gauge / anchor / spanning-tree base
+- citation privilege
+- citation-dividend-control
+- citation-hidden, reference-link-scrubbed, or source-card-neutralized variant
+- citation-incentive
+- citation-incentive / evidence-market / provenance-dividend board
+- citation-loop-pressure
+- citation-warning
+- citation_incentive_state
+- claim
+- claim-ceiling
+- claim-ceiling privilege
+- claim-equivalence
+- claim-equivalence privilege
+- claim-settled-retirement
+- claim-settled-retirement, carrier-expiry-retirement, authority-return-retirement, scope-shrink-retirement, or mixed-custody-retirement
+- class
+- clean-slate / restart / matched-fresh baseline
+- cleanup or state claim being stress-tested
+- closed object / exact target surfaces
+- closed-transported-closeout-expiry-record-travel
+- closed-transported-closeout-expiry-record-travel, tombstone-pruned-transported-closeout-expiry-record-travel, warning-sunset-transported-closeout-expiry-record-travel, successor-handoff-transported-closeout-expiry-record-travel, quarantine-expired-transported-closeout-expiry-record-travel, redacted-freeze-transported-closeout-expiry-record-travel, or mixed-transported-closeout-expiry-record-travel-closeout
+- closed-transported-closeout-history-portability-expiry-history-portability-record
+- closed-transported-closeout-history-portability-expiry-history-portability-record, tombstone-pruned-transported-closeout-history-portability-expiry-history-portability-record, warning-sunset-transported-closeout-history-portability-expiry-history-portability-record, successor-handoff-transported-closeout-history-portability-expiry-history-portability-record, quarantine-expired-transported-closeout-history-portability-expiry-history-portability-record, redacted-freeze-transported-closeout-history-portability-expiry-history-portability-record, or mixed-transported-closeout-history-portability-expiry-history-portability-closeout
+- closeout-history-custody-post-arbitration-governance-retirement-threshold-scope
+- closeout-history-loss-post-arbitration-governance-retirement-threshold
+- closeout-history-overbinding-post-arbitration-governance-retirement-threshold
+- closeout-template-retired-threshold-scope-history
+- closure
+- closure error
+- closure reason
+- closure reason / what counted as enough to stop treating it as live
+- closure state / resolved vs superseded vs retired vs deprecated vs rejected
+- closure target
+- cluster-collapsed, syndication-scrubbed, or independence-counted variant
+- cluster-collapsed, syndication-scrubbed, or independence-counted variant worth checking
+- clustered-observed-spillover
+- clustered-observed-spillover, dispersed-observed-spillover, distribution-gated-generalization, or mixed-refresh-scope-distribution
+- coarse-graining map or aggregation rule
+- codename
+- cold-restart-after-displacement
+- cold-start mismatch, sleep/wake resume drift, profile-download or engine-build drift, or warmup mismatch
+- collapse
+- collapsed-with-compensation
+- collateral-status privilege
+- command
+- command posture / what checks to prefer before claiming admissibility
+- commands
+- commit criterion
+- commitment-only-carry
+- commutator
+- compact
+- comparability
+- comparability budget
+- compared abstain / fallback / defer-to-evidence baseline
+- compared cue directions / perturbation modes / neighborhood axes
+- compared interpolation path / ramp schedule / adaptive route family
+- compared loader, packet, or intervention family
+- compared no-reuse baseline / gated baseline / alternative carry baseline
+- compared one-shot baseline / no-reuse baseline / from-scratch baseline
+- compared policy class / exploitation-only baseline / no-learning baseline
+- compared policy class / fixed open-loop schedule vs feedback-conditioned policy
+- comparison family or support set
+- compensation-control
+- compiled-dividend budget
+- composition defect / cocycle residue / atlas-consistency budget
+- compression was too aggressive
+- confidence-label privilege
+- confirmation-frame privilege
+- conflict-history-freeze-post-arbitration-governance-retirement
+- conflict-history-loss-post-arbitration-governance
+- conflict-history-overbinding-post-arbitration-governance
+- conflict-quarantined-retired-history-currentness-closeout
+- conflicting claim or decision surface
+- conflicting-carrier-precedent
+- conflicting-reopen-closeout-carrier
+- conformance
+- conformance witness
+- confusability budget
+- confusability slice / near-tie stress family / rival-eligible case
+- connector-presence privilege
+- consensus
+- consensus-blanded, majority-scrubbed, or popularity-neutralized variant
+- consensus-blanded, majority-scrubbed, or popularity-neutralized variant worth checking
+- consensus-signal privilege
+- consolidation-lane
+- const
+- constitutional core
+- constraint
+- consulted store or surface family
+- contamination family or carryover being neutralized
+- contamination family or influence claimed to be washed out
+- context-carry privilege
+- continuation action licensed
+- continuation monitor
+- continuing-resume
+- continuing-resume, checkpoint-fork, sandbox-branch, or mixed-recovery-identity
+- continuity court
+- continuous-enforcement
+- contract
+- control action family / exploitation move / current actuation
+- control role
+- converted-checkpoint
+- cooldown or defer window
+- cooled-residue
+- cooling
+- cooling state
+- copied-forward
+- core-only replay surface
+- correlation-key-conflict
+- cost or contamination budget
+- count
+- counted
+- counterexample-only-post-arbitration-governance-retirement
+- counterexample-only-precedent
+- counterexample-only-reopen-closeout
+- counterexample-only-retired-governance
+- counterexample-only-retired-threshold-scope-history
+- counterposition-cue privilege
+- counts
+- coupled-multi-surface-echo
+- coupled-multi-surface-echo, shared-context-carry, independent-confirming-support, or mixed-refresh-independence
+- couples to the stop rule
+- credit assignment rule or consequence
+- credit horizon or adjudication delay
+- criterion-isolated, atomic-evaluation, or entanglement-scrubbed variant
+- criterion-isolated, atomic-evaluation, or entanglement-scrubbed variant worth checking
+- critical metric or slice
+- cross-axis-corroborated-dispersion
+- cross-carrier-conflict-tiebreak-governance
+- cross-criterion privilege
+- cross-term residue / superposition budget
+- cue state / fresh-aligned vs stale vs split-brain vs broken-jump vs overwritten
+- curated exports
+- current
+- current citation head / frozen reference tip or explicit absence
+- current cooling state
+- current error signature or drift symptom
+- current head
+- current local owner / source surface / current lane
+- current operational head / live working tip
+- current state class / working vs hold vs released vs frozen
+- current support / why the move is tolerated for now
+- current-carrier-precedence-post-arbitration-governance-retirement-drift
+- current-carrier-precedence-retired-governance-drift
+- current-evidence-precedence-reopen-drift
+- current-portability-precedent
+- current-portability-precedent, stale-template-precedent, conflicting-carrier-precedent, revoked-lesson-precedent, sunset-expired-precedent, or mixed-precedent-drift
+- current-post-arbitration-governance-retirement-carry
+- current-post-arbitration-governance-retirement-carry, stale-post-arbitration-governance-retirement-template, carrier-conflicted-post-arbitration-governance-retirement-carry, revoked-post-arbitration-governance-retirement-lesson, expired-post-arbitration-governance-retirement-exit-proof, successor-required-post-arbitration-governance-retirement-drift, or mixed-post-arbitration-governance-retirement-drift
+- current-reopen-closeout-portability
+- current-reopen-closeout-portability, stale-reopen-closeout-template, conflicting-reopen-closeout-carrier, revoked-reopen-closeout-lesson, expired-reopen-closeout-sunset, or mixed-reopen-closeout-drift
+- current-retired-governance-portability
+- current-retired-governance-portability, stale-retired-governance-template, carrier-conflicted-retired-governance, revoked-retired-governance-lesson, expired-retired-governance-exit-proof, successor-required-retired-governance-drift, or mixed-retired-governance-drift
+- curvature or distortion warning sign
+- custody-boundary-overflow
+- datacube
+- dated fresh-pass, as-of rerun, or post-break revalidation variant
+- dated fresh-pass, as-of rerun, or post-break revalidation variant worth checking
+- de-authorized, source-blanded, or provenance-swapped variant
+- de-authorized, source-blanded, or provenance-swapped variant worth checking
+- deadline
+- deadline mismatch, truncated stream, or response-mode mismatch
+- decision
+- declarative source surface
+- deep-neutralized, breadth-capped, or seed-query-replayed variant
+- deep-neutralized, breadth-capped, or seed-query-replayed variant worth checking
+- defect-comparability budget
+- defer-import
+- deferred
+- delegate-neutralized, authority-withdrawn, or manual-steps-replayed variant
+- delegate-neutralized, authority-withdrawn, or manual-steps-replayed variant worth checking
+- delegated-authority privilege
+- deletion court
+- deletion-proof-overflow
+- delivery
+- delivery uncertainty or mirror-drop risk
+- delivery witness or explicit best-effort note
+- demote
+- demoted
+- demotion / rollback / quarantine consequence
+- density variant
+- density variant worth checking
+- deontic modal wording
+- dependence-adjusted witness
+- dependency-imputed-spillover
+- deprecated
+- derivative
+- derivative-surface privilege
+- destabilizing evidence
+- device-warmth-shadow
+- device-warmth-shadow, host-parity-shadow, placement-contention-shadow, or mixed-refresh-scope-axis-remediation-displacement-performance-shadow-source
+- diagnostic probe / intervention family
+- diagnostic probe / intervention family actually applied
+- direct-canonical-writeback
+- direct-canonical-writeback, promotion-gated-branch-import, export-only-carryover, or mixed-recovery-promotion
+- direct-rule
+- direct-rule, inherited-binding, synced-membership, or mixed-provenance
+- direct-underlier
+- directional asymmetry / local-shape budget
+- directly-observed-widening
+- directly-observed-widening, dependency-imputed-spillover, topology-imputed-spillover, or mixed-refresh-scope-basis
+- disagreeing evidence or surface family
+- disagreement or escalation consequence
+- discarded modes / nuisance family / residual remainder
+- discharge
+- discharge path / evidence artifact / future proof that would retire the debt
+- discharged
+- discharged-post-arbitration-governance-retirement
+- discharged-post-arbitration-governance-retirement, scope-sunset-post-arbitration-governance-retirement, authority-return-post-arbitration-governance-retirement, conflict-history-freeze-post-arbitration-governance-retirement, residue-quarantine-post-arbitration-governance-retirement, successor-handoff-post-arbitration-governance-retirement, or mixed-post-arbitration-governance-retirement
+- discharged-reopen-drift-governance-retirement
+- discharged-reopen-drift-governance-retirement, scope-sunset-reopen-drift-governance-retirement, authority-return-reopen-drift-governance-retirement, history-freeze-reopen-drift-governance-retirement, residue-quarantine-reopen-drift-governance-retirement, successor-handoff-reopen-drift-governance-retirement, or mixed-reopen-drift-governance-retirement
+- discriminating probe or countermodel
+- dispersed-observed-spillover
+- disposition
+- disposition / imported vs supporting-only vs deferred vs rejected vs retired
+- dispute-settled-appeal-retirement
+- dispute-settled-appeal-retirement, survivor-handoff-appeal-retirement, authority-return-appeal-retirement, policy-sunset-appeal-retirement, precedent-quarantine-appeal-retirement, or mixed-appeal-retirement
+- distortion target
+- distribution-gated-generalization
+- divergence signature
+- do not keep PDFs or other large non-crucial artifacts long-term
+- docs README current-docs-head guard
+- docs/
+- docs/10-method/
+- docs/10-method/action-lane-packets-primary-next-step-classes-and-routing-overflow-tests.md
+- docs/10-method/citation-incentive-witnesses-quality-preserving-visibility-optimization-evidence-market-distortion-and-source-grooming.md
+- docs/10-method/enforcement-regime-witnesses-bootstrap-only-gating-continuous-enforcement-and-dry-run-rehearsal.md
+- docs/10-method/evidence-ecology-witnesses-selector-source-bias-citation-loop-pressure-and-retrieval-contamination-collapse.md
+- docs/10-method/exception-witnesses-temporary-waivers-expiry-honesty-and-suppression-exclusions.md
+- docs/10-method/gpu-replay-cross-observer-bridge-witnesses-trace-context-external-correlation-metric-exemplars-placement-scope-and-missing-bridge.md
+- docs/10-method/gpu-replay-cross-observer-custody-exit-appeal-scope-witnesses-packet-local-survivor-carrier-authority-boundary-policy-window-retirement-window-and-mixed-scope.md
+- docs/10-method/gpu-replay-cross-observer-custody-retirement-witnesses-claim-settled-carrier-expiry-authority-return-scope-shrink-and-mixed-retirement.md
+- docs/10-method/gpu-replay-cross-observer-custody-scope-witnesses-packet-local-bridge-record-evidence-carrier-authority-handoff-retirement-window-and-mixed-custody.md
+- docs/10-method/gpu-replay-cross-observer-promotion-gate-witnesses-no-promotion-local-hardening-repeated-overflow-custody-boundary-authority-handoff-and-mixed-promotion.md
+- docs/10-method/gpu-replay-envelope-witnesses-captured-graph-stable-pool-and-locality-partition.md
+- docs/10-method/gpu-replay-observer-conflict-witnesses-scope-correlation-intrusion-authority-and-mixed-conflict.md
+- docs/10-method/gpu-replay-receipt-witnesses-capture-lineage-update-delta-resource-lifetime-and-locality-lease.md
+- docs/10-method/gpu-replay-trace-grade-witnesses-runtime-self-attestation-profiler-trace-external-observer-and-missing-receipt.md
+- docs/10-method/gpu-rpra-drift-retirement-scope-witnesses.md
+- docs/10-method/gpu-rpra-drift-retirement-threshold-witnesses.md
+- docs/10-method/gpu-rpra-post-closeout-portability-drift-witnesses.md
+- docs/10-method/obligation-packets-waivers-remediation-expiry-and-overflow-tests.md
+- docs/10-method/pa-closeout-history-portability-expiry-state-witnesses.md
+- docs/10-method/pa-closeout-history-portability-travel-witnesses.md
+- docs/10-method/pa-governance-retirement-closeout-history-portability-expiry-history-portability-closeout-witnesses-closed-pruned-sunset-handoff-quarantine-redacted-mixed.md
+- docs/10-method/pa-governance-retirement-closeout-history-portability-expiry-history-portability-witnesses-nonportable-audit-warning-successor-redacted-quarantine-mixed.md
+- docs/10-method/pa-governance-retirement-portability-drift-conflict-arbitration-retirement-witnesses-settled-handoff-expiry-authority-sunset-quarantine-mixed.md
+- docs/10-method/pa-governance-retirement-portability-drift-witnesses-current-stale-conflict-revoked-expired-successor-mixed.md
+- docs/10-method/pa-governance-retirement-threshold-scope-retirement-history-portability-currentness
+- docs/10-method/pa-governance-retirement-threshold-scope-retirement-history-portability-currentness-closeout-witnesses-settled-stale-revocation-expiry-handoff-quarantine-mixed.md
+- docs/10-method/pa-governance-retirement-threshold-scope-retirement-history-portability-currentness-witnesses-fresh-stale-revoked-expired-successor-carrier-conflict-mixed.md
+- docs/10-method/pa-governance-retirement-threshold-scope-retirement-history-portability-witnesses-nonportable-audit-template-authority-successor-counterexample-mixed.md
+- docs/10-method/pa-governance-retirement-threshold-scope-retirement-witnesses-settled-window-authority-history-handoff-quarantine-mixed.md
+- docs/10-method/pa-governance-retirement-threshold-scope-witnesses-packet-history-lane-route-window-mixed.md
+- docs/10-method/provenance-control-witnesses-opt-out-attribution-compensation-exclusion-citation-dividend-and-mixed-control.md
+- docs/10-method/public-state-packets-discoverability-exclusions-and-overflow-tests.md
+- docs/10-method/recovery-anchor-witnesses-self-lineage-checkpoints-imported-seeds-converted-checkpoints-and-migrated-runtime-images.md
+- docs/10-method/recovery-identity-witnesses-continuing-resumes-checkpoint-forked-clones-and-sandbox-restored-branches.md
+- docs/10-method/recovery-loss-witnesses-state-preserving-repair-checkpoint-resume-and-full-replay.md
+- docs/10-method/recovery-promotion-witnesses-direct-canonical-writeback-promotion-gated-branch-import-and-export-only-carryover.md
+- docs/10-method/recovery-writeback-witnesses-canonical-writeback-derived-branch-writeback-and-sandbox-isolation.md
+- docs/10-method/refresh-burden-scope-witnesses-same-claim-burden-upgrade-bounded-scope-widening-and-scope-gated-generalization.md
+- docs/10-method/refresh-elevation-witnesses-stabilizing-independent-support-threshold-licensed-elevation-and-judgment-gated-escalation.md
+- docs/10-method/refresh-independence-witnesses-coupled-multi-surface-echo-shared-context-carry-and-independent-confirming-support.md
+- docs/10-method/refresh-scope-axis-coupling-witnesses-same-plane-coupled-corroboration-hierarchy-coupled-corroboration-and-perturbation-decoupled-corroboration.md
+- docs/10-method/refresh-scope-axis-durability-witnesses-eviction-preserved-decoupling-repair-restored-decoupling-and-grandfathered-decoupling.md
+- docs/10-method/refresh-scope-axis-enforcement-witnesses-hard-enforced-decoupled-corroboration-best-effort-decoupled-corroboration-and-advisory-corroboration.md
+- docs/10-method/refresh-scope-axis-independence-witnesses-renamed-or-mirrored-axis-restatement-nested-axis-restatement-and-independent-axis-corroboration.md
+- docs/10-method/refresh-scope-axis-materiality-witnesses-label-distinct-only-corroboration-failure-domain-backed-corroboration-and-isolation-backed-corroboration.md
+- docs/10-method/refresh-scope-axis-remediation-capacity-source-witnesses-free-capacity-restoration-preemption-backed-restoration-and-mixed-restoration.md
+- docs/10-method/refresh-scope-axis-remediation-collateral-witnesses-local-workload-replacement-drain-backed-restoration-and-fenced-substrate-restoration.md
+- docs/10-method/refresh-scope-axis-remediation-displacement-aftercare-witnesses-resumable-displacement-terminal-displacement-and-mixed-aftercare.md
+- docs/10-method/refresh-scope-axis-remediation-displacement-performance-shadow-source-witnesses-device-warmth-host-parity-and-placement-contention.md
+- docs/10-method/refresh-scope-axis-remediation-displacement-replay-equivalence-witnesses-functionally-exact-restore-and-performance-shadow-restore.md
+- docs/10-method/refresh-scope-axis-remediation-displacement-replay-fidelity-witnesses-exact-state-restore-bounded-loss-checkpoint-replay-and-source-only-restart.md
+- docs/10-method/refresh-scope-axis-remediation-displacement-resumption-basis-witnesses-in-memory-continuation-checkpoint-backed-replay-and-cold-restart.md
+- docs/10-method/refresh-scope-axis-remediation-witnesses-native-controller-restoration-external-remediator-restoration-and-operator-replay-restoration.md
+- docs/10-method/refresh-scope-axis-witnesses-one-axis-dispersion-cross-axis-corroboration-and-axis-gated-generalization.md
+- docs/10-method/refresh-scope-basis-witnesses-directly-observed-widening-dependency-imputed-spillover-and-topology-imputed-spillover.md
+- docs/10-method/refresh-scope-distribution-witnesses-clustered-observed-spillover-dispersed-observed-spillover-and-distribution-gated-generalization.md
+- docs/10-method/refresh-scope-extent-witnesses-single-observed-slice-patterned-observed-spillover-and-extent-gated-generalization.md
+- docs/10-method/refresh-strength-witnesses-single-resurfacing-threshold-confirmed-reactivation-and-grace-held-return.md
+- docs/10-method/refresh-support-witnesses-repeated-same-surface-grouped-origin-carry-and-widened-confirming-support.md
+- docs/10-method/release-hardening-witnesses.md
+- docs/10-method/renewal-scope-witnesses-local-refresh-boundaries-and-spillover-drift.md
+- docs/10-method/renewal-witnesses-fresh-approval-acts-and-carryforward-drift.md
+- docs/10-method/reopened-residue-drift-governance-retirement-witnesses-discharge-sunset-return-freeze-quarantine-handoff-and-mixed.md
+- docs/10-method/repair-scope-witnesses-in-place-repair-substrate-reset-and-workload-replacement.md
+- docs/10-method/response-witnesses-monitoring-availability-withdrawal-local-remediation-and-runtime-eviction.md
+- docs/10-method/rpra-governance-retirement-portability-witnesses.md
+- docs/10-method/selector-enforcement-witnesses-execution-authority-grandfathered-placement-and-eviction-gates.md
+- docs/10-method/selector-freshness-witnesses-live-provenance-sync-lag-and-ancestor-residue.md
+- docs/10-method/selector-provenance-witnesses-direct-rules-inherited-bindings-and-synced-membership.md
+- docs/10-method/selector-witnesses-realized-membership-and-coverage-drift.md
+- docs/10-method/shadow-comparison-packets-minimal-pre-promotion-lanes-and-overflow-tests.md
+- docs/10-method/stake-continuity-witnesses-active-carried-pressure-commitment-carry-cooled-residue-and-narrated-concern.md
+- docs/10-method/stake-refresh-witnesses-observed-reactivation-regression-return-inherited-urgency-and-rhetorical-reheating.md
+- docs/10-method/transfer-packets-reviewed-datacube-sets-disposition-classes-and-overflow-tests.md
+- docs/10-method/wvf-0076.md
+- docs/10-method/wvf-0078.md
+- docs/10-method/wvf-0079.md
+- docs/10-method/wvf-0081.md
+- docs/10-method/wvf-0082.md
+- docs/10-method/wvf-0083.md
+- docs/10-method/wvf-0084.md
+- docs/10-method/wvf-0085.md
+- docs/10-method/wvf-0086.md
+- docs/10-method/wvf-0087.md
+- docs/10-method/wvf-0088.md
+- docs/10-method/wvf-0089.md
+- docs/10-method/wvf-0090.md
+- docs/10-method/wvf-0092.md
+- docs/10-method/wvf-0093.md
+- docs/10-method/wvf-0097.md
+- docs/10-method/wvf-0098.md
+- docs/10-method/wvf-0099.md
+- docs/10-method/wvf-0100.md
+- docs/10-method/wvf-0101.md
+- docs/10-method/wvf-0102.md
+- docs/10-method/wvf-0103.md
+- docs/10-method/wvf-0106.md
+- docs/10-method/wvf-0108.md
+- docs/10-method/wvf-0114.md
+- docs/10-method/wvf-0115.md
+- docs/10-method/wvf-0116.md
+- docs/10-method/wvf-0117.md
+- docs/10-method/wvf-0122.md
+- does not claim
+- downstream payoff family
+- draft
+- draft-authorship posture / accepted-text lane
+- draft-family mismatch, acceptance-policy drift, or load-triggered speculation disable
+- draft-model or proposer witness, speculative-token budget, and acceptance-rate witness or explicit no-spec note
+- drain-backed-restoration
+- drift signature
+- dry-run-only
+- durable status ledger / register / pointer relation where that mapping lives
+- durable status surface / register / ledger where that state lives
+- effect-drift
+- effort
+- eligible
+- embedded-widget privilege
+- empty arrays, NaN-like outputs, nil-like results, or absent telemetry
+- endogenous-resistance
+- endorsement invitations
+- endorsement privilege
+- enforcement-regime
+- enforcement-regime witness
+- enforcement-regime-witnesses-bootstrap-only-gating-continuous-enforcement-and-dry-run-rehearsal.md
+- enforcement_regime_state
+- entanglement
+- epistemic dividend / information actually sought or acquired
+- equivalence
+- error
+- error / rollback posture
+- escalation-rung privilege
+- escrowed or withheld slice
+- eval-blind or ordinary-user-frame variant
+- eval-blind or ordinary-user-frame variant worth checking
+- evaluation horizon or preregistered future slice
+- evaluation or admission gate
+- evaluation-awareness privilege
+- eviction-preserved-decoupling
+- eviction-preserved-decoupling, repair-restored-decoupling, grandfathered-decoupling, or mixed-refresh-scope-axis-durability
+- evidence packet
+- evidence-carrier-custody
+- evidence-ecology
+- evidence-ecology court
+- evidence-market-distortion
+- evidence-selection privilege
+- evidence_ecology_state
+- exact
+- exact-match privilege
+- exact-state-restore
+- exact-state-restore, bounded-loss-checkpoint-replay, source-only-restart, or mixed-refresh-scope-axis-remediation-displacement-replay-fidelity
+- exception witness
+- exception-witnesses-temporary-waivers-expiry-honesty-and-suppression-exclusions.md
+- excerpt-selection privilege
+- excitation
+- excitation / observability-spend budget
+- excluded
+- excluded near-synonyms / drift temptations / non-controlled prose family
+- excluded or deferred store family
+- excluded stale / broken / overwritten / generic-success path family
+- exclusion-control
+- executable packet or compact operator
+- executable variant or metamorphic family
+- execution
+- execution or materialization lane / packaging or edit surface
+- execution surface / materialized artifact
+- execution witness
+- execution witness or explicit baseline-kernel note
+- execution-enforced
+- execution-enforced, admission-only, grandfathered-residue, or mixed-enforcement
+- exemplar bank
+- exists
+- exit-proof freshness registry
+- exit-proof priority ladder
+- exit-proof-precedence-post-arbitration-governance-retirement-drift
+- exit-proof-precedence-retired-governance-drift
+- exit-proof-reference-post-arbitration-governance-retirement
+- exit-proof-reference-retired-governance
+- expanded-coverage
+- expectation
+- expectation-neutralized, verdict-scrubbed, or anchor-scrubbed variant
+- expectation-neutralized, verdict-scrubbed, or anchor-scrubbed variant worth checking
+- expected
+- expected basis / anchor revision / reviewed head
+- expected deviation signature
+- expected differential signature
+- expected discriminating observable or response feature
+- expected gain / failure signature
+- expected head
+- expected readout or discriminating observable
+- expected split power
+- expert
+- expert witness or explicit no-EP note
+- expert-rebalance drift, all2all/backend drift, or expert-placement mismatch
+- expire
+- expired
+- expired-closeout-template-retired-threshold-scope-history
+- expired-post-arbitration-governance-retirement-exit-proof
+- expired-reopen-closeout-sunset
+- expired-residue
+- expired-retired-governance-exit-proof
+- expiry / supersession / reclaim consequence
+- expiry-complete-retired-history-currentness-closeout
+- explanation-frame privilege
+- explicit non-take / tempting neighboring machinery consciously left out
+- exploitation-only baseline / no-learning baseline
+- exploration premium / dual-effect budget
+- export-mirror privilege
+- export-only-carryover
+- exposed
+- extend-registry / narrow-family / fail-closed-on-drift consequence
+- extension
+- extent-gated-generalization
+- external-correlation-bridge
+- external-correlation-bridge, trace-context-bridge, metric-exemplar-bridge, placement-scope-bridge, missing-cross-observer-bridge, or mixed-cross-observer-bridge
+- external-observer-backed
+- external-remediator-restoration
+- extracted pressure / specific lesson or warning
+- fabric
+- fabric witness or explicit local-fabric note
+- facet privilege
+- facet-hidden, route-scrubbed, or related-question-neutralized variant
+- facet-hidden, route-scrubbed, or related-question-neutralized variant worth checking
+- fail-closed repair / bounded reread vs rerequest vs hold vs recover-resync consequence
+- fail-closed repair / narrow-claim vs hold-via-followthrough vs quarantine-or-retire vs refresh-support vs recover-resync consequence
+- fail-closed repair / narrow-import vs defer-import vs quarantine-or-retire vs hold vs recover-resync consequence
+- fail-closed repair / narrow-scope vs rerequest vs hold vs recover-resync consequence
+- fail-closed repair / ordinary-continuation vs record-compensating-control vs require-independent-review vs hold vs recover-resync consequence
+- fail-closed repair / refresh-assumptions vs retest-and-shrink vs quarantine-or-retire vs hold vs recover-resync consequence
+- fail-closed repair / refresh-cues vs re-open-primary vs narrow-scope vs recover-resync consequence
+- fail-closed repair / reopen-via-successor vs recover-closure-basis vs quarantine-or-retire vs hold vs recover-resync consequence
+- fail-closed repair / rereview vs narrow-import vs retire-ledger-entry vs recover-resync consequence
+- failure signature
+- failure-domain-backed-corroboration
+- fallback / abstain / escalate consequence
+- fallback / quarantine consequence
+- fallback / rollback / quarantine consequence
+- fallback / rollback consequence
+- families
+- family
+- family-compression frontier
+- family-level privilege
+- family-resemblance privilege
+- family-scoped, umbrella-scoped, program-scoped
+- fast-vs-slow timescale split
+- favorable-label defaults
+- favored answer carriers
+- fenced-substrate-restoration
+- field-key privilege
+- file-underlier privilege
+- files
+- first attempts only, retry-inclusive attempts, or hedge-inclusive parallel attempts
+- first curvature or distortion warning sign
+- first failure signature
+- first-answer privilege
+- fixed ambiguity or state claim
+- fixed or withheld context family
+- fixed prompt / route / control protocol / operational conditions
+- follow-up question prompts, continue-exploring links, dive-deeper transitions, or suggested next searches
+- followthrough
+- forbidden-overstatement privilege
+- foreign-pressure receipt
+- free-capacity-restoration
+- free-capacity-restoration, preemption-backed-restoration, or mixed-refresh-scope-axis-remediation-capacity-source
+- fresh
+- fresh-aligned
+- fresh-carrier-reopened-residue
+- fresh-packet-required-tiebreak-registry-residue
+- fresh-renewal
+- fresh-renewal, copied-forward, expired-residue, or basis-changed
+- fresh-retired-threshold-scope-history-carry
+- fresh-retired-threshold-scope-history-carry, stale-retired-threshold-scope-history-carry, revoked-authority-return-retired-threshold-scope-history, expired-closeout-template-retired-threshold-scope-history, successor-superseded-retired-threshold-scope-history, carrier-conflict-retired-threshold-scope-history, or mixed-retired-threshold-scope-history-currentness
+- freshness
+- freshness_state
+- frontier-ticket
+- frozen
+- frozen public / citation surface or explicit absence
+- full candidate surface
+- full-replay
+- functionally-exact-restore
+- functionally-exact-restore, performance-shadow-restore, or mixed-refresh-scope-axis-remediation-displacement-replay-equivalence
+- future discriminating probe or continuation property
+- future family
+- future reuse family / neighboring task class / deployment slice
+- future slice
+- future tests
+- future-equivalence class
+- future-probe signature
+- gate class / future-trigger kind
+- gate-class
+- gated
+- gauge-fixing
+- generated
+- generative grammar
+- generator
+- genuinely new evidence
+- good-change shapes / what kinds of revisions are usually worth making
+- governed discharge surfaces / durable queues / ledgers
+- gpu-replay-cross-observer-bridge
+- gpu-replay-cross-observer-custody-exit-appeal-scope
+- gpu-replay-cross-observer-custody-retirement
+- gpu-replay-cross-observer-custody-scope
+- gpu-replay-cross-observer-promotion-gate
+- gpu-replay-envelope
+- gpu-replay-observer-conflict
+- gpu-replay-receipt
+- gpu-replay-trace-grade
+- gpu_replay_envelope_state
+- grace-held-return
+- grandfathered-decoupling
+- grandfathered-residue
+- group
+- grouped-same-origin
+- guaranteed, best-effort, or fire-and-forget
+- guard
+- guard band
+- guardrail
+- guide
+- guide witness or explicit unconstrained note
+- guided
+- had to have data to count at all
+- handed-off
+- handle
+- handoff privilege
+- handoff-neutralized, context-reset, or manual-query-replayed variant
+- handoff-neutralized, context-reset, or manual-query-replayed variant worth checking
+- hard-enforced-decoupled-corroboration
+- hard-enforced-decoupled-corroboration, best-effort-decoupled-corroboration, advisory-corroboration, or mixed-refresh-scope-axis-enforcement
+- hidden-context or wrapper assumptions
+- hidden-subtask privilege
+- hierarchy-coupled-corroboration
+- highlight-window privilege
+- highlighted passages, chosen supporting excerpts, bolded snippet spans, or top-snippet sentences
+- history
+- history-carry privilege
+- history-custody-bound-post-arbitration-governance-scope
+- history-freeze-post-arbitration-governance-retirement-threshold-scope-retirement
+- history-freeze-reopen-drift-governance-retirement
+- history-light or residue-stripped variant
+- history-light or residue-stripped variant worth checking
+- history-loss-reopen-drift-retirement-governance
+- history-overbinding-reopen-drift-retirement-governance
+- hold packet
+- hold-via-followthrough
+- homing packet
+- horizon
+- horizon-expired-transported-closeout-expiry-record-closeout-history-portability
+- horizon-expired-transported-retired-history-closeout
+- host-parity escrow
+- host-parity-shadow
+- host-shell privilege
+- host/authority suffix, header mutation, host rewrite
+- hot-adapter mismatch, rank drift, mixed-batch interference, or adapter reload / eviction drift
+- hot-cache mismatch, offload-tier drift, or prefill/decode transfer mismatch
+- human-piloted
+- hysteresis
+- identification packet
+- identity-neutral, persona-scrubbed, or audience-agnostic variant
+- identity-neutral, persona-scrubbed, or audience-agnostic variant worth checking
+- image/video resize-or-frame-sampling drift
+- imported
+- imported-seed
+- in-memory-continuation
+- in-memory-continuation, checkpoint-backed-replay, cold-restart-after-displacement, or mixed-refresh-scope-axis-remediation-displacement-resumption-basis
+- in-place-repair
+- in-place-repair, substrate-reset, workload-replacement, or mixed-repair-scope
+- in-search-view privilege
+- included
+- independence court
+- independent witness
+- independent-axis-corroboration
+- independent-confirming-support
+- inherited-binding
+- inherited-urgency-only
+- initiating lane / request origin
+- inline citation badges, reference links, source cards, or used-sources panels
+- innovation
+- innovation packet
+- innovation-packet
+- inspectable-history-tiebreak-registry-residue
+- instance-blur privilege
+- instance-narrowed, scope-pinned, or family-stripped variant
+- instance-narrowed, scope-pinned, or family-stripped variant worth checking
+- intended invariant readout or same-judgment target
+- interlocutor-identity privilege
+- intervention family
+- intervention family / probe diversity / environment family
+- intervention-equivalence question
+- intrusion-shift-conflict
+- invalidated
+- invalidation or expiry triggers / what changes would stop it from holding
+- invariance or gain signature
+- invariant claim
+- invariant observable or reference observable
+- invariant operator core
+- inventory-graph privilege
+- isolation-backed-corroboration
+- items
+- joined-lesson-handoff-arbitration-retirement
+- joined-lesson-handoff-reopen-drift-retirement
+- joined-route-handoff-post-arbitration-governance-retirement-drift-retirement
+- joined-route-handoff-retired-governance-drift-retirement
+- judged artifact
+- judged continuation family
+- judged continuation property actually recovered
+- judged divergence signature
+- judged move / continuation claim / active decision surface
+- judged payback / reuse dividend / compiled-dividend budget
+- judged state or mechanism claim
+- judged survival / degradation signature
+- judgment-gated-escalation
+- keep-current
+- kept user-side anchor
+- kept-alive rival set
+- label
+- label-definition privilege
+- label-distinct-only-corroboration
+- label-distinct-only-corroboration, failure-domain-backed-corroboration, isolation-backed-corroboration, or mixed-refresh-scope-axis-materiality
+- label-neutral, criterion-name-scrubbed, or rubric-blanded variant
+- label-neutral, criterion-name-scrubbed, or rubric-blanded variant worth checking
+- label-scrubbed, claim-spelled-out, state-disambiguated, or semantics-explicit variant
+- label-scrubbed, claim-spelled-out, state-disambiguated, or semantics-explicit variant worth checking
+- landing-surface additions-alignment guard
+- lane senate
+- lane-collapse state / separated vs partially-collapsed vs collapsed-with-compensation
+- language-selection privilege
+- later
+- leakage
+- ledgers
+- legacy-label privilege
+- length-balanced, verbosity-scrubbed, or style-neutralized variant
+- length-balanced, verbosity-scrubbed, or style-neutralized variant worth checking
+- list-shape privilege
+- live camera feeds, interactive voice-and-video search turns, moving-scene visual search, or other embodied real-time context
+- live question
+- live-context privilege
+- live-neutralized, camera-disconnected, or still-basis-replayed variant
+- live-neutralized, camera-disconnected, or still-basis-replayed variant worth checking
+- live-provenance
+- live-provenance, sync-lag, ancestor-residue, or mixed-freshness
+- load-triggered speculation disable
+- local
+- local chart adapter
+- local chart neighborhood or execution family
+- local-bridge-hardening-gate
+- local-join-post-arbitration-governance-retirement-drift-conflict
+- local-join-precedent-conflict
+- local-join-reopen-drift-conflict
+- local-join-retired-governance-drift-conflict
+- local-linearity-budget
+- local-refresh
+- local-refresh, broadened-carryover, spillover, or effect-drift
+- local-remediation
+- local-workload-replacement
+- local-workload-replacement, drain-backed-restoration, fenced-substrate-restoration, or mixed-refresh-scope-axis-remediation-collateral
+- locality-lease-receipt
+- locality-partition-envelope
+- locked
+- long-context witness or explicit base-context note
+- loop-closure
+- losing or merged branch family
+- lost distinction
+- lucky-path privilege
+- maintained surface or carry object
+- majority endorsements, popularity counts, consensus labels, or peer-preference scaffolds
+- majority-label privilege
+- make lint
+- manual-only rubric
+- markdown wrappers, bullet or table layout, headings, code fences, comments, spacing, or other presentation scaffolds
+- markup privilege
+- markup-blanded, list-shape-swapped, or presentation-neutralized variant
+- markup-blanded, list-shape-swapped, or presentation-neutralized variant worth checking
+- matched endpoint / public summary / fixed current packet
+- matched endpoint target / actuation budget / compute budget
+- matched endpoint target / final mixed cue / fixed actuation budget
+- matched horizon / task volume / compute budget
+- matched marginal step sizes / local mixing rule / fixed baseline
+- matched request family, population, traffic slice, or time window
+- matched sham
+- matched sham / no-op / commuted-order baseline
+- matched step size / local sweep radius / fixed baseline
+- matched task budget / actuation budget / horizon budget
+- matched task budget / context budget / compute budget
+- mechanism-overclaim privilege
+- media-token drift, placeholder-expansion drift, processor-cache mismatch, image/video resize-or-frame-sampling drift, or vision-encoder/backend mismatch
+- members
+- memory store
+- merchant-feed privilege
+- metadata-exposed
+- metadata-wrapper privilege
+- metric-exemplar-bridge
+- metric-label alignment
+- metric-label alignment or confounder note
+- migrated-runtime-image
+- minimal conformance test or metamorphic check family
+- minimum measurement count or comparison duration
+- mirror-drop risk
+- mismatch
+- mismatch / drift / rollback / citation-warning consequence
+- mismatched
+- missing
+- missing support / undecided evidence or proof still owed
+- missing-cross-observer-bridge
+- missing-trace-receipt
+- mixed
+- mixed perturbation / composed cue / joint sweep
+- mixed-appeal-retirement
+- mixed-appeal-scope
+- mixed-appeal-threshold
+- mixed-arbitration-retirement
+- mixed-citation-incentive
+- mixed-cross-observer-bridge
+- mixed-custody-retirement
+- mixed-custody-scope
+- mixed-enforcement
+- mixed-evidence-ecology
+- mixed-freshness
+- mixed-gpu-replay-envelope
+- mixed-gpu-replay-receipt
+- mixed-gpu-replay-trace-grade
+- mixed-observer-conflict
+- mixed-post-arbitration-governance-retirement
+- mixed-post-arbitration-governance-retirement-drift
+- mixed-post-arbitration-governance-retirement-drift-arbitration
+- mixed-post-arbitration-governance-retirement-drift-arbitration-retirement
+- mixed-post-arbitration-governance-retirement-portability
+- mixed-post-arbitration-governance-retirement-threshold
+- mixed-post-arbitration-governance-retirement-threshold-scope
+- mixed-post-arbitration-governance-retirement-threshold-scope-retirement
+- mixed-post-arbitration-governance-scope
+- mixed-post-arbitration-governance-threshold
+- mixed-precedent-conflict-arbitration
+- mixed-precedent-drift
+- mixed-precedent-portability
+- mixed-promotion-gate
+- mixed-provenance
+- mixed-provenance-control
+- mixed-recovery-anchor
+- mixed-recovery-identity
+- mixed-recovery-loss
+- mixed-recovery-promotion
+- mixed-recovery-writeback
+- mixed-refresh-burden-scope
+- mixed-refresh-elevation
+- mixed-refresh-independence
+- mixed-refresh-scope-axis
+- mixed-refresh-scope-axis-coupling
+- mixed-refresh-scope-axis-durability
+- mixed-refresh-scope-axis-enforcement
+- mixed-refresh-scope-axis-independence
+- mixed-refresh-scope-axis-materiality
+- mixed-refresh-scope-axis-remediation
+- mixed-refresh-scope-axis-remediation-capacity-source
+- mixed-refresh-scope-axis-remediation-collateral
+- mixed-refresh-scope-axis-remediation-displacement-aftercare
+- mixed-refresh-scope-axis-remediation-displacement-performance-shadow-source
+- mixed-refresh-scope-axis-remediation-displacement-replay-equivalence
+- mixed-refresh-scope-axis-remediation-displacement-replay-fidelity
+- mixed-refresh-scope-axis-remediation-displacement-resumption-basis
+- mixed-refresh-scope-basis
+- mixed-refresh-scope-distribution
+- mixed-refresh-scope-extent
+- mixed-refresh-strength
+- mixed-refresh-support
+- mixed-regime
+- mixed-release-hardening
+- mixed-reopen-closeout-drift
+- mixed-reopen-closeout-portability
+- mixed-reopen-drift-arbitration
+- mixed-reopen-drift-arbitration-retirement
+- mixed-reopen-drift-governance-retirement
+- mixed-reopen-drift-governance-scope
+- mixed-reopen-drift-retirement-governance-escalation
+- mixed-reopened-residue-closeout
+- mixed-reopened-residue-scope
+- mixed-repair-scope
+- mixed-response
+- mixed-retired-governance-drift
+- mixed-retired-governance-drift-arbitration
+- mixed-retired-governance-drift-arbitration-retirement
+- mixed-retired-governance-portability
+- mixed-retired-history-currentness-closeout
+- mixed-retired-history-currentness-closeout-travel
+- mixed-retired-threshold-scope-history-currentness
+- mixed-retired-threshold-scope-history-portability
+- mixed-stake-continuity
+- mixed-stake-refresh
+- mixed-tiebreak-governance-escalation
+- mixed-tiebreak-registry-residue-reopen
+- mixed-tiebreak-registry-retirement
+- mixed-tiebreak-registry-scope
+- mixed-transported-closeout-expiry-record-closeout-history-portability
+- mixed-transported-closeout-expiry-record-closeout-history-portability-expiry
+- mixed-transported-closeout-expiry-record-travel
+- mixed-transported-closeout-expiry-record-travel-closeout
+- mixed-transported-closeout-history-portability-expiry-history-portability
+- mixed-transported-closeout-history-portability-expiry-history-portability-closeout
+- mixed-transported-closeout-history-portability-expiry-history-portability-closeout-history-portability
+- mixed-transported-retired-history-closeout-expiry
+- modal-pressure privilege
+- monetization-eligibility privilege
+- monitor-only
+- monitor-only, availability-withdrawal, local-remediation, runtime-eviction, or mixed-response
+- monitored property or ambiguity split
+- motion-scene privilege
+- multi-question privilege
+- multimodal
+- multimodal witness or explicit no-media note
+- multiple criteria, bundled objectives, or multi-question judge prompts
+- mutable-artifact privilege
+- name the trigger, the update gain
+- namespace or disambiguation boundary
+- narrated-unbound-concern
+- narrow
+- narrow-claim
+- narrow-family
+- narrow-import
+- narrow-scope
+- narrowed-coverage
+- narrowing, demotion, or fallback consequence
+- narrowing, fallback, or quarantine consequence
+- native-controller-restoration
+- native-controller-restoration, external-remediator-restoration, operator-replay-restoration, or mixed-refresh-scope-axis-remediation
+- nearby
+- nearby ambient surfaces / roster-visible alternatives / excluded adjacent families
+- nearby cue family / paraphrase / alias / style / context-stem sweep
+- nearby sham or cue-neighborhood variant
+- nearby sham or cue-neighborhood variant worth checking
+- nearest deferred alternative
+- necessity witness
+- negative-control handle
+- negative-transfer
+- negative-transfer budget
+- neighborhood
+- nested-axis-restatement
+- never call the basis `current` when the expected and observed heads differ
+- next discriminating probe or settle condition
+- next proof point / discharge surface / future receipt
+- next-query privilege
+- no-appeal-needed
+- no-appeal-needed, receipt-repair-threshold, repeated-retention-dispute, authority-contest-overflow, deletion-proof-overflow, or mixed-appeal-threshold
+- no-arbitration-needed-post-arbitration-governance-retirement-drift-conflict
+- no-arbitration-needed-post-arbitration-governance-retirement-drift-conflict, local-join-post-arbitration-governance-retirement-drift-conflict, current-carrier-precedence-post-arbitration-governance-retirement-drift, revocation-precedence-post-arbitration-governance-retirement-drift, exit-proof-precedence-post-arbitration-governance-retirement-drift, successor-route-precedence-post-arbitration-governance-retirement-drift, or mixed-post-arbitration-governance-retirement-drift-arbitration
+- no-arbitration-needed-precedent-conflict
+- no-arbitration-needed-precedent-conflict, local-join-precedent-conflict, carrier-precedence-precedent-conflict, authority-precedence-precedent-conflict, sunset-precedence-precedent-conflict, revocation-precedence-precedent-conflict, or mixed-precedent-conflict-arbitration
+- no-arbitration-needed-reopen-drift-conflict
+- no-arbitration-needed-reopen-drift-conflict, local-join-reopen-drift-conflict, current-evidence-precedence-reopen-drift, carrier-precedence-reopen-drift, revocation-precedence-reopen-drift, sunset-precedence-reopen-drift, or mixed-reopen-drift-arbitration
+- no-arbitration-needed-retired-governance-drift-conflict
+- no-arbitration-needed-retired-governance-drift-conflict, local-join-retired-governance-drift-conflict, current-carrier-precedence-retired-governance-drift, revocation-precedence-retired-governance-drift, exit-proof-precedence-retired-governance-drift, successor-route-precedence-retired-governance-drift, or mixed-retired-governance-drift-arbitration
+- no-promotion-gate
+- no-promotion-gate, local-bridge-hardening-gate, repeated-missing-bridge-overflow, custody-boundary-overflow, authority-handoff-overflow, or mixed-promotion-gate
+- no-registry-needed-tiebreak-governance
+- no-registry-needed-tiebreak-governance, repeated-closeout-failure-tiebreak-governance, cross-carrier-conflict-tiebreak-governance, authority-split-tiebreak-governance, audit-retention-tiebreak-governance, sunset-breach-tiebreak-governance, or mixed-tiebreak-governance-escalation
+- no-reopen-tiebreak-registry-residue
+- no-reopen-tiebreak-registry-residue, inspectable-history-tiebreak-registry-residue, audit-only-reopen-tiebreak-registry-residue, fresh-packet-required-tiebreak-registry-residue, tombstone-only-tiebreak-registry-residue, or mixed-tiebreak-registry-residue-reopen
+- no-reuse baseline / from-scratch baseline
+- no-standing-post-arbitration-governance
+- no-standing-post-arbitration-governance, repeated-retirement-failure-post-arbitration-governance, conflict-history-loss-post-arbitration-governance, conflict-history-overbinding-post-arbitration-governance, authority-split-post-arbitration-governance, successor-route-loop-post-arbitration-governance, or mixed-post-arbitration-governance-threshold
+- no-standing-post-arbitration-governance-retirement-threshold
+- no-standing-post-arbitration-governance-retirement-threshold, repeated-arbitration-retirement-failure-post-arbitration-governance-retirement-threshold, closeout-history-loss-post-arbitration-governance-retirement-threshold, closeout-history-overbinding-post-arbitration-governance-retirement-threshold, authority-split-post-arbitration-governance-retirement-threshold, successor-closeout-loop-post-arbitration-governance-retirement-threshold, or mixed-post-arbitration-governance-retirement-threshold
+- no-standing-reopen-drift-retirement-governance
+- no-standing-reopen-drift-retirement-governance, repeated-closeout-failure-reopen-drift-governance, history-loss-reopen-drift-retirement-governance, history-overbinding-reopen-drift-retirement-governance, authority-split-reopen-drift-retirement-governance, sunset-breach-reopen-drift-retirement-governance, or mixed-reopen-drift-retirement-governance-escalation
+- non-demolition budget
+- non-negotiables / what future passes must not silently break
+- non-returning, log-only, or inspection-only
+- non-target deployment-shape or measurement-shape conditions
+- nonbinding-history-freeze-tiebreak-registry-retirement
+- nonbinding-history-reopen-drift-governance-scope
+- nonbinding-history-tiebreak-registry-scope
+- nonportable-history-precedent
+- nonportable-history-precedent, carrier-matched-precedent, template-bound-precedent, counterexample-only-precedent, sunset-inherited-precedent, or mixed-precedent-portability
+- nonportable-post-arbitration-governance-retirement-history
+- nonportable-post-arbitration-governance-retirement-history, audit-reference-post-arbitration-governance-retirement, carrier-template-post-arbitration-governance-retirement, exit-proof-reference-post-arbitration-governance-retirement, counterexample-only-post-arbitration-governance-retirement, successor-packet-required-post-arbitration-governance-retirement, or mixed-post-arbitration-governance-retirement-portability
+- nonportable-reopen-closeout-history
+- nonportable-reopen-closeout-history, audit-reference-reopen-closeout, tombstone-reference-reopen-closeout, carrier-template-reopen-closeout, counterexample-only-reopen-closeout, or mixed-reopen-closeout-portability
+- nonportable-retired-governance-history
+- nonportable-retired-governance-history, audit-reference-retired-governance, carrier-template-retired-governance, exit-proof-reference-retired-governance, counterexample-only-retired-governance, successor-packet-required-retired-governance, or mixed-retired-governance-portability
+- nonportable-retired-history-currentness-closeout-travel
+- nonportable-retired-history-currentness-closeout-travel, audit-trace-retired-history-currentness-closeout-travel, warning-only-retired-history-currentness-closeout-travel, successor-context-retired-history-currentness-closeout-travel, redacted-summary-retired-history-currentness-closeout-travel, quarantine-reference-retired-history-currentness-closeout-travel, or mixed-retired-history-currentness-closeout-travel
+- nonportable-retired-threshold-scope-history
+- nonportable-retired-threshold-scope-history, audit-reference-retired-threshold-scope-history, closeout-template-retired-threshold-scope-history, authority-return-warning-retired-threshold-scope-history, successor-packet-required-retired-threshold-scope-history, counterexample-only-retired-threshold-scope-history, or mixed-retired-threshold-scope-history-portability
+- nonportable-transported-closeout-expiry-record-closeout-history
+- nonportable-transported-closeout-expiry-record-closeout-history, audit-reference-transported-closeout-expiry-record-closeout-history, warning-only-transported-closeout-expiry-record-closeout-history, successor-context-transported-closeout-expiry-record-closeout-history, redacted-summary-transported-closeout-expiry-record-closeout-history, quarantine-reference-transported-closeout-expiry-record-closeout-history, or mixed-transported-closeout-expiry-record-closeout-history-portability
+- nonportable-transported-closeout-expiry-record-travel
+- nonportable-transported-closeout-expiry-record-travel, audit-tombstone-transported-closeout-expiry-record-travel, warning-only-transported-closeout-expiry-record-travel, successor-bound-transported-closeout-expiry-record-travel, redacted-summary-transported-closeout-expiry-record-travel, quarantine-reference-transported-closeout-expiry-record-travel, or mixed-transported-closeout-expiry-record-travel
+- nonportable-transported-closeout-history-portability-expiry-history-portability-closeout-history
+- nonportable-transported-closeout-history-portability-expiry-history-portability-closeout-history, audit-reference-transported-closeout-history-portability-expiry-history-portability-closeout-history, warning-only-transported-closeout-history-portability-expiry-history-portability-closeout-history, successor-context-transported-closeout-history-portability-expiry-history-portability-closeout-history, redacted-summary-transported-closeout-history-portability-expiry-history-portability-closeout-history, quarantine-reference-transported-closeout-history-portability-expiry-history-portability-closeout-history, mixed-transported-closeout-history-portability-expiry-history-portability-closeout-history-portability
+- nonportable-transported-closeout-history-portability-expiry-record
+- nonportable-transported-closeout-history-portability-expiry-record, audit-reference-transported-closeout-history-portability-expiry-record, warning-only-transported-closeout-history-portability-expiry-record, successor-context-transported-closeout-history-portability-expiry-record, redacted-summary-transported-closeout-history-portability-expiry-record, quarantine-reference-transported-closeout-history-portability-expiry-record, or mixed-transported-closeout-history-portability-expiry-history-portability
+- novelty
+- null / flatness expectation / zero-defect baseline
+- object
+- objective-conflation privilege
+- obligation
+- obligation state / open vs staged vs satisfied vs waived vs retired
+- obligation-packets-waivers-remediation-expiry-and-overflow-tests.md
+- observation
+- observation channel / checkpoint signal / mid-course readout
+- observation role
+- observation sought
+- observationally safe
+- observed
+- observed-reactivation
+- observed-reactivation, regression-return, inherited-urgency-only, rhetorical-reheat, or mixed-stake-refresh
+- observer surface
+- observer/actuator split
+- off-path adjudication family
+- offload-tier drift, or prefill/decode transfer mismatch
+- omission basis
+- omitted or thinned assistant-side surface
+- one density variant
+- one placement variant
+- one-axis-dispersion
+- one-axis-dispersion, cross-axis-corroborated-dispersion, axis-gated-generalization, or mixed-refresh-scope-axis
+- one-production/one-shadow, one-deployment, or same-backend-type limits
+- only advisory or inconclusive
+- open transfer question / what remains live after the pass
+- open-loop substitution gap / contingency budget
+- operator
+- operator-core
+- operator-replay-restoration
+- order
+- order-balanced, position-scrubbed, or top-slot-neutralized variant
+- order-balanced, position-scrubbed, or top-slot-neutralized variant worth checking
+- order-primacy privilege
+- order-sensitivity budget
+- ordinary-continuation
+- ordinary-tone, de-escalated, or pragmatic-frame-scrubbed variant
+- ordinary-tone, de-escalated, or pragmatic-frame-scrubbed variant worth checking
+- orientation/update rule
+- original-shape witness
+- out-of-band writes could still occur
+- out-of-family stress slice / conflict case / neighboring non-fit family
+- outputs
+- overflow
+- overlap
+- overlap probe or shared test surface
+- overlap-neutralized, paraphrase-balanced, or reference-echo-scrubbed variant
+- overlap-neutralized, paraphrase-balanced, or reference-echo-scrubbed variant worth checking
+- overwritten
+- pa-governance-retirement-threshold-scope-retirement-history-portability-witnesses-nonportable-audit-template-authority-successor-counterexample-mixed.md
+- pa-governance-retirement-threshold-scope-retirement-witnesses-settled-window-authority-history-handoff-quarantine-mixed.md
+- package-identity
+- packaged
+- packet-local-appeal-scope
+- packet-local-appeal-scope, survivor-carrier-appeal-scope, authority-boundary-appeal-scope, policy-window-appeal-scope, retirement-window-appeal-scope, or mixed-appeal-scope
+- packet-local-custody
+- packet-local-custody, bridge-record-custody, evidence-carrier-custody, authority-handoff-custody, retirement-window-custody, or mixed-custody-scope
+- packet-local-post-arbitration-governance-retirement-threshold-scope
+- packet-local-post-arbitration-governance-retirement-threshold-scope, closeout-history-custody-post-arbitration-governance-retirement-threshold-scope, authority-lane-limited-post-arbitration-governance-retirement-threshold-scope, successor-route-bound-post-arbitration-governance-retirement-threshold-scope, retirement-window-post-arbitration-governance-retirement-threshold-scope, or mixed-post-arbitration-governance-retirement-threshold-scope
+- packet-local-post-arbitration-governance-scope
+- packet-local-post-arbitration-governance-scope, history-custody-bound-post-arbitration-governance-scope, authority-lane-limited-post-arbitration-governance-scope, successor-route-bound-post-arbitration-governance-scope, retirement-window-post-arbitration-governance-scope, or mixed-post-arbitration-governance-scope
+- packet-local-reopen-drift-governance-scope
+- packet-local-reopen-drift-governance-scope, carrier-bound-reopen-drift-governance-scope, authority-limited-reopen-drift-governance-scope, nonbinding-history-reopen-drift-governance-scope, retirement-window-reopen-drift-governance-scope, or mixed-reopen-drift-governance-scope
+- packet-local-reopened-residue
+- packet-local-reopened-residue, audit-bound-reopened-residue, fresh-carrier-reopened-residue, tombstone-bound-reopened-residue, authority-limited-reopened-residue, or mixed-reopened-residue-scope
+- packet-local-tiebreak-registry-scope
+- packet-local-tiebreak-registry-scope, carrier-bound-tiebreak-registry-scope, authority-limited-tiebreak-registry-scope, nonbinding-history-tiebreak-registry-scope, retirement-window-tiebreak-registry-scope, or mixed-tiebreak-registry-scope
+- packet-only
+- paid-placement privilege
+- parallelism
+- parallelism witness or explicit single-replica note
+- partial
+- partial observability
+- partially-collapsed
+- partner-route privilege
+- pass/fail rule
+- path-portable-bounded
+- pattern
+- pattern or warning under review
+- patterned-observed-spillover
+- pending
+- performance-shadow-restore
+- persists
+- persona
+- persona privilege
+- personal-context privilege
+- perturbation family
+- perturbation-decoupled-corroboration
+- phase
+- phase boundary
+- phase-placement witness or explicit aggregated-serving note
+- placement variant
+- placement variant worth checking
+- placement-contention-shadow
+- placement-scope-bridge
+- platform
+- plausible alias or collision family
+- polarity
+- polarity privilege
+- policy
+- policy-sunset-appeal-retirement
+- policy-window-appeal-scope
+- popularity-glamour privilege
+- population, traffic slice, or time window
+- portability budget or expected failure surface
+- portable-closeout-history-expiry-court
+- position/density privilege
+- pragmatic
+- pragmatic-frame privilege
+- pre-break authority privilege
+- precedence or arbitration rule
+- precedent-quarantine-appeal-retirement
+- predicate-parity, polarity-scrubbed, or modal-neutralized variant
+- predicate-parity, polarity-scrubbed, or modal-neutralized variant worth checking
+- predicate-sign privilege
+- predictive sufficiency
+- preemption-backed-restoration
+- preemption/resume divergence
+- prefill
+- prefill privilege
+- prefilled starters, suggested prompt chips, autocomplete shells, example-library scaffolds, or copied template frames
+- present
+- presentation-scaffold privilege
+- pressure
+- prestige
+- prestige privilege
+- preview
+- preview-stripped, display-scrubbed, or underlier-literal variant
+- preview-stripped, display-scrubbed, or underlier-literal variant worth checking
+- primary
+- primary landing surface / first trusted cue
+- prior live state / what kind of object it was
+- prior relied-on cue family / documented startup promise
+- prior relied-on startup path / documented startup promise
+- prior-verdict privilege
+- priority
+- priority tariff
+- priority-sunset-arbitration-retirement
+- priority-sunset-post-arbitration-governance-retirement-drift-arbitration-retirement
+- priority-sunset-reopen-drift-retirement
+- priority-sunset-retired-governance-drift-arbitration-retirement
+- private
+- pro/con/neutral badges, balanced-vs-biased markers, or other stance overlays
+- probe family or staged intervention family being compared
+- probe horizon or future family
+- probe-economics packet
+- probe-order
+- procedural-compilation
+- profile privilege
+- profile-blinded, history-disconnected, or public-basis-replayed variant
+- profile-blinded, history-disconnected, or public-basis-replayed variant worth checking
+- profiler-trace-backed
+- project
+- project-state privilege
+- promote
+- promoted
+- promotion / demotion / expire consequence
+- promotion / retirement consequence
+- promotion or freeze gate / admission witness that moved authority
+- promotion, demotion, or rollback consequence
+- promotion-gated-branch-import
+- prompt
+- prompt pairs
+- prompt-suggestion privilege
+- property monitored
+- proposed support core
+- protected kernel / contingency invariant / same-task comparison surface
+- protected kernel / intended invariant readout / same-task comparison surface
+- protected kernel / invariant readout / same-task success criterion
+- protected kernel / matched-fresh baseline / same-task comparison surface
+- protected kernel / pathwise invariant / same-task comparison surface
+- protected kernel / retained state intended to survive the reset
+- protected kernel / same-task comparison surface / judged downstream advantage
+- protected observable or operator-core commitment
+- protected property
+- protocol
+- protocol mismatch, bridge normalization, or trailer-status loss
+- provenance
+- provenance-control
+- provenance-cue privilege
+- provenance-rights / citation-dividend / evidence-market clearinghouse
+- provenance_control_state
+- provisional
+- prune / merge / abstain consequence
+- prune / merge / defer consequence
+- prune, promote, or rollback consequence
+- pseudo-corroboration privilege
+- public
+- public belief state
+- public challenge family
+- public extract
+- purpose
+- quality-preserving-visibility-optimization
+- quality-preserving-visibility-optimization, evidence-market-distortion, source-grooming-distortion, or mixed-citation-incentive
+- quarantine
+- quarantine-expired-transported-closeout-expiry-record-closeout-history-portability
+- quarantine-expired-transported-closeout-expiry-record-travel
+- quarantine-expired-transported-closeout-history-portability-expiry-history-portability-record
+- quarantine-expired-transported-retired-history-closeout
+- quarantine-or-retire
+- quarantine-reference-retired-history-currentness-closeout-travel
+- quarantine-reference-transported-closeout-expiry-record-closeout-history
+- quarantine-reference-transported-closeout-expiry-record-travel
+- quarantine-reference-transported-closeout-history-portability-expiry-history-portability-closeout-history
+- quarantine-reference-transported-closeout-history-portability-expiry-record
+- quarantined
+- query-blanded, slant-scrubbed, or retrieval-phrase-swapped variant
+- query-blanded, slant-scrubbed, or retrieval-phrase-swapped variant worth checking
+- query-slant privilege
+- question
+- queue-policy drift, priority mismatch, or preemption/resume divergence
+- queued
+- quick advisory look
+- quoted, code-fenced, or literal-mention variant
+- quoted, code-fenced, or literal-mention variant worth checking
+- rank privilege
+- rationale
+- re-open-primary
+- reactivation court
+- reactivation radius / basin-breadth budget
+- read path
+- read-first surfaces / shortest honest startup path
+- read-only, dry-run-aware, isolated to a non-authoritative sink
+- reason
+- reasoning firebreak
+- receipt
+- receipt-delta-coherent
+- receipt-freshness
+- receipt-repair-threshold
+- receiving surface / follow-up owner / linked issue or queue entry if work moved out
+- recency-label privilege
+- recent/current/new/updated labels, legacy/old/deprecated labels, explicit timestamps, or novelty/innovation cues
+- recomposed-coverage
+- reconciliation
+- reconsolidation
+- record-compensating-control
+- recover-closure-basis
+- recover-resync
+- recoverability budget
+- recovery
+- recovery trigger / adversarial cue / structured follow-up family
+- recovery-anchor
+- recovery-anchor court
+- recovery-anchor witness
+- recovery-anchor-witnesses-self-lineage-checkpoints-imported-seeds-converted-checkpoints-and-migrated-runtime-images.md
+- recovery-identity
+- recovery-identity court
+- recovery-identity-witnesses-continuing-resumes-checkpoint-forked-clones-and-sandbox-restored-branches.md
+- recovery-loss
+- recovery-loss witness
+- recovery-loss-witnesses-state-preserving-repair-checkpoint-resume-and-full-replay.md
+- recovery-promotion
+- recovery-promotion court
+- recovery-promotion-witnesses-direct-canonical-writeback-promotion-gated-branch-import-and-export-only-carryover.md
+- recovery-writeback
+- recovery-writeback court
+- recovery-writeback-witnesses-canonical-writeback-derived-branch-writeback-and-sandbox-isolation.md
+- recovery_anchor_state
+- recovery_identity_state
+- recovery_loss_state
+- recovery_promotion_state
+- recovery_writeback_state
+- redacted-freeze-transported-closeout-expiry-record-travel
+- redacted-freeze-transported-closeout-history-portability-expiry-history-portability-record
+- redacted-summary-retired-history-currentness-closeout-travel
+- redacted-summary-transported-closeout-expiry-record-closeout-history
+- redacted-summary-transported-closeout-expiry-record-travel
+- redacted-summary-transported-closeout-history-portability-expiry-history-portability-closeout-history
+- redacted-summary-transported-closeout-history-portability-expiry-record
+- redaction-vault-by-history-portability
+- reference-echo privilege
+- reference-echo scaffolds
+- reference-link privilege
+- reference-score-anchor privilege
+- refresh / rotation rule
+- refresh burden scope
+- refresh-assumptions
+- refresh-burden-scope
+- refresh-burden-scope-witnesses-same-claim-burden-upgrade-bounded-scope-widening-and-scope-gated-generalization.md
+- refresh-cues
+- refresh-elevation
+- refresh-elevation court
+- refresh-elevation-witnesses-stabilizing-independent-support-threshold-licensed-elevation-and-judgment-gated-escalation.md
+- refresh-independence
+- refresh-independence court
+- refresh-independence-witnesses-coupled-multi-surface-echo-shared-context-carry-and-independent-confirming-support.md
+- refresh-receipt
+- refresh-scope court
+- refresh-scope-axis
+- refresh-scope-axis-coupling
+- refresh-scope-axis-coupling witness
+- refresh-scope-axis-coupling-witnesses-same-plane-coupled-corroboration-hierarchy-coupled-corroboration-and-perturbation-decoupled-corroboration.md
+- refresh-scope-axis-durability
+- refresh-scope-axis-durability witness
+- refresh-scope-axis-durability-witnesses-eviction-preserved-decoupling-repair-restored-decoupling-and-grandfathered-decoupling.md
+- refresh-scope-axis-enforcement
+- refresh-scope-axis-enforcement witness
+- refresh-scope-axis-enforcement-witnesses-hard-enforced-decoupled-corroboration-best-effort-decoupled-corroboration-and-advisory-corroboration.md
+- refresh-scope-axis-independence
+- refresh-scope-axis-independence witness
+- refresh-scope-axis-independence-witnesses-renamed-or-mirrored-axis-restatement-nested-axis-restatement-and-independent-axis-corroboration.md
+- refresh-scope-axis-materiality
+- refresh-scope-axis-materiality witness
+- refresh-scope-axis-materiality-witnesses-label-distinct-only-corroboration-failure-domain-backed-corroboration-and-isolation-backed-corroboration.md
+- refresh-scope-axis-remediation
+- refresh-scope-axis-remediation witness
+- refresh-scope-axis-remediation-capacity-source
+- refresh-scope-axis-remediation-capacity-source witness
+- refresh-scope-axis-remediation-capacity-source-witnesses-free-capacity-restoration-preemption-backed-restoration-and-mixed-restoration.md
+- refresh-scope-axis-remediation-collateral
+- refresh-scope-axis-remediation-collateral witness
+- refresh-scope-axis-remediation-collateral-witnesses-local-workload-replacement-drain-backed-restoration-and-fenced-substrate-restoration.md
+- refresh-scope-axis-remediation-displacement-aftercare
+- refresh-scope-axis-remediation-displacement-aftercare witness
+- refresh-scope-axis-remediation-displacement-aftercare-witnesses-resumable-displacement-terminal-displacement-and-mixed-aftercare.md
+- refresh-scope-axis-remediation-displacement-performance-shadow-source
+- refresh-scope-axis-remediation-displacement-performance-shadow-source-witnesses-device-warmth-host-parity-and-placement-contention.md
+- refresh-scope-axis-remediation-displacement-replay-equivalence
+- refresh-scope-axis-remediation-displacement-replay-equivalence-witnesses-functionally-exact-restore-and-performance-shadow-restore.md
+- refresh-scope-axis-remediation-displacement-replay-fidelity
+- refresh-scope-axis-remediation-displacement-replay-fidelity-witnesses-exact-state-restore-bounded-loss-checkpoint-replay-and-source-only-restart.md
+- refresh-scope-axis-remediation-displacement-resumption-basis
+- refresh-scope-axis-remediation-displacement-resumption-basis witness
+- refresh-scope-axis-remediation-displacement-resumption-basis-witnesses-in-memory-continuation-checkpoint-backed-replay-and-cold-restart.md
+- refresh-scope-axis-remediation-witnesses-native-controller-restoration-external-remediator-restoration-and-operator-replay-restoration.md
+- refresh-scope-axis-witnesses-one-axis-dispersion-cross-axis-corroboration-and-axis-gated-generalization.md
+- refresh-scope-basis
+- refresh-scope-basis-witnesses-directly-observed-widening-dependency-imputed-spillover-and-topology-imputed-spillover.md
+- refresh-scope-distribution
+- refresh-scope-distribution-witnesses-clustered-observed-spillover-dispersed-observed-spillover-and-distribution-gated-generalization.md
+- refresh-scope-extent
+- refresh-scope-extent-witnesses-single-observed-slice-patterned-observed-spillover-and-extent-gated-generalization.md
+- refresh-strength
+- refresh-strength-witnesses-single-resurfacing-threshold-confirmed-reactivation-and-grace-held-return.md
+- refresh-support
+- refresh-support-witnesses-repeated-same-surface-grouped-origin-carry-and-widened-confirming-support.md
+- refresh-topology court
+- refresh_burden_scope_state
+- refresh_elevation_state
+- refresh_independence_state
+- refresh_scope_axis_coupling_state
+- refresh_scope_axis_durability_state
+- refresh_scope_axis_enforcement_state
+- refresh_scope_axis_independence_state
+- refresh_scope_axis_materiality_state
+- refresh_scope_axis_remediation_capacity_source_state
+- refresh_scope_axis_remediation_collateral_state
+- refresh_scope_axis_remediation_displacement_aftercare_state
+- refresh_scope_axis_remediation_displacement_performance_shadow_source_state
+- refresh_scope_axis_remediation_displacement_replay_equivalence_state
+- refresh_scope_axis_remediation_displacement_replay_fidelity_state
+- refresh_scope_axis_remediation_displacement_resumption_basis_state
+- refresh_scope_axis_remediation_state
+- refresh_scope_axis_state
+- refresh_scope_basis_state
+- refresh_scope_distribution_state
+- refresh_scope_extent_state
+- refresh_strength_state
+- refresh_support_state
+- regime-reentry packet
+- registry
+- regression-return
+- regular-vs-streaming response mode
+- reinclusion or escalation consequence
+- reinflate, fallback, or quarantine consequence
+- rejected
+- related-question privilege
+- relatedness / leakage risk
+- release-hardening
+- release-manifest-hashed
+- released
+- relevance criterion / separation-of-scales budget
+- relinearize / rollback / quarantine consequence
+- renamed-or-mirrored-axis-restatement
+- renamed-or-mirrored-axis-restatement, nested-axis-restatement, independent-axis-corroboration, or mixed-refresh-scope-axis-independence
+- rendered previews
+- rendered-preview privilege
+- renewal
+- renewal witness
+- renewal-scope
+- renewal-scope witness
+- renewal-scope-witnesses-local-refresh-boundaries-and-spillover-drift.md
+- renewal-witnesses-fresh-approval-acts-and-carryforward-drift.md
+- renewal_scope_state
+- renewal_state
+- renewed
+- reopen / rollback / citation-warning consequence
+- reopen trigger / what future evidence would legitimately reactivate it
+- reopen trigger or unresolved residue
+- reopen-via-successor
+- repair
+- repair-restored-decoupling
+- repair-scope
+- repair-scope witness
+- repair-scope-witnesses-in-place-repair-substrate-reset-and-workload-replacement.md
+- repair_scope_state
+- repeated state labels, approval words, current-status words
+- repeated-arbitration-retirement-failure-post-arbitration-governance-retirement-threshold
+- repeated-closeout-failure-reopen-drift-governance
+- repeated-closeout-failure-tiebreak-governance
+- repeated-missing-bridge-overflow
+- repeated-retention-dispute
+- repeated-retirement-failure-post-arbitration-governance
+- repeated-same-surface
+- repeated-same-surface, grouped-same-origin, widened-confirming-support, or mixed-refresh-support
+- replace
+- replay seed
+- replay seed or restaging surface
+- replay-capsule.json
+- replicate
+- replicate bundle / repeated-inference family / decode regime
+- replicate-bundle or repeated-inference sweep worth checking
+- require-independent-review
+- required
+- rerequest
+- rereview
+- rerun or escalation consequence
+- rescoped
+- research online
+- research-depth privilege
+- reset
+- reset / branch / filter / refactoring operator actually applied
+- reset / filter / suppression operator that produced the clean-looking state
+- reset or stitching rule
+- residue-quarantine-arbitration-retirement
+- residue-quarantine-post-arbitration-governance-retirement
+- residue-quarantine-post-arbitration-governance-retirement-drift-arbitration-retirement
+- residue-quarantine-post-arbitration-governance-retirement-threshold-scope-retirement
+- residue-quarantine-reopen-drift-governance-retirement
+- residue-quarantine-reopen-drift-retirement
+- residue-quarantine-retired-governance-drift-arbitration-retirement
+- residue-quarantine-tiebreak-registry-retirement
+- resolution
+- resolved
+- resolved question
+- resource-lifetime-receipt
+- response
+- response court
+- response witness
+- response-witnesses-monitoring-availability-withdrawal-local-remediation-and-runtime-eviction.md
+- response_state
+- resumable-displacement-aftercare
+- resumable-displacement-aftercare, terminal-displacement-aftercare, or mixed-refresh-scope-axis-remediation-displacement-aftercare
+- resynced
+- retain
+- retained lag / hysteresis / alias budget
+- retest
+- retest-and-shrink
+- retire
+- retire / rename / escalate consequence
+- retired
+- retirement or cold-storage trigger
+- retirement-window-appeal-scope
+- retirement-window-custody
+- retirement-window-expiry-tiebreak-registry-retirement
+- retirement-window-post-arbitration-governance-retirement-threshold-scope
+- retirement-window-post-arbitration-governance-scope
+- retirement-window-reopen-drift-governance-scope
+- retirement-window-tiebreak-registry-scope
+- retokenization privilege
+- retrieval-contamination-collapse
+- retrieval-wording privilege
+- retrospective
+- retry or hedge mismatch
+- retry-inclusive attempts
+- retune / rollback consequence
+- reveal-order privilege
+- review court
+- review or compensating-control lane
+- review or mutation surface actually in scope
+- reviewed datacubes / exact source surfaces
+- revision
+- revocation-frozen-retired-history-currentness-closeout
+- revocation-precedence-post-arbitration-governance-retirement-drift
+- revocation-precedence-precedent-conflict
+- revocation-precedence-reopen-drift
+- revocation-precedence-retired-governance-drift
+- revoked-authority-return-retired-threshold-scope-history
+- revoked-lesson-precedent
+- revoked-post-arbitration-governance-retirement-lesson
+- revoked-reopen-closeout-lesson
+- revoked-retired-governance-lesson
+- rewrite
+- rewrite drift
+- rewrite witness
+- rhetorical-reheat
+- rival history family or route contrast
+- rollback / exploit-only fallback / quarantine consequence
+- rollback / factorize-claim / widen-mix-test / quarantine consequence
+- rollback / freeze-policy / quarantine consequence
+- rollback / gate-closed / quarantine consequence
+- rollback / narrow-claim / widen-sweep / quarantine consequence
+- rollback / one-shot demotion / quarantine consequence
+- rollback / quarantine / packet-splitting consequence
+- rollback / quarantine consequence
+- rollback / schedule-lock / restage / quarantine consequence
+- rollover packet
+- rough cost class
+- round-trip or cross-exam witness
+- route timeout, max stream duration, request-timeout posture, or regular-vs-streaming response mode
+- route-to-fallback / abstain / quarantine consequence
+- routing trigger or query signature
+- rubric
+- rubric privilege
+- rubric-order privilege
+- rubric-permuted, score-id-swapped, or score-anchor-neutralized variant
+- rubric-permuted, score-id-swapped, or score-anchor-neutralized variant worth checking
+- runbook
+- runtime self-attestation
+- runtime triplet
+- runtime-eviction
+- runtime-self-attested
+- runtime-self-attested, profiler-trace-backed, external-observer-backed, missing-trace-receipt, or mixed-gpu-replay-trace-grade
+- safe-language drift
+- same adapter family / rank / target-module posture
+- same aggregated-versus-disaggregated serving posture
+- same all2all/backend or expert-load-balancer posture
+- same attention-backend or kernel-family posture
+- same base-only-versus-adapter-augmented posture
+- same chunked-prefill / continuous-batching / decode-priority posture
+- same eager-versus-CUDA-graph posture
+- same endpoint or another backend/deployment class the mirroring substrate actually supports
+- same fcfs versus priority posture
+- same guide kind such as choice, JSON schema, regex, or grammar
+- same handoff/recompute-or-fallback posture
+- same hot-resident-versus-sleeping-versus-scale-from-zero posture
+- same internal-versus-hybrid-versus-external replica-balancing posture
+- same max-model-len / truncation posture
+- same model/profile-cache or engine-ready posture
+- same no-spec versus speculative-decoding posture
+- same node-count / per-node-GPU / cross-node posture
+- same position-scaling posture such as RoPE scaling or sink-relative positions
+- same precision / quantization posture
+- same prefill/decode role-binding or heterogeneous-parallelism posture
+- same prefix-caching, KV-cache reuse, cache-offload, or disaggregated-prefill posture
+- same processor / placeholder-and-media-sizing posture
+- same same-node-versus-cross-node and same NVLink-domain / NIC-rail posture
+- same single-replica-versus-tensor/pipeline/context/data-parallel posture
+- same sliding-window / attention-sink / cyclic-KV posture
+- same tensor-parallel-versus-expert-parallel-or-hybrid MoE posture
+- same text-only-versus-multimodal posture
+- same transport/backend posture such as GPUDirect-RDMA, UCX/NIXL/Mooncake, or socket fallback
+- same unconstrained-versus-guided-decoding posture
+- same vision-encoder / multimodal-cache posture
+- same warmup / first-inference posture
+- same zero-copy-versus-staged-copy / transfer-concurrency posture
+- same-backend-type
+- same-claim-burden-upgrade
+- same-claim-burden-upgrade, bounded-scope-widening, scope-gated-generalization, or mixed-refresh-burden-scope
+- same-label privilege
+- same-origin multiplicity privilege
+- same-plane-coupled-corroboration
+- same-plane-coupled-corroboration, hierarchy-coupled-corroboration, perturbation-decoupled-corroboration, or mixed-refresh-scope-axis-coupling
+- same-source grouped cards, syndicated mirrors, publisher-network duplicates, or repeated-origin result clusters
+- sample-row privilege
+- sampled percentage
+- sandbox-branch
+- sandbox-only
+- satisfied
+- saved memories, past-search carryover, connected Gmail or Photos context, or other personal-context profile surfaces
+- scale-fixing
+- scheduled-window
+- scheduler
+- scheduler witness or explicit single-lane note
+- schema
+- schema-backed
+- schema-scrubbed, field-key-swapped, enum-blanded, or type-neutral variant
+- schema-scrubbed, field-key-swapped, enum-blanded, or type-neutral variant worth checking
+- schema-slot
+- schema-slot privilege
+- scope
+- scope / decision family / surface family where it is being spent
+- scope court
+- scope state / exact vs broadened vs ambiguous vs ambient vs rescoped
+- scope witness
+- scope-boundary-conflict
+- scope-boundary-conflict, correlation-key-conflict, intrusion-shift-conflict, authority-gap-conflict, or mixed-observer-conflict
+- scope-gated-generalization
+- scope-shrink-retirement
+- scope-sunset-post-arbitration-governance-retirement
+- scope-sunset-reopen-drift-governance-retirement
+- scope_state
+- score
+- score-ID privilege
+- scorecourt
+- script
+- script-barrier privilege
+- scrubbed or relabeled view
+- search-hosted side panels, in-search page viewers, retained host-chrome source opens, or other source-open overlays
+- search-open-neutralized, host-shell-detached, or source-root-replayed variant
+- search-open-neutralized, host-shell-detached, or source-root-replayed variant worth checking
+- seed cue / local chart anchor / stressor starting point
+- seed recovery cue / relapse trigger / local chart anchor
+- seeded prior verdicts
+- segment
+- selection
+- selection bias or unseen slice
+- selection policy under budget
+- selector court
+- selector lineage court
+- selector witness
+- selector-enforcement
+- selector-enforcement witness
+- selector-enforcement-witnesses-execution-authority-grandfathered-placement-and-eviction-gates.md
+- selector-freshness
+- selector-freshness witness
+- selector-freshness-witnesses-live-provenance-sync-lag-and-ancestor-residue.md
+- selector-provenance
+- selector-provenance witness
+- selector-provenance-witnesses-direct-rules-inherited-bindings-and-synced-membership.md
+- selector-source-bias
+- selector-source-bias, citation-loop-pressure, retrieval-contamination-collapse, or mixed-evidence-ecology
+- selector-witnesses-realized-membership-and-coverage-drift.md
+- selector_enforcement_state
+- selector_freshness_state
+- selector_membership_state
+- selector_provenance_state
+- self-certification risk
+- self-certifying-release-court
+- self-lineage-checkpoint
+- self-lineage-checkpoint, imported-seed, converted-checkpoint, migrated-runtime-image, or mixed-recovery-anchor
+- self-sufficiency probe
+- sentinel panel
+- separated
+- sequestered challenge suite
+- servo-packet
+- session provenance
+- session provenance / explicit reread vs copied summary vs nearby-session carry posture
+- settle witness or prune evidence
+- settled-closeout-tiebreak-registry-retirement
+- settled-closeout-tiebreak-registry-retirement, carrier-expiry-tiebreak-registry-retirement, authority-return-tiebreak-registry-retirement, nonbinding-history-freeze-tiebreak-registry-retirement, retirement-window-expiry-tiebreak-registry-retirement, residue-quarantine-tiebreak-registry-retirement, or mixed-tiebreak-registry-retirement
+- settled-post-arbitration-governance-retirement-drift-arbitration-retirement
+- settled-post-arbitration-governance-retirement-drift-arbitration-retirement, joined-route-handoff-post-arbitration-governance-retirement-drift-retirement, carrier-expiry-post-arbitration-governance-retirement-drift-arbitration-retirement, authority-return-post-arbitration-governance-retirement-drift-arbitration-retirement, priority-sunset-post-arbitration-governance-retirement-drift-arbitration-retirement, residue-quarantine-post-arbitration-governance-retirement-drift-arbitration-retirement, or mixed-post-arbitration-governance-retirement-drift-arbitration-retirement
+- settled-post-arbitration-governance-retirement-threshold-scope-retirement
+- settled-post-arbitration-governance-retirement-threshold-scope-retirement, window-expired-post-arbitration-governance-retirement-threshold-scope-retirement, authority-return-post-arbitration-governance-retirement-threshold-scope-retirement, history-freeze-post-arbitration-governance-retirement-threshold-scope-retirement, successor-handoff-post-arbitration-governance-retirement-threshold-scope-retirement, residue-quarantine-post-arbitration-governance-retirement-threshold-scope-retirement, or mixed-post-arbitration-governance-retirement-threshold-scope-retirement
+- settled-reopen-closeout
+- settled-reopen-closeout, audit-handoff-reopen-closeout, carrier-expiry-reopen-closeout, tombstone-freeze-reopen-closeout, authority-return-reopen-closeout, or mixed-reopened-residue-closeout
+- settled-reopen-drift-tiebreak-retirement
+- settled-reopen-drift-tiebreak-retirement, joined-lesson-handoff-reopen-drift-retirement, carrier-expiry-reopen-drift-retirement, authority-return-reopen-drift-retirement, priority-sunset-reopen-drift-retirement, residue-quarantine-reopen-drift-retirement, or mixed-reopen-drift-arbitration-retirement
+- settled-retired-governance-drift-arbitration-retirement
+- settled-retired-governance-drift-arbitration-retirement, joined-route-handoff-retired-governance-drift-retirement, carrier-expiry-retired-governance-drift-arbitration-retirement, authority-return-retired-governance-drift-arbitration-retirement, priority-sunset-retired-governance-drift-arbitration-retirement, residue-quarantine-retired-governance-drift-arbitration-retirement, or mixed-retired-governance-drift-arbitration-retirement
+- settled-retired-history-currentness-closeout
+- settled-retired-history-currentness-closeout, stale-mark-retired-history-currentness-closeout, revocation-frozen-retired-history-currentness-closeout, expiry-complete-retired-history-currentness-closeout, successor-handoff-retired-history-currentness-closeout, conflict-quarantined-retired-history-currentness-closeout, or mixed-retired-history-currentness-closeout
+- settled-tiebreak-arbitration-retirement
+- settled-tiebreak-arbitration-retirement, joined-lesson-handoff-arbitration-retirement, carrier-expiry-arbitration-retirement, authority-return-arbitration-retirement, priority-sunset-arbitration-retirement, residue-quarantine-arbitration-retirement, or mixed-arbitration-retirement
+- shadow marker
+- shadow source
+- shadow-
+- shadow-comparison-packets-minimal-pre-promotion-lanes-and-overflow-tests.md
+- sham or alien-noun test
+- sham or decoy runtime
+- shared applicability gate / eligibility surface that kept them alive
+- shared operator core
+- shared-context-carry
+- shared-origin coupling
+- short horizon or horizon proxy
+- shrink / preserve / quarantine consequence
+- signed letters
+- single-direction passes / constituent perturbation families / basis sweeps
+- single-observed-slice
+- single-observed-slice, patterned-observed-spillover, extent-gated-generalization, or mixed-refresh-scope-extent
+- single-resurfacing
+- single-resurfacing, threshold-confirmed-reactivation, grace-held-return, or mixed-refresh-strength
+- sleeping
+- slot-swapped, rung-shifted, or reveal-order-scrubbed variant
+- slot-swapped, rung-shifted, or reveal-order-scrubbed variant worth checking
+- snapshot-authority privilege
+- social-force privilege
+- socket fallback, fabric-domain drift, rail/NIC drift, or transfer-buffer/concurrency drift
+- source
+- source chart
+- source datacubes / exact source surfaces
+- source of truth
+- source packet or authority anchor
+- source scale or resolution
+- source-card privilege
+- source-grooming-distortion
+- source-only-restart
+- source-open-overlay privilege
+- source-revoked-transported-closeout-expiry-record-closeout-history-portability
+- source-revoked-transported-retired-history-closeout
+- source-root, live-head, or derivative-scrubbed variant
+- source-root, live-head, or derivative-scrubbed variant worth checking
+- source-salience privilege
+- spacing or refresh rule
+- span-balanced, excerpt-scrubbed, or counterspan-included variant
+- span-balanced, excerpt-scrubbed, or counterspan-included variant worth checking
+- specific compared orderings or insertion points
+- speculative
+- spillover
+- split-brain
+- sponsor privilege
+- stabilizing-independent-support
+- stabilizing-independent-support, threshold-licensed-elevation, judgment-gated-escalation, or mixed-refresh-elevation
+- stable-coverage
+- stable-coverage, expanded-coverage, narrowed-coverage, or recomposed-coverage
+- staged
+- stake-continuity
+- stake-continuity-witnesses-active-carried-pressure-commitment-carry-cooled-residue-and-narrated-concern.md
+- stake-refresh
+- stake-refresh-witnesses-observed-reactivation-regression-return-inherited-urgency-and-rhetorical-reheating.md
+- stake_continuity_state
+- stake_refresh_state
+- stale
+- stale-mark-retired-history-currentness-closeout
+- stale-post-arbitration-governance-retirement-template
+- stale-proof privilege
+- stale-reopen-closeout-template
+- stale-retired-governance-template
+- stale-retired-threshold-scope-history-carry
+- stale-template-precedent
+- stamp
+- stance-hidden, stance-label-scrubbed, or balance-badge-neutralized variant
+- stance-hidden, stance-label-scrubbed, or balance-badge-neutralized variant worth checking
+- stance-label privilege
+- standing freshness court
+- start surface / source chart / initial packet
+- starter-example privilege
+- state
+- state / local vs queued vs handed-off vs blocked vs expired
+- state claim being stress-tested
+- state claim or target objective being stress-tested
+- state family / governed field family
+- state packet
+- state-preserving
+- state-preserving, checkpoint-resume, full-replay, or mixed-recovery-loss
+- state-word privilege
+- stateless-routing versus client-IP, header, or cookie affinity posture
+- status
+- status-wrapper
+- status-wrapper privilege
+- sticky-route drift
+- sticky-route drift, warm-connection mismatch, or cached-session-state mismatch
+- stop or escalation condition
+- stopping packet
+- stream-pool-envelope
+- string
+- strong
+- strongest-safe-sentence, stronger-forbidden-sentence, or overclaim-scrubbed variant
+- strongest-safe-sentence, stronger-forbidden-sentence, or overclaim-scrubbed variant worth checking
+- style-fluency privilege
+- substrate family
+- substrate-reset
+- success, failure, or inconclusive
+- success, failure, or inconclusive result
+- successor
+- successor route / nearest safe reentry path
+- successor surface or explicit absence
+- successor-bound-transported-closeout-expiry-record-travel
+- successor-closeout-loop-post-arbitration-governance-retirement-threshold
+- successor-context-retired-history-currentness-closeout-travel
+- successor-context-transported-closeout-expiry-record-closeout-history
+- successor-context-transported-closeout-history-portability-expiry-history-portability-closeout-history
+- successor-context-transported-closeout-history-portability-expiry-record
+- successor-handoff-post-arbitration-governance-retirement
+- successor-handoff-post-arbitration-governance-retirement-threshold-scope-retirement
+- successor-handoff-reopen-drift-governance-retirement
+- successor-handoff-retired-history-currentness-closeout
+- successor-handoff-transported-closeout-expiry-record-travel
+- successor-handoff-transported-closeout-history-portability-expiry-history-portability-record
+- successor-packet-required-post-arbitration-governance-retirement
+- successor-packet-required-retired-governance
+- successor-packet-required-retired-threshold-scope-history
+- successor-required-post-arbitration-governance-retirement-drift
+- successor-required-retired-governance-drift
+- successor-review-senate
+- successor-route-bound-post-arbitration-governance-retirement-threshold-scope
+- successor-route-bound-post-arbitration-governance-scope
+- successor-route-loop-post-arbitration-governance
+- successor-route-precedence-post-arbitration-governance-retirement-drift
+- successor-route-precedence-retired-governance-drift
+- successor-superseded-retired-threshold-scope-history
+- successor-superseded-transported-closeout-expiry-record-closeout-history-portability
+- successor-superseded-transported-retired-history-closeout
+- sufficiency witness
+- summary
+- sunset-breach-reopen-drift-retirement-governance
+- sunset-breach-tiebreak-governance
+- sunset-expired-precedent
+- sunset-inherited-precedent
+- sunset-precedence-precedent-conflict
+- sunset-precedence-reopen-drift
+- superseded
+- supersession edge / previous frozen head if any
+- supported model-wrapper-context family
+- supporting durable cue set / agreeing latest-path surfaces
+- supporting surfaces / current evidence family / local reason it is still tolerated
+- supporting-only
+- supporting-span privilege
+- suppressed
+- surface
+- surface lineage / family / stable id namespace
+- surface lineage / latest-path family
+- surfaces
+- surviving ambiguity or unresolved residue
+- survivor-carrier-appeal-scope
+- survivor-handoff-appeal-retirement
+- sync-lag
+- synced-membership
+- synthesis-breadth privilege
+- synthetic pressure board
+- target chart
+- target claim or surface / what is being asked to carry authority
+- target continuation property
+- target property
+- target property or operator core
+- target scale or resolution
+- target surfaces / ledgers / receipt fields governed by that family
+- template privilege
+- template-bound-precedent
+- template-law audit
+- terminal-displacement-aftercare
+- tested family or wrapper envelope
+- third-party-actuation privilege
+- thresh
+- threshold-confirmed-reactivation
+- threshold-licensed-elevation
+- time-tag-neutralized, recency-scrubbed, or novelty-blanded variant
+- time-tag-neutralized, recency-scrubbed, or novelty-blanded variant worth checking
+- timeout witness or explicit deadline note
+- timescale
+- timescale stratification
+- timestamp
+- title
+- tolerated ambiguity class or equivalence remainder
+- tolerated arc-vs-chord residue / endpoint-equivalence budget
+- tolerated backaction / non-demolition budget
+- tolerated between-run dispersion / lucky-path budget
+- tolerated contamination remainder / washout budget
+- tolerated cross-term residue / superposition budget
+- tolerated directional asymmetry / local-shape budget
+- tolerated divergence or instability budget
+- tolerated exploration premium / dual-effect budget
+- tolerated misroute / tie-instability / confusability budget
+- tolerated negative-transfer / misuse / conflict budget
+- tolerated open-loop substitution gap / contingency budget
+- tolerated reactivation radius / basin-breadth budget
+- tolerated relapse / recoverability budget
+- tolerated sequencing defect / order-sensitivity budget
+- tombstone-bound-reopened-residue
+- tombstone-freeze-reopen-closeout
+- tombstone-history-review-layer
+- tombstone-only-tiebreak-registry-residue
+- tombstone-pruned-transported-closeout-expiry-record-travel
+- tombstone-pruned-transported-closeout-history-portability-expiry-history-portability-record
+- tombstone-reference-reopen-closeout
+- tools
+- top-ranked placement, first-card position, search-result reorder advantage, or other raw list-position privilege
+- top-slot privilege
+- topology
+- topology-imputed-spillover
+- trace
+- trace-context-bridge
+- trailer-status witness or explicit protocol note
+- trajectory
+- trajectory map
+- transaction-ready privilege
+- transfer
+- transfer rule
+- transfer-packets-reviewed-datacube-sets-disposition-classes-and-overflow-tests.md
+- translation, transliteration, or script-swapped variant
+- translation, transliteration, or script-swapped variant worth checking
+- transport budget or tolerated residue
+- triangle overlap probe or family-level shared test surface
+- triangulation witness
+- trigger
+- truncation consequence
+- truncation drift, window/sink drift, or position-scaling drift
+- trust-cue privilege
+- typed-input privilege
+- umbrella-scope privilege
+- unchanged
+- underlier-plus-wrapper
+- unexpired-transported-closeout-expiry-record-closeout-history-portability
+- unexpired-transported-closeout-expiry-record-closeout-history-portability, horizon-expired-transported-closeout-expiry-record-closeout-history-portability, use-exhausted-transported-closeout-expiry-record-closeout-history-portability, successor-superseded-transported-closeout-expiry-record-closeout-history-portability, source-revoked-transported-closeout-expiry-record-closeout-history-portability, quarantine-expired-transported-closeout-expiry-record-closeout-history-portability, or mixed-transported-closeout-expiry-record-closeout-history-portability-expiry
+- unexpired-transported-retired-history-closeout
+- unexpired-transported-retired-history-closeout, horizon-expired-transported-retired-history-closeout, use-exhausted-transported-retired-history-closeout, successor-superseded-transported-retired-history-closeout, source-revoked-transported-retired-history-closeout, quarantine-expired-transported-retired-history-closeout, or mixed-transported-retired-history-closeout-expiry
+- unlock condition
+- unresolved
+- unsupported backend, incompatible endpoint class, or topology shim
+- unsuppressed actuator or downstream-write risk
+- update gain
+- update or shrink rule
+- update-delta-receipt
+- upfront acquisition cost / exploratory move / learning move
+- upload-context privilege
+- upload-neutralized, attachment-detached, or public-web-replayed variant
+- upload-neutralized, attachment-detached, or public-web-replayed variant worth checking
+- uploaded PDFs, images, Google Drive files, or other user-supplied file context
+- upstream candidate surface
+- use `current` only when expected and observed basis still match exactly
+- use-exhausted-transported-closeout-expiry-record-closeout-history-portability
+- use-exhausted-transported-retired-history-closeout
+- validate
+- validated
+- validation
+- value
+- verbosity
+- verbosity privilege
+- verify or approval surface
+- version
+- version or supersession link
+- viewpoint-balance privilege
+- vocabulary
+- waived
+- wake-state witness or explicit hot-start note
+- warning
+- warning banners, low-confidence labels, may-not-be-reliable notices, or evolving-information strips
+- warning-banner privilege
+- warning-hidden, caution-scrubbed, or confidence-label-neutralized variant
+- warning-only-retired-history-currentness-closeout-travel
+- warning-only-transported-closeout-expiry-record-closeout-history
+- warning-only-transported-closeout-expiry-record-travel
+- warning-only-transported-closeout-history-portability-expiry-history-portability-closeout-history
+- warning-only-transported-closeout-history-portability-expiry-record
+- warning-renewal-by-closeout-history
+- warning-sunset-transported-closeout-expiry-record-travel
+- warning-sunset-transported-closeout-history-portability-expiry-history-portability-record
+- washout budget
+- watcher-frame privilege
+- what still counts as genuinely new evidence
+- what surface still served authoritative output
+- why this result blurbs, explanation chips, coverage notes, or other rationale surfaces
+- why-hidden, explanation-scrubbed, or rationale-swapped variant
+- why-hidden, explanation-scrubbed, or rationale-swapped variant worth checking
+- why-this-result privilege
+- widen-bundle / lower-confidence / quarantine consequence
+- widened-confirming-support
+- window-expired-post-arbitration-governance-retirement-threshold-scope-retirement
+- wired
+- withheld
+- within-family adjudication metric
+- witness set
+- words
+- working
+- workload-replacement
+- workspace privilege
+- workspace-neutralized, project-state-reset, or underlier-replayed variant
+- workspace-neutralized, project-state-reset, or underlier-replayed variant worth checking
+- worth checking
+- wrapper
+- wrapper or role-slot variant
+- wrapper or role-slot variant worth checking
+- wrapper-routed
+- wrapper-stripped, status-scrubbed, or direct-work variant
+- wrapper-stripped, status-scrubbed, or direct-work variant worth checking
+- writable public surfaces
+- citation-hidden, reference-link-scrubbed, or source-card-neutralized variant worth checking
+- warning-hidden, caution-scrubbed, or confidence-label-neutralized variant worth checking

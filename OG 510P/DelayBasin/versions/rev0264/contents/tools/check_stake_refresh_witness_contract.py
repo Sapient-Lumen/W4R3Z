@@ -1,0 +1,3 @@
+from packet_contract_common import require_named_stake_refresh_witness_packet_and_vocabulary
+
+require_named_stake_refresh_witness_packet_and_vocabulary("stake_refresh_witness_contract")

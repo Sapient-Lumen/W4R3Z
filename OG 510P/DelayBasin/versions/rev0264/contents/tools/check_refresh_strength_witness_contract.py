@@ -1,0 +1,5 @@
+from packet_contract_common import require_named_refresh_strength_witness_packet_and_vocabulary
+
+require_named_refresh_strength_witness_packet_and_vocabulary("refresh_strength_witness_contract")
+
+print("check_refresh_strength_witness_contract: OK")

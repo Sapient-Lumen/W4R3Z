@@ -1,0 +1,9 @@
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from gpustorming_contract_lib import ensure_needles
+
+ensure_needles(ROOT, 'gpustorming-expectation', {'docs/10-method/operator-tokens-and-bootstrap-grammar.md': ['expectation-neutralized, verdict-scrubbed, or anchor-scrubbed variant', 'prior-verdict privilege', 'confirmation-frame privilege', 'anchor privilege'], 'docs/10-method/alias-packets-handle-collision-budgets-and-namespace-hygiene.md': ['expectation-neutralized, verdict-scrubbed, or anchor-scrubbed variant', 'prior-verdict privilege', 'confirmation-frame privilege', 'anchor privilege'], 'docs/10-method/gpustorming-control-family-crosswalk-and-sync-guards.md': ['expectation', 'seeded prior verdicts', 'embedded anchors'], 'docs/00-meta/trajectory-map.md': ['prior-verdict privilege', 'confirmation-frame privilege', 'anchor privilege', 'family plus placement/density/boundary/wrapper/neighborhood/history/replicate/channel/eval/script/prestige/persona/pragmatic/rubric/scoreframe/entanglement/polarity/expectation problem'], 'docs/20-constitution/open-question-registry.md': ['expectation-neutralized/verdict-scrubbed/anchor-scrubbed variant', 'prior-verdict privilege', 'anchor privilege'], 'docs/50-promptcraft/prompt-pairs.md': ['expectation-neutralized, verdict-scrubbed, or anchor-scrubbed variant worth checking', 'prior-verdict privilege'], 'docs/00-meta/llm-runbook.md': ['expectation-neutralized, verdict-scrubbed, or anchor-scrubbed variant', 'prior-verdict privilege', 'confirmation-frame privilege'], 'docs/90-quarantine/wild-speculations-2026-03-08.md': ['QWS-0168', 'anchor court', 'prior-verdict scaffold', 'confirmation-frame controller'], 'CHANGELOG.md': ['expectation-neutralized / verdict-scrubbed / anchor-scrubbed guard', 'check_gpustorming_expectation_contract.py']})
+print('check_gpustorming_expectation_contract: OK')

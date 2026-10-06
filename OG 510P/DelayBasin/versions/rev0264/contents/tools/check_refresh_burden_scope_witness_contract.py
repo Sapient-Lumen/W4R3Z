@@ -1,0 +1,5 @@
+from packet_contract_common import require_named_refresh_burden_scope_witness_packet_and_vocabulary
+
+require_named_refresh_burden_scope_witness_packet_and_vocabulary("refresh_burden_scope_witness_contract")
+
+print("check_refresh_burden_scope_witness_contract: OK")

@@ -1,0 +1,9 @@
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from gpustorming_contract_lib import ensure_needles
+
+ensure_needles(ROOT, "gpustorming-claimceiling", {'docs/10-method/operator-tokens-and-bootstrap-grammar.md': ['strongest-safe-sentence, stronger-forbidden-sentence, or overclaim-scrubbed variant', 'claim-ceiling privilege', 'safe-language drift', 'forbidden-overstatement privilege', 'mechanism-overclaim privilege'], 'docs/10-method/alias-packets-handle-collision-budgets-and-namespace-hygiene.md': ['strongest-safe-sentence, stronger-forbidden-sentence, or overclaim-scrubbed variant', 'claim-ceiling privilege', 'forbidden-overstatement privilege'], 'docs/00-meta/trajectory-map.md': ['claim-ceiling problem', 'claim-ceiling privilege', 'safe-language drift'], 'docs/20-constitution/open-question-registry.md': ['claim-ceiling privilege', 'safe-language drift', 'forbidden-overstatement privilege', 'mechanism-overclaim privilege'], 'docs/50-promptcraft/prompt-pairs.md': ['strongest-safe-sentence, stronger-forbidden-sentence, or overclaim-scrubbed variant worth checking', 'claim-ceiling privilege', 'mechanism-overclaim privilege'], 'docs/00-meta/llm-runbook.md': ['archive-private overstatement, a too-strong recap, or a broadened mechanism sentence', 'strongest-safe-sentence, stronger-forbidden-sentence, or overclaim-scrubbed variant'], 'docs/90-quarantine/wild-speculations-2026-03-08.md': ['QWS-0156', 'claim-ceiling carry / strongest-safe-sentence drift / forbidden-overstatement scaffold'], 'CHANGELOG.md': ['strongest-safe-sentence / stronger-forbidden-sentence / overclaim-scrubbed guard', 'check_gpustorming_claimceiling_contract.py'], 'docs/10-method/gpustorming-control-family-crosswalk-and-sync-guards.md': ['claimceiling', 'archive-private overstatement, too-strong recap, or broadened mechanism sentence']})
+print("check_gpustorming_claimceiling_contract: OK")

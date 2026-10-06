@@ -1,0 +1,5 @@
+from packet_contract_common import require_named_recovery_writeback_witness_packet_and_vocabulary
+
+require_named_recovery_writeback_witness_packet_and_vocabulary("recovery_writeback_witness_contract")
+
+print("check_recovery_writeback_witness_contract: OK")

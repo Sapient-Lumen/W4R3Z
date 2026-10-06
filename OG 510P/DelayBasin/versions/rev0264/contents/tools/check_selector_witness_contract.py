@@ -1,0 +1,5 @@
+from packet_contract_common import require_named_standard_packet_and_vocabulary
+
+require_named_standard_packet_and_vocabulary("selector_witness_contract")
+
+print("check_selector_witness_contract: OK")

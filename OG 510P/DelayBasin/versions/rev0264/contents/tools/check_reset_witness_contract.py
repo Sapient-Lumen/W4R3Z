@@ -1,0 +1,59 @@
+import pathlib
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+DOC = ROOT / "docs/10-method/reset-witnesses-washout-baselines-and-contamination-budgets.md"
+TRAJ = ROOT / "docs/00-meta/trajectory-map.md"
+PROMPTS = ROOT / "docs/50-promptcraft/prompt-pairs.md"
+RUNBOOK = ROOT / "docs/00-meta/llm-runbook.md"
+CLAIMS = ROOT / "docs/20-constitution/claim-registry.md"
+INVS = ROOT / "docs/20-constitution/invariant-registry.md"
+OQS = ROOT / "docs/20-constitution/open-question-registry.md"
+PPREG = ROOT / "docs/20-constitution/prompt-pair-registry.md"
+
+for path in (DOC, TRAJ, PROMPTS, RUNBOOK, CLAIMS, INVS, OQS, PPREG):
+    if not path.exists():
+        raise SystemExit(f"missing required reset-witness surface: {path}")
+
+text = DOC.read_text(encoding="utf-8")
+required = [
+    "# Reset witnesses, washout baselines, and contamination budgets",
+    "## Practice / observation",
+    "## External pressure from current research",
+    "## Working synthesis",
+    "## Reset witness vs assistant-echo filter vs hysteresis witness vs backaction witness",
+    "## Countermodels / probes",
+    "## Design consequences",
+    "## Transformer-facing implication",
+    "contamination family or carryover being neutralized",
+    "reset / branch / filter / refactoring operator actually applied",
+    "protected kernel / retained state intended to survive the reset",
+    "clean-slate / restart / matched-fresh baseline",
+    "tolerated contamination remainder / washout budget",
+    "reinject / rollback / quarantine / restage consequence",
+]
+missing = [item for item in required if item not in text]
+if missing:
+    raise SystemExit("reset-witness contract missing: " + ", ".join(missing))
+
+traj = TRAJ.read_text(encoding="utf-8")
+if "OQ-0088" not in traj or "reset witness" not in traj:
+    raise SystemExit("trajectory map missing reset-witness wiring")
+
+prompt_text = PROMPTS.read_text(encoding="utf-8")
+if "PP-0047" not in prompt_text or "clean-slate / restart / matched-fresh baseline" not in prompt_text or "washout budget" not in prompt_text:
+    raise SystemExit("prompt pairs missing reset-witness ratchet")
+
+runbook = RUNBOOK.read_text(encoding="utf-8")
+if "reset witness / washout baseline / contamination budget" not in runbook:
+    raise SystemExit("runbook missing reset-witness guidance")
+
+if "CL-0088" not in CLAIMS.read_text(encoding="utf-8"):
+    raise SystemExit("claim registry missing CL-0088")
+if "INV-0086" not in INVS.read_text(encoding="utf-8"):
+    raise SystemExit("invariant registry missing INV-0086")
+if "OQ-0088" not in OQS.read_text(encoding="utf-8"):
+    raise SystemExit("open question registry missing OQ-0088")
+if "PP-0047" not in PPREG.read_text(encoding="utf-8"):
+    raise SystemExit("prompt pair registry missing PP-0047")
+
+print("check_reset_witness_contract: OK")

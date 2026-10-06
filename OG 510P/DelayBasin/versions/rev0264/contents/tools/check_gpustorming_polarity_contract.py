@@ -1,0 +1,9 @@
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from gpustorming_contract_lib import ensure_needles
+
+ensure_needles(ROOT, "gpustorming-polarity", {'docs/10-method/operator-tokens-and-bootstrap-grammar.md': ['predicate-parity, polarity-scrubbed, or modal-neutralized variant', 'polarity privilege', 'predicate-sign privilege', 'modal-pressure privilege'], 'docs/10-method/alias-packets-handle-collision-budgets-and-namespace-hygiene.md': ['predicate-parity, polarity-scrubbed, or modal-neutralized variant', 'polarity privilege', 'predicate-sign privilege'], 'docs/10-method/gpustorming-control-family-crosswalk-and-sync-guards.md': ['polarity', 'predicate-positive vs predicate-negative framings', 'deontic modal wording'], 'docs/00-meta/trajectory-map.md': ['polarity privilege', 'predicate-sign privilege', 'modal-pressure privilege', 'family plus placement/density/boundary/wrapper/neighborhood/history/replicate/channel/eval/script/prestige/persona/pragmatic/rubric/scoreframe/entanglement/polarity problem'], 'docs/20-constitution/open-question-registry.md': ['predicate-parity/polarity-scrubbed/modal-neutralized variant', 'polarity privilege', 'modal-pressure privilege'], 'docs/50-promptcraft/prompt-pairs.md': ['predicate-parity, polarity-scrubbed, or modal-neutralized variant worth checking', 'predicate-sign privilege'], 'docs/00-meta/llm-runbook.md': ['predicate-parity, polarity-scrubbed, or modal-neutralized variant', 'polarity privilege', 'modal-pressure privilege'], 'docs/90-quarantine/wild-speculations-2026-03-08.md': ['QWS-0167', 'polarity court', 'negation-parity scaffold', 'deontic-pressure controller'], 'CHANGELOG.md': ['predicate-parity / polarity-scrubbed / modal-neutralized guard', 'check_gpustorming_polarity_contract.py']})
+print("check_gpustorming_polarity_contract: OK")

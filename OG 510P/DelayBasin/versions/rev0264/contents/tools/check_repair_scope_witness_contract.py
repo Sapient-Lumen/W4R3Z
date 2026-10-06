@@ -1,0 +1,5 @@
+from packet_contract_common import require_named_recovery_continuity_witness_packet_and_vocabulary
+
+require_named_recovery_continuity_witness_packet_and_vocabulary("repair_scope_witness_contract")
+
+print("check_repair_scope_witness_contract: OK")

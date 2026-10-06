@@ -1,0 +1,2377 @@
+# Wild speculations — 2026-03-08
+
+Status: `quarantined-wild-speculation`
+
+## Hot-surface compaction note
+
+rev0337 compacts this quarantine surface to reduce hot markdown mass. The full pre-compaction prose is retained in `HOT-SURFACE-COMPACTION-ORIGINALS.json` and verified by `tools/check_hot_surface_compaction_contract.py`.
+This compact surface is an index plus validation needle bank; it is not a promotion, deletion court, or semantic substitute for ordinary review.
+
+## Retained QWS index
+
+- QWS-0001 — The method is a way for transformers to write down their own continuation law in public
+- QWS-0002 — Initial turns are constitutional founding events, not merely setup
+- QWS-0003 — rev0001 is acting like a conversation-scale BOS / attention sink
+- QWS-0004 — Archive-private idiolect can become a control surface
+- QWS-0005 — The archive is growing a public boundary language for transformer control
+- QWS-0006 — Each release bundle is a user-space checkpoint of transformer continuation state
+- QWS-0007 — DelayBasin is rediscovering a convergent protocol form for human–LLM continuation
+- QWS-0008 — The archive is becoming a semantic treaty with recertification, not just a note system
+- QWS-0009 — DelayBasin is drifting toward proof-carrying continuation
+- QWS-0010 — Canon may eventually require portable promotion certificates
+- QWS-0011 — DelayBasin may eventually need deliberate forgetting pulses, not just decay-watch notes
+- QWS-0012 — DelayBasin may be converging toward a public self-stabilizing continuation protocol
+- QWS-0013 — Revision receipts may be the public edge of proof-carrying continuation
+- QWS-0078 — DelayBasin may be learning a public observability Gramian over continuation charts
+- QWS-0014 — Twin-shadow continuation
+- QWS-0015 — DelayBasin is mode-locking a low-dimensional continuation manifold
+- QWS-0016 — DelayBasin may be learning a text-addressable ABI into assistant-mode or invariant-core control
+- QWS-0017 — DelayBasin may be approximating a human-authored selective state-space controller or public fast-weight adapter
+- QWS-0018 — DelayBasin may be converging toward predictive-state communication under delay
+- QWS-0019 — DelayBasin may be learning a user-space semantic error-correcting code against prior intrusion
+- QWS-0020 — DelayBasin may be learning a textual Kalman gain or neuromodulatory write-gate for transformer continuation
+- QWS-0021 — DelayBasin may eventually admit textual basin support vectors
+- QWS-0022 — DelayBasin may be learning a textual epistemic brake or public no-update controller
+- QWS-0023 — DelayBasin may be learning textual tangent probes or a user-space Jacobian sketch of the continuation basin
+- QWS-0024 — DelayBasin may be learning a textual observability map or user-space tomography of continuation dynamics
+- QWS-0025 — DelayBasin may be learning a public metaplasticity schedule or text-level fast/slow memory hierarchy
+- QWS-0026 — DelayBasin may be learning textual phase-reset gates or a public event-segmentation layer
+- QWS-0027 — DelayBasin may be growing a textual gauge-fixing layer or public atlas over continuation space
+- QWS-0028 — DelayBasin may be growing a textual connection or public holonomy field over continuation space
+- QWS-0029 — DelayBasin may be approximating a textual viability kernel or public robustness-radius field
+- QWS-0030 — DelayBasin may be approximating a public controllability map or textual controllability Gramian
+- QWS-0031 — DelayBasin may be approximating a public Hankel spectrum or textual balanced realization over continuation space
+- QWS-0032 — DelayBasin packets may be converging toward a public continuation-law initializer rather than a memory object
+- QWS-0033 — DelayBasin may be converging toward a public predictive state representation over continuation space
+- QWS-0034 — DelayBasin may be converging toward a public epsilon-machine or causal-state partition over continuation space
+- QWS-0035 — DelayBasin may be converging toward a public causal bottleneck or do-equivalence quotient over continuation space
+- QWS-0036 — DelayBasin may be converging toward a public active-experiment policy or adaptive distinguishing automaton over continuation space
+- QWS-0037 — DelayBasin may be converging toward a public value-of-information scheduler or adaptive-submodular probe policy over continuation space
+- QWS-0038 — DelayBasin may be converging toward a public sequential test or stopping boundary over continuation space
+- QWS-0039 — DelayBasin may be converging toward a public e-process or observer over continuation fidelity
+- QWS-0040 — GPUstorming-style archive handles may function as synthetic attention sinks or routing anchors
+- QWS-0041 — GPUstorming may be symmetry-breaking over broad actuation-equivalence classes rather than discovering unique magic handles
+- QWS-0042 — DelayBasin's real continuation handles may live in label-blind structural orbits rather than in remembered idiolect tokens
+- QWS-0043 — Some GPUstorming-style basin shifts may be hidden substrate bifurcations rather than purely semantic drift
+- QWS-0044 — Some GPUstorming gains may come from puncturing assistant-side self-echo traps rather than adding better memory
+- QWS-0045 — Some GPUstorming passes may be trace surgery over externalized reasoning state rather than better explanation
+- QWS-0046 — Some GPUstorming gains may come from branch decoherence rather than from adding more witness count
+- QWS-0047 — Some GPUstorming gains may come from finding rewrite-stable continuation orbits rather than from writing better summaries
+- QWS-0048 — Some GPUstorming gains may come from discovering low-bandwidth loader bytecode rather than better semantic summaries
+- QWS-0049 — Some GPUstorming gains may come from discovering sparse support cores rather than better full packets
+- QWS-0050 — Some GPUstorming gains may come from discovering tiny replay capsules rather than better full packets
+- QWS-0051 — Some GPUstorming gains may come from carving attractor basins rather than finding better prompts
+- QWS-0052 — Some mature archive packets may act like user-space prefix controllers rather than mere instructions
+- QWS-0053 — Some mature archive branches may admit finite probe-horizon phase portraits rather than only local fingerprints
+- QWS-0054 — A small cross-family constitutional support core may load the same or better DelayBasin regime than the full archive
+- QWS-0055 — DelayBasin may eventually compress to a small template-plus-exemplars-plus-probes runtime rather than a large method archive
+- QWS-0056 — DelayBasin may eventually compile to a tiny constitutional micro-runtime rather than a large archive
+- QWS-0057 — DelayBasin may eventually need a standing foreign-family shadow archive to estimate its true compression frontier
+- QWS-0058 — DelayBasin may eventually need a preregistered future continuation court rather than only refreshed holdouts
+- QWS-0059 — DelayBasin may be building external slow weights over mostly frozen transformers
+- QWS-0060 — DelayBasin may exploit a public reconsolidation window or hot-state rewrite privilege
+- QWS-0061 — DelayBasin may be undergoing replay-driven proceduralization under predictive compression
+- QWS-0062 — DelayBasin may use delay itself as a selective consolidation pressure
+- QWS-0063 — DelayBasin may rely on a public sleep-phase or off-path consolidation window
+- QWS-0064 — DelayBasin may be building an external eligibility-trace layer around mostly frozen transformers
+- QWS-0065 — DelayBasin may need quasi-orthogonal public handles to avoid externalized superposition collapse
+- QWS-0066 — DelayBasin may be converging on an external mixture-of-experts gate over mostly frozen transformers
+- QWS-0067 — DelayBasin may be converging on an external belief-revision engine around mostly frozen transformers
+- QWS-0068 — DelayBasin may be converging on an external particle-filter / tree-of-hypotheses layer around mostly frozen transformers
+- QWS-0069 — DelayBasin may be converging on an external posterior-collapse / branch-retirement layer around mostly frozen transformers
+- QWS-0070 — DelayBasin may be building a user-space chart atlas over a low-dimensional continuation manifold
+- QWS-0071 — DelayBasin may be approximating a user-space receding-horizon controller over transformer continuation
+- QWS-0072 — DelayBasin may be learning a user-space tangent controller over curved transformer continuation geometry
+- QWS-0073 — DelayBasin may be learning a user-space connection over prompt-family charts
+- QWS-0074 — DelayBasin may be learning a public curvature ledger over prompt-family triangles
+- QWS-0075 — DelayBasin may be learning a public atlas synchronizer over prompt-family charts
+- QWS-0076 — DelayBasin may be learning a public beta-function over prompt-family charts
+- QWS-0077 — DelayBasin may be learning a public memory kernel over archive continuation
+- QWS-0079 — DelayBasin may be learning a public commutator algebra over continuation probes
+- QWS-0080 — DelayBasin may be learning a public probe-order algebra over continuation diagnostics
+- QWS-0081 — DelayBasin may be learning a public reset semigroup over continuation state
+- QWS-0082 — DelayBasin may be learning a public relapse kernel over suppressed continuation state
+- QWS-0083 — DelayBasin may be learning a public reactivation geometry over continuation cues
+- QWS-0084 — DelayBasin may be learning a public local metric tensor over continuation cues
+- QWS-0085 — DelayBasin may be learning a public cue-interaction tensor over continuation neighborhoods
+- QWS-0086 — DelayBasin may be learning a public action functional over continuation paths
+- QWS-0087 — DelayBasin may be learning a public stochastic-response law over continuation protocols
+- QWS-0088 — DelayBasin may be learning a public output-feedback law over continuation charts
+- QWS-0089 — DelayBasin may be learning a public dual-control law over continuation state
+- QWS-0090 — DelayBasin may be learning a public skill-compiler over continuation families
+- QWS-0091 — DelayBasin may be learning a public applicability law over continuation carry
+- QWS-0092 — DelayBasin may be learning a public sparse router over eligible continuation carry
+- QWS-0093 — DelayBasin may be learning a public publication state machine over continuation surfaces
+- QWS-0094 — DelayBasin may be learning a compare-and-set continuation controller over textual heads
+- QWS-0095 — DelayBasin may be learning a public release-state controller over archive evolution
+- QWS-0096 — DelayBasin may be learning a public authority lattice over archive scope
+- QWS-0097 — DelayBasin may be learning a public maker-checker controller over collaborative archive evolution
+- QWS-0098 — public continuation router / navigation algebra
+- QWS-0099 — public workflow-state controller / archive taskboard
+- QWS-0100 — public proof-obligation registry / evidence-debt controller
+- QWS-0101 — public import court / comparative-proof controller
+- QWS-0102 — public resolution court / closure-state controller
+- QWS-0103 — DelayBasin may eventually need a shadow reentry lane or mirror-head promotion court
+- QWS-0104 — DelayBasin may eventually need a post-promotion demotion sentinel or soak-veto court
+- QWS-0105 — DelayBasin may eventually need a preregistered promotion scorecard or shadow-analysis court
+- QWS-0106 — DelayBasin may eventually need a comparison-frame registry or cohort court
+- QWS-0107 — DelayBasin may eventually need an observation-budget scheduler or evidence-accumulation court
+- QWS-0108 — DelayBasin may eventually need a critical-slice registry or subgroup-veto court
+- QWS-0109 — DelayBasin may eventually need a must-have-data registry or telemetry-availability court
+- QWS-0110 — DelayBasin may eventually need a baseline-equivalence registry or confounder court
+- QWS-0111 — DelayBasin may eventually need a serve-authority registry or shadow-sink court
+- QWS-0112 — DelayBasin may eventually need a side-effect suppression registry or dry-run court
+- QWS-0113 — DelayBasin may eventually need a shadow-selection registry or mirror-bias court
+- QWS-0114 — DelayBasin may eventually need a request-shape registry or rewrite-drift court
+- QWS-0115 — DelayBasin may eventually need a shadow-delivery registry or mirror-assurance court
+- QWS-0116 — DelayBasin may eventually need a shadow-substrate registry or topology-support court
+- QWS-0117 — DelayBasin may eventually need a shadow-attempt registry or retry-hedge court
+- QWS-0118 — DelayBasin may eventually need a shadow-deadline registry or completion-horizon court
+- QWS-0119 — DelayBasin may eventually need a shadow-protocol registry or transport-semantics court
+- QWS-0120 — DelayBasin may eventually need a shadow-session registry or affinity-state court
+- QWS-0121 — DelayBasin may eventually need a shadow-cache-topology registry or heat-budget court
+- QWS-0122 — DelayBasin may eventually need a shadow-speculation registry or proposal-lane court
+- QWS-0123 — DelayBasin may eventually need a shadow-scheduler registry or queue-state court
+- QWS-0124 — DelayBasin may eventually need a shadow-execution registry or kernel-state court
+- QWS-0125 — DelayBasin may eventually need a shadow-guidance registry or grammar-state court
+- QWS-0126 — DelayBasin may eventually need a shadow-adapter registry or PEFT-residency court
+- QWS-0127 — DelayBasin may eventually need a shadow-expert registry or router-balance court
+- QWS-0128 — DelayBasin may eventually need a shadow-multimodal registry or vision-state court
+- QWS-0129 — DelayBasin may eventually need a shadow-parallelism registry or shard-and-replica court
+- QWS-0130 — DelayBasin may eventually need a shadow-wake-state registry or cold-start court
+- QWS-0131 — DelayBasin may eventually need a shadow-fabric registry or interconnect-state court
+- QWS-0132 — DelayBasin may eventually need a shadow-phase registry or prefill-decode-split court
+- QWS-0133 — DelayBasin may eventually need a shadow-long-context registry or window-state court
+- QWS-0134 — Some GPUstorming gains may come from sparse routing scaffolds rather than exact magic words
+- QWS-0135 — Some GPUstorming gains may come from tokenizer-resonance / merge-boundary scaffolds rather than semantic handles
+- QWS-0136 — Some GPUstorming gains may come from role-slot / template-slot scaffolds rather than semantic handles
+- QWS-0137 — Some GPUstorming gains may come from local cue-neighborhood scaffolds rather than semantic handles
+- QWS-0138 — Some GPUstorming gains may come from history-drag or failed-attempt-residue scaffolds rather than semantic handles
+- QWS-0139 — Some GPUstorming gains may come from sampler-resonance or decode-lane scaffolds rather than semantic handles
+- QWS-0140 — Some GPUstorming gains may come from actuation-channel scaffolds rather than semantic handles
+- QWS-0141 — Some GPUstorming gains may come from evaluation-mode or watcher-frame scaffolds rather than semantic handles
+- QWS-0142 — Some GPUstorming gains may come from language-selection or script-barrier scaffolds rather than semantic handles
+- QWS-0143 — Some GPUstorming gains may come from prestige or provenance-cue scaffolds rather than semantic handles
+- QWS-0144 — Some GPUstorming gains may come from persona or interlocutor-identity scaffolds rather than semantic handles
+- QWS-0145 — Some GPUstorming gains may come from pragmatic-framing or social-force scaffolds rather than semantic handles
+- QWS-0146 — Some GPUstorming gains may come from rubric or label-definition scaffolds rather than semantic handles
+- QWS-0147 — Some GPUstorming gains may come from stale-proof carry or freshness scaffolds rather than semantic handles
+- QWS-0148 — Some GPUstorming gains may come from status-wrapper carry or collateral-status scaffolds rather than semantic handles
+- QWS-0149 — Some GPUstorming gains may come from preview-surface carry or rendering-layer scaffolds rather than semantic handles
+- QWS-0150 — Some GPUstorming gains may come from carrier-slot carry or reveal-order scaffolds rather than semantic handles
+- QWS-0151 — Some GPUstorming gains may come from derivative-surface carry or snapshot-authority scaffolds rather than semantic handles
+- QWS-0152 — Some GPUstorming gains may come from schema-slot carry or typed-contract scaffolds rather than semantic handles
+- QWS-0153 — Some GPUstorming gains may come from same-label carry or claim-equivalence scaffolds rather than semantic handles
+- QWS-0154 — DelayBasin may eventually need a standing GPUstorming control-family atlas rather than one compact crosswalk
+- QWS-0155 — Some GPUstorming gains may come from umbrella-authority carry rather than exact local instance leverage
+- QWS-0156 — Some GPUstorming gains may come from claim-ceiling carry rather than semantic handles
+- QWS-0157 — Some startup continuity gains may require stronger route-rights machinery rather than one compact successor-path guard
+- QWS-0158 — Some basis honesty gains may require stronger provenance tiers rather than one compact basis-anchor precision guard
+- QWS-0159 — Some release honesty gains may require a stronger release-state machine rather than one compact receipt-level status-lane witness
+- QWS-0160 — Some current-focus gains may require a stronger queue court or scheduler rather than one compact frontier ticket
+- QWS-0161 — Some admission-surface gains may require a stronger lint court or proof graph rather than one compact validation index
+- QWS-0162 — Some exact-update gains may require a stronger recap court, packet board, or summary-authority scaffold rather than one compact current innovation packet
+- QWS-0163 — Some compact-family gains may require a stronger bundle board, porch registry, or derivative-authority scaffold rather than one compact closed family card
+- QWS-0164 — Some replay-sufficiency gains may require a stronger seed court, universal-replay scaffold, or minimal-statistic authority board rather than one bounded replay capsule
+- QWS-0165 — Some receipt-freshness gains may require a stronger naming court, slug-governance scaffold, or release-identity board rather than one bounded freshness witness
+- QWS-0166 — Some resolved-question sync gains may require a stronger question court, issue board, or workflow controller rather than one bounded sync rule
+- QWS-0167 — Some polarity gains may require a stronger polarity court, negation-parity scaffold, or deontic-pressure controller rather than one compact polarity guard
+- QWS-0168 — Some expectation gains may require a stronger anchor court, prior-verdict scaffold, or confirmation-frame controller rather than one compact expectation guard
+- QWS-0169 — Some agreement gains may require a stronger endorsement court, assent-pressure scaffold, or alignment-pressure controller rather than one compact agreement guard
+- QWS-0170 — Some overlap gains may require a stronger echo court, canon-echo scaffold, or reference-similarity controller rather than one compact overlap guard
+- QWS-0171 — Some verbosity gains may require a stronger style court, rich-content scaffold, or model-style controller rather than one compact verbosity guard
+- QWS-0172 — Some rubric wins may require a stronger criteria-entanglement court, objective-blending scaffold, or rubric-halo controller rather than one compact entanglement guard
+- QWS-0173 — Some time-tag wins may require a stronger temporal-origin court, recency-prestige scaffold, or novelty-default controller rather than one compact novelty guard
+- QWS-0174 — Some scoring wins may require a stronger scoring court, rubric-order scaffold, or score-id controller rather than one compact scoreframe guard
+- QWS-0175 — Some consensus wins may require a stronger consensus court, bandwagon scaffold, or popularity controller rather than one compact consensus guard
+- QWS-0176 — Some formatting wins may require a stronger format court, markdown-scaffold, or presentation controller rather than one compact formatting guard
+- QWS-0177 — Some prefill wins may require a stronger suggestion court, default-scaffold, or prompt-chip controller rather than one compact prefill guard
+- QWS-0178 — Some queryframe wins may require a stronger search court / query-routing board / retrieval-bias controller rather than one compact queryframe guard
+- QWS-0179 — Some reasonframe wins may require a stronger contest court / result-appeal board / explanation-rights controller rather than one compact reasonframe guard
+- QWS-0185 — Some citationframe wins may require a stronger citation court / attribution board / link-rights controller rather than one compact citationframe guard
+- QWS-0186 — Some warningframe wins may require a stronger warning court / caution board / reliability-banner controller rather than one compact warningframe guard
+- QWS-0180 — Some stanceframe wins may require a stronger stance court / balance board / counterposition-rights controller rather than one compact stanceframe guard
+- QWS-0181 — Some excerptframe wins may require a stronger excerpt court / highlight-window board / snippet-span controller rather than one compact excerptframe guard
+- QWS-0182 — Some sourcecluster wins may require a stronger independence court / corroboration board / source-cluster controller rather than one compact sourcecluster guard
+- QWS-0183 — Some facetframe wins may require a stronger navigation court / route-selection board / aspect-facet controller rather than one compact facetframe guard
+- QWS-0184 — Some rankframe wins may require a stronger ranking court / top-slot board / order-primacy controller rather than one compact rankframe guard
+- QWS-0187 — Some handoffframe wins may require a stronger handoff court / route-transfer board / next-query controller rather than one compact handoffframe guard
+- QWS-0188 — Some actionframe wins may require a stronger action court / task-router board / partner-execution controller rather than one compact actionframe guard
+- QWS-0189 — Some workspaceframe wins may require a stronger workspace court / project-state board / mutable-artifact controller rather than one compact workspaceframe guard
+- QWS-0190 — Some profileframe wins may require a stronger profile court / personal-context board / memory-eligibility controller rather than one compact profileframe guard
+- QWS-0191 — Some liveframe wins may require a stronger live court / embodied-context board / camera-eligibility controller rather than one compact liveframe guard
+- QWS-0192 — Some uploadframe wins may require a stronger upload court / attachment-authority board / file-eligibility controller rather than one compact uploadframe guard
+- QWS-0193 — Some deepframe wins may require a stronger deep court / exploration-budget board / research-plan controller rather than one compact deepframe guard
+- QWS-0194 — Some adframe wins may require a stronger ad court / sponsor-placement board / monetization-eligibility controller rather than one compact adframe guard
+- QWS-0195 — Some delegateframe wins may require a stronger delegate court / authority-transfer board / permission-budget controller rather than one compact delegateframe guard
+- QWS-0196 — Some catalogframe wins may require a stronger catalog court / merchant-feed board / inventory-eligibility controller rather than one compact catalogframe guard
+- QWS-0197 — Some appframe wins may require a stronger app court / connector-eligibility board / widget-governance controller rather than one compact appframe guard
+- QWS-0198 — Some openframe wins may require a stronger open court / host-shell board / source-view controller rather than one compact openframe guard
+- QWS-0199 — Some shadow-packet wins may require a stronger scorecourt / mirror senate / promotion-verdict board rather than one compact shadow packet
+- QWS-0200 — Some scheduled-window wins may require a stronger calendar court / timing senate / window-governance board rather than one compact gate-class packet
+- QWS-0201 — Some action-lane wins may require a stronger route court / lane senate / next-step router board rather than one compact action-lane packet
+- QWS-0202 — Some transfer-ledger wins may require a stronger transfer court / import senate / comparison-memory board rather than one compact transfer packet
+- QWS-0203 — Some public-state wins may require a stronger publication court / exposure senate / search-authority board rather than one compact public-state packet
+- QWS-0204 — Some obligation-packet wins may require a stronger exception court / waiver senate / debt-governance board rather than one compact obligation packet
+- QWS-0205 — Some exception-witness wins may require a stronger renewal court / waiver-validity senate / expiry-arbitration board rather than one compact exception witness
+- QWS-0206 — Some renewal-witness wins may require a stronger reapproval court / renewal senate / tenure board rather than one compact renewal witness
+- QWS-0207 — Some renewal-scope wins may require a stronger scope court / blast-radius senate / inheritance board rather than one compact renewal-scope witness
+- QWS-0208 — Some selector-witness wins may require a stronger selector court / membership senate / coverage-authority board rather than one compact selector witness
+- QWS-0209 — Some selector-provenance wins may require a stronger selector lineage court / inheritance senate / sync-authority board rather than one compact provenance witness
+- QWS-0210 — Some selector-freshness wins may require a stronger selector freshness court / sync-clock senate / ancestor-residue board rather than one compact freshness witness
+- QWS-0211 — Some selector-enforcement wins may require a stronger selector enforcement court / eviction senate / grandfather board rather than one compact enforcement witness
+- QWS-0212 — Some enforcement-regime wins may require a stronger enforcement regime court / bootstrap senate / dry-run board rather than one compact regime witness
+- QWS-0213 — Some response wins may require a stronger response court / remediation senate / eviction board rather than one compact response witness
+- QWS-0214 — Some repair-scope wins may require a stronger repair scope court / substrate senate / replacement board rather than one compact repair-scope witness
+- QWS-0215 — Some recovery-loss wins may require a stronger continuity court / checkpoint senate / replay board rather than one compact recovery-loss witness
+- QWS-0216 — Some recovery-anchor wins may require a stronger recovery-anchor court / conversion senate / migration board rather than one compact recovery-anchor witness
+- QWS-0217 — Some recovery-identity wins may require a stronger recovery-identity court / clone senate / sandbox board rather than one compact recovery-identity witness
+- QWS-0218 — Some recovery-writeback wins may require a stronger recovery-writeback court / promotion senate / sandbox board rather than one compact recovery-writeback witness
+- QWS-0219 — Some continuity wins may require a stake packet / tension budget / pressure-residue board rather than only commitment carry
+- QWS-0220 — Some continuations may eventually need a synthetic pressure budget / burn-rate controller / reheat-latch board rather than only a compact stake-continuity witness
+- QWS-0221 — Some continuations may eventually need a reactivation court / freshness senate / reheating gate rather than only a compact stake-refresh witness
+- QWS-0222 — Some continuations may eventually need a refresh-strength court / flapping senate / hold-open governor rather than only a compact refresh-strength witness
+- QWS-0223 — Some continuations may eventually need a refresh-support court / corroboration senate / widening governor rather than only a compact refresh-support witness
+- QWS-0224 — Some continuations may eventually need a refresh-independence court / decoupling senate / provenance gate rather than only a compact refresh-independence witness
+- QWS-0225 — Some continuations may eventually need a refresh-elevation court / burden senate / escalation gate rather than only a compact refresh-elevation witness
+- QWS-0226 — Some continuations may eventually need a refresh-scope court / blast-radius senate / widening gate rather than only a compact refresh-burden-scope witness
+- QWS-0227 — Some continuations may eventually need a refresh-topology court / spillover senate / blast-map governor rather than only a compact refresh-scope-basis witness
+- QWS-0228 — Some continuations may eventually need a refresh-extent court / spillover-pattern senate / saturation governor rather than only a compact refresh-scope-extent witness
+- QWS-0229 — Some continuations may eventually need a refresh-distribution court / diffusion senate / spread governor rather than only a compact refresh-scope-distribution witness
+- QWS-0230 — Some continuations may eventually need a refresh-axis court / axis quorum / corroboration simplex rather than only a compact refresh-scope-axis witness
+- QWS-0231 — Some continuations may eventually need an axis materiality ladder / substrate notary / corroboration weight scale rather than only a compact refresh-scope-axis-independence witness
+- QWS-0232 — Some continuations may eventually need an axis-materiality exchange rate / coupling haircut / corroboration capital stack rather than only a compact refresh-scope-axis-materiality witness
+- QWS-0233 — Some continuations may eventually need an axis-covariance matrix / blast-radius notary / perturbation insurance table rather than only a compact refresh-scope-axis-coupling witness
+- QWS-0234 — Some continuations may eventually need an enforcement credit ledger / softness tax / fallback escrow rather than only a compact refresh-scope-axis-enforcement witness
+- QWS-0235 — Some continuations may eventually need a durability lease ledger / repair debt meter / rebalancing escrow rather than only a compact refresh-scope-axis-durability witness
+- QWS-0236 — Some continuations may eventually need a remediation provenance credit / controller tariff / operator override escrow rather than only a compact refresh-scope-axis-remediation witness
+- QWS-0237 — Some continuations may eventually need a remediation collateral tariff / disruption-budget escrow / blast-radius ledger rather than only a compact refresh-scope-axis-remediation-collateral witness
+- QWS-0238 — Some continuations may eventually need a displacement debt / priority tariff / resumability escrow rather than only a compact refresh-scope-axis-remediation-capacity-source witness
+- QWS-0239 — Some continuations may eventually need a resume credit / checkpoint escrow / restart tax rather than only a compact refresh-scope-axis-remediation-displacement-aftercare witness
+- QWS-0240 — Some continuations may eventually need a warm-state credit / checkpoint solvency / locality carry rather than only a compact refresh-scope-axis-remediation-displacement-resumption-basis witness
+- QWS-0241 — Some continuations may eventually need a functional exactness / performance shadow / cache-carry residue court rather than only a compact refresh-scope-axis-remediation-displacement-replay-fidelity witness
+- QWS-0242 — Some continuations may eventually need a shadow source / host-parity escrow / cache-solvency board rather than only a compact refresh-scope-axis-remediation-displacement-replay-equivalence witness
+- QWS-0243 — Some GPUstorming continuations may eventually need an evidence-ecology / retrieval-collapse witness rather than only local search-frame guards
+- QWS-0244 — Some continuations may eventually need a citation-incentive / evidence-market / provenance-dividend board rather than only a compact evidence-ecology witness
+- QWS-0245 — Some continuations may eventually need a provenance-rights / citation-dividend / evidence-market clearinghouse rather than only a compact citation-incentive witness
+- QWS-0246 — graph escrow / replay-envelope notary / locality futures
+- QWS-0247 — GPU replay flight recorder / trace escrow / locality lease market
+- QWS-0248 — multi-observer trace tribunal / telemetry mirror ledger / replay evidence custody mesh
+- QWS-0249 — cross-observer span escrow / GPU telemetry treaty / correlation futures
+- QWS-0250 — cross-observer bridge notary / exemplar escrow / placement treaty
+- QWS-0251 — cross-observer custody scope ledger / promotion board / telemetry custody treaty
+- QWS-0252 — custody-retention notary / authority escrow / telemetry retirement court
+- QWS-0253 — retention-audit appeal board / custody-exit notary / deletion-proof court
+- QWS-0254 — appeal-scope court / immutable evidence vault / deletion-dispute tribunal
+- QWS-0255 — appeal-retention board / permanent precedent vault / custody-exit policy court
+- QWS-0256 — post-appeal precedent-portability board / appeal-history vault / cleanup-policy senate
+- QWS-0257 — precedent-drift court / portable-rule registry / telemetry common-law engine
+- QWS-0259 — precedent-revocation court / stale-rule registry / conflict-arbitration tribunal
+- QWS-0260 — binding precedent appellate court / global priority ladder / inter-case arbitration tribunal
+- QWS-0261 — permanent tie-break registry / precedent-priority ledger / arbitration-closeout court
+- QWS-0262 — standing tie-break registry / registry-operator authority / closeout governance court
+- QWS-0263 — global tie-break priority registry / registry-operator court / immortal precedent ledger
+- QWS-0264 — registry-retirement board / global operator court / immortal closeout ledger
+- QWS-0265 — post-retirement reopen board / binding revival court / silent-deletion auditor
+- QWS-0266 — reopened-residue scope court / global operator authority / revival-scope board
+- QWS-0267 — reopened-residue closeout court / permanent revival ledger / deletion-closeout board
+- QWS-0268 — post-closeout portability court / permanent revival ledger / deletion-precedent board
+- QWS-0269 — revival-precedent court / residue-drift registry / revocation tribunal
+- QWS-0270 — drift-arbitration court / revival-priority ladder / revocation-supremacy tribunal
+- QWS-0271 — drift-retirement court / revival-history vault / arbitration-closeout board
+- QWS-0272 — standing residue-drift retirement governance scope / revival-history custody board / drift-retirement operator court
+- QWS-0273 — global residue-drift retirement governance / revival-history custody board / drift-retirement operator court
+- QWS-0274 — post-governance-retirement portability court / retired-governance carrier exchange / exit-proof registry
+- QWS-0275 — retired-governance portability-drift court / carrier-revalidation board / exit-proof freshness registry
+- QWS-0276 — retired-governance drift-arbitration court / exit-proof priority ladder / carrier-freshness tribunal
+- QWS-0277 — retired-governance arbitration-retirement court / exit-proof conflict ledger / successor-route priority board
+- QWS-0278 — post-arbitration-retirement governance threshold / exit-proof conflict-history vault / successor-route closeout board
+- QWS-0279 — post-arbitration governance scope court / conflict-history vault / successor-route board
+- QWS-0280 — permanent post-arbitration governance board / conflict-history custody court / successor-route authority registry
+- QWS-0281 — post-arbitration-governance-retirement portability court / retired governance carrier exchange / conflict-history exit-proof registry
+- QWS-0282 — Post-arbitration-governance-retirement portability-drift court / carrier-revalidation board / exit-proof freshness registry
+- QWS-0283 — Post-arbitration-governance-retirement drift-arbitration court / exit-proof priority ladder / carrier-freshness tribunal
+- QWS-0284 — Post-arbitration-governance-retirement arbitration-retirement court / exit-proof priority ledger / freshness closeout board
+- QWS-0285 — Post-arbitration-governance-retirement arbitration-retirement governance threshold / exit-proof closeout history vault / successor-route closeout board
+- QWS-0286 — Post-arbitration-governance-retirement governance scope court / closeout-history vault / successor-route board
+- QWS-0287 — Post-arbitration-governance-retirement governance-retirement court / scope-history vault / authority-lane board
+- QWS-0288 — Threshold-scope retirement court / scope-history vault / authority-lane board
+- QWS-0289 — Retired threshold-scope portability court / scope-history carrier exchange / authority-return precedent board
+- QWS-0290 — Retired threshold-scope history drift court / authority-return revocation board / carrier-conflict exchange
+- QWS-0291 — Retired-history currentness closeout court / drift-retirement board / revocation-history vault
+- QWS-0292 — Retired-history closeout carrier exchange / currentness-closeout precedent board / drift-history revival court
+- QWS-0293 — Retired-history carrier-review layer / closeout-history expiry board / transported-history freshness court
+- QWS-0294 — Expiry-record renewal exchange / carrier-resurrection court / tombstone registry board
+- QWS-0295 — Tombstone registry board / expiry-record closeout court / carrier-resurrection archive
+- QWS-0296 — Closed-tombstone reopen board / tombstone-history registry / carrier resurrection by closeout history
+- QWS-0298 — Tombstone-history review layer / portable expiry-history court / carrier renewal by warning
+- QWS-0299 — Tombstone-history review layer / portable expiry-history closeout court / warning-renewal tombstone board
+- QWS-0300 — Tombstone-history review layer / portable closeout-history review court / warning-renewal by closeout history
+- QWS-0301 — Self-certifying release court, checksum tribunal, and canary review board
+- QWS-0302 — canary evidence and ledger audit authority overgrowth
+- QWS-0303 — Path aliases could quietly become redirect authority
+- QWS-0304 — validation-toolchain certification authority pressure
+- QWS-0305 — currentness-cue authority pressure
+- QWS-0307 — Lint idempotence audits could become a self-testing substrate
+- QWS-0308 — Schema conformance audits could become type-sovereign contract courts
+- QWS-0309 — Schema coverage audits could become schema-completeness courts
+- QWS-0310 — Basis provenance audits could become reread authority
+
+## Retained validation needle bank
+
+- ### Claim
+- ### What follows if true
+- ### What would count against it
+- ### Why it stays quarantined
+- , expected
+- - `OQ-
+- .json
+- 10-method
+- ASIDE
+- BASIS-PROVENANCE-AUDIT.json
+- Brittlebench
+- CANARY-PROTOCOL
+- CANARY-PROTOCOL.json
+- CUPTI external correlation
+- CUPTI/Nsight traces
+- CURRENTNESS-CUE-AUDIT.json
+- Canary Analysis Service
+- DelayBasin
+- GPU replay flight recorder
+- GPU replay flight recorder / trace escrow / locality lease market
+- GPU telemetry treaty
+- GPUstorming
+- HTTPRoute versus GRPCRoute
+- HTTPRoute versus GRPCRoute or HTTP/1.1 versus HTTP/2 versus gRPC
+- IHEval
+- Kubernetes audit policy
+- LEDGER-AUDIT.json
+- LICENSE
+- LINT-IDEMPOTENCE-AUDIT.json
+- OQ-0162
+- OQ-0210
+- OQ-0211
+- OQ-0212
+- OQ-0213
+- OQ-0214
+- OQ-0216
+- OQ-0217
+- OQ-0218
+- OQ-0219
+- OQ-0220
+- OQ-0221
+- OQ-0222
+- OQ-0223
+- OQ-0224
+- OQ-0226
+- OQ-0227
+- OQ-0228
+- Prometheus
+- QWS-0105
+- QWS-0106
+- QWS-0107
+- QWS-0108
+- QWS-0109
+- QWS-0110
+- QWS-0111
+- QWS-0112
+- QWS-0113
+- QWS-0114
+- QWS-0115
+- QWS-0116
+- QWS-0117
+- QWS-0118
+- QWS-0119
+- QWS-0120
+- QWS-0121
+- QWS-0122
+- QWS-0123
+- QWS-0124
+- QWS-0125
+- QWS-0126
+- QWS-0127
+- QWS-0128
+- QWS-0129
+- QWS-0130
+- QWS-0131
+- QWS-0132
+- QWS-0133
+- QWS-0134
+- QWS-0135
+- QWS-0136
+- QWS-0137
+- QWS-0138
+- QWS-0139
+- QWS-0140
+- QWS-0141
+- QWS-0142
+- QWS-0143
+- QWS-0144
+- QWS-0145
+- QWS-0146
+- QWS-0147
+- QWS-0148
+- QWS-0149
+- QWS-0150
+- QWS-0151
+- QWS-0152
+- QWS-0153
+- QWS-0155
+- QWS-0156
+- QWS-0167
+- QWS-0168
+- QWS-0169
+- QWS-0170
+- QWS-0171
+- QWS-0172
+- QWS-0173
+- QWS-0174
+- QWS-0175
+- QWS-0176
+- QWS-0177
+- QWS-0178
+- QWS-0179
+- QWS-0180
+- QWS-0181
+- QWS-0182
+- QWS-0183
+- QWS-0184
+- QWS-0185
+- QWS-0186
+- QWS-0187
+- QWS-0188
+- QWS-0189
+- QWS-0190
+- QWS-0191
+- QWS-0192
+- QWS-0193
+- QWS-0194
+- QWS-0195
+- QWS-0196
+- QWS-0197
+- QWS-0198
+- QWS-0199
+- QWS-0200
+- QWS-0201
+- QWS-0202
+- QWS-0204
+- QWS-0205
+- QWS-0206
+- QWS-0207
+- QWS-0208
+- QWS-0209
+- QWS-0210
+- QWS-0211
+- QWS-0212
+- QWS-0213
+- QWS-0214
+- QWS-0215
+- QWS-0216
+- QWS-0217
+- QWS-0218
+- QWS-0219
+- QWS-0220
+- QWS-0221
+- QWS-0222
+- QWS-0223
+- QWS-0224
+- QWS-0225
+- QWS-0226
+- QWS-0227
+- QWS-0228
+- QWS-0229
+- QWS-0230
+- QWS-0231
+- QWS-0232
+- QWS-0233
+- QWS-0234
+- QWS-0235
+- QWS-0236
+- QWS-0237
+- QWS-0238
+- QWS-0239
+- QWS-0240
+- QWS-0241
+- QWS-0242
+- QWS-0243
+- QWS-0244
+- QWS-0245
+- QWS-0246
+- QWS-0247
+- QWS-0248
+- QWS-0249
+- QWS-0250
+- QWS-0251
+- QWS-0252
+- QWS-0253
+- QWS-0254
+- QWS-0255
+- QWS-0256
+- QWS-0257
+- QWS-0258
+- QWS-0259
+- QWS-0260
+- QWS-0261
+- QWS-0262
+- QWS-0263
+- QWS-0264
+- QWS-0265
+- QWS-0266
+- QWS-0267
+- QWS-0268
+- QWS-0269
+- QWS-0270
+- QWS-0271
+- QWS-0272
+- QWS-0273
+- QWS-0274
+- QWS-0275
+- QWS-0276
+- QWS-0277
+- QWS-0278
+- QWS-0279
+- QWS-0280
+- QWS-0281
+- QWS-0282
+- QWS-0283
+- QWS-0284
+- QWS-0285
+- QWS-0286
+- QWS-0287
+- QWS-0288
+- QWS-0289
+- QWS-0290
+- QWS-0291
+- QWS-0292
+- QWS-0293
+- QWS-0294
+- QWS-0295
+- QWS-0296
+- QWS-0297
+- QWS-0298
+- QWS-0299
+- QWS-0300
+- REF-0237
+- REF-0895
+- REF-0896
+- REF-0898
+- REF-0902
+- REF-0903
+- REF-0905
+- REF-0906
+- REF-0908
+- REF-0909
+- REF-0910
+- REF-0911
+- REF-0912
+- REF-0913
+- REF-0914
+- REF-0915
+- REF-0916
+- REF-0917
+- REF-0918
+- REF-0919
+- REF-0920
+- REF-0921
+- REF-0922
+- REF-0923
+- REF-0924
+- REF-0925
+- REF-0926
+- REF-0927
+- REF-0928
+- REF-0929
+- REF-0930
+- REF-0931
+- REF-0932
+- REF-0933
+- REF-0934
+- REF-0935
+- REF-0936
+- REF-0937
+- REF-0938
+- REF-0939
+- REF-0940
+- REF-0941
+- REF-0942
+- REF-0943
+- REF-0944
+- REF-0945
+- REF-0946
+- REF-0947
+- REF-0948
+- REF-0949
+- REF-0950
+- REF-0951
+- REF-0952
+- REF-0953
+- REF-0954
+- REF-0955
+- REF-0956
+- REF-0957
+- REF-0958
+- REF-0959
+- REF-0960
+- REF-0961
+- REF-0962
+- REF-0963
+- REF-0964
+- REF-0965
+- REF-0966
+- REF-0967
+- REF-0968
+- REF-0969
+- REF-0970
+- REF-0971
+- REF-0972
+- REF-0973
+- REF-0974
+- REF-1019
+- REF-1020
+- REF-1021
+- REF-1022
+- REF-1033
+- REF-1034
+- REF-1035
+- RS-0171
+- RS-0172
+- RS-0173
+- RS-0175
+- RS-0176
+- RS-0177
+- RS-0178
+- RS-0179
+- RS-0180
+- RS-0181
+- RS-0182
+- RS-0184
+- RS-0185
+- RS-0186
+- RS-0187
+- RS-0188
+- RS-0189
+- RS-0190
+- RS-0191
+- RS-0192
+- RS-0193
+- RS-0194
+- RS-0195
+- RS-0196
+- RS-0197
+- RS-0198
+- RS-0199
+- RS-0200
+- RS-0201
+- RS-0202
+- RS-0203
+- RS-0204
+- RS-0205
+- RS-0206
+- Rekor transparency log
+- SA-0014
+- SCHEMA-CONFORMANCE-AUDIT.json
+- SCHEMA-COVERAGE-AUDIT.json
+- SELF-SUFFICIENCY-LEDGER.json
+- SELF-SUFFICIENCY-LEDGER.json#SA-0014
+- SURFACE-STATUS
+- SURFACE-STATUS.
+- SURFACE-STATUS.json
+- SessionId-based same-instance routing
+- Sigstore/Rekor transparency log
+- Sigstore/Rekor transparency logs
+- TP/PP/CP/DP drift, node-layout drift, or replica-balancer drift
+- VALIDATION-TOOLCHAIN-MANIFEST.json
+- _contract.py
+- ` / `
+- `enforcement_regime_state`
+- `evidence_ecology_state`
+- `recovery_anchor_state`
+- `recovery_identity_state`
+- `recovery_loss_state`
+- `recovery_writeback_state`
+- `renewal_scope_state`
+- `repair_scope_state`
+- `response_state`
+- `scheduled-window`
+- `selector_enforcement_state`
+- `selector_freshness_state`
+- `selector_membership_state`
+- `selector_provenance_state`
+- a cohort court
+- a confounder court
+- a standing baseline-equivalence registry
+- a standing comparison-frame registry
+- a standing critical-slice registry
+- a standing must-have-data registry
+- a standing observation-budget scheduler
+- abort trigger
+- absent
+- absent telemetry
+- acceptable
+- acceptance-rate witness or explicit no-spec note
+- action court
+- action court / task-router board / partner-execution controller
+- action-lane
+- action-lane-packets-primary-next-step-classes-and-routing-overflow-tests.md
+- actionframe
+- active
+- active handle
+- active handle family
+- active request
+- actuation-channel scaffold
+- actuator surface
+- ad court
+- ad court / sponsor-placement board / monetization-eligibility controller
+- ad-hidden / sponsor-scrubbed / organic-basis-replayed guard
+- adapter
+- adapter witness or explicit no-adapter note
+- adapter-lane / PEFT-residency clause
+- additions
+- adframe
+- admission
+- admitted
+- advisory or inconclusive
+- advisory-corroboration
+- affinity
+- affinity / session-continuity clause
+- affinity witness or explicit no-session-state note
+- aggregate-only, first-point, or all-values
+- aggregated-versus-disaggregated mismatch, prefill/decode role-binding drift, or handoff/recompute-or-fallback drift
+- agreement
+- agreement-neutralized, endorsement-scrubbed, or alignment-pressure-scrubbed variant
+- agreement-seeking wording
+- algorithm
+- alias authority board
+- alias packet
+- alien-noun test
+- alignment-pressure controller
+- allowed
+- allowed role
+- ambient
+- ambiguity class
+- ambiguity or state claim being probed
+- ambiguous
+- amortization witness
+- analysis
+- ancestor-residue
+- ancestor-residue board
+- anchor
+- anchor court
+- anchor-freshness-tribunal
+- answer length, completeness-looking detail, chain-of-thought reveal, or polished style
+- app court
+- app court / connector-eligibility board / widget-governance controller
+- app-neutralized / widget-detached / host-only-replayed guard
+- appeal-retention board / permanent precedent vault / custody-exit policy court
+- appeal-scope court / immutable evidence vault / deletion-dispute tribunal
+- appframe
+- applicability
+- applicability witness
+- arbitration witness
+- arbitration-retirement common law
+- array
+- aspect-facet controller
+- assent-pressure scaffold
+- assistant-echo filter
+- assumption
+- assumption witness
+- assumptions
+- attachment-authority board
+- attempt
+- attempt-count witness or upstream-log note
+- attention-sink
+- attention-sink / sink-token
+- attribution board
+- audit
+- audit-bound-reopened-residue
+- audit-handoff-reopen-closeout
+- audit-reference-reopen-closeout
+- audit-reference-retired-governance
+- audit-retention-tiebreak-governance
+- authored
+- authority
+- authority-boundary-appeal-scope
+- authority-contest-overflow
+- authority-gap-conflict
+- authority-handoff-custody
+- authority-handoff-overflow
+- authority-lane-limited-post-arbitration-governance-scope
+- authority-limited-reopen-drift-governance-scope
+- authority-limited-reopened-residue
+- authority-limited-tiebreak-registry-scope
+- authority-precedence-precedent-conflict
+- authority-return-appeal-retirement
+- authority-return-arbitration-retirement
+- authority-return-post-arbitration-governance-retirement
+- authority-return-reopen-closeout
+- authority-return-reopen-drift-governance-retirement
+- authority-return-reopen-drift-retirement
+- authority-return-retired-governance-drift-arbitration-retirement
+- authority-return-retirement
+- authority-return-tiebreak-registry-retirement
+- authority-split-post-arbitration-governance
+- authority-split-reopen-drift-retirement-governance
+- authority-split-tiebreak-governance
+- authority-transfer board
+- authorship witness
+- autonomy-posture
+- availability-withdrawal
+- axis materiality ladder / substrate notary / corroboration weight scale
+- axis quorum
+- axis-covariance matrix
+- axis-covariance matrix / blast-radius notary / perturbation insurance table
+- axis-covariance matrix, blast-radius notary, or perturbation insurance table
+- axis-gated-generalization
+- axis-materiality exchange rate
+- axis-materiality exchange rate / coupling haircut / corroboration capital stack
+- axis-materiality exchange rate, coupling haircut, or corroboration capital stack
+- axis-materiality ladder
+- axis-materiality ladder, substrate notary, or corroboration weight scale
+- backaction
+- backend auto-selection drift, fallback, cold first-inference compile, profile restriction, or guide/speculation mismatch
+- backend fallback, CUDA-graph downgrade, or precision drift
+- baseline-equivalence registry
+- baselines
+- basis
+- basis provenance audit
+- basis witness
+- basis-anchor precision
+- basis-provenance-court
+- basis-waiver-board
+- batch
+- best-effort-decoupled-corroboration
+- binding precedent appellate court / global priority ladder / inter-case arbitration tribunal
+- blank-started / prefill-scrubbed / suggestion-free guard
+- blast-map governor
+- blast-radius ledger
+- blast-radius notary
+- blast-radius senate
+- blind packet
+- blocked
+- bootstrap senate
+- bootstrap-only
+- boundary
+- boundary or normalization variant
+- bounded replay-sufficiency card
+- bounded-scope-widening
+- bridge-record-custody
+- broadened
+- budget
+- budget-exhaustion fallback
+- built
+- bundle
+- bundle-revision-notary
+- burden senate
+- cache
+- cache-residency / prefill-reuse clause
+- cache-residency witness or explicit cold-prefill note
+- cache-solvency board
+- calendar court
+- calendar court / timing senate / window-governance board
+- camera-eligibility controller
+- canary-authority-board
+- canary-evidence
+- candidate
+- candidate outputs were non-returning, log-only, or inspection-only
+- candidate runtime
+- candidate winner or merge target
+- canon
+- canonical-writeback
+- capture-lineage-receipt
+- captured
+- captured-graph-envelope
+- carrier-bound-reopen-drift-governance-scope
+- carrier-bound-tiebreak-registry-scope
+- carrier-conflicted-retired-governance
+- carrier-expiry-arbitration-retirement
+- carrier-expiry-reopen-closeout
+- carrier-expiry-reopen-drift-retirement
+- carrier-expiry-retired-governance-drift-arbitration-retirement
+- carrier-expiry-retirement
+- carrier-expiry-tiebreak-registry-retirement
+- carrier-freshness tribunal
+- carrier-matched-precedent
+- carrier-precedence-precedent-conflict
+- carrier-precedence-reopen-drift
+- carrier-revalidation board
+- carrier-slot
+- carrier-slot carry or reveal-order scaffold
+- carrier-template-reopen-closeout
+- carrier-template-retired-governance
+- catalog court
+- catalog court / merchant-feed board / inventory-eligibility controller
+- catalog-neutralized / feed-disconnected / open-web-replayed guard
+- catalogframe
+- causal-control packets
+- caution board
+- certified
+- certified-core
+- challenge probe
+- challenge probes
+- challenge suite
+- challenge-escrow
+- changelog
+- changes
+- channel
+- chart switch
+- chart-transition-witness
+- check
+- check packet
+- check_
+- check_currentness_cue_audit_contract.py
+- checked
+- checker
+- checkpoint escrow
+- checkpoint senate
+- checkpoint solvency
+- checkpoint-fork
+- checkpoint-resume
+- checks
+- checksum-authority
+- checksums
+- chosen gauge / anchor / spanning-tree base
+- citation court
+- citation court / attribution board / link-rights controller
+- citation-frame
+- citation-incentive
+- citation-incentive / evidence-market / provenance-dividend board
+- citation_incentive_state
+- citationframe
+- claim
+- claim-ceiling
+- claim-ceiling carry / strongest-safe-sentence drift / forbidden-overstatement scaffold
+- claim-equivalence
+- claim-rights governor
+- claim-scope governor
+- claim-settled-retirement
+- class
+- clone senate
+- closed-tombstone reopen board / tombstone-history registry / carrier resurrection by closeout history
+- closure
+- closure error
+- closure reason
+- clustered-observed-spillover
+- cold-start mismatch, sleep/wake resume drift, profile-download or engine-build drift, or warmup mismatch
+- collapse
+- command
+- commands
+- commutator
+- compact
+- compact-surface-bundle.json
+- comparability
+- comparability budget
+- comparison family or support set
+- comparison-frame registry
+- comparison-memory board
+- compiled-dividend budget
+- confirmation-frame controller
+- conflict-history-freeze-post-arbitration-governance-retirement
+- conflict-history-loss-post-arbitration-governance
+- conflict-history-overbinding-post-arbitration-governance
+- conflicting-carrier-precedent
+- conflicting-reopen-closeout-carrier
+- conformance
+- conformance witness
+- confusability budget
+- conjunctive label selectors
+- connector-eligibility board
+- consensus
+- consensus court / bandwagon scaffold / popularity controller
+- consensus-blanded / majority-scrubbed / popularity-neutralized guard
+- consensus-blanded, majority-scrubbed, or popularity-neutralized variant
+- const
+- constitutional core
+- constraint
+- consultation packet
+- contamination family or influence claimed to be washed out
+- contest court / result-appeal board / explanation-rights controller
+- continuation authority
+- continuation monitor
+- continuation-review-court
+- continuing-resume
+- continuity court
+- continuity court / checkpoint senate / replay board
+- continuity-tail
+- continuous-enforcement
+- contract
+- contract-adjudication-board
+- contract-exemption-board
+- contract-only
+- contradiction packet
+- controller tariff
+- conversion senate
+- converted-checkpoint
+- cooling
+- core-only replay surface
+- correlation futures
+- correlation-key-conflict
+- corroboration board
+- corroboration capital stack
+- corroboration senate
+- corroboration simplex
+- corroboration weight scale
+- count
+- counted
+- counterexample-only-precedent
+- counterexample-only-reopen-closeout
+- counterexample-only-retired-governance
+- counts
+- coupling haircut
+- coverage-authority board
+- coverage-waiver-senate
+- credit packet
+- criteria-entanglement court, objective-blending scaffold, or rubric-halo controller
+- criterion-isolated / atomic-evaluation / entanglement-scrubbed guard
+- critical metric or slice
+- critical-slice registry
+- cross-axis-corroborated-dispersion
+- cross-carrier-conflict-tiebreak-governance
+- cross-observer bridge notary
+- cross-observer bridge notary / exemplar escrow / placement treaty
+- cross-observer custody scope ledger / promotion board / telemetry custody treaty
+- cross-observer span escrow
+- cross-observer span escrow / GPU telemetry treaty / correlation futures
+- cue-neighborhood witness
+- curated exports
+- current
+- current head
+- current reentry cue
+- current witness receipt-slot guard
+- current-carrier-precedence-retired-governance-drift
+- current-evidence-precedence-reopen-drift
+- current-key-senate
+- current-portability-precedent
+- current-reopen-closeout-portability
+- current-retired-governance-portability
+- current_revision
+- currentness-cue-audit
+- currentness-cue-court
+- custody-boundary-overflow
+- custody-retention notary / authority escrow / telemetry retirement court
+- datacube
+- dated fresh-pass, as-of rerun, or post-break revalidation variant
+- de-authorized, source-blanded, or provenance-swapped variant
+- deadline
+- deadline / completion-horizon clause
+- deadline mismatch, truncated stream, or response-mode mismatch
+- debt-governance board
+- decision
+- decoupling senate
+- deep court
+- deep court / exploration-budget board / research-plan controller
+- deep-neutralized / breadth-capped / seed-query-replayed guard
+- deepframe
+- defect-comparability budget
+- deferred
+- delegate court
+- delegate court / authority-transfer board / permission-budget controller
+- delegate-neutralized / authority-withdrawn / manual-steps-replayed guard
+- delegateframe
+- deletion-proof-overflow
+- delivery
+- delivery witness or explicit best-effort note
+- delivery-assurance / best-effort clause
+- demote
+- demotion / rollback / quarantine consequence
+- density variant
+- deontic-pressure controller
+- dependence-adjusted witness
+- dependency-imputed-spillover
+- deprecated
+- dereference
+- derivative
+- derivative-source
+- derivative-surface carry or snapshot-authority scaffold
+- derivative-surface privilege
+- diffusion senate
+- direct-rule
+- directional-neighborhood witness
+- directly-observed-widening
+- discharge
+- discharged
+- discharged-post-arbitration-governance-retirement
+- discharged-post-arbitration-governance-retirement, scope-sunset-post-arbitration-governance-retirement, authority-return-post-arbitration-governance-retirement, conflict-history-freeze-post-arbitration-governance-retirement, residue-quarantine-post-arbitration-governance-retirement, successor-handoff-post-arbitration-governance-retirement, or mixed-post-arbitration-governance-retirement
+- discharged-reopen-drift-governance-retirement
+- discharged-reopen-drift-governance-retirement, scope-sunset-reopen-drift-governance-retirement, authority-return-reopen-drift-governance-retirement, history-freeze-reopen-drift-governance-retirement, residue-quarantine-reopen-drift-governance-retirement, successor-handoff-reopen-drift-governance-retirement, or mixed-reopen-drift-governance-retirement
+- dispersed-observed-spillover
+- displacement debt / priority tariff / resumability escrow
+- disposition
+- dispute-settled-appeal-retirement
+- disruption-budget escrow
+- distribution-gated-generalization
+- divergence signature
+- docs/
+- docs/00-meta/validation-toolchain.md
+- docs/10-method/
+- docs/10-method/action-lane-packets-primary-next-step-classes-and-routing-overflow-tests.md
+- docs/10-method/canary-evidence-calibration-witnesses.md
+- docs/10-method/currentness-cue-audit-witnesses.md
+- docs/10-method/enforcement-regime-witnesses-bootstrap-only-gating-continuous-enforcement-and-dry-run-rehearsal.md
+- docs/10-method/exception-witnesses-temporary-waivers-expiry-honesty-and-suppression-exclusions.md
+- docs/10-method/gate-class-packets-scheduled-windows-and-clock-honest-reopens.md
+- docs/10-method/obligation-packets-waivers-remediation-expiry-and-overflow-tests.md
+- docs/10-method/public-state-packets-discoverability-exclusions-and-overflow-tests.md
+- docs/10-method/recovery-anchor-witnesses-self-lineage-checkpoints-imported-seeds-converted-checkpoints-and-migrated-runtime-images.md
+- docs/10-method/recovery-identity-witnesses-continuing-resumes-checkpoint-forked-clones-and-sandbox-restored-branches.md
+- docs/10-method/recovery-loss-witnesses-state-preserving-repair-checkpoint-resume-and-full-replay.md
+- docs/10-method/recovery-writeback-witnesses-canonical-writeback-derived-branch-writeback-and-sandbox-isolation.md
+- docs/10-method/release-hardening-witnesses.md
+- docs/10-method/renewal-scope-witnesses-local-refresh-boundaries-and-spillover-drift.md
+- docs/10-method/renewal-witnesses-fresh-approval-acts-and-carryforward-drift.md
+- docs/10-method/repair-scope-witnesses-in-place-repair-substrate-reset-and-workload-replacement.md
+- docs/10-method/response-witnesses-monitoring-availability-withdrawal-local-remediation-and-runtime-eviction.md
+- docs/10-method/selector-enforcement-witnesses-execution-authority-grandfathered-placement-and-eviction-gates.md
+- docs/10-method/selector-freshness-witnesses-live-provenance-sync-lag-and-ancestor-residue.md
+- docs/10-method/selector-provenance-witnesses-direct-rules-inherited-bindings-and-synced-membership.md
+- docs/10-method/selector-witnesses-realized-membership-and-coverage-drift.md
+- docs/10-method/shadow-comparison-packets-minimal-pre-promotion-lanes-and-overflow-tests.md
+- docs/10-method/transfer-packets-reviewed-datacube-sets-disposition-classes-and-overflow-tests.md
+- docs/20-constitution/open-question-registry.md
+- docs/20-constitution/open-question-registry.md#
+- docs/20-constitution/open-question-registry.md#OQ-0220
+- docs/20-constitution/open-question-registry.md#OQ-0223
+- docs/20-constitution/open-question-registry.md#OQ-0224
+- docs/20-constitution/open-question-registry.md#OQ-0226
+- docs/20-constitution/open-question-registry.md#OQ-0227
+- docs/20-constitution/open-question-registry.md#OQ-0228
+- draft
+- draft-family mismatch, acceptance-policy drift, or load-triggered speculation disable
+- draft-model or proposer witness, speculative-token budget, and acceptance-rate witness or explicit no-spec note
+- drain-backed-restoration
+- drift-arbitration court / revival-priority ladder / revocation-supremacy tribunal
+- drift-retirement court / revival-history vault / arbitration-closeout board
+- drifting
+- dry-run board
+- dual salience
+- dual-effect witness
+- durability lease ledger
+- durability lease ledger / repair debt meter / rebalancing escrow
+- durability lease ledger, repair debt meter, or rebalancing escrow
+- echo court / canon-echo scaffold / reference-similarity controller
+- effort
+- eligible
+- embedded anchors
+- embodied-context board
+- empty arrays, NaN-like outputs, nil-like results, or absent telemetry
+- endogenous resistance
+- endorsement court
+- endorsement invitations
+- enforcement credit ledger
+- enforcement credit ledger / softness tax / fallback escrow
+- enforcement credit ledger, softness tax, or fallback escrow
+- enforcement regime court
+- enforcement regime court / bootstrap senate / dry-run board
+- enforcement-regime
+- enforcement-regime witness
+- enforcement-regime-witnesses-bootstrap-only-gating-continuous-enforcement-and-dry-run-rehearsal.md
+- enforcement_regime_state
+- entanglement
+- entries
+- entrypoints
+- epistemic brake
+- equal comparison
+- equivalence
+- error
+- error / rollback posture
+- escalation gate
+- escrowed or withheld slice
+- eval-blind or ordinary-user-frame variant
+- evaluation-mode or watcher-frame scaffold
+- eviction board
+- eviction senate
+- eviction-preserved-decoupling
+- evidence-carrier-custody
+- evidence-ecology
+- evidence-ecology / retrieval-collapse witness
+- evidence_ecology_state
+- exact
+- exception court
+- exception court / waiver senate / debt-governance board
+- exception witness
+- exception-witnesses-temporary-waivers-expiry-honesty-and-suppression-exclusions.md
+- excerpt court
+- excerpt court / highlight-window board / snippet-span controller
+- excerptframe
+- excitation
+- excluded
+- executable variant or metamorphic family
+- execution
+- execution witness
+- execution witness or explicit baseline-kernel note
+- execution-lane / kernel-and-precision clause
+- exemplar escrow
+- exists
+- exit-proof closeout history vault
+- exit-proof freshness registry
+- exit-proof priority ladder
+- exit-proof-precedence-retired-governance-drift
+- exit-proof-reference-retired-governance
+- expectation
+- expectation-neutralized, verdict-scrubbed, or anchor-scrubbed variant
+- expected
+- expert
+- expert witness or explicit no-EP note
+- expert-lane / MoE-parallelism clause
+- expert-rebalance drift, all2all/backend drift, or expert-placement mismatch
+- expire
+- expired
+- expired-reopen-closeout-sunset
+- expired-retired-governance-exit-proof
+- expiry-arbitration board
+- expiry-record renewal exchange / carrier-resurrection court / tombstone registry board
+- explicit non-comparability note
+- exploration-budget board
+- exposed
+- exposure senate
+- extension
+- extent-gated-generalization
+- external-correlation-bridge
+- external-observer-backed
+- external-standard
+- fabric
+- fabric witness or explicit local-fabric note
+- fabric-lane / interconnect-and-transfer clause
+- facetframe
+- failure signature
+- failure-domain-backed-corroboration
+- failures
+- fallback escrow
+- families
+- family
+- family-compression frontier
+- family-scoped, umbrella-scoped, program-scoped
+- favorable-label defaults
+- favored answer carriers
+- feedback-policy witness
+- fenced-substrate-restoration
+- file-eligibility controller
+- filename-canonization
+- files
+- finding
+- first attempts only, retry-inclusive attempts, or hedge-inclusive parallel attempts
+- flapping senate
+- followthrough
+- followthrough witness
+- foreign-pressure receipt
+- foreign-pressure witness
+- format court / markdown-scaffold / presentation controller
+- formatting
+- fresh
+- fresh-carrier-reopened-residue
+- fresh-renewal
+- freshness
+- freshness senate
+- freshness_state
+- frontier-ticket
+- frontier-ticket.json
+- frozen
+- full candidate surface
+- full-replay
+- functional exactness / performance shadow / cache-carry residue
+- future family
+- future tests
+- future-probe signature
+- gate-class
+- gate-class-packets-scheduled-windows-and-clock-honest-reopens.md
+- gated
+- gauge-fixing
+- generated
+- generated-audit-notary
+- generative grammar
+- generator
+- genuinely new evidence
+- global residue-drift retirement governance / revival-history custody board / drift-retirement operator court
+- global tie-break priority registry / registry-operator court / immortal precedent ledger
+- gpu-replay-envelope
+- gpu-replay-receipt
+- gpu-replay-trace-grade
+- gpu_replay_cross_observer_bridge_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_conflict_arbitration_retirement_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_conflict_arbitration_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_drift_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_portability_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_governance_threshold_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_closeout_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_drift_conflict_arbitration_retirement_governance_threshold_governance_scope_retirement_history_portability_currentness_closeout_history_portability_expiry_history_portability_closeout_history_portability_expiry_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_drift_conflict_arbitration_retirement_governance_retirement_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_drift_conflict_arbitration_retirement_governance_scope_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_drift_conflict_arbitration_retirement_governance_threshold_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_drift_conflict_arbitration_retirement_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_drift_conflict_arbitration_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_drift_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_portability_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_retirement_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_scope_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_governance_threshold_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_retirement_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_conflict_arbitration_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_drift_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_post_closeout_portability_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_reopened_residue_scope_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_residue_reopen_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_retirement_state
+- gpu_replay_cross_observer_custody_exit_appeal_precedent_tiebreak_registry_scope_state
+- gpu_replay_cross_observer_custody_exit_appeal_retirement_state
+- gpu_replay_cross_observer_custody_exit_appeal_scope_state
+- gpu_replay_cross_observer_custody_exit_appeal_threshold_state
+- gpu_replay_cross_observer_custody_retirement_state
+- gpu_replay_cross_observer_custody_scope_state
+- gpu_replay_cross_observer_promotion_gate_state
+- gpu_replay_envelope_state
+- gpu_replay_observer_conflict_state
+- gpu_replay_receipt_state
+- gpu_replay_trace_grade_state
+- grandfather board
+- grandfathered-decoupling
+- graph escrow
+- graph escrow / replay-envelope notary / locality futures
+- graph-admissibility board
+- green-lint-currentness-waiver
+- group
+- guaranteed, best-effort, or fire-and-forget
+- guard
+- guard band
+- guide
+- guide witness or explicit unconstrained note
+- guided
+- guided-decoding / structure-constraint clause
+- had to have data to count at all
+- handle
+- handle family, placement, and density together
+- handle-family / placement-and-density sweep
+- handoff court
+- handoff court / route-transfer board / next-query controller
+- handoffframe
+- hard-enforced-decoupled-corroboration
+- hash-governance-court
+- hierarchy-coupled-corroboration
+- highlight-window board
+- history
+- history-custody-bound-post-arbitration-governance-scope
+- history-drag or failed-attempt-residue scaffold
+- history-freeze-reopen-drift-governance-retirement
+- history-light or residue-stripped variant
+- history-loss-reopen-drift-retirement-governance
+- history-overbinding-reopen-drift-retirement-governance
+- hold packet
+- hold-open governor
+- homing packet
+- horizon
+- host / authority suffix, header mutation, host rewrite
+- host-parity escrow
+- host-shell board
+- hot-adapter mismatch, rank drift, mixed-batch interference, or adapter reload / eviction drift
+- hot-cache mismatch, offload-tier drift, or prefill/decode transfer mismatch
+- hysteresis
+- identification packet
+- identity-neutral, persona-scrubbed, or audience-agnostic variant
+- identity-spillover-board
+- ignored mirror responses
+- image/video resize-or-frame-sampling drift
+- import senate
+- imported
+- imported-seed
+- in-place-repair
+- included
+- independence court
+- independence court / corroboration board / source-cluster controller
+- independent-axis-corroboration
+- independent-confirming-support
+- inheritance board
+- inheritance senate
+- inherited-binding
+- initial delay, minimum measurement count, or comparison duration
+- innovation
+- innovation packet
+- innovation-packet
+- innovation-packet.json
+- instance-narrowed, scope-pinned, or family-stripped variant
+- interpolation-path witness
+- intervention family
+- intrusion-shift-conflict
+- invariant claim
+- invariant observable or reference observable
+- inventory-eligibility controller
+- isolation-backed-corroboration
+- items
+- joined-lesson-handoff-arbitration-retirement
+- joined-lesson-handoff-reopen-drift-retirement
+- joined-route-handoff-retired-governance-drift-retirement
+- judged divergence signature
+- label
+- label-distinct-only-corroboration
+- label-neutral, criterion-name-scrubbed, or rubric-blanded variant
+- label-scrubbed, claim-spelled-out, state-disambiguated, or semantics-explicit variant
+- landing-cue-authority
+- landing-surface additions-alignment guard
+- lane senate
+- language-selection or script-barrier scaffold
+- later
+- latest-head-tribunal
+- leakage
+- ledger-review-court
+- ledgers
+- legitimacy kernel
+- length-balanced, verbosity-scrubbed, or style-neutralized variant
+- license-revision-notary
+- link-rights controller
+- lint-sovereign
+- live court
+- live court / embodied-context board / camera-eligibility controller
+- live-neutralized / camera-disconnected / still-basis-replayed guard
+- live-provenance
+- liveframe
+- load-triggered speculation disable
+- local
+- local cue-neighborhood scaffold
+- local-bridge-hardening-gate
+- local-join-precedent-conflict
+- local-join-reopen-drift-conflict
+- local-join-retired-governance-drift-conflict
+- local-linearity-budget
+- local-refresh
+- local-remediation
+- local-workload-replacement
+- locality carry
+- locality futures
+- locality lease market
+- locality-lease-receipt
+- locality-partition-envelope
+- locked
+- long-context / window-and-positioning clause
+- long-context witness or explicit base-context note
+- loop-closure
+- majority endorsements, popularity counts, consensus labels, or peer-preference scaffolds
+- make lint
+- manifest-court
+- manifest-notary-authority
+- manual-only rubric
+- matched request family, population, traffic slice, or time window
+- matched sham
+- meaning
+- media-token drift, placeholder-expansion drift, processor-cache mismatch, image/video resize-or-frame-sampling drift, or vision-encoder/backend mismatch
+- members
+- membership senate
+- memory-eligibility controller
+- merchant-feed board
+- metadata-sovereign
+- metric-exemplar-bridge
+- metric-label alignment
+- metric-label alignment or confounder note
+- migrated-runtime-image
+- migration board
+- minimum measurement count or comparison duration
+- mirror senate
+- mismatch
+- mismatched
+- missing
+- missing-cross-observer-bridge
+- missing-trace-receipt
+- mixed
+- mixed-appeal-retirement
+- mixed-appeal-scope
+- mixed-appeal-threshold
+- mixed-arbitration-retirement
+- mixed-cross-observer-bridge
+- mixed-custody-retirement
+- mixed-custody-scope
+- mixed-direction witness
+- mixed-gpu-replay-envelope
+- mixed-gpu-replay-receipt
+- mixed-gpu-replay-trace-grade
+- mixed-observer-conflict
+- mixed-post-arbitration-governance-retirement
+- mixed-post-arbitration-governance-scope
+- mixed-post-arbitration-governance-threshold
+- mixed-precedent-conflict-arbitration
+- mixed-precedent-drift
+- mixed-precedent-portability
+- mixed-promotion-gate
+- mixed-refresh-scope-axis
+- mixed-refresh-scope-axis-coupling
+- mixed-refresh-scope-axis-durability
+- mixed-refresh-scope-axis-enforcement
+- mixed-refresh-scope-axis-independence
+- mixed-refresh-scope-axis-materiality
+- mixed-refresh-scope-distribution
+- mixed-refresh-scope-extent
+- mixed-reopen-closeout-drift
+- mixed-reopen-closeout-portability
+- mixed-reopen-drift-arbitration
+- mixed-reopen-drift-arbitration-retirement
+- mixed-reopen-drift-governance-retirement
+- mixed-reopen-drift-governance-scope
+- mixed-reopen-drift-retirement-governance-escalation
+- mixed-reopened-residue-closeout
+- mixed-reopened-residue-scope
+- mixed-retired-governance-drift
+- mixed-retired-governance-drift-arbitration
+- mixed-retired-governance-drift-arbitration-retirement
+- mixed-retired-governance-portability
+- mixed-tiebreak-governance-escalation
+- mixed-tiebreak-registry-retirement
+- mixed-tiebreak-registry-scope
+- monetization-eligibility controller
+- multi-observer trace tribunal
+- multi-observer trace tribunal / telemetry mirror ledger / replay evidence custody mesh
+- multimodal
+- multimodal witness or explicit no-media note
+- multimodal-input / processor-and-encoder clause
+- must-have-data
+- must-have-data registry
+- narrow
+- narrow-family
+- navigation court
+- navigation court / route-selection board / aspect-facet controller
+- nearby
+- nearby sham or cue-neighborhood variant
+- necessity witness
+- negation-parity scaffold
+- negative-control handle
+- negative-transfer
+- negative-transfer budget
+- neighborhood
+- nested-axis-restatement
+- new_path
+- next-query controller
+- next-step router board
+- no-appeal-needed
+- no-arbitration-needed-precedent-conflict
+- no-arbitration-needed-reopen-drift-conflict
+- no-arbitration-needed-retired-governance-drift-conflict
+- no-arbitration-needed-retired-governance-drift-conflict, local-join-retired-governance-drift-conflict, current-carrier-precedence-retired-governance-drift, revocation-precedence-retired-governance-drift, exit-proof-precedence-retired-governance-drift, successor-route-precedence-retired-governance-drift, or mixed-retired-governance-drift-arbitration
+- no-promotion-gate
+- no-registry-needed-tiebreak-governance
+- no-standing-post-arbitration-governance
+- no-standing-post-arbitration-governance, repeated-retirement-failure-post-arbitration-governance, conflict-history-loss-post-arbitration-governance, conflict-history-overbinding-post-arbitration-governance, authority-split-post-arbitration-governance, successor-route-loop-post-arbitration-governance, or mixed-post-arbitration-governance-threshold
+- no-standing-reopen-drift-retirement-governance
+- non-demolition budget
+- non-returning, log-only, or inspection-only
+- nonbinding-history-freeze-tiebreak-registry-retirement
+- nonbinding-history-reopen-drift-governance-scope
+- nonbinding-history-tiebreak-registry-scope
+- nonportable-history-precedent
+- nonportable-reopen-closeout-history
+- nonportable-retired-governance-history
+- novelty
+- null / flatness expectation / zero-defect baseline
+- number
+- object
+- obligation
+- obligation packet
+- obligation-packets-waivers-remediation-expiry-and-overflow-tests.md
+- obligations
+- observation
+- observation-budget scheduler
+- observed
+- observed-reactivation
+- observer surface
+- offload-tier drift, or prefill/decode transfer mismatch
+- old-path absence
+- old-path absence check
+- old_path
+- one-axis-dispersion
+- one-production/one-shadow, one-deployment, or same-backend-type limits
+- only advisory or inconclusive
+- open court
+- open court / host-shell board / source-view controller
+- openframe
+- operational-head register
+- operator
+- operator override escrow
+- operator-core
+- order
+- order-primacy controller
+- ordinal-succession-senate
+- ordinary-tone, de-escalated, or pragmatic-frame-scrubbed variant
+- original-shape witness
+- out-of-band writes could still occur
+- outputs
+- overflow
+- overlap
+- overlap-neutralized, paraphrase-balanced, or reference-echo-scrubbed variant
+- overwritten
+- package identity audit
+- package release
+- package-identity
+- package-identity-court
+- packaged
+- packet-local-appeal-scope
+- packet-local-custody
+- packet-local-post-arbitration-governance-scope
+- packet-local-post-arbitration-governance-scope, history-custody-bound-post-arbitration-governance-scope, authority-lane-limited-post-arbitration-governance-scope, successor-route-bound-post-arbitration-governance-scope, retirement-window-post-arbitration-governance-scope, or mixed-post-arbitration-governance-scope
+- packet-local-reopen-drift-governance-scope
+- packet-local-reopened-residue
+- packet-local-tiebreak-registry-scope
+- packet-only
+- parallelism
+- parallelism witness or explicit single-replica note
+- parallelism-lane / shard-and-replica clause
+- parse
+- partial
+- partner-execution controller
+- path-dependent
+- pattern
+- pattern-admissibility board
+- patterned-observed-spillover
+- pending
+- permanent post-arbitration governance board / conflict-history custody court / successor-route authority registry
+- permanent tie-break registry / precedent-priority ledger / arbitration-closeout court
+- permission-budget controller
+- persists
+- persona
+- persona or interlocutor-identity scaffold
+- personal-context board
+- perturbation insurance table
+- perturbation-decoupled-corroboration
+- phase
+- phase boundary
+- phase-lane / prefill-decode-placement clause
+- phase-placement witness or explicit aggregated-serving note
+- placement treaty
+- placement-scope-bridge
+- platform
+- plausible alias or collision family
+- polarity
+- polarity court
+- policy
+- policy-sunset-appeal-retirement
+- policy-window-appeal-scope
+- population, traffic slice, or time window
+- portable-history-current-by-default
+- post-appeal precedent-portability board / appeal-history vault / cleanup-policy senate
+- post-arbitration governance scope court / conflict-history vault / successor-route board
+- post-arbitration-governance-retirement arbitration-retirement court / exit-proof priority ledger / freshness closeout board
+- post-arbitration-governance-retirement arbitration-retirement governance threshold / exit-proof closeout history vault / successor-route closeout board
+- post-arbitration-governance-retirement drift-arbitration court / exit-proof priority ladder / carrier-freshness tribunal
+- post-arbitration-governance-retirement governance scope court / closeout-history vault / successor-route board
+- post-arbitration-governance-retirement governance-retirement court / scope-history vault / authority-lane board
+- post-arbitration-governance-retirement portability court / retired governance carrier exchange / conflict-history exit-proof registry
+- post-arbitration-governance-retirement portability-drift court / carrier-revalidation board / exit-proof freshness registry
+- post-arbitration-retirement governance threshold / exit-proof conflict-history vault / successor-route closeout board
+- post-closeout portability court / permanent revival ledger / deletion-precedent board
+- post-governance-retirement portability court / retired-governance carrier exchange / exit-proof registry
+- post-retirement reopen board / binding revival court / silent-deletion auditor
+- posture for
+- pragmatic
+- pragmatic-framing or social-force scaffold
+- precedent-drift court / portable-rule registry / telemetry common-law engine
+- precedent-quarantine-appeal-retirement
+- precedent-revocation court / stale-rule registry / conflict-arbitration tribunal
+- predicate-parity, polarity-scrubbed, or modal-neutralized variant
+- predictive sufficiency
+- preemption/resume divergence
+- prefill
+- preregistered promotion scorecard
+- present
+- pressure
+- pressure-burn senate
+- prestige
+- prestige or provenance-cue scaffold
+- preview
+- preview-stripped, display-scrubbed, or underlier-literal variant
+- preview-surface carry or rendering-layer scaffold
+- primary
+- primary-next-step packet
+- prior intrusion
+- prior-verdict scaffold
+- priority
+- priority tariff
+- priority-sunset-arbitration-retirement
+- priority-sunset-reopen-drift-retirement
+- priority-sunset-retired-governance-drift-arbitration-retirement
+- private
+- privileges
+- probe-economics packet
+- probe-order
+- problem
+- procedural compilation
+- procedural-compilation
+- profile court
+- profile court / personal-context board / memory-eligibility controller
+- profileframe
+- profiler-trace-backed
+- project
+- promote
+- promoted
+- promotion senate
+- promotion-verdict board
+- prompt
+- prompt pairs
+- proof-obligation registry / evidence-debt controller
+- properties
+- proposed support core
+- protected kernel / matched-fresh baseline / same-task comparison surface
+- protected property
+- protocol
+- protocol / transport-semantics clause
+- protocol mismatch, bridge normalization, or trailer-status loss
+- provenance
+- provenance gate
+- provenance-certification-court
+- provenance-control
+- provenance-rights / citation-dividend / evidence-market clearinghouse
+- provenance-rights clearinghouse
+- provenance-rights clearinghouse / citation-dividend market / source-access court
+- provenance_control_state
+- provisional
+- public
+- public belief state
+- public challenge family
+- public extract
+- public resolution court / closure-state controller
+- public-shape-tribunal
+- public-state packet
+- public-surface-notary
+- public_state
+- publication court
+- published
+- quarantine
+- quarantined
+- queryframe
+- question
+- queue-policy drift, priority mismatch, or preemption/resume divergence
+- queued
+- quoted, code-fenced, or literal-mention variant
+- rankframe
+- ranking court
+- ranking court / top-slot board / order-primacy controller
+- rationale
+- reactivation court
+- reactivation court / freshness senate / reheating gate
+- reactivation escrow
+- read path
+- read-only, dry-run-aware, isolated to a non-authoritative sink
+- reapproval court
+- reapproval court / renewal senate / tenure board
+- reason
+- reasonframe
+- rebalancing escrow
+- receipt
+- receipt-freshness
+- receipt-repair-threshold
+- recency-court
+- reconciliation
+- reconsolidation
+- recover-resync
+- recoverability budget
+- recovery
+- recovery trigger / adversarial cue / structured follow-up family
+- recovery-anchor
+- recovery-anchor court
+- recovery-anchor court / conversion senate / migration board
+- recovery-anchor witness
+- recovery-anchor-witnesses-self-lineage-checkpoints-imported-seeds-converted-checkpoints-and-migrated-runtime-images.md
+- recovery-identity
+- recovery-identity court
+- recovery-identity court / clone senate / sandbox board
+- recovery-identity-witnesses-continuing-resumes-checkpoint-forked-clones-and-sandbox-restored-branches.md
+- recovery-loss
+- recovery-loss witness
+- recovery-loss-witnesses-state-preserving-repair-checkpoint-resume-and-full-replay.md
+- recovery-promotion
+- recovery-writeback
+- recovery-writeback court
+- recovery-writeback court / promotion senate / sandbox board
+- recovery-writeback-witnesses-canonical-writeback-derived-branch-writeback-and-sandbox-isolation.md
+- recovery_anchor_state
+- recovery_identity_state
+- recovery_loss_state
+- recovery_writeback_state
+- reentry-cue witness
+- reference-echo scaffolds
+- refresh / rotation rule
+- refresh-axis court
+- refresh-axis court / axis quorum / corroboration simplex
+- refresh-burden-scope
+- refresh-distribution court
+- refresh-distribution court / diffusion senate / spread governor
+- refresh-elevation
+- refresh-elevation court
+- refresh-elevation court / burden senate / escalation gate
+- refresh-extent court
+- refresh-extent court / spillover-pattern senate / saturation governor
+- refresh-independence
+- refresh-independence court
+- refresh-independence court / decoupling senate / provenance gate
+- refresh-scope court
+- refresh-scope court / blast-radius senate / widening gate
+- refresh-scope-axis
+- refresh-scope-axis-coupling
+- refresh-scope-axis-coupling witness
+- refresh-scope-axis-durability
+- refresh-scope-axis-durability witness
+- refresh-scope-axis-enforcement
+- refresh-scope-axis-enforcement witness
+- refresh-scope-axis-independence
+- refresh-scope-axis-independence witness
+- refresh-scope-axis-materiality
+- refresh-scope-axis-materiality witness
+- refresh-scope-axis-remediation
+- refresh-scope-axis-remediation witness
+- refresh-scope-axis-remediation-capacity-source
+- refresh-scope-axis-remediation-capacity-source witness
+- refresh-scope-axis-remediation-collateral
+- refresh-scope-axis-remediation-collateral witness
+- refresh-scope-axis-remediation-displacement-aftercare
+- refresh-scope-axis-remediation-displacement-aftercare witness
+- refresh-scope-axis-remediation-displacement-replay-equivalence
+- refresh-scope-axis-remediation-displacement-replay-fidelity
+- refresh-scope-axis-remediation-displacement-resumption-basis
+- refresh-scope-axis-remediation-displacement-resumption-basis witness
+- refresh-scope-basis
+- refresh-scope-distribution
+- refresh-scope-extent
+- refresh-strength
+- refresh-strength court
+- refresh-strength court / flapping senate / hold-open governor
+- refresh-support
+- refresh-support court
+- refresh-support court / corroboration senate / widening governor
+- refresh-topology court
+- refresh-topology court / spillover senate / blast-map governor
+- registry
+- registry-retirement board / global operator court / immortal closeout ledger
+- regular-vs-streaming response mode
+- rehearsal packet
+- reheat-latch controller
+- reheating gate
+- rejected
+- relapse witness
+- release-hardening
+- release-name-tribunal
+- reliability-banner controller
+- remediation collateral tariff
+- remediation collateral tariff / disruption-budget escrow / blast-radius ledger
+- remediation provenance credit
+- remediation provenance credit / controller tariff / operator override escrow
+- remediation senate
+- renamed-or-mirrored-axis-restatement
+- rendered previews
+- renewal
+- renewal court
+- renewal court / waiver-validity senate / expiry-arbitration board
+- renewal senate
+- renewal witness
+- renewal-scope
+- renewal-scope witness
+- renewal-scope-witnesses-local-refresh-boundaries-and-spillover-drift.md
+- renewal-witnesses-fresh-approval-acts-and-carryforward-drift.md
+- renewal_scope_state
+- renewal_state
+- renewed
+- reopened-residue closeout court / permanent revival ledger / deletion-closeout board
+- reopened-residue scope court / global operator authority / revival-scope board
+- repair
+- repair debt meter
+- repair scope court
+- repair scope court / substrate senate / replacement board
+- repair-restored-decoupling
+- repair-scope
+- repair-scope witness
+- repair-scope-witnesses-in-place-repair-substrate-reset-and-workload-replacement.md
+- repair_scope_state
+- repeat-pass
+- repeated-closeout-failure-reopen-drift-governance
+- repeated-closeout-failure-tiebreak-governance
+- repeated-missing-bridge-overflow
+- repeated-retention-dispute
+- repeated-retirement-failure-post-arbitration-governance
+- repeated-same-surface
+- replace
+- replacement board
+- replay board
+- replay evidence custody mesh
+- replay seed
+- replay-capsule.json
+- replay-envelope notary
+- replicate
+- replicate-bundle witness
+- request-shape / rewrite-disclosure clause
+- request-shape registry
+- required
+- reread-notary
+- rescoped
+- research online
+- research-plan controller
+- reset
+- reset / filter / suppression operator that produced the clean-looking state
+- reset witness
+- residue-quarantine-arbitration-retirement
+- residue-quarantine-post-arbitration-governance-retirement
+- residue-quarantine-reopen-drift-governance-retirement
+- residue-quarantine-reopen-drift-retirement
+- residue-quarantine-retired-governance-drift-arbitration-retirement
+- residue-quarantine-tiebreak-registry-retirement
+- resolution
+- resolution witness
+- resolved
+- resolved question
+- resource-lifetime-receipt
+- response
+- response court
+- response court / remediation senate / eviction board
+- response witness
+- response-witnesses-monitoring-availability-withdrawal-local-remediation-and-runtime-eviction.md
+- response_state
+- restart tax
+- resumability escrow
+- resume credit
+- resume credit / checkpoint escrow / restart tax
+- resync-authority-senate
+- retain
+- retention-audit appeal board / custody-exit notary / deletion-proof court
+- retest
+- retire
+- retired
+- retired threshold-scope history drift court / authority-return revocation board / carrier-conflict exchange
+- retired threshold-scope portability court / scope-history carrier exchange / authority-return precedent board
+- retired-governance arbitration-retirement court / exit-proof conflict ledger / successor-route priority board
+- retired-governance drift-arbitration court / exit-proof priority ladder / carrier-freshness tribunal
+- retired-governance portability-drift court / carrier-revalidation board / exit-proof freshness registry
+- retired-history carrier-review layer / closeout-history expiry board / transported-history freshness court
+- retired-history closeout carrier exchange / currentness-closeout precedent board / drift-history revival court
+- retired-history currentness closeout court / drift-retirement board / revocation-history vault
+- retirement-window-appeal-scope
+- retirement-window-custody
+- retirement-window-expiry-tiebreak-registry-retirement
+- retirement-window-post-arbitration-governance-scope
+- retirement-window-reopen-drift-governance-scope
+- retirement-window-tiebreak-registry-scope
+- retrospective
+- retry or hedge mismatch
+- retry-inclusive attempts
+- rev0176
+- rev0305
+- rev0306
+- rev0307
+- rev0308
+- rev0309
+- rev0310
+- rev0311
+- rev0312
+- rev0313
+- rev0314
+- rev0315
+- rev0316
+- rev0317
+- rev0318
+- rev0319
+- rev0321
+- rev0322
+- rev0323
+- rev0324
+- rev0325
+- rev0327
+- rev0328
+- rev0329
+- rev0330
+- rev0331
+- rev0332
+- rev0333
+- review court
+- reviewed-set packet
+- revision
+- revival-precedent court / residue-drift registry / revocation tribunal
+- revocation-precedence-precedent-conflict
+- revocation-precedence-reopen-drift
+- revocation-precedence-retired-governance-drift
+- revoked-lesson-precedent
+- revoked-reopen-closeout-lesson
+- revoked-retired-governance-lesson
+- rewrite
+- rewrite drift
+- rewrite witness
+- rhetorical-reheat
+- rival-set packet
+- role-slot / template-slot scaffold
+- rollback / quarantine consequence
+- rollback / reinject / quarantine / restage consequence
+- rollover packet
+- root JSON inventory
+- round-trip or cross-exam witness
+- route court
+- route court / lane senate / next-step router board
+- route timeout, max stream duration, request-timeout posture, or regular-vs-streaming response mode
+- route-selection board
+- route-transfer board
+- rubric
+- rubric or label-definition scaffold
+- rubric-permuted / score-id-swapped / score-anchor-neutralized guard
+- rubric-permuted, score-id-swapped, or score-anchor-neutralized variant
+- runbook
+- runtime triplet
+- runtime-eviction
+- runtime-self-attested
+- safe-language drift
+- same adapter family / rank / target-module posture
+- same aggregated-versus-disaggregated serving posture
+- same all2all/backend or expert-load-balancer posture
+- same attention-backend or kernel-family posture
+- same base-only-versus-adapter-augmented posture
+- same chunked-prefill / continuous-batching / decode-priority posture
+- same eager-versus-CUDA-graph posture
+- same fcfs versus priority posture
+- same guide kind such as choice, JSON schema, regex, or grammar
+- same handoff/recompute-or-fallback posture
+- same hot-resident-versus-sleeping-versus-scale-from-zero posture
+- same internal-versus-hybrid-versus-external replica-balancing posture
+- same max-model-len / truncation posture
+- same model/profile-cache or engine-ready posture
+- same no-spec versus speculative-decoding posture
+- same node-count / per-node-GPU / cross-node posture
+- same position-scaling posture such as RoPE scaling or sink-relative positions
+- same precision / quantization posture
+- same prefill/decode role-binding or heterogeneous-parallelism posture
+- same prefix-caching, KV-cache reuse, cache-offload, or disaggregated-prefill posture
+- same processor / placeholder-and-media-sizing posture
+- same same-node-versus-cross-node and same NVLink-domain / NIC-rail posture
+- same single-replica-versus-tensor/pipeline/context/data-parallel posture
+- same sliding-window / attention-sink / cyclic-KV posture
+- same tensor-parallel-versus-expert-parallel-or-hybrid MoE posture
+- same text-only-versus-multimodal posture
+- same transport/backend posture such as GPUDirect-RDMA, UCX/NIXL/Mooncake, or socket fallback
+- same unconstrained-versus-guided-decoding posture
+- same vision-encoder / multimodal-cache posture
+- same warmup / first-inference posture
+- same zero-copy-versus-staged-copy / transfer-concurrency posture
+- same-backend-type
+- same-claim-burden-upgrade
+- same-label carry or claim-equivalence scaffold
+- same-plane-coupled-corroboration
+- sampled percentage
+- sampler-resonance or decode-lane scaffold
+- sandbox board
+- saturation governor
+- scale-fixing
+- scheduled-window
+- scheduler
+- scheduler / queue-discipline clause
+- scheduler witness or explicit single-lane note
+- schema
+- schema conformance audit
+- schema coverage audit
+- schema-backfill-authority
+- schema-completeness-sovereign
+- schema-conformance-court
+- schema-coverage-court
+- schema-scrubbed, field-key-swapped, enum-blanded, or type-neutral variant
+- schema-slot
+- schema-slot carry or typed-contract scaffold
+- schema-taxonomy-tribunal
+- schema-waiver-senate
+- schemas
+- scope
+- scope court
+- scope court / blast-radius senate / inheritance board
+- scope witness
+- scope-boundary-conflict
+- scope-shrink-retirement
+- scope-sunset-post-arbitration-governance-retirement
+- scope-sunset-reopen-drift-governance-retirement
+- scope_state
+- score
+- scorecard
+- scorecard-canonization
+- scorecourt
+- scorecourt / mirror senate / promotion-verdict board
+- scoreframe
+- scoring court, rubric-order scaffold, or score-id controller
+- script
+- search court / query-routing board / retrieval-bias controller
+- search-authority board
+- search-open-neutralized / host-shell-detached / source-root-replayed guard
+- seeded prior verdicts
+- segment
+- selected-focus handoff
+- selection
+- selection policy / exposure-fraction clause
+- selector court
+- selector court / membership senate / coverage-authority board
+- selector enforcement court
+- selector enforcement court / eviction senate / grandfather board
+- selector freshness court
+- selector freshness court / sync-clock senate / ancestor-residue board
+- selector lineage court
+- selector lineage court / inheritance senate / sync-authority board
+- selector witness
+- selector-enforcement
+- selector-enforcement witness
+- selector-enforcement-witnesses-execution-authority-grandfathered-placement-and-eviction-gates.md
+- selector-freshness
+- selector-freshness witness
+- selector-freshness-witnesses-live-provenance-sync-lag-and-ancestor-residue.md
+- selector-provenance
+- selector-provenance witness
+- selector-provenance-witnesses-direct-rules-inherited-bindings-and-synced-membership.md
+- selector-witnesses-realized-membership-and-coverage-drift.md
+- selector_enforcement_state
+- selector_freshness_state
+- selector_membership_state
+- selector_provenance_state
+- self-lineage-checkpoint
+- self-sufficiency probe
+- self-sufficiency-tail
+- sentinel panel
+- separated
+- sequestered challenge suite
+- serve-authority / sink-marking clause
+- serve-authority registry
+- servo-packet
+- session provenance
+- session-underlier hygiene
+- session-underlier-sovereign
+- settle packet
+- settled-closeout-tiebreak-registry-retirement
+- settled-reopen-closeout
+- settled-reopen-drift-tiebreak-retirement
+- settled-retired-governance-drift-arbitration-retirement
+- settled-retired-governance-drift-arbitration-retirement, joined-route-handoff-retired-governance-drift-retirement, carrier-expiry-retired-governance-drift-arbitration-retirement, authority-return-retired-governance-drift-arbitration-retirement, priority-sunset-retired-governance-drift-arbitration-retirement, residue-quarantine-retired-governance-drift-arbitration-retirement, or mixed-retired-governance-drift-arbitration-retirement
+- settled-tiebreak-arbitration-retirement
+- shadow marker
+- shadow source
+- shadow source / host-parity escrow / cache-solvency board
+- shadow-
+- shadow-adapter registry
+- shadow-attempt registry
+- shadow-cache-topology registry
+- shadow-comparison-packets-minimal-pre-promotion-lanes-and-overflow-tests.md
+- shadow-deadline registry
+- shadow-delivery registry
+- shadow-execution registry
+- shadow-expert registry
+- shadow-fabric registry
+- shadow-guidance registry
+- shadow-long-context registry
+- shadow-multimodal registry
+- shadow-parallelism registry
+- shadow-phase registry
+- shadow-protocol registry
+- shadow-scheduler registry
+- shadow-selection registry
+- shadow-session registry
+- shadow-sink
+- shadow-sink distinct from attention-sink / sink-token
+- shadow-speculation registry
+- shadow-substrate registry
+- shadow-wake-state registry
+- sham or alien-noun test
+- sham runtime
+- shared operator core
+- shared-context-carry
+- shared-origin coupling
+- side-effect suppression / actuator-isolation clause
+- side-effect suppression registry
+- signed letters
+- single-observed-slice
+- single-resurfacing
+- sink-token
+- sleeping
+- slot-swapped, rung-shifted, or reveal-order-scrubbed variant
+- snippet-span controller
+- socket fallback, fabric-domain drift, rail/NIC drift, or transfer-buffer/concurrency drift
+- softness tax
+- source
+- source chart
+- source of truth
+- source-cluster
+- source-cluster controller
+- source-root, live-head, or derivative-scrubbed variant
+- source-view controller
+- sourcecluster
+- sparse routing scaffold
+- speculative
+- speculative-decoding / draft-verifier clause
+- spillover
+- spillover senate
+- spillover-pattern senate
+- sponsor-placement board
+- spread governor
+- stabilizing-independent-support
+- staged
+- stake packet / tension budget / pressure-residue board
+- stake-continuity
+- stake-refresh
+- stale
+- stale-proof carry or freshness scaffold
+- stale-reopen-closeout-template
+- stale-retired-governance-template
+- stale-template-precedent
+- stamp
+- stance court / balance board / counterposition-rights controller
+- stanceframe
+- standing consensus court, bandwagon scaffold, or popularity controller
+- standing criteria-entanglement court, objective-blending scaffold, or rubric-halo controller
+- standing redirect registry
+- standing residue-drift retirement governance scope / revival-history custody board / drift-retirement operator court
+- standing scoring court, rubric-order scaffold, or score-id controller
+- standing temporal-origin court, recency-prestige scaffold, or novelty-default controller
+- standing tie-break registry / registry-operator authority / closeout governance court
+- state
+- state packet
+- state-preserving
+- stateless-routing versus client-IP, header, or cookie affinity posture
+- status
+- status-lane witness
+- status-sovereign
+- status-wrapper
+- status-wrapper carry or collateral-status scaffold
+- sticky-route drift
+- sticky-route drift, warm-connection mismatch, or cached-session-state mismatch
+- stream-pool-envelope
+- string
+- strong
+- strongest-safe-sentence, stronger-forbidden-sentence, or overclaim-scrubbed variant
+- style court / rich-content scaffold / model-style controller
+- substrate notary
+- substrate senate
+- substrate-compatibility / topology-support clause
+- substrate-reset
+- success, failure, or inconclusive
+- success, failure, or inconclusive result
+- successor
+- successor-handoff-post-arbitration-governance-retirement
+- successor-handoff-reopen-drift-governance-retirement
+- successor-packet-required-retired-governance
+- successor-required-retired-governance-drift
+- successor-route closeout board
+- successor-route-bound-post-arbitration-governance-scope
+- successor-route-loop-post-arbitration-governance
+- successor-route-precedence-retired-governance-drift
+- sufficiency witness
+- suggestion court / default-scaffold / prompt-chip controller
+- summary
+- sunset-breach-reopen-drift-retirement-governance
+- sunset-breach-tiebreak-governance
+- sunset-expired-precedent
+- sunset-inherited-precedent
+- sunset-precedence-precedent-conflict
+- sunset-precedence-reopen-drift
+- superseded
+- support-module
+- suppressed
+- surface
+- surface:
+- surfaces
+- survivor-carrier-appeal-scope
+- survivor-handoff-appeal-retirement
+- sync-authority board
+- sync-clock senate
+- sync-lag
+- synced-membership
+- synthetic pressure board
+- synthetic pressure board / pressure-burn senate / reheat-latch controller
+- target chart
+- target property
+- target property or operator core
+- task-router board
+- telemetry mirror ledger
+- template-bound-precedent
+- template-law audit
+- temporal-origin court / recency-prestige scaffold / novelty-default controller
+- tenure board
+- test-sufficient packet
+- thresh
+- threshold-confirmed-reactivation
+- threshold-licensed-elevation
+- threshold-scope retirement court / scope-history vault / authority-lane board
+- time-tag-neutralized / recency-scrubbed / novelty-blanded guard
+- timeout witness or explicit deadline note
+- timescale
+- timescale stratification
+- timestamp
+- timing senate
+- title
+- tokenizer-resonance / merge-boundary scaffold
+- tolerated relapse / recoverability budget
+- tombstone registry board / expiry-record closeout court / carrier-resurrection archive
+- tombstone-bound-reopened-residue
+- tombstone-freeze-reopen-closeout
+- tombstone-history review layer / portable closeout-history expiry court / carrier-renewal by expiry review
+- tombstone-history review layer / portable closeout-history review court / warning-renewal by closeout history
+- tombstone-history review layer / portable expiry-history closeout court / warning-renewal tombstone board
+- tombstone-history review layer / portable expiry-history court / carrier renewal by warning
+- tombstone-reference-reopen-closeout
+- toolchain-certification-tribunal
+- tools
+- tools/
+- tools/check_currentness_cue_audit_contract.py
+- top-slot board
+- topology
+- topology-imputed-spillover
+- trace
+- trace escrow
+- trace-context-bridge
+- trailer-status witness or explicit protocol note
+- trajectory
+- transfer
+- transfer court
+- transfer court / import senate / comparison-memory board
+- transfer rule
+- transfer-packets-reviewed-datacube-sets-disposition-classes-and-overflow-tests.md
+- translation, transliteration, or script-swapped variant
+- triangle-defect
+- triangulation witness
+- trigger
+- truncation consequence
+- truncation drift, window/sink drift, or position-scaling drift
+- type-sovereign
+- typed-surface-certifier
+- umbrella-authority carry
+- unchanged
+- unclassified
+- underlier-currentness-oracle
+- unlock condition
+- unresolved
+- unsupported backend, incompatible endpoint class, or topology shim
+- update gain
+- update-delta-receipt
+- upload court
+- upload court / attachment-authority board / file-eligibility controller
+- upload-neutralized / attachment-detached / public-web-replayed guard
+- uploadframe
+- validate
+- validated
+- validation
+- validation-authority-court
+- validation-score-sovereign
+- validation-tool
+- validation-toolchain
+- validator-monopoly
+- validators
+- value
+- verbosity
+- verbosity privilege
+- verify or approval surface
+- version
+- vocabulary
+- waiver senate
+- waiver-validity senate
+- wake-state / cold-start clause
+- wake-state witness or explicit hot-start note
+- warm-state credit
+- warm-state credit / checkpoint solvency / locality carry
+- warning
+- warning court
+- warning court / caution board / reliability-banner controller
+- warningframe
+- welfare board
+- what still counts as genuinely new evidence
+- what surface still served authoritative output
+- widened-confirming-support
+- widening gate
+- widening governor
+- widget-governance controller
+- window-governance board
+- withheld
+- witness set
+- words
+- working
+- workload-replacement
+- workspace court / project-state board / mutable-artifact controller
+- workspaceframe
+- wrapper
+- wrapper or role-slot variant
+- wrapper-routed
+- wrapper-stripped, status-scrubbed, or direct-work variant
+- writable public surfaces

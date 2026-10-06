@@ -1,0 +1,5 @@
+from packet_contract_common import require_named_runtime_continuity_witness_packet_and_vocabulary
+
+require_named_runtime_continuity_witness_packet_and_vocabulary("enforcement_regime_witness_contract")
+
+print("check_enforcement_regime_witness_contract: OK")
