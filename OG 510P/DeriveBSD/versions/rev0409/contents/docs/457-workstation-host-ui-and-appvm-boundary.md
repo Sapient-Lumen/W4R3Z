@@ -1,0 +1,140 @@
+# Workstation host UI and AppVM boundary
+
+**Tier:** B (Cross-cutting product-shape decision)
+**Profiles:** B
+**Pillars:** isolation, operability
+**Patterns:** Broker→Lease→Receipt, Adapter→Shadow→Replace
+
+Profile **B** only stays coherent if the archive answers one uncomfortable question clearly:
+
+> does the workstation host run general apps directly, or does it remain a trusted UI/control plane while apps live in compartments?
+
+This doc makes the smallest durable decision that keeps **B** viable without weakening **A** or **D**.
+
+## Decision (v0 posture)
+
+For profile **B**:
+
+- the **host** is the trusted UI and broker control plane,
+- general interactive apps are **AppVM-first**,
+- and host↔app sharing is **portal-mediated and receipted**.
+
+This is an accepted boundary, not a sketch. See `adrs/ADR-0047-workstation-host-ui-and-appvm-boundary.md`.
+
+## What the host is allowed to be
+
+The host may run a deliberately small trusted set:
+
+- compositor / trusted shell / window-origin markers
+- secure-attention / unlock / approval surfaces
+- portal brokers and session managers
+- settings / updates / recovery / support tooling
+- device, network, identity, and secret mediation services
+
+These are host responsibilities because they define the trust boundary or own privileged host state.
+
+## What the host is **not** by default
+
+The host is **not** the default execution surface for arbitrary user-facing apps such as:
+
+- browsers
+- mail/chat clients
+- office/document viewers
+- media players
+- general developer GUI tools
+
+Those should execute inside derived AppVMs and use portals/brokers for access.
+
+This avoids the common failure mode where the system has nice isolation primitives on paper, but daily life happens on the host “for convenience.”
+
+## Why AppVM-first is the right default for B
+
+This boundary keeps the product shapes coherent:
+
+- **A (fleet host):** keeps a small control-plane threat model.
+- **B (workstation):** gets real per-app isolation without inventing ad-hoc file/device sharing.
+- **C (general OS):** may still offer broader host execution via bounded adapters, but that is not the workstation default.
+- **D (appliance/regulatory):** avoids inheriting host-side desktop sprawl.
+
+The safe path becomes the normal path: app isolation first, host mediation second.
+
+## Required crossing rules
+
+### Files and data movement
+
+Use portals/brokers for:
+
+- open/save/import/export
+- clipboard and drag&drop
+- printing
+- screenshots / screencast / remote desktop
+- camera / microphone / location
+
+The host should hand apps narrowed handles/streams/tokens, not ambient namespaces. clipboard/file-transfer broker UX should make the ordinary workstation floor explicit: no ambient shared clipboard, explicit export/import, and future bounded drag/drop only if it stays reviewable rather than becoming another ambient shared state path. URI opening should likewise stay compartment-preserving: `http` / `https` goes to a designated browsing compartment, `mailto` goes to a designated communications compartment, and `file://` does not bypass explicit file authority lanes. Cross-compartment file open/view/edit should stay import-shaped first and route-shaped second: the exact imported artifact remains on `content.import.receipt`, ordinary document rendering/editing stays in bounded `document_viewing` / `document_editing` compartments instead of on the host, and route evidence should carry `import_receipt_digest` so support/export surfaces can point back to the exact safe-open intake that made the open possible. `docs/606-workstation-imported-foreign-documents-stay-view-first.md` now tightens the next practical rule too: imported foreign originals stay view-first, so baseline workstation behavior is to **work on a copy** rather than let the ordinary edit path save back over the imported original. `docs/653-workstation-imported-foreign-document-viewing-stays-disposable-first.md` then fixes the ordinary viewing posture too: those imported foreign originals should resolve to a disposable `document_viewing` target by baseline policy instead of a remembered persistent reader fallback. `docs/654-workstation-sanitized-inspection-derivatives-stay-inspection-shaped-and-disposable-first.md` then makes the follow-on trust boundary explicit too: sanitized inspection derivatives still stay inspection-shaped and disposable-first, so sanitizer success does not silently become trusted/local persistent-viewer promotion. `docs/655-workstation-ocr-searchable-sanitized-derivatives-stay-explicit-secondary-and-nondefault.md` then makes the next convenience boundary explicit: flat visual sanitized output stays the boring default, while searchable/OCR reconstruction remains an explicit secondary derivative instead of quietly replacing the baseline inspection artifact. `docs/656-workstation-ocr-searchable-sanitized-derivatives-stay-out-of-ambient-host-indexes-by-default.md` then fixes the next persistence boundary: in-view search may stay local to that inspection lane, but searchable foreign-derived inspection artifacts do not silently enroll in ambient host/global search indexes or detached text sidecars by default. `docs/657-workstation-ocr-text-egress-stays-explicit-plain-text-single-delivery.md` then fixes the next egress boundary for OCR-derived text egress: if text leaves that OCR inspection lane at all, the boring baseline is still an explicit plain-text single-delivery transfer with a provenance-carrying `content_source` join rather than ambient clipboard/export state. `docs/658-workstation-datatransfer-evidence-binds-offer-source-and-transfer-subjects-exactly.md` then fixes the actor side of that same lane: `ui.datatransfer.*` evidence now keeps `offer_source_subject` exact while `subject` remains the current grant/receipt holder, so support/export can answer who offered data to whom without broker-memory folklore. `docs/659-workstation-datatransfer-receipts-join-exact-grants-by-digest.md` then fixes the next policy join too: transfer receipts now also carry `grant_digest`, so the reviewed MIME/size/expiry policy artifact remains portable instead of being reconstructed from `offer_id`/`lease_id` folklore. `docs/660-workstation-single-delivery-datatransfer-grants-stay-one-shot-and-fresh-grant-required.md` then fixes the next recovery join too: the ordinary single-delivery lane is one-shot, so the first successful read-side transfer exhausts the grant and later recovery is fresh grant / re-offer required rather than replay/history resurrection. `docs/670-workstation-datatransfer-constraints-stay-closed-world-and-no-hidden-successor-posture.md` then closes the last open-ended posture seam in that same lane: ordinary `ui.datatransfer.grant.constraints` is now a closed-world typed vocabulary, so hidden extra execution posture cannot sneak back in behind broker-local `constraints.*` names. `docs/671-workstation-ordinary-datatransfer-baseline-stays-frozen-and-richer-lanes-are-rfc-first.md` then makes the next archive-management cut explicit too: the ordinary portable lane is now frozen and complete enough to implement, and richer widened/substituting/broader transfer lanes are RFC-first instead of quiet baseline drift. `docs/672-workstation-richer-datatransfer-lanes-mint-distinct-artifact-families.md` then makes the intake split explicit too: if a richer lane is ever worth adding, it must mint a distinct artifact family instead of reusing ordinary `ui.datatransfer.grant` / `ui.datatransfer.receipt` with profile- or mode-specific reinterpretation. `docs/673-workstation-first-richer-datatransfer-rfc-target-is-reviewed-finite-collection-handoff.md` then fixes the next queueing cut too: the first richer workstation transfer RFC target is a reviewed finite collection handoff rather than persistent directory authority or a replay-first clipboard exception. `docs/674-workstation-reviewed-finite-collection-handoff-stays-single-retrieve-by-default-and-auto-stopping.md` then fixes the first retrieve-width cut inside that queue too: the first richer lane should stay auto-stopping and single-retrieve by default instead of becoming quiet session-local replay authority. `docs/675-workstation-finite-collection-handoff-directory-members-stay-snapshot-shaped-and-no-live-tree-traversal-first.md` then fixes the next directory-semantics cut too: selected directories in that first richer lane should remain reviewed snapshot membership rather than live tree traversal from the host/broker boundary outward. `docs/676-workstation-finite-collection-handoff-snapshot-membership-stays-manifest-first-and-tree-summary-is-supplementary.md` then fixes the next review/export cut too: that same richer lane keeps reviewed membership on an explicit per-member manifest instead of resolving it later from a tree summary or broker-local reconstruction. `docs/677-workstation-finite-collection-handoff-first-cut-stays-read-only-and-write-enabled-receive-is-follow-on-rfc-only.md` then fixes the next access-mode cut too: the first richer finite-collection handoff now stays read-only only, and writable receive must go back through a separate later lane instead of piggybacking on the first collection handoff family. `docs/678-workstation-finite-collection-handoff-first-cut-rejects-symlinks-and-special-files.md` then fixes the next member-kind seam too: the trusted UI/broker boundary should fail closed on symlink or special-file members instead of silently following, preserving, or omitting them under the same reviewed collection story. `docs/679-workstation-finite-collection-handoff-manifest-entry-floor-stays-content-identity-first-and-stat-light.md` then fixes the next manifest-shape seam too: the first richer lane now keeps a stat-light manifest floor with normalized review path + member kind for every entry, plus exact payload digest + byte length for regular files. `docs/663-workstation-successor-datatransfer-grants-stay-same-actor-pair-and-no-wider-offer.md`, `docs/664-workstation-successor-datatransfer-grants-keep-payload-lineage-and-redaction-posture-exact.md`, and `docs/665-workstation-successor-datatransfer-grants-stay-exact-payload-bound-and-no-semantic-equivalence-rebinding.md` now fix the next retry-scope joins too: successor continuity stays same-actor-pair and no-wider-offer, keeps payload lineage/redaction posture exact, and keeps the same reviewed payload through payload digest (`offer.payload_digest`), so widened MIME/byte changes or semantically equivalent payload substitution are fresh-grant required instead of hiding behind “allow again.” `docs/666-workstation-successor-datatransfer-grants-keep-foreground-requirement-exact.md`, `docs/667-workstation-successor-datatransfer-grants-keep-delivery-mode-exact.md`, `docs/668-workstation-successor-datatransfer-grants-keep-rate-limit-posture-exact.md`, and `docs/669-workstation-successor-datatransfer-grants-keep-absolute-expiry-posture-exact.md` then finish the next execution/timing-posture joins: successor continuity also keeps exact `constraints.requires_foreground`, exact `delivery_mode`, exact `constraints.rate_limit`, and exact `constraints.expires_at`, so old-story retry wording cannot quietly become background-capable, replay-wider, differently throttled, or differently outer-deadlined authority. `docs/607-workstation-working-copy-receipts-and-edit-route-joins.md` then makes that copy act typed through `content.working-copy.plan` / `content.working-copy.receipt`, and allow-path edit routes should carry `working_copy_receipt_digest` so support/export surfaces can prove the writable artifact came from an explicit transition. `docs/608-workstation-working-copy-save-scope-and-no-implicit-source-writeback.md` then fixes the next local rule: ordinary save updates the working-copy output rather than quietly mutating the imported source lineage. `docs/609-workstation-working-copy-reintegration-stays-explicit-and-new-version-shaped.md` then fixes the next source-lineage rule: any path from those locally edited bytes back toward authority remains an explicit `content.reintegrate.receipt` successor-candidate act rather than an in-place replacement side effect. `docs/610-workstation-successor-candidates-stay-immutable-and-resnapshot-shaped.md` then fixes the next evidence rule: that act names an immutable snapshot, so later edits require a new candidate rather than silently mutating the old one. `docs/611-workstation-candidate-supersession-stays-explicit-and-no-latest-wins.md` then fixes the next multi-candidate rule: a later candidate does not become current by recency alone, and any candidate-to-candidate replacement must name the exact earlier receipt through `supersedes_receipt_digest`. `docs/612-workstation-candidate-supersession-stays-same-origin-and-self-describing.md` then fixes the next scope/evidence rule: that same replacement must stay inside one authoritative origin and carry `superseded_candidate_digest` plus `superseded_authoritative_origin_digest` rather than vaguely pointing at some older receipt. The chooser/default-app layer for URI and document routing should stay on trusted host-managed role slots instead of arbitrary handler discovery or first-open default rewrites from untrusted context, the remembered role/default state for those slots should live in typed `intent.role.binding` objects rather than package-manager or desktop-entry folklore, trusted settings changes to that state should review through `intent.role.binding.diff` instead of ad-hoc settings deltas, those remembered-role mutations should emit `intent.role.binding.event` so the event journal/support bundles can answer when the change happened, and the ordinary interactive workstation lane should prove approval through the constrained `intent.role.binding` consent profiles instead of treating trusted settings UI as ambient write authority. When the same remembered-role family is mutated non-interactively by reconcile/import/admin policy, the durable event should join back to `policy.decision` through `policy_decision_digest` instead of pretending a workstation prompt happened. When that non-interactive path specifically came from support/import/recovery, the same event should also carry `import_receipt_digest` so the exact typed import receipt stays queryable. Across both lanes, the actual apply rule is compare-and-swap against the current binding digest: reviewed diffs that go stale must leave `write-denied` evidence with `reason_code = precondition-failed` and `observed_binding` instead of silently rebasing.
+
+See: `docs/179-portals-and-powerbox.md`, `docs/205-data-transfer-portals-clipboard-and-dnd.md`, `docs/208-screencast-and-remote-desktop-portals.md`, `docs/538-workstation-cross-domain-datatransfer-floor.md`, `docs/539-workstation-intent-routed-uri-opening-floor.md`, `docs/540-workstation-role-bound-intent-targets-and-chooser-floor.md`, `docs/541-workstation-role-slot-bindings-as-typed-state-boundary.md`, `docs/542-role-binding-diff-as-review-surface.md`, `docs/544-role-binding-consent-lane-for-interactive-workstation-mutations.md`, `docs/545-role-binding-policy-decision-join-for-noninteractive-mutations.md`, `docs/546-role-binding-diff-precondition-and-conflict-denial-boundary.md`, `docs/547-role-binding-support-import-join-via-content-import-receipt.md`, `docs/548-role-binding-authority-lanes-not-invocation-surfaces.md`, `docs/605-workstation-file-open-import-and-bounded-document-roles.md`, `docs/606-workstation-imported-foreign-documents-stay-view-first.md`, `docs/653-workstation-imported-foreign-document-viewing-stays-disposable-first.md`, `docs/654-workstation-sanitized-inspection-derivatives-stay-inspection-shaped-and-disposable-first.md`, `docs/658-workstation-datatransfer-evidence-binds-offer-source-and-transfer-subjects-exactly.md`, `docs/607-workstation-working-copy-receipts-and-edit-route-joins.md`, `docs/608-workstation-working-copy-save-scope-and-no-implicit-source-writeback.md`, `docs/609-workstation-working-copy-reintegration-stays-explicit-and-new-version-shaped.md`, `docs/610-workstation-successor-candidates-stay-immutable-and-resnapshot-shaped.md`, `docs/611-workstation-candidate-supersession-stays-explicit-and-no-latest-wins.md`, `docs/612-workstation-candidate-supersession-stays-same-origin-and-self-describing.md`, `docs/613-workstation-candidate-supersession-stays-head-exact-and-stale-target-fail-closed.md`, and `docs/614-workstation-stale-supersession-denials-carry-current-head-evidence-and-recovery-target.md`.
+
+### Input and trusted prompts
+
+The host owns raw HID, focus, and the secure-attention path.
+AppVMs should receive brokered input streams, not raw keyboard/mouse devices by default.
+High-risk prompts (unlock, signing, consent, elevation) must route through a host-controlled trusted path.
+
+See: `docs/207-input-authority-secure-attention-and-hid-risk.md`.
+
+### Devices
+
+Direct device passthrough is exceptional, not normal workstation plumbing.
+USB and removable-media flows should prefer quarantine/device domains and typed grants/receipts over ambient `/dev` exposure.
+
+See: `docs/204-device-isolation-domains.md`, `docs/278-device-grants-and-devfs-rulesets.md`, `docs/279-usb-quarantine-and-removable-media-workflow.md`.
+
+### Display composition and acceleration
+
+The trusted host should own composition, window-origin markers, focus policy, and trusted prompts.
+AppVMs should cross into that host-controlled display plane through remoted GUI rather than joining a shared host display server.
+`docs/537-workstation-remoted-session-surface-boundary.md` now fixes the baseline as a **remoted session surface** first; seamless host-native per-window integration is intentionally deferred.
+The baseline accepts software-rendered or simple 2D guest output as acceptable workstation behavior; raw host X11/DRM/render-node access and direct guest GPU passthrough are not.
+Using small-role or single-app AppVMs is the preferred ergonomics answer at this stage.
+
+See: `docs/536-workstation-display-composition-and-gpu-boundary.md`, `docs/537-workstation-remoted-session-surface-boundary.md`.
+
+## What remains intentionally undecided
+
+This boundary is crisp, but it is **not** a complete desktop implementation plan.
+Still-open implementation questions include:
+
+- the exact remoting transport and damage/copy model for the session surface,
+- audio/video backend details,
+- IME/accessibility behavior across the boundary,
+- whether a future bounded accelerated lane is worth the complexity,
+- whether a future seamless per-window lane is worth standardizing,
+- whether role families beyond `browsing` / `communications` / `document_viewing` / `document_editing` are worth standardizing,
+- and whether some tightly bounded host-side developer/admin tools deserve an adapter lane.
+
+Those are future RFC/ADR topics.
+
+## Product-profile wiring
+
+Profile **B** should summarize this boundary in a small, stable way:
+
+- `runtime=appvm-first-with-host-ui-control-plane`
+- forbidden by default: host execution of general-purpose apps outside the trusted host UI / broker set
+
+This is intentionally **not** a second policy language.
+It is a compact compilation-target default that keeps reviews, docs, and future tooling aligned.
+
+## Related docs
+
+- `docs/268-desktop-appvms-and-portalized-apps.md`
+- `docs/410-desktop-viability-checklist.md`
+- `docs/411-product-profiles-as-compilation-target.md`
+- `docs/412-product-profile-matrix.md`
+- `docs/179-portals-and-powerbox.md`
+- `docs/207-input-authority-secure-attention-and-hid-risk.md`
+- `docs/536-workstation-display-composition-and-gpu-boundary.md`
+
+
+Cross-domain transfer lifetime now follows the same exact evidence posture too: `docs/661-workstation-datatransfer-grants-carry-exact-effective-until-and-late-delivery-fails-closed.md` requires grants to publish exact `effective_until`, and successful ordinary transfer must not arrive later than that  joined deadline. `docs/662-workstation-datatransfer-renewals-stay-successor-grants-and-predecessor-digest-linked.md` then fixes the reviewed retry continuity story too: a host/broker “allow again” flow must mint a fresh grant artifact, and successor continuity lives on `supersedes_grant_digest` instead of control-plane-only state. `docs/665-workstation-successor-datatransfer-grants-stay-exact-payload-bound-and-no-semantic-equivalence-rebinding.md` tightens the same path again: if a reviewed successor exists at all, it stays bound to the same reviewed payload by payload digest (`offer.payload_digest`) rather than a broker-side claim that new bytes are “close enough.” `docs/666-workstation-successor-datatransfer-grants-keep-foreground-requirement-exact.md` then closes the next execution-posture drift: the same successor path must also preserve exact `constraints.requires_foreground`, so a reviewed foreground transfer cannot quietly become background-capable under retry wording. `docs/667-workstation-successor-datatransfer-grants-keep-delivery-mode-exact.md` then closes the next replay-width drift too: the same successor path must also preserve exact `delivery_mode`, so a reviewed one-shot transfer cannot quietly become multi-delivery authority under familiar retry wording. `docs/671-workstation-ordinary-datatransfer-baseline-stays-frozen-and-richer-lanes-are-rfc-first.md` then closes the next archive-management drift too: this ordinary lane stops here, and any richer broader lane is RFC-first rather than another quiet expansion of the same host/broker contract.
+
+Last updated: 2026-03-22r409

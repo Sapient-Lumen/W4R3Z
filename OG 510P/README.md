@@ -8,4 +8,6 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [BrowserRT](BrowserRT/): five selected snapshots of a browser-local runtime, from a validation scaffold to OPFS recovery work, with packaged and linked revision identities kept distinct.
 
+- [DeriveBSD](DeriveBSD/): eight selected FreeBSD-first control-plane snapshots, from design contracts to a fixture-bound local dry-run runtime.
+
 Each project has its own reading guide and provenance. Existing license notices remain applicable; no new blanket license is granted here.

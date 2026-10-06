@@ -1,0 +1,108 @@
+# Data transfer portals (clipboard / drag&drop) as capability grants
+
+Clipboard and drag&drop are *cross-app data channels*.
+If they are ambient, sandboxing collapses.
+
+Historically:
+- on **X11**, any client on a display can read the clipboard (and worse, log keys)
+- on **Wayland**, clipboard access is restricted to foreground apps; clipboard managers require privileged protocols and explicit consent
+
+DeriveBSD should treat “copy/paste” as a **portal-shaped capability acquisition**.
+`docs/538-workstation-cross-domain-datatransfer-floor.md` now fixes the workstation baseline more tightly: ordinary cross-domain clipboard/file movement is explicit, directional, and **not** an ambient shared clipboard or cross-domain drag&drop requirement. The workstation floor is **no ambient shared clipboard** across compartments.
+
+## Lessons to steal
+
+- **XDG Desktop Portals** define a Clipboard portal interface for sandboxed apps:
+  - apps request clipboard access for a session
+  - the host broker mediates what is allowed  
+  Reference: https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Clipboard.html
+
+- Wayland compositors intentionally restrict clipboard access; “data-control” protocols for clipboard managers are privileged and should be opt-in.  
+  Reference: https://wayland.app/protocols/wlr-data-control-unstable-v1
+
+## Model
+
+### 1) A DataTransfer broker issues scoped handles
+
+A host-side `derive-datatransferd` broker (name placeholder):
+
+- issues **leased** handles for:
+  - read clipboard (paste)
+  - write clipboard (copy)
+  - drag&drop offers (explicit user gesture)
+- enforces constraints:
+  - MIME types
+  - max bytes / rate limits
+  - time-to-live
+  - optional redaction transform profile
+
+### 2) Redaction and privacy are first-class
+
+Clipboard is a common exfil channel.
+If DeriveBSD is going to produce sharable artifacts (capsules, receipts), it should also be able to produce sharable clipboard transfers.
+
+Integrate:
+- deterministic redaction transforms: `docs/195-deterministic-redaction-transforms.md`
+- portal consent receipts: `docs/185-portal-consent-and-audit-receipts.md`
+
+### 3) Shape this as “data offers”, not “global state”
+
+Rather than a single global clipboard, model clipboard entries as **offers**:
+
+- a producer creates an offer with constraints
+- a consumer obtains a read handle to a specific offer via the broker
+- offers expire (or are revoked) by default
+
+This matches the “authority is explicit” philosophy and makes auditing easier. `docs/657-workstation-ocr-text-egress-stays-explicit-plain-text-single-delivery.md` now fixes one concrete follow-on too: OCR-derived text copied out of searchable foreign inspection stays an explicit plain-text single-delivery transfer, and typed grants/receipts may preserve a `content_source` provenance join instead of laundering copied text into generic host clipboard folklore. `docs/658-workstation-datatransfer-evidence-binds-offer-source-and-transfer-subjects-exactly.md` then fixes the actor-side evidence gap: the transfer artifacts now also carry exact `offer_source_subject` alongside `subject`, so support/export no longer has to recover the offerer from broker-only state or direction folklore. `docs/659-workstation-datatransfer-receipts-join-exact-grants-by-digest.md` then fixes the next portability gap: receipts now also carry exact `grant_digest`, so detached tooling can answer which exact `ui.datatransfer.grant` artifact governed the transfer without reconstructing policy from `offer_id`, `lease_id`, or broker memory. `docs/660-workstation-single-delivery-datatransfer-grants-stay-one-shot-and-fresh-grant-required.md` then fixes the next recovery gap too: in the ordinary lane, the first successful read-side transfer exhausts the grant, and any retry is fresh grant / re-offer required rather than broker replay or clipboard-history resurrection. `docs/661-workstation-datatransfer-grants-carry-exact-effective-until-and-late-delivery-fails-closed.md` then fixes the next lifetime gap: grants now publish exact `effective_until`, and late delivery fails closed instead of leaning on TTL/expiry/broker folklore. `docs/662-workstation-datatransfer-renewals-stay-successor-grants-and-predecessor-digest-linked.md` then fixes the next continuity gap: reviewed retries mint fresh grants and use `renewal_posture` plus `supersedes_grant_digest` instead of mutating an older grant story in place. `docs/663-workstation-successor-datatransfer-grants-stay-same-actor-pair-and-no-wider-offer.md` then fixes the next widening gap: successor continuity is only for the same actor pair and same-or-narrower offer scope, so broader MIME/byte/source/destination changes are fresh-grant required instead of hiding behind retry wording. `docs/664-workstation-successor-datatransfer-grants-keep-payload-lineage-and-redaction-posture-exact.md` then fixes the next payload-drift gap: successor continuity must also preserve exact payload lineage and redaction posture, so “allow again” cannot quietly swap `content_source` or `redaction_profile_digest` while pretending to continue the same reviewed transfer story. `docs/665-workstation-successor-datatransfer-grants-stay-exact-payload-bound-and-no-semantic-equivalence-rebinding.md` then fixes the next substitution gap: successor continuity is exact-payload-bound through payload digest (`offer.payload_digest`), so newly rendered or semantically equivalent bytes are fresh-grant required rather than old-story folklore. `docs/666-workstation-successor-datatransfer-grants-keep-foreground-requirement-exact.md` then fixes the next interactivity gap: successor continuity also preserves `constraints.requires_foreground`, so “allow again” cannot quietly turn a foreground-reviewed crossing into a background-capable one under the old story. `docs/667-workstation-successor-datatransfer-grants-keep-delivery-mode-exact.md` then fixes the next replay-width gap: successor continuity also preserves exact `delivery_mode`, so a reviewed one-shot transfer cannot quietly become multi-delivery retry authority under the old story. `docs/668-workstation-successor-datatransfer-grants-keep-rate-limit-posture-exact.md` then fixes the next throttling gap too: successor continuity also preserves exact `constraints.rate_limit`, so a reviewed transfer cannot quietly change tempo/throughput posture under the old story. `docs/669-workstation-successor-datatransfer-grants-keep-absolute-expiry-posture-exact.md` then fixes the next timing-posture gap too: successor continuity also preserves exact `constraints.expires_at`, so old-story retry wording cannot quietly replace or remove the reviewed outer expiry ceiling.
+
+## Evidence objects
+
+- `ui.datatransfer.grant` — leased grant to read/write an offer (or create an offer); now carries exact `offer_source_subject` plus the grant-holder `subject`, reviewed retries/re-offers can stay successor-shaped through `renewal_posture` plus `supersedes_grant_digest`, and successor continuity itself now stays explicit through `successor_scope_posture` so wider actor/scope changes cannot masquerade as the same story, and successor continuity also cannot quietly swap payload lineage, redaction posture, or exact payload binding
+- `ui.datatransfer.receipt` — record that a transfer occurred under a grant (optional policy knob); ordinary read-side receipts can now name both the offer-side subject and the receiving subject directly and join back to the exact grant artifact through `grant_digest`
+
+Schemas:
+- `spec/ui.datatransfer.grant.schema.json`
+- `spec/ui.datatransfer.receipt.schema.json`
+
+## Practical ergonomics (so people actually use it)
+
+- provide a tiny `derive-clip` tool that speaks to the broker for terminal apps (like `wl-copy` / `wl-paste`)
+- allow a “clipboard manager” role only via explicit policy + visible consent, rather than hidden privileged protocols
+- make `delivery_mode` explicit on grants so ordinary cross-domain transfer stays `single-delivery` unless policy approves a richer lane
+- keep `offer_source_subject` explicit so transfer evidence can answer who offered the data without broker-memory folklore
+- keep `grant_digest` explicit on receipts so transfer evidence can answer which exact grant artifact was consumed without broker-memory folklore
+- keep ordinary `single-delivery` one-shot so the first successful read-side transfer is visibly terminal (`grant_exhausted = true`) and recovery is a fresh grant / re-offer rather than replay folklore
+- attach redaction transforms by digest to grants (“this paste path always strips tokens”)
+
+See also:
+- portals/powerbox: `docs/179-portals-and-powerbox.md`
+- workstation data-transfer floor: `docs/538-workstation-cross-domain-datatransfer-floor.md`
+- OCR text-egress boundary: `docs/657-workstation-ocr-text-egress-stays-explicit-plain-text-single-delivery.md`
+- transfer-subject exactness boundary: `docs/658-workstation-datatransfer-evidence-binds-offer-source-and-transfer-subjects-exactly.md`
+- transfer grant-join exactness boundary: `docs/659-workstation-datatransfer-receipts-join-exact-grants-by-digest.md`
+- transfer single-delivery exhaustion boundary: `docs/660-workstation-single-delivery-datatransfer-grants-stay-one-shot-and-fresh-grant-required.md`
+- intent routing (“open/share” can be implemented via offers): `docs/199-intent-routing-and-plumbing.md`
+- origin labels + quarantine attributes (for file-offers/import flows): `docs/280-origin-labels-and-quarantine-attributes.md`
+
+- keep exact `effective_until` on grants so lifetime is explicit on the reviewed artifact instead of reconstructed from TTL/expiry folklore
+- keep successful ordinary transfer at or before `effective_until`; late delivery fails closed and later retry is a fresh grant / re-offer required
+- keep reviewed retries/re-offers successor-shaped with `renewal_posture` plus `supersedes_grant_digest` instead of in-place extension folklore
+- keep successor continuity same-actor-pair and no-wider-offer through `successor_scope_posture`; widened MIME/byte/source/destination changes are fresh-grant required
+- keep successor continuity foreground-exact through `constraints.requires_foreground`; background-capable retry changes are fresh-grant required
+- keep successor continuity payload-lineage and redaction-posture exact; add/drop/swap of `offer.content_source` or `offer.redaction_profile_digest` is fresh grant required
+- keep successor continuity exact-payload-bound through payload digest (`offer.payload_digest`); semantic-equivalence rebinding or payload-digest add/drop/swap is fresh grant required
+- keep successor continuity delivery-mode exact through `delivery_mode`; single-delivery to multi-delivery retry drift is fresh-grant required
+- keep successor continuity rate-limit posture exact through `constraints.rate_limit`; add/drop/swap of throttling posture is fresh-grant required
+- keep successor continuity absolute expiry posture exact through `constraints.expires_at`; add/drop/swap of the outer absolute deadline is fresh-grant required
+- keep ordinary `ui.datatransfer.grant.constraints` closed-world; hidden extra `constraints.*` keys are not baseline and future extra posture needs an ADR/spec change
+- transfer lifetime boundary: `docs/661-workstation-datatransfer-grants-carry-exact-effective-until-and-late-delivery-fails-closed.md`
+- transfer renewal-lineage boundary: `docs/662-workstation-datatransfer-renewals-stay-successor-grants-and-predecessor-digest-linked.md`
+- transfer successor-scope boundary: `docs/663-workstation-successor-datatransfer-grants-stay-same-actor-pair-and-no-wider-offer.md`
+- transfer successor payload-lineage boundary: `docs/664-workstation-successor-datatransfer-grants-keep-payload-lineage-and-redaction-posture-exact.md`
+- transfer successor payload-digest boundary: `docs/665-workstation-successor-datatransfer-grants-stay-exact-payload-bound-and-no-semantic-equivalence-rebinding.md`
+- transfer successor delivery-mode boundary: `docs/667-workstation-successor-datatransfer-grants-keep-delivery-mode-exact.md`
+- transfer successor rate-limit boundary: `docs/668-workstation-successor-datatransfer-grants-keep-rate-limit-posture-exact.md`
+- transfer successor absolute-expiry boundary: `docs/669-workstation-successor-datatransfer-grants-keep-absolute-expiry-posture-exact.md`
+Reviewed retry/re-offer continuity now stays **new artifact plus predecessor digest**: see `docs/662-workstation-datatransfer-renewals-stay-successor-grants-and-predecessor-digest-linked.md`. The next narrowing cuts are explicit too: successor continuity is only for the same actor pair and same-or-narrower offer scope, not for widened transfer authority under the old story (`docs/663-workstation-successor-datatransfer-grants-stay-same-actor-pair-and-no-wider-offer.md`), it must also preserve exact payload lineage and redaction posture rather than silently swapping `content_source` or `redaction_profile_digest` (`docs/664-workstation-successor-datatransfer-grants-keep-payload-lineage-and-redaction-posture-exact.md`), it stays exact-payload-bound rather than semantic-equivalence-bound (`docs/665-workstation-successor-datatransfer-grants-stay-exact-payload-bound-and-no-semantic-equivalence-rebinding.md`), it must also keep `constraints.requires_foreground` exact so old-story retry wording cannot quietly become background-capable (`docs/666-workstation-successor-datatransfer-grants-keep-foreground-requirement-exact.md`), it must also keep `delivery_mode` exact so one-shot review cannot quietly become multi-delivery retry authority (`docs/667-workstation-successor-datatransfer-grants-keep-delivery-mode-exact.md`), and it must also keep `constraints.rate_limit` exact so old-story retry wording cannot quietly change the reviewed throttling posture (`docs/668-workstation-successor-datatransfer-grants-keep-rate-limit-posture-exact.md`), and it must also keep `constraints.expires_at` exact so the same successor lane cannot quietly replace or remove the reviewed outer absolute-expiry ceiling (`docs/669-workstation-successor-datatransfer-grants-keep-absolute-expiry-posture-exact.md`). `docs/670-workstation-datatransfer-constraints-stay-closed-world-and-no-hidden-successor-posture.md` then closes the remaining open-ended vocabulary seam too: ordinary `ui.datatransfer.grant.constraints` is now a closed-world typed vocabulary, so there is no hidden successor execution posture beyond the already accepted typed keys. `docs/671-workstation-ordinary-datatransfer-baseline-stays-frozen-and-richer-lanes-are-rfc-first.md` then makes the ordinary portable baseline frozen and complete enough to implement; richer widened/substituting/broader transfer lanes are RFC-first instead of quiet baseline drift. `docs/672-workstation-richer-datatransfer-lanes-mint-distinct-artifact-families.md` then fixes the next intake rule too: if a richer lane is accepted later, it must mint a distinct artifact family instead of reusing ordinary `ui.datatransfer.grant` / `ui.datatransfer.receipt` with one more mode bit. `docs/673-workstation-first-richer-datatransfer-rfc-target-is-reviewed-finite-collection-handoff.md` then fixes the next queueing cut too: if practice forces one richer lane, start with a reviewed finite collection handoff, not persistent tree authority or replay-first clipboard convenience. `docs/674-workstation-reviewed-finite-collection-handoff-stays-single-retrieve-by-default-and-auto-stopping.md` then makes the next RFC-shaping cut explicit too: that first richer lane should stay single-retrieve by default and auto-stop after the first successful retrieve instead of quietly growing repeated-retrieve replay semantics in the first cut. `docs/675-workstation-finite-collection-handoff-directory-members-stay-snapshot-shaped-and-no-live-tree-traversal-first.md` then fixes the next directory-semantics cut too: selected directories in that first richer lane stay snapshot-shaped reviewed membership rather than live browse/traverse authority or persistent tree access. `docs/676-workstation-finite-collection-handoff-snapshot-membership-stays-manifest-first-and-tree-summary-is-supplementary.md` then fixes the next representation cut too: that richer lane keeps manifest-first reviewed membership through an explicit per-member manifest, and any tree/collection digest is only supplementary summary evidence instead of the real reviewed/exported membership surface. `docs/677-workstation-finite-collection-handoff-first-cut-stays-read-only-and-write-enabled-receive-is-follow-on-rfc-only.md` then fixes the next access-mode cut too: the first richer finite-collection handoff now stays read-only only, and any write-enabled receive must come back as a separate follow-on RFC/ADR decision instead of lingering inside the first cut. `docs/678-workstation-finite-collection-handoff-first-cut-rejects-symlinks-and-special-files.md` then fixes the next member-kind cut too: that same first richer lane now rejects symlinks and special files, staying regular-files-plus-explicit-directories only so the broker does not quietly follow, preserve, or omit path-sensitive members under “selected folder snapshot” wording. `docs/679-workstation-finite-collection-handoff-manifest-entry-floor-stays-content-identity-first-and-stat-light.md` then fixes the next manifest-entry seam too: the first richer finite-collection handoff now keeps a stat-light manifest floor centered on normalized review path + member kind for every entry and exact payload digest + byte length for regular files, instead of letting path-only review, MIME-first heuristics, or full host-stat folklore become the real review surface.
+
+Last updated: 2026-03-22r409
