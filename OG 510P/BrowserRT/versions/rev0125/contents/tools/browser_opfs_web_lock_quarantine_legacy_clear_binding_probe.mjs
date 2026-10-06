@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { REVISION, VERSION } from '../src/browserrt.mjs';
+import { runManagedBrowserPage } from './browser_cdp_fixture.mjs';
+const TASK_ID = 'browser:opfs-web-lock-quarantine-legacy-clear-binding-proof';
+const DEFAULT_OUT = `artifacts/validation/REV${REVISION.slice(3)}-BROWSER-OPFS-WEB-LOCK-QUARANTINE-LEGACY-CLEAR-BINDING-PROBE.json`;
+const argValue = (argv, flag, fallback = null) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : fallback; };
+function pageExpression({ prefix, lockPrefix, lockName }) { return `(async () => {
+  const m = await import(new URL('/src/browserrt.mjs', location.href).href);
+  const rt = await m.boot({ telemetry:'browser-cdp', proof:'${REVISION}', quarantineLegacyClearBindingProof:true });
+  const raw = rt.opfsAsyncBlockStore({ name:'${REVISION}-legacy-clear-binding-raw', prefix:${JSON.stringify(prefix)} });
+  await raw.open();
+  const cleanupBefore = await raw.cleanupForTest();
+  const guard = rt.opfsWebLockGuardedBlockStore({ store:raw, lockPrefix:${JSON.stringify(lockPrefix)}, lockName:${JSON.stringify(lockName)}, label:'${REVISION}-legacy-clear-binding-guard', lockTimeoutMs:1000 });
+  const makeScheduler = (label) => m.createCrossLaneScheduler({ label, lanes:[{id:'storage',rank:70,capacity:1,quantum:4096,maxQueuedCost:8192},{id:'maintenance',rank:10,capacity:1,quantum:64,maxQueuedCost:128}] });
+  const adapter = rt.blockStoreLaneAdapter({ label:'${REVISION}-legacy-clear-binding-adapter', store:guard, scheduler:makeScheduler('${REVISION}-legacy-clear-binding-scheduler'), lane:'storage', defaultOperationTimeoutMs:1000 });
+  const success = { opId:'browser-legacy-clear-success', kind:'put', lane:'storage', timeoutMs:300, timedOutAtMs:1700000001000, settledAtMs:1700000002000, result:{ disposition:'browser-synthetic-late-success' } };
+  const failure = { opId:'browser-legacy-clear-failure', kind:'put', lane:'storage', timeoutMs:300, timedOutAtMs:1700000001100, settledAtMs:1700000002100, error:{ name:'BrowserSyntheticFailure', message:'synthetic imported late failure', code:'BRT_OPFS_OPERATION_FAILED', storageDisposition:'BRT_OPFS_OPERATION_FAILED' } };
+  const ledger = { schema:'brt.storageLane.timedOutOperationQuarantine.v1', exportedAtMs:Date.now(), label:'${REVISION}-browser-legacy-clear-binding-ledger', reason:'browser-legacy-clear-binding-import', lane:'storage', counts:{ total:2, unsettled:0, successful:1, failed:1 }, unsettledTimedOutOperations:[], successfulTimedOutOperations:[success], failedTimedOutOperations:[failure] };
+  const importResult = adapter.importTimedOutOperationQuarantine(ledger, { lane:'storage', reason:'browser-legacy-clear-binding-import', markUnhealthy:false });
+  const importedQuarantine = adapter.timedOutOperationQuarantine('storage');
+  const importedLane = adapter.snapshot().executor.scheduler.lanes.find(l => l.id === 'storage');
+  const rejectedPayload = new TextEncoder().encode('${REVISION}:browser-legacy-clear-binding-rejected-payload');
+  const rejectedDigest = 'sha256:' + await m.digestBytesHex(rejectedPayload);
+  const rejected = adapter.schedulePut(rejectedPayload, { id:'browser-legacy-clear-binding-rejected-put', priority:'user-visible' });
+  const rejectedPresent = await guard.has(rejectedDigest, { timeoutMs:1000 });
+  const noFingerprintSuccess = adapter.clearSuccessfulTimedOutOperations({ lane:'storage', opId:'browser-legacy-clear-success', reviewed:true, reviewToken:'${REVISION}-browser-legacy-success-no-fingerprint', reason:'browser-legacy-success-no-fingerprint' });
+  const staleFingerprintSuccess = adapter.clearSuccessfulTimedOutOperations({ lane:'storage', opId:'browser-legacy-clear-success', reviewed:true, reviewToken:'${REVISION}-browser-legacy-success-stale-fingerprint', reviewFingerprint:'brt-qfp-v1:0000000000000000', reason:'browser-legacy-success-stale-fingerprint' });
+  const noFingerprintFailure = adapter.clearFailedTimedOutOperations({ lane:'storage', opId:'browser-legacy-clear-failure', reviewed:true, reviewToken:'${REVISION}-browser-legacy-failure-no-fingerprint', reason:'browser-legacy-failure-no-fingerprint' });
+  const successReview = adapter.createTimedOutOperationQuarantineReview({ lane:'storage', category:'successful', opId:'browser-legacy-clear-success', reviewer:'browser-legacy-clear-binding-probe', reviewToken:'${REVISION}-browser-legacy-success-bound-review', reason:'browser-legacy-success-bound-review' });
+  const clearSuccess = adapter.clearSuccessfulTimedOutOperations({ reviewManifest:successReview, requireReviewFingerprint:true, reason:'browser-legacy-success-bound-clear' });
+  const blockedAfterSuccess = await adapter.recoverWhenStoreSettled({ timeoutMs:200, intervalMs:10, reason:'browser-legacy-clear-binding-blocked-after-success' });
+  const staleOldSuccessReviewOnFailure = adapter.clearFailedTimedOutOperations({ reviewManifest:successReview, requireReviewFingerprint:true, reason:'browser-legacy-failure-with-stale-success-review' });
+  const failureReview = adapter.createTimedOutOperationQuarantineReview({ lane:'storage', category:'failed', opId:'browser-legacy-clear-failure', reviewer:'browser-legacy-clear-binding-probe', reviewToken:'${REVISION}-browser-legacy-failure-bound-review', reason:'browser-legacy-failure-bound-review' });
+  const clearFailure = adapter.clearFailedTimedOutOperations({ reviewManifest:failureReview, requireReviewFingerprint:true, reason:'browser-legacy-failure-bound-clear' });
+  const recovered = await adapter.recoverWhenStoreSettled({ timeoutMs:200, intervalMs:10, reason:'browser-legacy-clear-binding-recovered' });
+  const recoveredPayload = new TextEncoder().encode('${REVISION}:browser-legacy-clear-binding-recovered-payload');
+  const recoveredAccepted = adapter.schedulePut(recoveredPayload, { id:'browser-legacy-clear-binding-recovered-put', priority:'user-visible' });
+  const drain = await adapter.drain({ maxSteps:2 });
+  const recoveredResult = drain.results.find(r => r.opId === 'browser-legacy-clear-binding-recovered-put') || null;
+  const recoveredVerify = recoveredResult?.result?.ref ? await guard.verify(recoveredResult.result.ref, { timeoutMs:1000 }) : null;
+  const locksBeforeCleanup = await guard.queryLocks();
+  const cleanupAfter = await guard.cleanupForTest({ timeoutMs:1000 });
+  const finalLocks = await guard.queryLocks();
+  const finalSnapshot = adapter.snapshot();
+  const trace = rt.close();
+  return { capabilities:{...m.detectCapabilities(globalThis), webLocksQuery: typeof navigator.locks?.query === 'function'}, cleanupBefore, importResult, importedQuarantine, importedLane, rejected, rejectedDigest, rejectedPresent, noFingerprintSuccess, staleFingerprintSuccess, noFingerprintFailure, successReview, clearSuccess, blockedAfterSuccess, staleOldSuccessReviewOnFailure, failureReview, clearFailure, recovered, recoveredAccepted, recoveredResult, recoveredVerify, locksBeforeCleanup, cleanupAfter, finalLocks, finalSnapshot, traceKinds: trace.map(e=>e.kind), page:{location:location.href,isSecureContext,crossOriginIsolated} };
+})()`; }
+export async function runProbe(options={}){ const started=performance.now(); const prefix=options.prefix||`browserrt/${REVISION}/opfs-web-lock-quarantine-legacy-clear-binding-proof`; const lockPrefix=options.lockPrefix||'browserrt:quarantine-legacy-clear-binding'; const lockName=options.lockName||`${REVISION}-quarantine-legacy-clear-binding-lock`;
+  const { result, harness } = await runManagedBrowserPage({ timeoutMs: options.timeoutMs || 18000, chromium: options.chromium, relaxPolicy: options.relaxPolicy, pagePath:'/browser-opfs-web-lock-quarantine-legacy-clear-binding.html', pageTitle:'BrowserRT OPFS Web Lock quarantine legacy clear binding proof', allowedPrefixes:['src/'], profilePrefix:'browserrt-quarantine-legacy-clear-binding-', stderrTerms:['opfs','lock','quarantine','legacy-clear'] }, async ({ evalJson, timeoutMs, mark }) => { const t0=performance.now(); const report=await evalJson(pageExpression({ prefix, lockPrefix, lockName }), timeoutMs); mark('browser-quarantine-legacy-clear-binding-eval', t0); return report; });
+  assert.equal(result.capabilities.opfs,true); assert.equal(result.capabilities.webLocks,true); assert.equal(result.capabilities.webLocksQuery,true);
+  assert.equal(result.importResult.ok,true); assert.equal(result.importResult.importedCount,2); assert.equal(result.importResult.markUnhealthyForced,true); assert.equal(result.importedQuarantine.totalCount,2); assert.equal(result.importedLane.healthy,false);
+  assert.equal(result.rejected.accepted,false); assert.equal(result.rejected.scheduler.noMutation,true); assert.equal(result.rejectedPresent,false);
+  assert.equal(result.noFingerprintSuccess.ok,false); assert.equal(result.noFingerprintSuccess.code,'late-success-clear-review-fingerprint-required');
+  assert.equal(result.staleFingerprintSuccess.ok,false); assert.equal(result.staleFingerprintSuccess.code,'late-success-clear-review-fingerprint-mismatch');
+  assert.equal(result.noFingerprintFailure.ok,false); assert.equal(result.noFingerprintFailure.code,'late-failure-clear-review-fingerprint-required');
+  assert.equal(result.clearSuccess.ok,true); assert.equal(result.clearSuccess.clearedCount,1); assert.equal(result.blockedAfterSuccess.recovered,false); assert.equal(result.blockedAfterSuccess.reason,'timed-out-operation-late-failure');
+  assert.equal(result.staleOldSuccessReviewOnFailure.ok,false); assert.equal(result.staleOldSuccessReviewOnFailure.code,'late-failure-clear-review-fingerprint-mismatch');
+  assert.equal(result.clearFailure.ok,true); assert.equal(result.clearFailure.clearedCount,1); assert.equal(result.recovered.recovered,true); assert.equal(result.recoveredAccepted.accepted,true); assert.equal(result.recoveredResult?.ok,true); assert.equal(result.recoveredVerify?.ok,true);
+  assert.equal(result.finalSnapshot.executor.timedOutOperationQuarantine.totalCount,0); assert.equal(result.cleanupAfter,true); assert.equal(result.finalLocks.heldCount,0); assert.equal(result.finalLocks.pendingCount,0);
+  for (const kind of ['storage-lane:timed-out-quarantine-import-backpressure-forced','storage-lane:late-provider-success-clear-rejected','storage-lane:late-provider-failure-clear-rejected','storage-lane:late-provider-successes-cleared','storage-lane:late-provider-failures-cleared','coord:web-lock-acquired','coord:web-lock-released']) assert.ok(result.traceKinds.includes(kind), `missing trace kind ${kind}`);
+  return { project:'BrowserRT', revision:REVISION, version:VERSION, schema:1, probe_id:`${REVISION}-browser-opfs-web-lock-quarantine-legacy-clear-binding-proof`, task_id:TASK_ID, status:'passed', generatedAt:new Date().toISOString(), durationMs:Math.round(performance.now()-started), purpose:'Managed Chromium proof that legacy late-success/late-failure quarantine clear helpers cannot bypass review-fingerprint-bound clearing over a real guarded OPFS/Web Lock store.', observations:{...result,harness}, claimsChecked:['real OPFS/Web Locks available','imported timeout quarantine forces backpressure','legacy clear helpers reject missing/stale review fingerprints','review-manifest-bound legacy clears permit explicit recovery and verified later OPFS write'], nonClaims:['Managed Chromium only; no cross-browser, durability, quota, eviction, cancellation, rollback, cryptographic attestation, or production readiness claim.'] };
+}
+const argv=process.argv.slice(2); const out=argValue(argv,'--json',DEFAULT_OUT); try{ const report=await runProbe({ timeoutMs:Number(argValue(argv,'--timeout-ms','18000')) }); if(out){ await mkdir(dirname(out),{recursive:true}); await writeFile(out,JSON.stringify(report,null,2)+'\n'); console.log(out);} else console.log(JSON.stringify(report,null,2)); }catch(error){ const report={ project:'BrowserRT', revision:REVISION, version:VERSION, schema:1, probe_id:`${REVISION}-browser-opfs-web-lock-quarantine-legacy-clear-binding-proof`, task_id:TASK_ID, status:'failed', generatedAt:new Date().toISOString(), error:{ name:error?.name||'Error', message:error?.message||String(error), stack:error?.stack }, nonClaims:['Failed browser proof is not silently skipped.']}; if(out){ await mkdir(dirname(out),{recursive:true}); await writeFile(out,JSON.stringify(report,null,2)+'\n'); console.error(out);} console.error(`[browser_opfs_web_lock_quarantine_legacy_clear_binding_probe] FAIL: ${error?.stack||error}`); process.exitCode=1; }
