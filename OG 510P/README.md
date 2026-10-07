@@ -10,4 +10,6 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [DeriveBSD](DeriveBSD/): eight selected FreeBSD-first control-plane snapshots, from design contracts to a fixture-bound local dry-run runtime.
 
+- [Anonymity](Anonymity/): three selected research snapshots tracing receipt identities, verifier contracts, and a later correction to observation-channel assumptions.
+
 Each project has its own reading guide and provenance. Existing license notices remain applicable; no new blanket license is granted here.
