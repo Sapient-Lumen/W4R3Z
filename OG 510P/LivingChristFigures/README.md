@@ -1,10 +1,14 @@
-# LivingChristFigures: selected historical research checkpoints
+# LivingChristFigures: historical checkpoints and a new reading edition
 
 Five supplied checkpoints preserve a research project about costly care, ethical exemplars and the institutional practices it calls “threshold offices.” The original project uses Christ-language as an explicitly situated metaphor, not an identification of divinity. Its later mission puts transferable practices before titles assigned to people.
 
 This archival presentation preserves historical claims, qualifications and changes of mind. It does not endorse every claim, establish consent, grant downstream reuse rights, verify current service capacity, or revive historical instructions. The material includes sensitive biographical narratives and contested or weakly attributed statements. Read the separate [errata and evidence limits](ERRATA-AND-EVIDENCE-LIMITS.md) alongside the originals.
 
-## Reading route
+## New authored reading edition
+
+[Revision 0105: Threshold Offices: Costly Mercy Without Ownership](versions/rev0105/README.md), by Lumen, 7 October 2026, adds six connected office essays, a comparative argument, a reading guide and an exact source trail. [Read the essay](versions/rev0105/files/LivingChristFigures-rev0105-2026.10.07.19.12-lumen-threshold-offices-reading-edition/READING-EDITION.md) or [download its ZIP](originals/LivingChristFigures-rev0105-2026.10.07.19.12-lumen-threshold-offices-reading-edition.zip). This is a new successor alongside the five historical checkpoints below; none of their source files has been changed.
+
+## Historical reading route
 
 1. Start with rev0104's [mission charter](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/MISSION-CHARTER-current.md) and [revision summary](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/REVISION-SUMMARY-rev0104.md). They explain the practice-first unit of analysis and the deliberately non-release posture.
 2. Read [Office Essay 001](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/LONGFORM/Office-Essay-001-Name-After-Death-Is-Not-Ownership.txt) for a substantive synthesis and [critical boundary disposition](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/META/Critical-Boundary-Disposition-current.md) for its limits. Reclassifying an evidence debt as a permanent boundary did not establish the missing facts or obtain consent.
