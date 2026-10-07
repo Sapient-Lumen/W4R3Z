@@ -1,0 +1,8 @@
+# Critical Boundary Disposition — current
+
+This report records the rev0104 completion decision that removes the only two open critical blockers without using further extractive research.
+The decision is conservative: it narrows what the cube may say instead of expanding evidence or public payload.
+
+| disposition_id | candidate_id | candidate_name | debt_ids | old_priority | new_priority | decision | why | permitted_after_disposition | forbidden_after_disposition | next_review_trigger | public_effect | status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| disp_rev0104_0001 | cand_elissa_davey_garden_of_innocence_unclaimed_children | Elissa Davey / Garden of Innocence National — abandoned and unidentified children burial office | debt_0150\|debt_0151 | critical\|critical | high\|high | convert_open_critical_debt_to_permanent_boundary_control | Further resolution would require or invite child-case, family-knowledge, family-consent, legal-authority, ceremony, image, or assigned-name extraction. That would worsen the harm the cube is trying to prevent. | high-level institutional office shape and boundary caution only | child category conclusion; family abandonment/refusal/incapacity/knowledge/consent; posthumous consent; names; images; poems; ceremony details; location cues; contact/service prompts; legal advice; live referral use | only if an authorized family/community/legal-review process provides a safe aggregate correction route, or if public prose tries to exceed the boundary | none; public layer remains closed and gains no source URL or case detail | implemented_in_root_candidate_claim_debt_ledgers |

@@ -1,0 +1,20 @@
+# Claim Evidence Strength Fields current
+
+Dedicated field schema for `META/Claim-Evidence-Strength-current.csv`, added in rev0055 to close the rev0054 schema-coverage backlog.
+
+| field | required | allowed/pattern | meaning |
+|---|---:|---|---|
+| claim_id | true | non-empty stable identifier | Stable claim identifier joining claim lifecycle, quarantine, release, and audit tables. |
+| candidate_id | true | non-empty stable identifier | Stable candidate identifier joining candidate/frontmatter/governance/public tables. |
+| candidate_name | true | YYYY-MM-DD or documented date string | Human-readable candidate label; not by itself public-release permission. |
+| claim_type | true | string; non-empty when semantically required | `claim_type` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| claim_status | true | string; non-empty when semantically required | `claim_status` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| evidence_strength | true | string; non-empty when semantically required | `evidence_strength` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| capacity_currentness_risk | true | string; non-empty when semantically required | `capacity_currentness_risk` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| source_count | true | string; non-empty when semantically required | `source_count` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| independent_domain_count | true | string; non-empty when semantically required | `independent_domain_count` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| source_type_profile | true | string; non-empty when semantically required | `source_type_profile` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| refresh_priority | true | string; non-empty when semantically required | `refresh_priority` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| suggested_refresh_cadence | true | string; non-empty when semantically required | `suggested_refresh_cadence` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| needs_human_review | true | string; non-empty when semantically required | `needs_human_review` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| why | true | string; non-empty when semantically required | `why` column from `META/Claim-Evidence-Strength-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |

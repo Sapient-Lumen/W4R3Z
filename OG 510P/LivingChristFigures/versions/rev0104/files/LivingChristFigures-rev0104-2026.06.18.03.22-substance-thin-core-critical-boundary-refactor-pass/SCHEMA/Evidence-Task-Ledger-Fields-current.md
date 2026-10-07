@@ -1,0 +1,25 @@
+# Evidence Task Ledger Fields — current
+
+| field | role | required |
+| --- | --- | --- |
+| task_id | current task ledger field | yes |
+| task_rank | current task ledger field | yes |
+| priority_band | current task ledger field | yes |
+| risk_lane | current task ledger field | yes |
+| candidate_id | current task ledger field | yes |
+| candidate_name | current task ledger field | yes |
+| debt_ids | current task ledger field | yes |
+| claim_ids | current task ledger field | yes |
+| critical_debt_count_after_rev0104 | current task ledger field | yes |
+| high_debt_count_after_rev0104 | current task ledger field | yes |
+| task_type | current task ledger field | yes |
+| decision_needed | current task ledger field | yes |
+| first_action | current task ledger field | yes |
+| evidence_to_seek_or_not_seek | current task ledger field | yes |
+| stop_rule | current task ledger field | yes |
+| do_not_do | current task ledger field | yes |
+| reviewer_role | current task ledger field | yes |
+| completion_evidence_slot | current task ledger field | yes |
+| public_effect | current task ledger field | yes |
+| status | current task ledger field | yes |
+| supersedes | current task ledger field | yes |

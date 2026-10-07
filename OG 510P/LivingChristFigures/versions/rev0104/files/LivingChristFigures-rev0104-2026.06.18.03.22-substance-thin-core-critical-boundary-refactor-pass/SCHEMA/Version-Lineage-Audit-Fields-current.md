@@ -1,0 +1,17 @@
+# Version Lineage Audit Fields — current
+
+Generated/maintained for current schema coverage.
+
+Field schema for `Version-Lineage-Audit-current.csv`.
+
+Rows: 7
+
+| field | required | allowed_values_or_pattern | meaning |
+|---|---|---|---|
+| lineage_check_id | yes | lineage_NNN | Stable row id. |
+| check | yes | slug | Lineage check name. |
+| severity | yes | info/medium/high | Severity after pass/fail normalization. |
+| status | yes | pass/fail | Check status. |
+| expected | yes | free text | Expected value. |
+| observed | yes | free text | Observed value. |
+| detail | yes | free text | Explanation. |

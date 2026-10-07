@@ -1,0 +1,14 @@
+# Archive Member Manifest Fields current
+
+Field schema for the matching current table.
+
+| field | required | allowed_values_or_pattern | meaning |
+|---|---|---|---|
+| `member_path` | yes | ^.+/.+$ | ZIP member path rooted under manifest export_name_without_zip. |
+| `package_path` | yes | package-relative path | Path of the package file inside the root directory. |
+| `size_bytes` | conditional | integer or blank for deferred recursive-output | File size for non-self rows. |
+| `sha256` | conditional | 64 lowercase hex or blank for deferred recursive-output | SHA-256 digest for non-self rows. |
+| `package_zone` | yes | public_layer/governance_layer/meta_audit_layer/schema_contract_layer/tooling_layer/candidate_layer/office_card_layer/longform_layer/root_handoff_layer | Package zone classification. |
+| `inclusion_scope` | yes | stable_package_file/deferred_self_output | Whether the row is a normal archive member or a self-output path whose size/hash is deferred. |
+| `status` | yes | pass/fail | Release status for the member row. |
+| `note` | yes | free text | Reasoning note for the member row. |

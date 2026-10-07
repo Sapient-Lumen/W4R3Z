@@ -1,0 +1,9 @@
+# Handoff Review Digest — current
+
+| topic | value | note |
+| --- | --- | --- |
+| revision | rev0104 | current package revision |
+| export_name_without_zip | LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass | current package export name |
+| pass_type | substance_first_thin_core_critical_boundary_refactor_working_pass | working pass shape |
+| public_payload_expanded | false | no public expansion |
+| open_critical_evidence_debts | 0 | after rev0104 disposition |

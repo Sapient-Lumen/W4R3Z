@@ -1,0 +1,16 @@
+# Path-Rename-Ledger Fields — current
+
+Generated/curated for `rev0065`.
+
+Rows: 8
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| rename_id | yes | free text or controlled release/status value | Path rename ledger field `rename_id`. |
+| old_path | yes | free text or controlled release/status value | Path rename ledger field `old_path`. |
+| old_mojibake_path | yes | free text or controlled release/status value | Path rename ledger field `old_mojibake_path`. |
+| new_path | yes | free text or controlled release/status value | Path rename ledger field `new_path`. |
+| reason | yes | free text or controlled release/status value | Path rename ledger field `reason`. |
+| display_name_policy | yes | free text or controlled release/status value | Path rename ledger field `display_name_policy`. |
+| status | yes | free text or controlled release/status value | Path rename ledger field `status`. |
+| release | yes | free text or controlled release/status value | Path rename ledger field `release`. |

@@ -1,0 +1,10 @@
+# CSV JSON Mirror Audit Fields current
+
+| field | required | allowed/pattern | meaning |
+|---|---:|---|---|
+| finding_id | true | ^cjma_[0-9]{4}$ | Audit finding identifier emitted by csv_json_mirror_audit.py. |
+| severity | true | info|medium|high | Finding severity; high blocks release handoff. |
+| check | true | non-empty string | Name of mirror-audit check. |
+| file | true | package-relative path or paired path | CSV/JSON file or pair being checked. |
+| row | true | integer or 0 | CSV/JSON row number when applicable. |
+| detail | true | non-empty string | Finding detail or pass statement. |

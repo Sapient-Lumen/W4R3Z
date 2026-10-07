@@ -1,0 +1,13 @@
+# Public Index Semantic Audit Fields current
+
+| field | required | allowed/pattern | meaning |
+|---|---:|---|---|
+| finding_id | true | ^pisa_[0-9]{4}$ | Finding id emitted by public_index_semantic_audit.py. |
+| severity | true | info/medium/high | Finding severity; high blocks handoff. |
+| status | true | pass/warn/fail | Machine status for the semantic check. |
+| check | true | non-empty string | Name of semantic public-index check. |
+| candidate_id | true | candidate id or . | Candidate row under semantic review, or . for package-level checks. |
+| expected | true | non-empty string | Expected template, location, or note invariant. |
+| observed | true | string | Observed value or summary. |
+| detail | true | non-empty string | Finding detail or pass statement. |
+| remediation | true | non-empty string | Action required to resolve the finding. |

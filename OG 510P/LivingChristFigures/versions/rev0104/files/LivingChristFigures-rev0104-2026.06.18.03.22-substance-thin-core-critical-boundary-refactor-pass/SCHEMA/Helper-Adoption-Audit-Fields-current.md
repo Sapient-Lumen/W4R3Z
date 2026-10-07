@@ -1,0 +1,12 @@
+# Helper-Adoption-Audit Fields — current
+
+| field | required | allowed_values_or_pattern | meaning |
+|---|---|---|---|
+| finding_id | yes | nonempty string | stable helper-refactor finding id |
+| check | yes | nonempty string | helper adoption check name |
+| tool_path | yes | package-relative path | tool or helper module being checked |
+| expected_signal | yes | nonempty string | required helper/refactor signal |
+| observed_value | yes | string | observed helper/refactor value |
+| severity | yes | info|high | finding severity |
+| status | yes | pass|fail | check result |
+| note | yes | nonempty string | review note |

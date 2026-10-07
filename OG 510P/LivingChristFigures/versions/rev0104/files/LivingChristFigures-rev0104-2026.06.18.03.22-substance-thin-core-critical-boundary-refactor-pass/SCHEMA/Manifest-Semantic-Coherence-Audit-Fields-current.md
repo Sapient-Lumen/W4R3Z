@@ -1,0 +1,14 @@
+# Manifest-Semantic-Coherence-Audit-Fields-current — current
+
+Updated by rev0086 to match `tools/manifest_semantic_coherence_audit.py` after front-door semantic lint hardening.
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| check_id | yes | nonempty string | stable semantic coherence check id |
+| check | yes | nonempty string | check name |
+| artifact | yes | nonempty string | manifest, report, or front-door artifact inspected |
+| expected | yes | nonempty string unless explicitly blank | expected revision, token, or semantic pass shape |
+| observed | yes | nonempty string unless explicitly blank | observed revision, token, or semantic condition |
+| severity | yes | info|high | severity of failed finding |
+| status | yes | pass|fail | result of semantic coherence check |
+| note | yes | nonempty string | human-readable check rationale |

@@ -1,0 +1,11 @@
+# Path Rename Ledger — current
+
+Generated/curated for `rev0065`.
+
+Package-path normalization ledger for release-artifact safety.
+
+Rows: 1
+
+| rename_id | old_path | old_mojibake_path | new_path | reason | display_name_policy | status | release |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| path_rename_0001 | CANDIDATES/Sonia-Bermúdez-Gente-como-Uno-People-Like-Us-cemetery.txt | CANDIDATES/Sonia-Berm├║dez-Gente-como-Uno-People-Like-Us-cemetery.txt | CANDIDATES/Sonia-Bermudez-Gente-como-Uno-People-Like-Us-cemetery.txt | ASCII package path prevents ZIP filename-encoding ambiguity; human display spelling with accents remains inside candidate content and ledgers. | preserve_accents_in_human_text; use_ascii_slug_for_package_path | active | rev0065 |

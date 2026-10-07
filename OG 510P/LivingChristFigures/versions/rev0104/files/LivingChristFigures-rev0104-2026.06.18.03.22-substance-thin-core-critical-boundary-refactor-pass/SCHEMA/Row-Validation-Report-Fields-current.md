@@ -1,0 +1,11 @@
+# Row Validation Report Fields current — current
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| severity | true | info/medium/high | Finding severity; high fails row-validation gate. |
+| check | true | tool-controlled string | Validation check name. |
+| file | true | package-relative path | CSV file or package area checked. |
+| row | true | integer-like | CSV row number; 0 for table/file-level finding. |
+| field | false | column name | Column involved in the finding. |
+| value | false | short string | Observed value. |
+| detail | true | non-empty string | Human-readable finding detail. |

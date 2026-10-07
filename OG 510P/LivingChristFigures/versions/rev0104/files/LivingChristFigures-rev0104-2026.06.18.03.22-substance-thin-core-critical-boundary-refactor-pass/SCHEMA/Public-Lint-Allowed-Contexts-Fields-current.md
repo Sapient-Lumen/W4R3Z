@@ -1,0 +1,10 @@
+# Public-Lint-Allowed-Contexts Fields — current
+
+| field | required | allowed_values_or_pattern | meaning |
+|---|---|---|---|
+| context_id | yes | nonempty string | context id |
+| context_code | yes | string | context code |
+| allowed_when | yes | string | allowed when |
+| example_shape | yes | string | example shape |
+| lint_effect | yes | string | lint effect |
+| status | yes | nonempty string | status |

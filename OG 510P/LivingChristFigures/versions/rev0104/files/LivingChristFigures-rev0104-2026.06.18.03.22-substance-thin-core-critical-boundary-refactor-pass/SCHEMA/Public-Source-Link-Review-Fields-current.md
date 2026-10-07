@@ -1,0 +1,19 @@
+# Public Source Link Review Fields — current
+
+Field contract for `META/Public-Source-Link-Review-current.*`.
+
+Rows: 11
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| source_id | true | source id from Source-Registry-current.csv | Source Registry id; coverage must match all source rows. |
+| domain | true | non-empty string | Source domain copied from registry. |
+| source_type | true | controlled source_type | Source type copied from registry. |
+| candidate_ids | true | pipe-separated candidate ids | Candidate links copied from registry. |
+| harm_proximity | true | harm proximity vocabulary or pipe-separated values | Near-harm profile copied from registry. |
+| public_link_policy | true | public-link policy vocabulary | Registry-level public link policy. |
+| public_url_release_decision | true | block_public_url/manual_review_required_block_until_review/allow_only_with_boundary_note_after_manual_review/allow_after_context_review | Current public URL release decision; not the same as internal source use. |
+| required_boundary_note | true | non-empty string | Boundary note or review block required before URL exposure. |
+| allowed_public_use | true | non-empty string | Narrow public use, if any. |
+| reason | true | non-empty string | Derived reason or source risk note. |
+| date_reviewed | true | YYYY-MM-DD | Date of this automated review pass. |

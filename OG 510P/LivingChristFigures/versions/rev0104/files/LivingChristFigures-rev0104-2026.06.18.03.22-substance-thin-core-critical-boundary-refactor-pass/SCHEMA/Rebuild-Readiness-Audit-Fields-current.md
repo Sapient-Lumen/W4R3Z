@@ -1,0 +1,11 @@
+# Rebuild Readiness Audit Fields — current
+
+| field | required | allowed_values_or_pattern | meaning |
+|---|---|---|---|
+| finding_id | true | nonempty string | stable finding identifier generated for this audit row |
+| severity | true | info|medium|high | blocking or review severity for the readiness finding |
+| check | true | nonempty string | readiness check category |
+| file | true | nonempty string | artifact, generator, or package path under review |
+| row | false | string | artifact spec row number or zero for file/tool checks |
+| detail | false | string | finding detail |
+| readiness_status | true | nonempty string | normalized pass/failure/review status |

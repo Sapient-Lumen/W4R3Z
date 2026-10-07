@@ -1,0 +1,24 @@
+# Public Export Eligibility Fields — current
+
+Field contract for `META/Public-Export-Eligibility-current.*`.
+
+Rows: 16
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| candidate_id | true | ^cand_[a-z0-9_]+$ | Candidate identifier; must cover every Candidate-Ledger row exactly once. |
+| candidate_name | true | non-empty string | Display name copied from Candidate-Ledger. |
+| public_export_tier | true | public_index_shape_only/boundary_index_shape_only/policy_context_only/quarantined_no_public_expansion | Most permissive currently allowed public posture. |
+| public_shape_template | true | template_key from SCHEMA/Public-Allowed-Claim-Shapes-current.csv | Allowlisted public shape template to use in public index/prose gating. |
+| highest_harm_proximity | true | pipe-separated harm proximity values or not_recorded | Collapsed harm-proximity exposure from Source Registry rows linked to candidate. |
+| most_restrictive_public_link_policy | true | policy from SCHEMA/Public-Link-Policy-current.csv | Most restrictive linked source URL policy. |
+| consent_or_governance_gate | true | non-empty string | Consent/governance barrier or basis for current tier. |
+| live_referral_gate | true | non-empty string | Confirms public index is not a live referral surface. |
+| capacity_gate | true | non-empty string | Blocks current capacity/service inference unless separately reviewed. |
+| source_link_gate | true | non-empty string | URL exposure gate derived from source public-link policies. |
+| image_gate | true | non-empty string | Image/non-image posture. |
+| case_detail_gate | true | non-empty string | Case/detail/person-record extraction posture. |
+| public_url_release | true | non-empty string | Current public URL release status. |
+| public_claim_release | true | non-empty string | Current public claim release status. |
+| required_review | true | non-empty string | Review required before changing tier or writing public prose. |
+| review_note | true | non-empty string | Machine-readable summary for reviewers. |

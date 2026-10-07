@@ -12,4 +12,6 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [Anonymity](Anonymity/): three selected research snapshots tracing receipt identities, verifier contracts, and a later correction to observation-channel assumptions.
 
+- [LivingChristFigures](LivingChristFigures/): five selected research checkpoints tracing costly care, threshold offices, and evolving evidence and reuse boundaries.
+
 Each project has its own reading guide and provenance. Existing license notices remain applicable; no new blanket license is granted here.

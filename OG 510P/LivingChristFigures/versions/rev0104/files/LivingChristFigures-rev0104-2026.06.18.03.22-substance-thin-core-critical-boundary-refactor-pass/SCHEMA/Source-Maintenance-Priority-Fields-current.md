@@ -1,0 +1,27 @@
+# Source Maintenance Priority Fields current — current
+
+Field schema for `META/Source-Maintenance-Priority-current.csv`.
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| priority_id | yes | ^smp_[0-9]{4}$ | priority id |
+| source_id | yes | nonempty string unless explicitly blank | source id |
+| domain | yes | nonempty string unless explicitly blank | domain |
+| candidate_ids | yes | nonempty string unless explicitly blank | candidate ids |
+| source_type | yes | nonempty string unless explicitly blank | source type |
+| harm_proximity | yes | nonempty string unless explicitly blank | harm proximity |
+| public_link_policy | yes | nonempty string unless explicitly blank | public link policy |
+| public_url_release_decision | yes | nonempty string unless explicitly blank | public url release decision |
+| source_date | yes | nonempty string unless explicitly blank | source date |
+| date_last_checked | yes | nonempty string unless explicitly blank | date last checked |
+| last_http_status | yes | nonempty string unless explicitly blank | last http status |
+| archived_copy_status | yes | nonempty string unless explicitly blank | archived copy status |
+| language | yes | nonempty string unless explicitly blank | language |
+| jurisdiction | yes | nonempty string unless explicitly blank | jurisdiction |
+| safe_to_recheck_automatically | yes | nonempty string unless explicitly blank | safe to recheck automatically |
+| maintenance_priority | yes | p0_recheck_policy_repair/p0_public_url_blockage_repair/p1_manual_sensitive_preservation/p1_public_context_metadata_repair/p2_archive_planning/p3_tracked | maintenance priority |
+| review_action | yes | nonempty string unless explicitly blank | review action |
+| automation_posture | yes | no_auto_crawl/manual_only/manual_context_check/no_action_or_normal_review | automation posture |
+| severity | yes | info/medium/high | severity |
+| status | yes | pass/warn/fail | status |
+| rationale | yes | nonempty string unless explicitly blank | rationale |

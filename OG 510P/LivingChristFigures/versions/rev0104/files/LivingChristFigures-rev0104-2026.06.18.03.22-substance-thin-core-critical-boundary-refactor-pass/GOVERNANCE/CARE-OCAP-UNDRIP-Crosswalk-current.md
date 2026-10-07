@@ -1,0 +1,11 @@
+# CARE/OCAP/UNDRIP-Aware Crosswalk — current
+
+This crosswalk records a cautionary posture. It does not claim certification, compliance, community authorization, or legal authority.
+
+Rows: 3
+
+| crosswalk_id | reference_frame | cube_translation | not_claimed | operational_gate |
+| --- | --- | --- | --- | --- |
+| xwalk_0001 | CARE / collective benefit and authority to control | Do not maximize openness when openness converts grief, search, contact, testimony, or images into reusable data. | not a certification of CARE compliance | eligibility tier and governance review before public expansion |
+| xwalk_0002 | OCAP-aware caution | Do not claim ownership, control, access, possession, community authorization, or First Nations governance approval without a recorded basis. | not OCAP compliance and not pan-Indigenous authority | consent/case-name ledger and public-link gate |
+| xwalk_0003 | UNDRIP-aware consent posture | Do not treat state publication, inquiry testimony, dashboard visibility, or NGO profile pages as consent for reuse. | not legal advice and not a rights determination | takedown/reclassification protocol and governance decision ledger |

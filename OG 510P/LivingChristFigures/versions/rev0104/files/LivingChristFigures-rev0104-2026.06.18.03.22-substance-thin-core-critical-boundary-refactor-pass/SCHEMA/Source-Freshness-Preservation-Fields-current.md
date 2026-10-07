@@ -1,0 +1,21 @@
+# Source Freshness Preservation Fields current — current
+
+Field schema for `META/Source-Freshness-Preservation-current.csv`.
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| source_id | yes | nonempty string unless explicitly blank | source id |
+| source_date | yes | nonempty string unless explicitly blank | source date |
+| date_first_seen | yes | nonempty string unless explicitly blank | date first seen |
+| date_last_checked | yes | nonempty string unless explicitly blank | date last checked |
+| last_http_status | yes | nonempty string unless explicitly blank | last http status |
+| archived_copy_status | yes | nonempty string unless explicitly blank | archived copy status |
+| archive_url_or_archive_id | yes | nonempty string unless explicitly blank | archive url or archive id |
+| language | yes | nonempty string unless explicitly blank | language |
+| jurisdiction | yes | nonempty string unless explicitly blank | jurisdiction |
+| link_rot_risk | yes | nonempty string unless explicitly blank | link rot risk |
+| source_owner_type | yes | nonempty string unless explicitly blank | source owner type |
+| retrieval_method | yes | nonempty string unless explicitly blank | retrieval method |
+| safe_to_recheck_automatically | yes | nonempty string unless explicitly blank | safe to recheck automatically |
+| status | yes | tracked/freshness_check_needed/metadata_backfill_needed/metadata_refresh_needed/review_manual_recheck_policy | status |
+| note | yes | nonempty string unless explicitly blank | freshness/preservation note; no crawling authorization |

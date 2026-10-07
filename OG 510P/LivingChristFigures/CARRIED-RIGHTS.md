@@ -1,0 +1,7 @@
+# Carried rights and use notices
+
+No standalone permissive LICENSE/COPYING file was found in the five top-level member inventories. No open-content or open-source license is inferred from possession, public sources or archival presentation. Nested ZIP bytes are preserved without a new internal license audit.
+
+Rev0104 carries [RIGHTS-AND-USE-LIMITS.md](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/RIGHTS-AND-USE-LIMITS.md), which describes a boundary-governed working research package and places limits on reuse; it is not a broad third-party republication grant. Its [RO-Crate metadata](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/ro-crate-metadata.json) points its license field to that notice. The [handoff notice](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/GOVERNANCE/Handoff-Use-Limits-and-Reviewer-Notice-current.md) and historical notices remain intact too.
+
+Earlier checkpoints carry ethical and working-use restrictions in their rules, start files and essays rather than a standalone license. Their original text is preserved with the rest of each snapshot. This summary does not adjudicate legal effect, replace carried terms or resolve third-party copyright, consent or attribution questions. Original ZIPs remain the authoritative preservation objects.

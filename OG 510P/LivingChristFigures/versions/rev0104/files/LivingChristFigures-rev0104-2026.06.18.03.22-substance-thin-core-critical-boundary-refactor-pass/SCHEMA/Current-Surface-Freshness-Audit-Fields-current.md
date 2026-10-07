@@ -1,0 +1,13 @@
+# Current-Surface-Freshness-Audit Field Schema — current
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| freshness_id | yes | fresh_NNNN | Stable row identifier. |
+| surface_path | yes | package-relative path or package root | Surface being checked. |
+| surface_kind | yes | identity_json|front_door_text|review_digest|qa_transcript|filesystem | Kind of current surface under review. |
+| check | yes | slug | Specific freshness/coherence check. |
+| expected_value | yes | free text | Expected current revision/export/value. |
+| observed_value | yes | free text | Observed value. |
+| severity | yes | high|info | Release-blocking severity classification. |
+| status | yes | pass|fail | Check outcome. |
+| note | yes | free text | Reason this check exists or how to remediate. |

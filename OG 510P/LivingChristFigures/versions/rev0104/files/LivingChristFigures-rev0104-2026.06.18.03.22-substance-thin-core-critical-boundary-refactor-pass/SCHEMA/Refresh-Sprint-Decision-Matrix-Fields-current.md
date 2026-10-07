@@ -1,0 +1,15 @@
+# Refresh Sprint Decision Matrix Fields current
+
+Dedicated field schema for `META/Refresh-Sprint-Decision-Matrix-current.csv`, added in rev0055 to close the rev0054 schema-coverage backlog.
+
+| field | required | allowed/pattern | meaning |
+|---|---:|---|---|
+| sprint_id | true | non-empty stable identifier | `sprint_id` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| priority | true | string; non-empty when semantically required | `priority` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| candidate_group | true | YYYY-MM-DD or documented date string | `candidate_group` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| candidate_ids | true | YYYY-MM-DD or documented date string | `candidate_ids` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| source_intake_ids | true | string; non-empty when semantically required | `source_intake_ids` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| current_decision | true | string; non-empty when semantically required | `current_decision` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| blocked_public_claims | true | string; non-empty when semantically required | `blocked_public_claims` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| why | true | string; non-empty when semantically required | `why` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| next_file | true | string; non-empty when semantically required | `next_file` column from `META/Refresh-Sprint-Decision-Matrix-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |

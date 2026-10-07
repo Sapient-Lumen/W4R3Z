@@ -1,0 +1,16 @@
+# Candidate Discovery Intake Audit Fields — current
+
+Field schema for rev0070 candidate-discovery/intake governance surface.
+
+Rows: 8
+
+| field | required | allowed_values_or_pattern | meaning |
+| --- | --- | --- | --- |
+| audit_id | yes | candidate_discovery_audit_[0-9]{4} | audit row id |
+| check | yes | text token | audit check name |
+| discovery_id | no | discovery_[0-9]{4} | discovery row id |
+| candidate_id | no | cand_[a-z0-9_]+ | candidate/proposed id under audit |
+| severity | yes | info/medium/high | finding severity |
+| status | yes | pass/fail | audit row status |
+| detail | yes | text | finding detail |
+| recommendation | yes | text | required/recommended action |

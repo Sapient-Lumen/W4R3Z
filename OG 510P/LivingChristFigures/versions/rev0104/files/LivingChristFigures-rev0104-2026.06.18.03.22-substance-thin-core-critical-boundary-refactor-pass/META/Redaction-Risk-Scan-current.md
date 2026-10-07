@@ -1,0 +1,10 @@
+# Redaction Risk Scan — current
+
+Coverage summary for the configured redaction scan. The open findings list is intentionally maintained as a separate companion report.
+
+| scan_id | scope | observed_count | high_findings | medium_findings | status | note |
+|---|---|---:|---:|---:|---|---|
+| redscan_001 | text_file_scope | 1271 | 0 | 0 | pass | Text-like package files scanned with configured redaction patterns. |
+| redscan_002 | open_findings_surface | 0 | 0 | 0 | pass | Open findings remain in the companion findings report; this scan report is intentionally not a duplicate findings table. |
+| redscan_003 | contact_coordinate_grave_image_patterns | 0 | 0 | 0 | pass | Configured patterns cover email, coordinates, street-address-like strings, grave/case identifiers, image links, and public-contact digits. |
+| redscan_004 | report_economy_duplicate_guard | 2 | 0 | 0 | pass | Redaction-Risk-Scan is a coverage summary; Redaction-Risk-Open-Findings is the findings list. |

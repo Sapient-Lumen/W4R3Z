@@ -1,0 +1,12 @@
+# Helper-Golden-Output-Audit Fields — current
+
+| field | required | allowed_values_or_pattern | meaning |
+|---|---|---|---|
+| finding_id | yes | nonempty string | finding id |
+| check | yes | nonempty string | audit check identifier |
+| tool_path | yes | package-relative tool path | tool under selected helper-adoption scope |
+| expected_signal | yes | text | expected helper/report-shape or fixture signal |
+| observed_value | yes | text | observed audit value for the expected signal |
+| severity | yes | info|medium|high | finding severity |
+| status | yes | pass|fail|review | audit status |
+| note | yes | text | interpretive note |

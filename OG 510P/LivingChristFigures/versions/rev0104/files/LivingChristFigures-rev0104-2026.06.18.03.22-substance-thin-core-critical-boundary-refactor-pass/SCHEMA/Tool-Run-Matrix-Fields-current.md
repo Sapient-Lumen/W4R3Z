@@ -1,0 +1,15 @@
+# Tool Run Matrix Fields current
+
+Field contract for the matching current table.
+
+| field | required | allowed_values_or_pattern | meaning |
+|---|---|---|---|
+| `tool_path` | true | tools/*.py | Package-relative tool path. |
+| `tool_role` | true | generated_report_builder/package_qa_runner/schema_validator/checker/checker_or_helper | Tool role. |
+| `declared_outputs` | false | pipe-separated package-relative paths | Generated outputs declared by provenance for this tool. |
+| `included_in_provenance` | true | yes/no | Whether tool declares generated outputs in provenance. |
+| `included_in_dependency_graph` | true | yes/no | Whether tool appears in the package dependency graph. |
+| `included_in_release_gate` | true | yes/no | Whether tool participates directly or indirectly in release gates. |
+| `qa_direct_check` | true | yes/no | Whether qa_cube.py directly names/checks the tool or its report. |
+| `status` | true | pass/missing_provenance/missing_dependency_inventory | Machine-readable status. |
+| `note` | true | non-empty string | Tool inventory note. |

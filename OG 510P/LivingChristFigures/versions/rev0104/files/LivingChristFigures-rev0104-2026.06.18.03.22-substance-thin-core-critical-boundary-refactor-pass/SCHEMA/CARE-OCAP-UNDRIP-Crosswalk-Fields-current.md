@@ -1,0 +1,11 @@
+# CARE OCAP UNDRIP Crosswalk Fields current
+
+Dedicated field schema for `GOVERNANCE/CARE-OCAP-UNDRIP-Crosswalk-current.csv`, added in rev0055 to close the rev0054 schema-coverage backlog.
+
+| field | required | allowed/pattern | meaning |
+|---|---:|---|---|
+| crosswalk_id | true | non-empty stable identifier | `crosswalk_id` column from `GOVERNANCE/CARE-OCAP-UNDRIP-Crosswalk-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| reference_frame | true | string; non-empty when semantically required | `reference_frame` column from `GOVERNANCE/CARE-OCAP-UNDRIP-Crosswalk-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| cube_translation | true | string; non-empty when semantically required | `cube_translation` column from `GOVERNANCE/CARE-OCAP-UNDRIP-Crosswalk-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| not_claimed | true | string; non-empty when semantically required | `not_claimed` column from `GOVERNANCE/CARE-OCAP-UNDRIP-Crosswalk-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
+| operational_gate | true | string; non-empty when semantically required | `operational_gate` column from `GOVERNANCE/CARE-OCAP-UNDRIP-Crosswalk-current.csv`; field schema added in rev0055 to close schema-coverage backlog. |
