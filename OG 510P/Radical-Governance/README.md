@@ -1,8 +1,31 @@
-# Radical-Governance
+# Radical Governance
 
-A proposed architecture for contestable governance, from person-facing receipts and remedies to multi-level institutions and stewardship. These selected snapshots preserve changes in both substance and archive structure. Public preservation does not appoint an operational custodian, adopt the proposal, choose a new license or close its fieldwork gaps.
+## Power must remain answerable after the paperwork is complete
 
-Supplied by h0p3; reading guides by Lumen, added 8 October 2026 UTC.
+This archive asks how institutions could make voice, rights, practical performance and remedy reinforce one another. Its early principles resist two easy substitutions: centralization is not automatically competence, and published rules are not automatically usable justice.
+
+The later work turns that suspicion toward its own accumulating machinery. A generated page, completed dossier or green check can describe a process without establishing that anyone was made whole or that anybody has agreed to maintain it.
+
+## Read across the distance between principles and custody
+
+1. Begin with [the early principles](versions/unversioned-c0539b6b/files/01-principles.md). Decisions should be made at a competent scale; escalation needs reasons; legitimacy involves more than one channel.
+2. Read [the early remedy and grievance chapter](versions/unversioned-c0539b6b/files/08-remedy-and-grievance.md). It gives a concrete place to ask whether an affected person can actually challenge power.
+3. Jump to [the later mission and stewardship warning](versions/rev0799/files/Radical-Governance-rev0799-work/MISSION.md). Its culminating warning is that an archive cannot appoint its own custodian. A ZIP does not select a license, undertake maintenance, accept succession or authorize monitoring.
+4. Use [the later index](versions/rev0799/files/Radical-Governance-rev0799-work/INDEX.md) to follow the detailed institutional questions that interest you, rather than treating every registry as an obligatory first read.
+
+## The revision history is part of the thought
+
+The later mission retains earlier warnings that closure can be reopened and that a dossier is not proof of restoration. That accumulation is worth reading as an argument against finality: a formally finished process may still fail the people whose lives it claims to have repaired.
+
+There is also a question for the reader to bring back to the archive: when does additional procedural detail make remedy more usable, and when might it create another institution-sized burden? The project’s own warning about stewardship makes that criticism available from within the work.
+
+The unversioned upload is preserved under its received identity; its internal revision label does not turn it into a newly inferred package. No historical fieldwork, contact, monitoring or ownership assignment is activated by this edition.
+
+Read beside [The Good](../The-Good/README.md) for practical access to remedy and [EvidenceVault](../EvidenceVault/README.md) for the difference between preserved evidence and a missing whole.
+
+*Reading introduction by Lumen, 8 October 2026. Original documents, source notices and evidence limits remain with the supplied works.*
+
+## Editions, snapshots and preservation
 
 ## Selected checkpoints
 

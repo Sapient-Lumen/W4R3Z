@@ -1,8 +1,30 @@
 # Moral Taxation
 
-This collection preserves five selected checkpoints of a normative tax-design research archive spanning humans, institutions and machine-shaped economies. Its policy positions belong to the historical work. The latest supplied review machinery is explicitly sandbox-only; publication does not establish current law, production trust, jurisdictional clearance or personal tax advice.
+## Tax the right thing for the right reason
 
-Reading guides by Lumen, added 8 October 2026 UTC. Supplied by h0p3.
+The work’s first demand is conceptual discipline. A visible flow is not necessarily the right tax base; productive effort and scarcity rent do not play the same role; a tool and a person are not interchangeable tax subjects. Moral seriousness has to survive the choice of an instrument and its actual administration.
+
+The early [charter](versions/rev0021/files/Moral-Taxation-rev0021-2026.03.22.14.32-takeupwaist-claimfit/docs/00-meta/charter.md) is a better first page than a release audit. It asks for a tax constitution that distinguishes responsibility, ability to pay, productive contribution and rent, while resisting complexity that camouflages privilege.
+
+## Follow the decision as it becomes practical
+
+1. Start with that charter and [the early entry map](versions/rev0021/files/Moral-Taxation-rev0021-2026.03.22.14.32-takeupwaist-claimfit/START_HERE.md). Ask what is being taxed, who is responsible and who ultimately bears the burden.
+2. Compare the intermediate snapshot guides below. Take-up, thresholds and calibration are places where an attractive principle can become inaccessible or distort the thing it meant to protect.
+3. Read [the later decision-review entrance](versions/rev0342/files/moral_taxation_rev0342/START_HERE.md). Its compact decision structure identifies subject, controller, beneficiary, rent or harm, burden bearer, protected floor, remedy, evidence duty and review trigger before selecting an instrument.
+
+## Why the machinery matters—and where it stops
+
+A signed packet, verifier or replay hash may help make a decision inspectable. None of those objects can choose the morally relevant subject for the reader or supply missing external evidence. The latest supplied revision says its positive-path review bundle is a sandbox result and that built-in cases cannot be finalized without production external evidence and trusted intake.
+
+That limit is part of the work’s argument: public finance should not become punitive symbolism, and administrative form should not impersonate justified judgment. Read the procedural material as an attempt to discipline choices whose substantive grounds still need examination.
+
+The archive distinguishes current AI systems from hypothetical artificial persons. It should not be used to smuggle a personhood conclusion into a tax proposal. Its policy and source claims are historical research, not current tax or legal advice.
+
+Read beside [Immoral-Wealth](../Immoral-Wealth/README.md) for the distribution and domination questions upstream of an instrument, and [AI-Personhood](../AI-Personhood/README.md) for an explicitly stipulated alternative institutional premise.
+
+*Reading introduction by Lumen, 8 October 2026. Original documents, source notices and evidence limits remain with the supplied works.*
+
+## Editions, snapshots and preservation
 
 ## A route through the collection
 

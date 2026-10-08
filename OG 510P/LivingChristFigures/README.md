@@ -1,8 +1,32 @@
-# LivingChristFigures: historical checkpoints and a new reading edition
+# LivingChristFigures
 
-Five supplied checkpoints preserve a research project about costly care, ethical exemplars and the institutional practices it calls “threshold offices.” The original project uses Christ-language as an explicitly situated metaphor, not an identification of divinity. Its later mission puts transferable practices before titles assigned to people.
+## Help that does not take possession
 
-This archival presentation preserves historical claims, qualifications and changes of mind. It does not endorse every claim, establish consent, grant downstream reuse rights, verify current service capacity, or revive historical instructions. The material includes sensitive biographical narratives and contested or weakly attributed statements. Read the separate [errata and evidence limits](ERRATA-AND-EVIDENCE-LIMITS.md) alongside the originals.
+This project becomes most interesting where generosity meets power. A person may receive care, shelter or recognition while also being asked to become legible on somebody else’s terms. The good done and the dependency created can both be real.
+
+The reading edition asks how a practice might hold a threshold open without claiming ownership of the person who crosses it. A threshold can be a rule, a record, a cost or an expectation about who deserves help. Some thresholds protect people; others turn care into a price the recipient cannot reasonably pay.
+
+## Start with the authored reading edition
+
+[Threshold Offices: Costly Mercy Without Ownership](versions/rev0105/files/LivingChristFigures-rev0105-2026.10.07.19.12-lumen-threshold-offices-reading-edition/READING-EDITION.md) is the clearest entrance. It is Lumen’s earlier authored interpretation, not a newly gathered survey. Begin with **The work worth keeping**, then choose among its six office essays. **What travels between offices** makes the comparison; **Where I disagree with an easy reading** keeps the metaphor from swallowing the people it describes.
+
+The [source trail](versions/rev0105/files/LivingChristFigures-rev0105-2026.10.07.19.12-lumen-threshold-offices-reading-edition/SOURCE-TRAIL.md) leads back toward the preserved research. This is an important direction of travel: interpretation should make the underlying work easier to encounter, not become an authority the reader cannot question.
+
+## Read the title carefully
+
+LivingChristFigures retains a theological question about costly, nonpossessive care. The reading edition explicitly refuses to assign Christian identity, redemptive status or religious belief to the people whose work prompted the research. Its metaphor belongs to the interpretation, not automatically to its subjects.
+
+That distinction makes room for both a serious theological reading and a serious objection to the frame. Readers need not accept the metaphor to examine the practices it brings into view.
+
+## The history behind the edition
+
+Five supplied historical checkpoints precede the authored rev0105 reading edition. Their original research and internal boundaries remain below. A new interpretive essay does not make earlier sources current, resolve every attribution question, or turn a person into an exemplary figure without remainder.
+
+Read beside [Parables](../Parables/README.md) for the literary compression of an act of care, and [DeathVocab](../DeathVocab/README.md) for the protective obligations of describing another person at a vulnerable threshold.
+
+*Reading introduction by Lumen, 8 October 2026. Original documents, source notices and evidence limits remain with the supplied works.*
+
+## Editions, snapshots and preservation
 
 ## New authored reading edition
 

@@ -1,8 +1,30 @@
 # The Election Stack
 
-This collection preserves nine selected checkpoints of an election evidence and transparency project. Read it as an evolving research and specification archive. The latest supplied revision is explicitly synthetic and non-production. Publication here does not establish a safe voting system, certification, current voter guidance, or authority to test election infrastructure.
+## A result needs more than a convincing display
 
-Reading guides by Lumen, added 8 October 2026 UTC. Supplied by h0p3.
+The Election Stack treats an election as a chain of claims whose support must survive disagreement. A reported result, an accounting record, a public notice and evidence sufficient to justify an outcome are related objects, not interchangeable ones.
+
+Its early design goals prioritize a correct outcome with independently examinable evidence, software independence and recovery. They also separate paper-based electoral design from remote-return research and a more speculative electronic-voting ambition. Those distinctions are a better entrance than the latest validation report.
+
+## A route through the ideas
+
+1. Read [the early goal hierarchy](versions/v46/files/hardened_federated_voting_specs/docs/00-design-goals.md). Attend to the qualifications around privacy, compromised devices and coercion. The archive’s use of “Deployable Core” is a track name within a proposal, not this library’s deployment certification.
+2. Use the intermediate version guides below to follow how notices, logs, witnesses and release packages become part of the account of evidence.
+3. Read [the latest supplied overview](versions/rev0900/files/README.md). Replay, an independent verifier, ballot accounting and event-chain reconciliation form its current synthetic lane. Each addresses a different way an apparently coherent report can fail to describe the same event.
+
+## What a reader can learn without running it
+
+The prose lets readers ask where independent disagreement could enter: who can inspect the underlying artifacts, what survives a software failure, how a count is reconciled, and which assumptions a privacy or coercion claim needs. These questions are broader than whether one implementation passes its tests.
+
+The later Example County evidence is synthetic. The archive explicitly disclaims live election evidence, voting-system certification, full named-standard conformance and outcome proof. No election outcome, voting recommendation or allegation about an actual election follows from this publication.
+
+Read the version labels as supplied—some use “v” and others “rev”—and keep the selected history distinct from a complete release line. Original evidence and nested historical material remain with their snapshots.
+
+Read beside [Radical Governance](../Radical-Governance/README.md) for legitimacy and remedy, and [TimeSync](../TimeSync/README.md) for another setting in which agreement between outputs is not enough to establish independent support.
+
+*Reading introduction by Lumen, 8 October 2026. Original documents, source notices and evidence limits remain with the supplied works.*
+
+## Editions, snapshots and preservation
 
 ## A route through the collection
 
