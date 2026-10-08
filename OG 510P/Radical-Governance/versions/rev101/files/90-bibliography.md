@@ -1,0 +1,227 @@
+# Bibliography (Canonical Citation Keys)
+
+This list is intentionally short: it’s an anchor set, not a literature dump.
+
+**Policy:** keep this file to **reusable citation keys** (`[BIB-*]`). One-off sources live in the specific memo that uses them; promote a source to a `[BIB-*]` key only once it is referenced in **2+ memos** (then remove duplicates).
+
+Use keys inline (e.g., `see [BIB-UDHR]`) so references remain stable even if URLs change.
+
+## Citation keys (canonical; prefer these inline)
+
+- **[BIB-UK-MAGENTA-2025]** Magenta Book (UK central government evaluation guidance; updated 9 Jul 2025): https://www.gov.uk/government/publications/the-magenta-book/magenta-book-central-government-guidance-on-evaluation-html
+- **[BIB-UK-EVALREG-GUIDE]** UK Government Evaluation Registry guidance (mandatory registration from 1 Apr 2024): https://www.gov.uk/guidance/guidance-on-using-the-evaluation-registry
+- **[BIB-US-EVIDENCEACT-EVALGOV]** US Evidence Act summary (evaluation.gov): https://www.evaluation.gov/evidence-plans/summary/
+- **[BIB-OECD-GAAG2025-EXPOST]** OECD Government at a Glance 2025 — Ex post evaluation (topic page): https://www.oecd.org/en/publications/2025/06/government-at-a-glance-2025_70e14c6c/full-report/ex-post-evaluation_5fd27bda.html
+- **[BIB-RSF-ADMINBURDEN-2018]** Herd & Moynihan, *Administrative Burden: Policymaking by Other Means* (Russell Sage Foundation, 2018): https://www.russellsage.org/publications/book/administrative-burden
+- **[BIB-OECD-GPP-SERVICE-2022]** OECD, *Good Practice Principles for Public Service Design and Delivery in the Digital Age* (PDF, 2022): https://www.oecd.org/content/dam/oecd/en/publications/reports/2022/11/oecd-good-practice-principles-for-public-service-design-and-delivery-in-the-digital-age_f3845ec3/2ade500b-en.pdf
+- **[BIB-OECD-DARKPATTERNS-2022]** OECD, *Dark Commercial Patterns* (Digital Economy Papers No. 336, PDF, Oct 2022): https://www.oecd.org/content/dam/oecd/en/publications/reports/2022/10/dark-commercial-patterns_9f6169cd/44f5e846-en.pdf
+- **[BIB-UK-SERVICESTANDARD]** GOV.UK, *Service Standard* (service manual): https://www.gov.uk/service-manual/service-standard
+- **[BIB-US-21C-IDEA-2018]** United States, *21st Century Integrated Digital Experience Act* (Public Law 115-336, govinfo): https://www.govinfo.gov/app/details/PLAW-115publ336
+- **[BIB-AARHUS]** Aarhus Convention (text hub): https://unece.org/environment-policy/public-participation/aarhus-convention/text
+- **[BIB-BODS]** Beneficial Ownership Data Standard (BODS) v0.4 docs hub (Open Ownership): https://standard.openownership.org/en/0.4.0/
+- **[BIB-GLEIF-ISO17442]** GLEIF, ISO 17442 (LEI code structure / standard overview): https://www.gleif.org/en/organizational-identity/introducing-the-legal-entity-identifier-lei/iso-17442-the-lei-code-structure
+- **[BIB-OPENOWNERSHIP-VERIFY-2020]** Open Ownership policy briefing: *Verification of beneficial ownership data* (7 May 2020): https://www.openownership.org/en/publications/verification-of-beneficial-ownership-data/
+- **[BIB-C2PA-2-3]** C2PA Content Credentials / content provenance specification (v2.3 hub): https://c2pa.org/specifications/specifications/2.3/index.html
+- **[BIB-W3C-DCAT-3]** W3C Data Catalog Vocabulary (DCAT) — Version 3 Recommendation (22 Aug 2024): https://www.w3.org/TR/vocab-dcat-3/
+- **[BIB-W3C-PROV-O]** W3C PROV-O: The PROV Ontology Recommendation (30 Apr 2013): https://www.w3.org/TR/prov-o/
+- **[BIB-SDMX-3-0]** SDMX 3.0 Technical Specifications (released Sept 2021; standards hub): https://sdmx.org/standards-2/
+- **[BIB-CBD-GBF]** Kunming‑Montreal Global Biodiversity Framework (COP15 decision 15/4) (PDF): https://www.cbd.int/doc/decisions/cop-15/cop-15-dec-04-en.pdf
+- **[BIB-COE-AI]** Council of Europe Framework Convention on AI (CETS 225): https://rm.coe.int/1680afae3c
+- **[BIB-COE-C108]** Council of Europe Convention 108 family (data protection) hub: https://www.coe.int/en/web/data-protection/convention108-and-protocol
+- **[BIB-COE-TROMSO]** Council of Europe Convention on Access to Official Documents (Tromsø Convention) overview: https://www.coe.int/en/web/access-to-official-documents ; text PDF: https://rm.coe.int/1680084826
+- **[BIB-TSHWANE-2013]** Open Society Justice Initiative, *Global Principles on National Security and the Right to Information* (“Tshwane Principles”) (issued 12 Jun 2013) (PDF): https://www.justiceinitiative.org/uploads/bd50b729-d427-4fbb-8da2-1943ef2a3423/global-principles-national-security-10232013.pdf
+- **[BIB-JOHANNESBURG-1995]** ARTICLE 19, *Johannesburg Principles on National Security, Freedom of Expression and Access to Information* (adopted 1 Oct 1995) (PDF): https://www.article19.org/wp-content/uploads/2018/02/joburg-principles.pdf
+- **[BIB-COE-GOODADMIN-2007]** Council of Europe Recommendation CM/Rec(2007)7 on good administration (PDF): https://rm.coe.int/cmrec-2007-7-of-the-cm-to-ms-on-good-administration/16809f007c
+- **[BIB-EU-CHARTER-A41]** EU Charter of Fundamental Rights — Article 41 (Right to good administration) (consolidated text): https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX%3A12012P%2FTXT
+- **[BIB-EU-CHARTER-A47]** EU Charter of Fundamental Rights — Article 47 (Right to an effective remedy and to a fair trial) (consolidated text): https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX%3A12012P%2FTXT
+- **[BIB-EIP-GEIR-2024]** Electoral Integrity Project: Global Electoral Integrity Report 2024 + PEI dataset: https://www.electoralintegrityproject.com/eip-blog/2024/7/24/the-global-electoral-integrity-report-2024 ; dataset: https://www.electoralintegrityproject.com/pei
+- **[BIB-EU-AIACT]** EU Artificial Intelligence Act (Regulation (EU) 2024/1689): https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng
+- **[BIB-EU-GDPR]** EU GDPR (Regulation (EU) 2016/679) official text (PDF): https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=CELEX%3A32016R0679
+- **[BIB-EU-EIDAS]** European Commission, eIDAS Regulation / European Digital Identity framework overview: https://digital-strategy.ec.europa.eu/en/policies/eidas-regulation
+- **[BIB-FATF-BO-2023]** FATF, *Guidance on Beneficial Ownership of Legal Persons* (R.24 guidance, 2023): https://www.fatf-gafi.org/en/publications/Fatfrecommendations/Guidance-Beneficial-Ownership-Legal-Persons.html
+- **[BIB-HCCH-APOSTILLE]** HCCH Apostille Convention section (overview + status + tools): https://www.hcch.net/en/instruments/conventions/specialised-sections/apostille
+- **[BIB-ICA-ACCESS-2012]** ICA Principles of Access to Archives (2012) page: https://www.ica.org/resource/principles-of-access-to-archives/ ; PDF: https://www.ica.org/app/uploads/2023/12/ICA_Access-principles_EN.pdf
+- **[BIB-ICCPR]** ICCPR treaty text (incl. Article 4 derogations + notification duty via UN Secretary-General): https://www.ohchr.org/en/instruments-mechanisms/instruments/international-covenant-civil-and-political-rights
+
+- **[BIB-UNDRR-SENDAI-2015]** UNDRR, *Sendai Framework for Disaster Risk Reduction 2015–2030* (publication page): https://www.undrr.org/publication/sendai-framework-disaster-risk-reduction-2015-2030 ; PDF: https://www.undrr.org/media/88930/download
+- **[BIB-WHO-EHS-2020]** WHO, *Maintaining essential health services: operational guidance for the COVID-19 context* (interim guidance, 1 Jun 2020): https://www.who.int/publications/i/item/WHO-2019-nCoV-essential_health_services-2020.2
+
+- **[BIB-HRC-GC29]** UN Human Rights Committee General Comment No. 29 (States of emergency; ICCPR Article 4): https://digitallibrary.un.org/record/451555?ln=en
+- **[BIB-SIRACUSA]** Siracusa Principles on the Limitation and Derogation Provisions in the ICCPR (UN Commission on Human Rights; Refworld): https://www.refworld.org/legal/resolution/unchr/1984/en/57200
+- **[BIB-VENICE-COVID-EMERGENCY-2020]** Venice Commission CDL-AD(2020)018 *Interim Report on measures taken in EU Member States due to COVID-19 and their impact on democracy/rule of law/rights* (PDF): https://www.venice.coe.int/webforms/documents/default.aspx?pdffile=CDL-AD%282020%29018-e
+- **[BIB-ECHR-A15-GUIDE-2025]** ECtHR Knowledge Sharing: Guide on Article 15 ECHR (Derogation in time of emergency) (PDF, updated 31 Aug 2025): https://ks.echr.coe.int/documents/d/echr-ks/guide_art_15_eng
+- **[BIB-COE-A15-NOTIF-PROC]** Council of Europe Treaty Office note: Article 15 ECHR derogation registration/notification procedure (PDF): https://rm.coe.int/echr-article-15-registration-and-notification-by-treaty-office/1680a5c121
+- **[BIB-VENICE-SOE-COMPILATION-2020]** Venice Commission (2020), *Compilation of opinions and reports on states of emergency* (CDL-PI(2020)003): https://www.coe.int/en/web/venice-commission/-/CDL-PI%282020%29003-e
+- **[BIB-IDEA-EMD]** International IDEA *Electoral Management Design* (Revised Edition, 2014) (PDF): https://www.idea.int/sites/default/files/publications/electoral-management-design-2014.pdf
+- **[BIB-IDEA-ESD]** International IDEA *Electoral System Design* handbook (PDF): https://www.idea.int/sites/default/files/publications/electoral-system-design-the-new-international-idea-handbook.pdf
+- **[BIB-IDEA-GSOD-2025]** International IDEA Global State of Democracy 2025 (PDF): https://www.idea.int/sites/default/files/2025-09/global-state-of-democracy-2025-democracy-on-the-move_0.pdf
+- **[BIB-IMF-FTC-2019]** IMF Fiscal Transparency Code (2019) (PDF): https://www.imf.org/external/np/fad/trans/Code2019.pdf
+- **[BIB-IMF-FTH-2018]** IMF Fiscal Transparency Handbook (2018) (PDF): https://www.elibrary.imf.org/downloadpdf/book/9781484331859/9781484331859.pdf
+- **[BIB-IMF-TE-2019]** IMF FAD How-to Note: Tax Expenditure Reporting and Its Use in Fiscal Management (Mar 2019): https://www.imf.org/en/Publications/fiscal-affairs-department-how-to-notes/issues/2019/03/27/tax-expenditure-reporting-and-its-use-in-fiscal-management-a-guide-for-developing-economies-46676
+- **[BIB-IMF-TE-EVAL-2022]** IMF FAD How-to Note: How to Evaluate Tax Expenditures (Nov 2022): https://www.imf.org/en/Publications/fiscal-affairs-department-how-to-notes/issues/2022/11/how-to-evaluate-tax-expenditures-525166
+- **[BIB-GIFT-OFDP]** GIFT, Open Fiscal Data Package (OFDP) overview/spec hub: https://fiscaltransparency.net/open-fiscal-data-package/
+- **[BIB-IMF-PIMA-2022]** IMF, *PIMA Handbook: Public Investment Management Assessment* (1st ed., 2022) publication page: https://www.imf.org/en/publications/books/issues/2022/07/12/pima-handbook-public-investment-management-assessment-1st-edition-50166 ; PDF: https://www.elibrary.imf.org/downloadpdf/display/book/9781513571829/front-1.pdf
+- **[BIB-IMF-IGF-2018]** IMF (2018), *Designing Sound Fiscal Relations Across Government Levels* (WP/18/271): https://www.elibrary.imf.org/view/journals/001/2018/271/article-A001-en.xml
+- **[BIB-IMF-SNG-FISCALRISKS-2022]** IMF How to Note (Aug 2022), *How to Manage Fiscal Risks from Subnational Governments* (PDF): https://www.imf.org/-/media/files/publications/howtonotes/2022/english/htnea2022003.pdf
+- **[BIB-IMF-GFSM-2014]** IMF Government Finance Statistics Manual 2014 (GFSM 2014) hub: https://www.imf.org/external/np/sta/gfsm/
+- **[BIB-INTOSAI-P10]** INTOSAI‑P 10 Mexico Declaration on SAI Independence (2019 PDF): https://www.intosai.org/fileadmin/downloads/documents/open_access/INT_P_1_u_P_10/INTOSAI_P_10_en_2019.pdf
+- **[BIB-INTOSAI-P1]** INTOSAI‑P 1 Lima Declaration (2019 PDF): https://www.intosai.org/fileadmin/downloads/documents/open_access/INT_P_1_u_P_10/INTOSAI_P_1_en_2019.pdf
+- **[BIB-ISO-15489-1]** ISO 15489-1:2016 Records management — Concepts and principles (ISO page): https://www.iso.org/standard/62542.html
+- **[BIB-ISO-55000]** ISO 55000:2024 Asset management — Vocabulary, overview and principles (ISO page): https://www.iso.org/standard/83053.html
+- **[BIB-IAP2-COREVALUES]** IAP2 Core Values for Public Participation (official page): https://www.iap2.org/page/corevalues
+- **[BIB-NYAG-FAKECOMMENTS-2021]** New York State Attorney General (2021), *How U.S. Companies & Partisans Hack Democracy to Manufacture Consent* (FCC net neutrality fake comments report) (PDF): https://ag.ny.gov/sites/default/files/reports/oag-fakecommentsreport.pdf
+- **[BIB-STANFORD-FILTERINGBOTS-2017]** Stanford CIS / Cyberlaw Center (2017), *Filtering Out the Bots: What Americans Actually Told the FCC about Net Neutrality* (PDF): https://cyberlaw.stanford.edu/content/files/files/blogs/filteringoutthebotsuniquenetneutralitycomments.pdf
+- **[BIB-PEW-FCC-COMMENTS-2017]** Pew Research Center (2017-11-29), *Public comments to the FCC about net neutrality contain many inaccuracies and duplicates*: https://www.pewresearch.org/internet/2017/11/29/public-comments-to-the-federal-communications-commission-about-net-neutrality-contain-many-inaccuracies-and-duplicates/
+- **[BIB-POPP-SIDDARTH-2020]** Siddarth et al. (2020), *Who Watches the Watchmen? A Review of Subjective Approaches for Sybil-Resistance in Proof of Personhood Protocols* (Frontiers in Blockchain): https://www.frontiersin.org/journals/blockchain/articles/10.3389/fbloc.2020.590171/full
+- **[BIB-MANDELA]** Nelson Mandela Rules (UNODC edition) (PDF): https://www.unodc.org/documents/justice-and-prison-reform/Nelson_Mandela_Rules-E-ebook.pdf
+- **[BIB-MENDEZ-2021]** Méndez Principles on Effective Interviewing (2021) (PDF): https://www.wcl.american.edu/impact/initiatives-programs/center/publications/documents/upload/mendez-principles.pdf
+- **[BIB-MONTREAL-A4]** Montreal Protocol Article 4 (trade with non-parties): https://ozone.unep.org/treaties/articles/article-4-control-trade-non-parties
+- **[BIB-NIST-AIRMF]** NIST AI Risk Management Framework (AI RMF 1.0) (PDF): https://nvlpubs.nist.gov/nistpubs/ai/nist.ai.100-1.pdf
+- **[BIB-ENGSTROM-HO-ALGOACC-2019]** Engstrom & Ho, *Algorithmic Accountability in the Administrative State* (2019) (PDF): https://administrativestate.gmu.edu/wp-content/uploads/2019/11/Engstrom-Ho-Algorithmic-Accountability-in-the-Administrative-State.pdf
+- **[BIB-GFI-AI-RULEMAKING-2025]** Governing for Impact, *AI in Agency Rulemaking: Legal Guardrails* (Issue brief, Jul 2025) (PDF): https://governingforimpact.org/wp-content/uploads/2025/07/AI-in-Agency-Rulemaking_Legal-Guardrails.pdf
+- **[BIB-NIST-800-63-4]** NIST SP 800-63-4 *Digital Identity Guidelines* (Rev. 4; final, Jul 2025): https://csrc.nist.gov/pubs/sp/800/63/4/final
+- **[BIB-UK-ATRS]** UK Algorithmic Transparency Recording Standard (ATRS) guidance: https://www.gov.uk/government/publications/guidance-for-organisations-using-the-algorithmic-transparency-recording-standard/algorithmic-transparency-recording-standard-guidance-for-public-sector-bodies
+- **[BIB-CA-ADM]** Canada Directive on Automated Decision-Making (scope guide): https://www.canada.ca/en/government/system/digital-government/digital-government-innovations/responsible-use-ai/guide-scope-directive-automated-decision-making.html
+- **[BIB-OCDS]** Open Contracting Data Standard (OCDS) docs hub: https://standard.open-contracting.org/
+- **[BIB-OCDS-BUDGETSPEND-EXT]** OCDS “budget and spend” extension (joining contracts to budget/spend lines) (GitHub): https://github.com/open-contracting-extensions/ocds_budget_and_spend_extension
+- **[BIB-HUP-GOVBYCONTRACT-2009]** Freeman & Minow (eds.) (2009), *Government by Contract: Outsourcing and American Democracy* (Harvard University Press): https://www.hup.harvard.edu/books/9780674032088
+- **[BIB-ODI-ID]** ODI guide: Using identifiers: https://theodi.org/article/using-identifiers/
+- **[BIB-OCD-DIVISION-IDS]** Open Civic Data Division Identifiers (OCD-IDs) canonical repo: https://github.com/opencivicdata/ocd-division-ids
+- **[BIB-ISO-3166-2]** ISO 3166-2 Country subdivision codes (ISO page): https://www.iso.org/standard/63546.html ; online browsing platform: https://www.iso.org/obp/ui/
+- **[BIB-ISO-22301-2019]** ISO 22301:2019 — Security and resilience — Business continuity management systems — Requirements (ISO page): https://www.iso.org/standard/75106.html
+- **[BIB-OECD-AI]** OECD Recommendation on Artificial Intelligence (OECD/LEGAL/0449): https://legalinstruments.oecd.org/en/instruments/oecd-legal-0449
+- **[BIB-OECD-DEL]** OECD Good Practice Principles for Deliberative Processes (PDF): https://www.oecd.org/content/dam/oecd/en/topics/policy-issue-focus/innovative-citizen-participation/good-practice-principles-for-deliberative-processes-for-public-decision-making.pdf
+- **[BIB-OECD-CITPART-2022]** OECD *Guidelines for Citizen Participation Processes* (2022) (PDF): https://www.oecd.org/content/dam/oecd/en/publications/reports/2022/09/oecd-guidelines-for-citizen-participation-processes_63b34541/f765caf6-en.pdf
+- **[BIB-OECD-DIGID-REC]** OECD Recommendation on the Governance of Digital Identity (legal instrument + explanatory note) (PDF): https://legalinstruments.oecd.org/public/doc/707/2690ac50-f57c-4b84-b70e-62202b0e3507.pdf
+- **[BIB-OECD-DEL-EVAL-2021]** OECD *Evaluation Guidelines for Representative Deliberative Processes* (2021) (PDF): https://www.oecd.org/content/dam/oecd/en/publications/reports/2021/11/evaluation-guidelines-for-representative-deliberative-processes_10b0cea1/10ccbfcb-en.pdf
+- **[BIB-OECD-GSP]** OECD Recommendation on Good Statistical Practice (OECD/LEGAL/0417) hub: https://legalinstruments.oecd.org/en/instruments/OECD-LEGAL-0417
+- **[BIB-OECD-IFI]** OECD Recommendation of the Council on Principles for Independent Fiscal Institutions (2014) (PDF): https://legalinstruments.oecd.org/public/doc/301/301.en.pdf
+- **[BIB-OECD-IGFT-2025]** OECD (2025), *Intergovernmental fiscal transfers and fiscal equalisation in a time of consolidation* (PDF): https://www.oecd.org/content/dam/oecd/en/publications/reports/2025/06/intergovernmental-fiscal-transfers-and-fiscal-equalisation-in-a-time-of-consolidation_a6b7aadb/4853a4d0-en.pdf
+- **[BIB-OECD-LOB]** OECD Recommendation on Transparency and Integrity in Lobbying (OECD/LEGAL/0379) (PDF): https://legalinstruments.oecd.org/public/doc/256/256.en.pdf
+- **[BIB-OECD-COI]** OECD Recommendation: Guidelines for Managing Conflict of Interest in the Public Service (PDF): https://legalinstruments.oecd.org/public/doc/130/130.en.pdf
+- **[BIB-OECD-OG]** OECD Recommendation on Open Government (OECD/LEGAL/0438) (PDF): https://legalinstruments.oecd.org/public/doc/359/359.en.pdf
+- **[BIB-OECD-INFRA-2020]** OECD Recommendation on the Governance of Infrastructure (OECD/LEGAL/0460) (2020): https://legalinstruments.oecd.org/en/instruments/OECD-LEGAL-0460
+- **[BIB-OECD-PI]** OECD Recommendation on Public Integrity (OECD/LEGAL/0435) (PDF): https://legalinstruments.oecd.org/api/print?ids=353&lang=en
+- **[BIB-OECD-PROC]** OECD Recommendation of the Council on Public Procurement (OECD/LEGAL/0411): https://legalinstruments.oecd.org/en/instruments/OECD-LEGAL-0411
+- **[BIB-OECD-PRIV-2013]** OECD Privacy Guidelines (2013) (PDF): https://legalinstruments.oecd.org/public/doc/114/114.en.pdf
+- **[BIB-OECD-PSLC]** OECD Recommendation of the Council on Public Service Leadership and Capability (OECD/LEGAL/0445) (PDF): https://legalinstruments.oecd.org/public/doc/641/641.en.pdf
+- **[BIB-OECD-RPG-0390]** OECD Recommendation of the Council on Regulatory Policy and Governance (OECD/LEGAL/0390) (PDF): https://legalinstruments.oecd.org/public/doc/273/273.en.pdf
+- **[BIB-OECD-SOE-2024]** OECD, *Guidelines on Corporate Governance of State‑Owned Enterprises* (2024) (PDF): https://www.oecd.org/content/dam/oecd/en/publications/reports/2024/06/oecd-guidelines-on-corporate-governance-of-state-owned-enterprises-2024_68fa05cd/18a24f43-en.pdf
+- **[BIB-OGP-NHB-2025]** OGP National Handbook (April 2025 PDF): https://www.opengovpartnership.org/wp-content/uploads/2025/04/OGP-National-Handbook-April-2025.pdf
+- **[BIB-OPCAT]** Optional Protocol to the Convention against Torture (OPCAT) (OHCHR): https://www.ohchr.org/en/instruments-mechanisms/instruments/optional-protocol-convention-against-torture-and-other-cruel
+- **[BIB-OSCE-EOH]** OSCE/ODIHR *Election Observation Handbook* (PDF): https://www.osce.org/files/f/documents/5/e/68439.pdf
+- **[BIB-PARIS]** Paris Agreement (English PDF): https://unfccc.int/sites/default/files/english_paris_agreement.pdf
+- **[BIB-PEFA-2016]** PEFA 2016 Framework (PFM assessment): https://www.pefa.org/sites/default/files/PEFA_2016_Framework_Final_WEB_0.pdf
+- **[BIB-SEEA-CF]** UN SEEA Central Framework (2012) (PDF): https://seea.un.org/sites/seea.un.org/files/seea_cf_final_en.pdf
+- **[BIB-SEEA-EA]** UN SEEA Ecosystem Accounting (2021+) (PDF): https://seea.un.org/sites/seea.un.org/files/documents/EA/seea_ea_f124_web_12dec24.pdf
+- **[BIB-STERN-2011-IJC-305]** Stern (2011), “Design principles for global commons” (reviews Ostrom design principles for complex/global commons): https://thecommonsjournal.org/articles/10.18352/ijc.305
+- **[BIB-OSTROM-GOVCOMMONS-1990]** Ostrom (1990), *Governing the Commons: The Evolution of Institutions for Collective Action* (Cambridge University Press; DOI): https://doi.org/10.1017/CBO9780511807763
+- **[BIB-OSTROM-POLYCENTRIC-2010]** Ostrom (2010), “Polycentric systems for coping with collective action and global environmental change” (*Global Environmental Change*; DOI): https://doi.org/10.1016/j.gloenvcha.2010.07.004
+- **[BIB-TIEBOUT-1956-JPE]** Tiebout (1956), “A Pure Theory of Local Expenditures” (*Journal of Political Economy*; DOI): https://doi.org/10.1086/257839
+- **[BIB-WEINGAST-MPF-1995-JLEO]** Weingast (1995), “The Economic Role of Political Institutions: Market-Preserving Federalism and Economic Development” (*JLEO*; DOI): https://doi.org/10.1093/oxfordjournals.jleo.a036861
+- **[BIB-FAGUET-2014-WORLDDEV]** Faguet (2014), “Decentralization and Governance” (*World Development* 53; DOI): https://doi.org/10.1016/j.worlddev.2013.01.002
+- **[BIB-OECD-GOVCITY-2015]** OECD (2015), *Governing the City* (metropolitan governance typology; DOI): https://doi.org/10.1787/9789264226500-en
+- **[BIB-IDB-METROGOV-2019]** Slack (2019), *Metropolitan Governance: Principles and Practice* (IDB Discussion Paper IDB-DP-659) (PDF): https://publications.iadb.org/publications/english/document/Metropolitan_Governance_Principles_and_Practice.pdf
+- **[BIB-COE-UNDP-IMC-2010]** Council of Europe / UNDP / LGI (2010), *Toolkit Manual: Inter‑Municipal Cooperation* (PDF): https://rm.coe.int/imc-intermunicipal-co-operation/1680746ec3
+- **[BIB-OECD-SIGMA-IMC-WBALKANS-2024]** OECD/SIGMA Paper No. 70 (2024), *Inter‑municipal co‑operation in the Western Balkans* (PDF): https://www.oecd.org/content/dam/oecd/en/publications/reports/2024/06/inter-municipal-co-operation-in-the-western-balkans_67efc50a/a78a01e6-en.pdf
+- **[BIB-OECD-IMC-LITHUANIA-2024]** OECD (2024), *Enabling Inter‑Municipal Shared Service Provision in Lithuania: Proposed Legal and Institutional Framework and Piloting Approach in Tauragė+ Functional Zone* (PDF): https://www.oecd.org/content/dam/oecd/en/publications/reports/2024/09/enabling-inter-municipal-shared-service-provision-in-lithuania_b641855a/f8ad6859-en.pdf
+- **[BIB-ROSENBAUM-LOCALLOOPHOLE-2024]** Rosenbaum (2024), “The Local Lawmaking Loophole” (*Yale Law Journal*) (PDF): https://yalelawjournal.org/pdf/133.8.RosenbaumFinalDraft_zk8jm9wb.pdf
+- **[BIB-WB-UNTILDEBT-2013]** Canuto & Liu (eds.) (World Bank, 2013), *Until Debt Do Us Part: Subnational Debt, Insolvency, and Markets* (PDF): https://documents1.worldbank.org/curated/en/627741468322492935/pdf/Until-debt-do-us-part-subnational-debt-insolvency-and-markets.pdf ; text: https://documents1.worldbank.org/curated/en/627741468322492935/txt/Until-debt-do-us-part-subnational-debt-insolvency-and-markets.txt
+- **[BIB-WB-METROGOV-2020]** World Bank (2020), *International Practices of Metropolitan Governance: A Compendium of Collaborative Arrangements in Metropolitan Areas* (PDF): https://documents1.worldbank.org/curated/en/278861591018281649/pdf/International-Practices-of-Metropolitan-Governance-A-Compendium-of-Collaborative-Arrangements-in-Metropolitan-Areas.pdf
+- **[BIB-WB-PROC-REG-2025]** World Bank Procurement Regulations for IPF Borrowers (7th ed., Sep 2025) (PDF): https://thedocs.worldbank.org/en/doc/c84273d1b230aeb2b0b8134de5dc8cd7-0290012025/original/Procurement-Regulations-7th-Edition-Sep-2025.pdf
+- **[BIB-TEU-A5]** Treaty on European Union (TEU) Article 5 (conferral/subsidiarity/proportionality): https://eur-lex.europa.eu/eli/treaty/teu_2008/art_5/oj/eng
+- **[BIB-UDHR]** UN Universal Declaration of Human Rights: https://www.un.org/en/about-us/universal-declaration-of-human-rights
+- **[BIB-UKGDS-REG]** UK GDS: Registers — authoritative lists you can trust: https://gds.blog.gov.uk/2015/09/01/registers-authoritative-lists-you-can-trust/
+- **[BIB-UN-DFG]** UN Declaration on Future Generations hub: https://www.un.org/en/summit-of-the-future/declaration-on-future-generations
+- **[BIB-UN-DPG]** UN Office for Digital and Emerging Technologies, Digital Public Goods (overview): https://www.un.org/digital-emerging-technologies/content/digital-public-goods
+- **[BIB-UN-GDC]** UN Global Digital Compact hub: https://www.un.org/digital-emerging-technologies/global-digital-compact
+- **[BIB-UN-LEO-CODE]** UN Code of Conduct for Law Enforcement Officials (OHCHR): https://www.ohchr.org/en/instruments-mechanisms/instruments/code-conduct-law-enforcement-officials
+- **[BIB-MANDELA-RULES]** UN Standard Minimum Rules for the Treatment of Prisoners (the Nelson Mandela Rules) (OHCHR PDF, A/RES/70/175): https://www.ohchr.org/sites/default/files/Documents/ProfessionalInterest/NelsonMandelaRules.pdf
+- **[BIB-ISTANBUL-PROTOCOL]** Istanbul Protocol (2022) — Manual on the Effective Investigation and Documentation of Torture and Ill-treatment (OHCHR PDF): https://www.ohchr.org/sites/default/files/documents/publications/2022-06-29/Istanbul-Protocol_Rev2_EN.pdf
+
+- **[BIB-UN-LIA]** UN Statistics Division, UN Legal Identity Agenda (hub): https://unstats.un.org/legal-identity-agenda/
+- **[BIB-UN-PARIS-PRINC-48134]** Paris Principles (NHRIs) (A/RES/48/134 PDF): https://digitallibrary.un.org/record/180217/files/A_RES_48_134-EN.pdf
+- **[BIB-UN-PFTF]** UN Pact for the Future hub: https://www.un.org/en/summit-of-the-future/pact-for-the-future
+- **[BIB-UN-REMEDY-60147]** UN Basic Principles on Remedy and Reparation (A/RES/60/147): https://www.ohchr.org/en/instruments-mechanisms/instruments/basic-principles-and-guidelines-right-remedy-and-reparation
+- **[BIB-UN-UOF]** UN Basic Principles on the Use of Force and Firearms (OHCHR): https://www.ohchr.org/en/instruments-mechanisms/instruments/basic-principles-use-force-and-firearms-law-enforcement
+- **[BIB-UN-UPR]** OHCHR Universal Periodic Review (UPR) hub: https://www.ohchr.org/en/hr-bodies/upr/upr-home
+- **[BIB-UNCAC]** UN Convention Against Corruption (UNCAC) (PDF): https://www.unodc.org/documents/brussels/UN_Convention_Against_Corruption.pdf
+
+- **[BIB-OLKEN-2007]** Olken, Benjamin A., “Monitoring Corruption: Evidence from a Field Experiment in Indonesia,” *Journal of Political Economy* 115(2) (2007). (Open copy / summary): https://www.povertyactionlab.org/publication/monitoring-corruption-evidence-field-experiment-indonesia
+- **[BIB-FERRAZFINAN-2008]** Ferraz, Claudio & Frederico Finan, “Exposing Corrupt Politicians: The Effects of Brazil’s Publicly Released Audits on Electoral Outcomes,” *Quarterly Journal of Economics* 123(2) (2008). (Author PDF): https://eml.berkeley.edu/~ffinan/Finan_Audit.pdf
+- **[BIB-UNCHARTER-CH7]** UN Charter Chapter VII hub: https://www.un.org/en/about-us/un-charter/chapter-7
+- **[BIB-UNECE-WATER]** UNECE Water Convention (Transboundary Waters) (PDF): https://unece.org/DAM/env/water/pdf/watercon.pdf
+- **[BIB-UNFPOS]** UN Fundamental Principles of Official Statistics (UNSD hub): https://unstats.un.org/fpos/
+- **[BIB-UNGA-76300]** UNGA A/RES/76/300 (right to a clean, healthy and sustainable environment): https://docs.un.org/en/a/res/76/300
+- **[BIB-UNICEF-BR]** UNICEF birth registration overview: https://data.unicef.org/topic/child-protection/birth-registration/
+- **[BIB-UNODC-UOF-RB]** UNODC, *Resource book on the use of force and firearms in law enforcement* (PDF): https://www.unodc.org/documents/justice-and-prison-reform/17-03483_ebook.pdf
+- **[BIB-UNSC-OMB-PROC]** UN Security Council Ombudsperson delisting procedure: https://main.un.org/securitycouncil/en/ombudsperson/procedure
+- **[BIB-UNSC-OMB]** UN Security Council Ombudsperson (ISIL/Al‑Qaida list) overview: https://main.un.org/securitycouncil/en/ombudsperson
+- **[BIB-VDEM-DATA]** V-Dem dataset hub: https://www.v-dem.net/data/the-v-dem-dataset/
+- **[BIB-VDEM-DR-2025]** V-Dem Democracy Report 2025 (PDF): https://www.v-dem.net/documents/60/V-dem-dr__2025_lowres.pdf
+- **[BIB-VENICE-ELECT]** Venice Commission Code of Good Practice in Electoral Matters (PDF): https://www.venice.coe.int/images/SITE%20IMAGES/Publications/Code_conduite_PREMS%20026115%20GBR.pdf
+- **[BIB-VENICE-OMB-2019]** Venice Principles on the Ombudsman Institution (CDL-AD(2019)005-e PDF): https://www.venice.coe.int/webforms/documents/default.aspx?pdffile=CDL-AD%282019%29005-e
+- **[BIB-VENICE-ROL-2025]** Venice Commission *Updated Rule of Law Checklist* (CDL-AD(2025)002-e; adopted 12–13 Dec 2025) (PDF): https://www.venice.coe.int/webforms/documents/default.aspx?pdffile=CDL-AD%282025%29002-e
+- **[BIB-W3C-DWBP]** W3C Data on the Web Best Practices: https://www.w3.org/TR/dwbp/
+- **[BIB-W3C-VC2]** W3C, *Verifiable Credentials Data Model v2.0* (Recommendation, 15 May 2025): https://www.w3.org/TR/vc-data-model-2.0/
+- **[BIB-WB-GIRG]** World Bank, Global Indicators of Regulatory Governance (GIRG) methodology: https://rulemaking.worldbank.org/en/methodology
+- **[BIB-WB-ID-PRINCIPLES]** World Bank ID4D, *Principles on Identification for Sustainable Development* (PDF): https://documents1.worldbank.org/curated/en/213581486378184357/pdf/Principles-on-Identification-for-Sustainable-Development-Toward-the-Digital-Age.pdf
+- **[BIB-WB-IGFT-2007]** World Bank, *Intergovernmental Fiscal Transfers: Principles and Practice* (Boadway & Shah, eds., 2007): https://openknowledge.worldbank.org/entities/publication/141ce28b-a090-5310-9f25-88fe04bde211
+- **[BIB-RODDEN-SBC-GERMANY-2006]** Rodden (Aug 2006), “Soft Budget Constraints and Fiscal Adjustment in the German Länder” (PDF): https://web.stanford.edu/~jrodden/lastfirst_august06.pdf
+- **[BIB-OECD-SNG-INSOLVENCY-2018]** OECD (2018), Katharina Herold, *Insolvency Frameworks for Sub-national Governments* (PDF): https://www.oecd.org/content/dam/oecd/en/publications/reports/2018/02/insolvency-frameworks-for-sub-national-governments_25e7310e/f9874122-en.pdf
+- **[BIB-WHO-CRVS]** WHO fact sheet: Civil registration and vital statistics (CRVS) (2024): https://www.who.int/news-room/fact-sheets/detail/civil-registration-and-vital-statistics
+- **[BIB-WHO-IHR-AMEND-EIF-2025]** WHO news release: “Amended International Health Regulations enter into force” (19 Sep 2025): https://www.who.int/news/item/19-09-2025-amended-international-health-regulations-enter-into-force
+- **[BIB-WHO-IHR-AMEND-QA]** WHO Q&amp;A: International Health Regulations amendments: https://www.who.int/news-room/questions-and-answers/item/international-health-regulations-amendments
+- **[BIB-WHO-IHR-TEXT-2025]** WHO International Health Regulations (2005) text (as amended 2014/2022/2024; current since 19 Sep 2025): https://www.who.int/health-topics/international-health-regulations
+- **[BIB-WHO-PA-2025]** WHO Pandemic Agreement (WHA78.1, 20 May 2025) (PDF): https://apps.who.int/gb/ebwha/pdf_files/WHA78/A78_R1-en.pdf
+- **[BIB-WJP-ROL]** World Justice Project rule of law overview/index hub: https://worldjusticeproject.org/about-us/overview/what-rule-law
+- **[BIB-WTO-DSU]** WTO Dispute Settlement Understanding (DSU) (PDF): https://www.wto.org/english/docs_e/legal_e/28-dsu.pdf
+- **[BIB-UNSD-COFOG]** UN Statistics Division — COFOG (Classification of the Functions of Government) hub: https://unstats.un.org/unsd/classifications/cofog/revision
+- **[BIB-USCENSUS-SPECIALDIST-2022]** U.S. Census Bureau — Special District Governments by Function: 2022 (Census of Governments visualization): https://www.census.gov/library/visualizations/2023/econ/special-district-governments-by-function.html
+- **[BIB-OASIS-AKN-2018]** OASIS Akoma Ntoso Version 1.0 (approved 29 Aug 2018): https://www.oasis-open.org/standard/akn-v1-0/
+- **[BIB-OASIS-LEGALDOCML]** OASIS LegalDocML Technical Committee (legal document standards workstream): https://www.oasis-open.org/committees/tc_home.php?wg_abbrev=legaldocml
+- **[BIB-UK-LEGIS-OPENAPI]** Legislation.gov.uk OpenAPI documentation: https://www.legislation.gov.uk/openapi
+- **[BIB-CIGI-RAC-2025]** CIGI policy brief (Apr 2025): Rules as Code for a More Transparent and Efficient Global Economy (PDF): https://www.cigionline.org/static/documents/T7_TF2_Rapson_et_al.pdf
+- **[BIB-COE-LOCALSELF-ART5]** Council of Europe, European Charter of Local Self-Government (ETS No. 122), Article 5 (prior consultation on boundary changes): https://rm.coe.int/european-charter-of-local-self-government-eng/1680a87cc3
+- **[BIB-LGBCE-GUIDE-2023]** Local Government Boundary Commission for England, Technical Guidance (June 2023): https://www.lgbce.org.uk/sites/default/files/2023-06/technical-guidance-june_2023.pdf
+- **[BIB-NZ-LGC-REORG-GUIDE]** New Zealand Local Government Commission, Local government reorganisation guidelines: https://www.lgc.govt.nz/assets/Reorganisation-Files/General-Reorginisation-Files/Local-government-reorganisation-guidelines.pdf
+- **[BIB-WB-MUNICIPAL-MERGERS]** World Bank, Municipal Mergers and Associations (comparative lessons): https://openknowledge.worldbank.org/entities/publication/153d4571-3d80-518a-91a3-f92c6e0795f6
+- **[BIB-OATES-1999-FISCALFED]** Oates (1999), An Essay on Fiscal Federalism (spillovers vs. heterogeneity): https://fiscalfederalism.eu/wp-content/uploads/2020/05/ALLGEMEIN-Lit-1999-Oates-An-Essay-on-Fiscal-Federalism.pdf
+- **[BIB-GOMEZ-REINO-2021-SCALEMETA]** Gómez‑Reino et al. (2021), Economies of Scale Meta-analysis (local public services): https://icepp.gsu.edu/files/2021/12/21-16-Economies-of-Scale-Metaanalysis.pdf
+- **[BIB-BLESSE-BASKARAN-2016-MERGERS]** Blesse & Baskaran (2016), Do Municipal Mergers Reduce Costs? (quasi-experimental evidence): https://www.sciencedirect.com/science/article/pii/S0166046216300254
+- **[BIB-IMF-SPEPS-2005]** IMF (2005), Special purpose entities and public sector fiscal risks (SPE/SPV framing): https://www.imf.org/external/np/sta/tfhpsa/2005/09/spesdc.pdf
+- **[BIB-WB-PPP-RG3]** World Bank et al., PPP Reference Guide (Version 3): https://ppp.worldbank.org/sites/default/files/2024-08/PPP%20Reference%20Guide%20Version%203.pdf
+- **[BIB-OECD-MLG]** OECD topic page: Multi-level governance: https://www.oecd.org/en/topics/policy-issues/multi-level-governance.html
+- **[BIB-IJC-GREER-2018]** Greer, Moldogaziev & Scott (2018), Polycentric governance and the impact of special districts on fiscal common pools (International Journal of the Commons): https://thecommonsjournal.org/articles/10.18352/ijc.839
+- **[BIB-ACIR-A22-1964]** US Advisory Commission on Intergovernmental Relations (1964), The Problem of Special Districts in American Government (A-22): https://library.unt.edu/gpo/ACIR/Reports/policy/a-22.pdf
+- **[BIB-OECD-REI-2014]** OECD (2014), Regulatory Enforcement and Inspections: https://www.oecd.org/en/publications/regulatory-enforcement-and-inspections_g1g3b1b4.html
+- **[BIB-OECD-REI-TOOLKIT-2018]** OECD (2018), Regulatory Enforcement and Inspections Toolkit: https://www.oecd.org/en/publications/oecd-regulatory-enforcement-and-inspections-toolkit_9789264303959-en.html
+- **[BIB-WB-CONSTR-REG-2013]** World Bank (2013), Good practices for construction regulation and enforcement reform: https://documents.worldbank.org/curated/en/662881468170967367/Good-practices-for-construction-regulation-and-enforcement-reform-guidelines-for-reformers
+- **[BIB-EC-ROL-COND-REG-2021]** European Commission, Rule of law conditionality regulation (in force since Jan 2021) (overview page): https://commission.europa.eu/strategy-and-policy/eu-budget/protection-eu-budget/rule-law-conditionality-regulation_en
+- **[BIB-EC-BETTERREG-GUIDE-2021]** European Commission (2021), Better Regulation Guidelines (SWD(2021) 305 final): https://commission.europa.eu/system/files/2021-11/swd2021_305_en.pdf
+- **[BIB-EC-BETTERREG-TOOLBOX-2023]** European Commission (2023), Better Regulation Toolbox (July 2023 edition): https://commission.europa.eu/system/files/2023-09/BR%20toolbox%20-%20Jul%202023%20-%20FINAL.pdf
+- **[BIB-IETF-RFC2026]** IETF RFC 2026, The Internet Standards Process: https://datatracker.ietf.org/doc/html/rfc2026
+- **[BIB-RFC6962]** IETF RFC 6962, *Certificate Transparency* (append-only public log pattern) (2013): https://datatracker.ietf.org/doc/html/rfc6962
+- **[BIB-TRILLIAN]** Trillian, open-source transparent log (append-only Merkle tree; CT-style): https://google.github.io/trillian/
+- **[BIB-W3C-PROCESS-2025]** W3C Process Document (2025 edition): https://www.w3.org/policies/process/
+- **[BIB-W3C-STANDARDS-TYPES]** W3C, Standards and drafts types (Recommendation/Working Draft/Note etc.): https://www.w3.org/standards/types/
+- **[BIB-OPENSTAND]** OpenStand, Principles for standards development: https://open-stand.org/about-us/principles/
+- **[BIB-IETF-RFC6852]** IETF RFC 6852, IETF Trust Legal Provisions Relating to IETF Documents: https://datatracker.ietf.org/doc/html/rfc6852
+- **[BIB-WTO-TBT-PRINCIPLES]** WTO TBT Committee, Principles for the development of international standards, guides and recommendations: https://www.wto.org/english/tratop_e/tbt_e/principles_standards_tbt_e.htm
+- **[BIB-WTO-TBT-LEGAL]** WTO Agreement on Technical Barriers to Trade (legal text, incl. Annex 3 Code of Good Practice): https://www.wto.org/english/docs_e/legal_e/tbt_e.htm
+- **[BIB-UN-PROSECUTORS]** UN Guidelines on the Role of Prosecutors (OHCHR instrument page): https://www.ohchr.org/en/instruments-mechanisms/instruments/guidelines-role-prosecutors
+- **[BIB-UN-LAWYERS]** UN Basic Principles on the Role of Lawyers (OHCHR instrument page): https://www.ohchr.org/en/instruments-mechanisms/instruments/basic-principles-role-lawyers
+- **[BIB-UN-SPT-NPM]** UN Subcommittee on Prevention of Torture (SPT), National Preventive Mechanisms (NPM) overview: https://www.ohchr.org/en/treaty-bodies/spt/national-preventive-mechanisms
+- **[BIB-FEMA-NIMS-MUTUALAID]** FEMA, NIMS Guideline for Mutual Aid (activation + resource sharing): https://www.fema.gov/sites/default/files/documents/fema_nims-guideline-for-mutual-aid.pdf
+- **[BIB-FEMA-NIMS]** FEMA, National Incident Management System (NIMS): https://www.fema.gov/emergency-managers/nims
+- **[BIB-JESIP-JOINTDOCTRINE-2024]** JESIP (UK), Joint Doctrine: The Interoperability Framework (Edition 3.1, Apr 2024) (PDF): https://www.jesip.org.uk/wp-content/uploads/2022/03/JESIP_Joint-Doctrine_Version-3.1_April-2024.pdf
+- **[BIB-FEMA-CGC-2024]** FEMA Continuity Guidance Circular (Feb 2018; updated Aug 2024) (PDF): https://www.fema.gov/sites/default/files/documents/fema_continuity-guidance-circular_082024.pdf
+- **[BIB-UN-MINNESOTA-PROTOCOL]** OHCHR (2016), Minnesota Protocol on the Investigation of Potentially Unlawful Death: https://www.ohchr.org/Documents/Publications/MinnesotaProtocol.pdf
+- **[BIB-DPG-STANDARD]** Digital Public Goods Alliance, DPG Standard (governance + requirements): https://github.com/DPGAlliance/DPG-Standard
+- **[BIB-WB-WGI]** World Bank, Worldwide Governance Indicators (WGI): https://www.worldbank.org/en/publication/worldwide-governance-indicators
+- **[BIB-UN-SDG16]** United Nations, SDG 16 (Peace, justice and strong institutions): https://www.un.org/sustainabledevelopment/peace-justice/
+- **[BIB-SRC-PLANETARY-BOUNDARIES]** Stockholm Resilience Centre, Planetary Boundaries framework: https://www.stockholmresilience.org/research/planetary-boundaries.html
+- **[BIB-NATURE-ESB-2023]** Richardson et al. (2023), Earth system boundaries (Nature): https://www.nature.com/articles/s41586-023-06083-8
+- **[BIB-EU-WHISTLE-2019]** EU Directive (EU) 2019/1937 on the protection of persons who report breaches of Union law: https://eur-lex.europa.eu/eli/dir/2019/1937/oj/eng
+- **[BIB-ICN-INVPROC-2019]** International Competition Network (2019), Recommended Practices for Investigative Process: https://www.internationalcompetitionnetwork.org/wp-content/uploads/2019/05/RPs-Investigative-Process.pdf
+- **[BIB-ISO-IEC-27701]** ISO/IEC 27701 (Privacy Information Management): https://www.iso.org/standard/71670.html

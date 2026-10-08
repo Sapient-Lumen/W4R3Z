@@ -1,0 +1,124 @@
+# Service Standards & Minimum Service Guarantees (Make Service Power Measurable)
+
+**Purpose:** define minimum service guarantees (time, access, channels) so people can plan and contest delay-as-policy.
+
+Most people experience “government” as **service journeys**. When performance expectations are ambiguous, agencies can “deny by delay,” degrade quietly, or shift costs onto users (administrative burden) without changing any rule text.
+
+This memo defines a compact **Service Standard** layer that plugs into `SRV-*` (service catalog) and existing joinable artifacts (`REL/DRR/OFR/AL/RULE/STD`) without creating a new bureaucracy tier.
+
+**Anchor set:** [BIB-UK-SERVICESTANDARD], [BIB-UK-SERVICE-MEASURING-SUCCESS], [BIB-UK-SERVICE-DATA-YOU-MUST-PUBLISH], [BIB-CA-DIGITALSTANDARDS], [BIB-OECD-GPP-SERVICE-2022].
+
+## Kernel anchors (do not repeat)
+- **Protective legibility / adoption:** transparency can be weaponized; design disclosures and incentives accordingly. (`99-protective-legibility-and-adoption-dynamics.md`)
+- Service catalog and access journeys: `47-...`.
+- Person-facing accessibility floors: `98-persons-path-and-accessibility-invariants.md`.
+- Records/receipts for eligibility and denials: `31-...`.
+- Appeals lanes and escalation: `36-...`.
+
+## Named tensions (design must surface these)
+- Uniform minimums vs local capacity and context.
+- Metric targets vs lived experience (gaming and “paper compliance”).
+- Speed/throughput vs correctness and contestability.
+- Scarcity triage vs equal-rights floors (avoid rationing by opacity).
+
+---
+## A. Definitions (tight)
+
+**Service standard (SS)**  
+A published, user-facing set of commitments for a service: what the service does, what “success” means, how performance is measured, and what happens when the service fails (remedy/escalation).
+
+**Minimum Service Guarantee (MSG)**  
+A **floor** for essential services (`ESS-1`) that MUST be met even during outages, fiscal shocks, or emergency mode: e.g., minimum channels, maximum queue time for urgent categories, and a continuity backstop.
+
+**Service performance release (`REL-*`)**  
+A publishable performance snapshot (cadence-defined) for one or more `SRV-*` entries, with method notes and disaggregation rules.
+
+---
+
+## A1. Waiting is harm (deny-by-delay control)
+For essential or rights-affecting services, **time** is a first-class obligation.
+- Standards MUST publish a maximum **time to acknowledgement**, **time to first substantive contact**, **time to decision**, and (where relevant) maximum **queue/hold time** for urgent categories.
+- Published time commitments are not just targets—they are **promises**. Missing them MUST trigger a duty to account (reasons + revised estimate) and the defined remedy trigger, not silence.
+- Standards SHOULD publish **tail harm** signals (not just medians): share waiting >2×, >5×, and >10× the published standard, because the tail is where waiting harm concentrates.
+- Missed deadlines MUST trigger a defined consequence (auto-escalation, interim protection, or deemed outcome) rather than silence (see `08-remedy-and-grievance.md`, ALR `36-...`, and `98-persons-path-and-accessibility-invariants.md`).
+
+
+
+## A2. Dignity is an obligation (not a vibe)
+Procedural fairness fails if service interactions humiliate people, treat them as suspects, or force repeated proof of identity/eligibility.
+- Standards SHOULD include a **dignity commitment**: respectful treatment, clear explanations, minimal repeated documentation, and acknowledgment/apology when the system is wrong.
+- Dignity failures are actionable: they belong in complaint/oversight loops (`08-...`, `09-...`) and can be tracked via a small user‑reported measure (bounded, privacy‑safe).
+
+## B. Minimum Service Standard (one screen per `SRV-*`)
+
+A service SHOULD have an SS once it is public-facing and rights-/resource-affecting (benefits, permits, licensing, bills, enforcement-adjacent interactions).
+
+Common high-stakes `SRV-*` families include benefits delivery (`64-...`), permits/licensing (`29-...`), and tax/fees billing + refunds (`93-...`).
+
+
+The SS is not a manifesto; it is a **small contract** between authority and user.
+
+**Minimum fields**
+- **Scope:** which `SRV-*` entry(ies) this standard covers; channels included/excluded (and why).
+- **User promise:** plain-language “what we will do for you” (bounded).
+- **Dignity:** respectful treatment + minimal repeated proof + clear explanations; how to report dignity failures.
+- **Measures (4–8):** chosen from `CAD-2`, `CAD-1`, `LRR-4`, `LRR-10`, and a small equity slice (disaggregated where relevant).
+- **Targets / floors:** at least one **time-to-first-action** target and one **time-to-final-outcome** target (median + 90p).
+- **Exception policy:** what counts as a legitimate exception (and what doesn’t).
+- **Remedy triggers:** what users get when targets are missed (priority escalation, fee waiver/refund, interim protections, auto-open grievance lane, or a compensation rule where lawful).
+- **Review cadence:** review date + revision discipline (tie to `74-...` lookback discipline).
+- **Evidence pointers:** the `REL-*` performance release(s) and method note.
+
+---
+
+## C. Join rules (keep it auditable; avoid new ID families)
+
+**1) Put the standard on the service page**  
+Each `SRV-*` record MUST include a pointer to:
+- the governing SS artifact (often a `RULE-*` of kind `POLICY`/`GUIDE`, or a `STD-*`), and
+- the current performance `REL-*` release.
+
+**2) Publish performance at a stated cadence**  
+For material services, publish `REL-SRV-PERF-*` releases at a cadence appropriate to harm (monthly for high-stakes, quarterly for low-stakes). Each `REL` MUST include method notes (definition of “processing time,” exclusion rules, channel coverage, and disaggregation rules).
+
+**3) Bind underperformance to follow-through**
+- Chronic SS misses MUST trigger an `OFR-*` case scoped to the service (root cause, corrective actions, deadlines, closure evidence).
+- If misses create patterned harms (by group/place), apply `76-systemic-redress-and-pattern-remediation.md` (systemic triggers → scoped corrective cases).
+
+**4) Make emergency mode explicit**  
+If emergency operations alter service floors, log the change as `EMR-*` and preserve an `ESS-1` MSG floor unless explicitly overridden (and reviewable).
+
+---
+
+## D. Minimum Service Guarantee (MSG) for `ESS-1`
+
+For `ESS-1` services (life/health/rights-critical), the SRV record MUST define a **continuity floor** and this memo adds a user-facing MSG clause:
+
+**MSG minimum**
+- **Urgent category definition** (what qualifies).
+- **Guaranteed channels** (at least one non-digital channel unless impossible; **no AI‑only front door**—if chatbots/portals exist, a staffed alternative MUST exist; see `98-persons-path-and-accessibility-invariants.md`).
+- **Assistance channel:** for high‑stakes queues and filings, provide navigator/interpreter support and a non‑reading option (oral explanation or audio/pictogram summaries) for notices and next steps (`98`, `09`).
+- **Maximum urgent queue time** (or interim protection rule if queues exceed).
+- **Backstop owner + funding path** (who takes over if the service operator collapses).
+- **Public status signal** (how outages/slowdowns are announced; correction timeline).
+
+---
+
+## E. Failure modes this memo blocks (and how)
+
+- **Procedural denial / “deny by delay”** → performance targets + remedy triggers + publishable dashboards.
+- **Quiet degradation** → cadence-defined performance `REL` releases + `OFR` triggers.
+- **Channel exclusion** → explicit channel coverage and MSG for `ESS-1`.
+- **Gaming metrics** → required method notes + disaggregation + stop conditions for perverse incentives.
+- **Blame shifting across units** → `SRV-*` ownership + competence ledger joins + “wrong door rate” (`MCL-5`).
+
+---
+
+## F. Minimal metric hooks (do not proliferate)
+
+Default to existing packs, but service standards SHOULD at least cover:
+- **[CAD-2] Response/queue times + access friction** (key by `SRV-*`).
+- **[LRR-4] Time-to-remedy** (for contestable decisions).
+- **[MCL-5] “Wrong door” rate** (misrouted users).
+
+See also: `47-service-catalog-and-access-journeys-register.md`, `03-metrics-and-evidence.md`, `09-public-service-and-state-capacity.md`.

@@ -18,4 +18,12 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [Moral Taxation](Moral-Taxation/): five selected tax-design research checkpoints, from take-up and calibration to sandbox decision-review bundles.
 
+- [Radical-Governance](Radical-Governance/): 9 selected snapshots covering governance design, remedy, scope and non-closing stewardship.
+
+- [AI-Personhood](AI-Personhood/): 4 selected snapshots covering conditional personhood, rights infrastructure and historical no-send evidence gates.
+
+- [CloudtainerML](CloudtainerML/): 2 selected snapshots covering small ML memory/cache experiments and guarded public-trace capture.
+
+- [AI-EDU](AI-EDU/): 4 selected snapshots covering learner continuity, repair and bounded teacher/tutor workflow design.
+
 Each project has its own reading guide and provenance. Existing license notices remain applicable; no new blanket license is granted here.

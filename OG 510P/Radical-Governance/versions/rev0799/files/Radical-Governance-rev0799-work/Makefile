@@ -1,0 +1,162 @@
+export PYTHONDONTWRITEBYTECODE := 1
+
+.PHONY: all build lint schema_validation reproducibility clean sources note_index note_status claims defeat_tests handback_tests supplier_dependency_tests symbolic_authority_tests capacity_tests model_decision_tests generative_assistant_tests staff_copilot_tests transition_receipt_tests platform_migration_tests ecological_personhood_tests entitlement_continuity_tests payment_redress_tests evidence_receipts source_claim_receipts outcome_tail_plans credential_access_tests representative_access_tests disaster_assistance_tests unemployment_insurance_tests watchlist_border_tests public_ai_register_tests subnational_ai_tests global_south_source_tests health_benefit_tests climate_utility_tests housing_continuity_tests software_cyber_continuity_tests election_continuity_tests child_welfare_tests custody_reentry_tests long_term_care_tests water_sanitation_tests food_nutrition_tests emergency_response_tests transportation_mobility_tests common_test_matrices case_matrix route_redirect_ledger retirement_candidates consolidation_audit canon_map threads thread_summary releases control_surfaces assurance_artifacts lifecycle_gates source_health gap_ledger generated_surface_audit manifest tail_sampling_gates field_intake_controls fieldwork_authorization_gates fieldwork_execution_controls fieldwork_release_controls fieldwork_correction_controls fieldwork_redress_verification_controls fieldwork_closure_dossiers fieldwork_postclosure_monitoring_controls archive_stewardship_handoff_controls
+
+all: lint
+
+build:
+	python3 tools/build_all.py
+
+lint: build
+	python3 tools/lint_archive.py
+	python3 tools/check_reproducible_build.py
+
+schema_validation:
+	python3 tools/schema_validation.py
+
+reproducibility: build
+	python3 tools/check_reproducible_build.py
+
+sources:
+	python3 tools/build_sources_index.py
+
+note_index:
+	python3 tools/build_note_index.py
+
+note_status: note_index
+	python3 tools/build_note_status.py
+
+claims: note_status
+	python3 tools/build_claims.py
+
+defeat_tests: claims
+	python3 tools/build_defeat_tests.py
+
+handback_tests: defeat_tests
+	python3 tools/build_handback_tests.py
+
+supplier_dependency_tests: handback_tests
+	python3 tools/build_supplier_dependency_tests.py
+
+symbolic_authority_tests: supplier_dependency_tests
+	python3 tools/build_symbolic_authority_tests.py
+
+capacity_tests: symbolic_authority_tests
+	python3 tools/build_capacity_tests.py
+
+model_decision_tests: capacity_tests
+	python3 tools/build_model_decision_tests.py
+
+generative_assistant_tests: model_decision_tests
+	python3 tools/build_generative_assistant_tests.py
+
+staff_copilot_tests: generative_assistant_tests
+	python3 tools/build_staff_copilot_tests.py
+
+transition_receipt_tests: staff_copilot_tests
+	python3 tools/build_transition_receipt_tests.py
+
+platform_migration_tests: transition_receipt_tests
+	python3 tools/build_platform_migration_tests.py
+
+ecological_personhood_tests: platform_migration_tests
+	python3 tools/build_ecological_personhood_tests.py
+
+entitlement_continuity_tests: ecological_personhood_tests
+	python3 tools/build_entitlement_continuity_tests.py
+
+payment_redress_tests: entitlement_continuity_tests
+	python3 tools/build_payment_redress_tests.py
+
+evidence_receipts: payment_redress_tests
+	python3 tools/build_evidence_receipts.py
+
+source_claim_receipts: evidence_receipts
+	python3 tools/build_source_claim_receipts.py
+
+outcome_tail_plans: source_claim_receipts
+	python3 tools/build_outcome_tail_plans.py
+
+tail_sampling_gates: outcome_tail_plans
+	python3 tools/build_tail_sampling_gates.py
+
+field_intake_controls: tail_sampling_gates
+	python3 tools/build_field_intake_controls.py
+
+fieldwork_authorization_gates: field_intake_controls
+	python3 tools/build_fieldwork_authorization_gates.py
+
+fieldwork_execution_controls: fieldwork_authorization_gates
+	python3 tools/build_fieldwork_execution_controls.py
+
+fieldwork_release_controls: fieldwork_execution_controls
+	python3 tools/build_fieldwork_release_controls.py
+
+fieldwork_correction_controls: fieldwork_release_controls
+	python3 tools/build_fieldwork_correction_controls.py
+
+fieldwork_redress_verification_controls: fieldwork_correction_controls
+	python3 tools/build_fieldwork_redress_verification_controls.py
+
+fieldwork_closure_dossiers: fieldwork_redress_verification_controls
+	python3 tools/build_fieldwork_closure_dossiers.py
+
+fieldwork_postclosure_monitoring_controls: fieldwork_closure_dossiers
+	python3 tools/build_fieldwork_postclosure_monitoring_controls.py
+
+archive_stewardship_handoff_controls: fieldwork_postclosure_monitoring_controls
+	python3 tools/build_archive_stewardship_handoff_controls.py
+
+common_test_matrices: archive_stewardship_handoff_controls
+	python3 tools/build_test_matrices.py
+
+credential_access_tests representative_access_tests disaster_assistance_tests unemployment_insurance_tests watchlist_border_tests public_ai_register_tests subnational_ai_tests global_south_source_tests health_benefit_tests climate_utility_tests housing_continuity_tests software_cyber_continuity_tests election_continuity_tests child_welfare_tests custody_reentry_tests long_term_care_tests water_sanitation_tests food_nutrition_tests emergency_response_tests transportation_mobility_tests: common_test_matrices
+
+case_matrix: note_status claims defeat_tests handback_tests supplier_dependency_tests symbolic_authority_tests capacity_tests model_decision_tests generative_assistant_tests staff_copilot_tests transition_receipt_tests platform_migration_tests ecological_personhood_tests entitlement_continuity_tests payment_redress_tests evidence_receipts source_claim_receipts outcome_tail_plans tail_sampling_gates field_intake_controls fieldwork_authorization_gates fieldwork_execution_controls fieldwork_release_controls fieldwork_correction_controls fieldwork_redress_verification_controls fieldwork_closure_dossiers fieldwork_postclosure_monitoring_controls archive_stewardship_handoff_controls common_test_matrices
+	python3 tools/build_case_packet_matrix.py
+
+route_redirect_ledger: case_matrix
+	python3 tools/build_route_redirect_ledger.py
+
+retirement_candidates: route_redirect_ledger
+	python3 tools/build_retirement_candidates.py
+
+consolidation_audit: retirement_candidates
+	python3 tools/build_cross_boundary_consolidation_audit.py
+
+canon_map: consolidation_audit
+	python3 tools/build_canon_map.py
+
+threads: note_index
+	python3 tools/build_threads.py
+
+thread_summary: note_index
+	python3 tools/build_thread_summary.py
+
+releases:
+	python3 tools/build_releases.py
+
+control_surfaces: note_index
+	python3 tools/build_control_surfaces.py
+
+assurance_artifacts: note_index
+	python3 tools/build_assurance_artifacts.py
+
+lifecycle_gates: note_index
+	python3 tools/build_lifecycle_gates.py
+
+source_health: case_matrix
+	python3 tools/build_source_health.py
+
+gap_ledger: source_health
+	python3 tools/build_gap_ledger.py
+
+generated_surface_audit: gap_ledger
+	python3 tools/build_generated_surface_audit.py
+
+manifest: build
+
+clean:
+	rm -rf generated
+	find tools -type d -name '__pycache__' -prune -exec rm -rf {} +
+	find . -type f -name '*.pyc' -delete

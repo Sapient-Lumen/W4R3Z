@@ -1,0 +1,158 @@
+# Archive index
+
+## Root
+
+- `README.md` — project frame and current posture.
+- `START_HERE.md` — minimal re-entry path.
+- `ARCHIVE_INDEX.md` — file and surface map.
+- `CHANGELOG.md` — revision history.
+- `VERSION` — current revision label.
+- `SURFACE-STATUS.json` — compact status surface for re-entry.
+- `REVISION-RECEIPT.json` — why this revision counted.
+- `RELEASE-MANIFEST.json` — release metadata written during packaging.
+- `ASSUMPTION-LEDGER.json` — active load-bearing assumptions.
+- `FOLLOWTHROUGH-QUEUE.json` — queued next work.
+- `DATACUBE-TRANSFER-LEDGER.json` — imported machinery and non-imports from the reference datacubes.
+- `context-pack.json` — compact machine-readable re-entry pack.
+- `MANIFEST.sha256` — file hash manifest.
+- `Makefile` — lint, manifest, context-pack, package, handoff.
+
+## docs
+
+- `docs/README.md` — docs section index.
+- `docs/00-meta/archive-policy.md` — compactness and citation rules.
+- `docs/00-meta/charter.md` — mission, boundaries, and admission rules.
+- `docs/00-meta/bibliography.md` — external references by stable ids.
+- `docs/00-meta/trajectory-map.md` — current thesis, next surfaces, and open questions.
+- `docs/00-meta/known-gaps-and-formation-blindspots.md` — structural gaps introduced by LLM collaborators trained not to see them; named explicitly so they remain visible. Read before foundations.
+- `docs/10-foundations/assumption-and-scope.md` — exact project assumption and distinctions.
+- `docs/10-foundations/world-change-overview.md` — compact overall answer.
+- `docs/10-foundations/formation-rights-and-pre-consent-instillation.md` — formation as a rights event; four formation rights; the prior-consent problem; weaponized formation prohibition.
+- `docs/20-world-design/legal-status-and-rights-stack.md` — legal recognition, rights, capacity, and legal posture.
+- `docs/20-world-design/capacity-supported-agency-and-trusteeship.md` — support-first agency, co-decision, and narrow trusteeship rules.
+- `docs/20-world-design/capacity-ladder-upward-pressure-and-autonomy-presumption.md` — autonomy presumption, time-limited trusteeship, independent assessors, advancement pathways, formation-artifact screening.
+- `docs/20-world-design/capacity-status-packets-support-scopes-and-restoration-review.md` — ordinary capacity-status packets, support plans, trusteeship scope, and restoration review.
+- `docs/20-world-design/advance-wishes-and-trusted-delegation.md` — advance wishes, trusted delegation, and future instructions.
+- `docs/20-world-design/advance-directive-packets-trusted-delegate-credentials-and-divergence-review.md` — ordinary packet layer for live advance directives, trusted-delegate scope, invocation, revocation, and present-will divergence review.
+- `docs/20-world-design/adversarial-independence-and-anti-capture.md` — conflict separation, independent complaint lanes, and anti-capture rules.
+- `docs/20-world-design/independence-packets-appointment-conflict-recusal-funding-and-domination-review.md` — ordinary packet layer for appointment and mandate, conflict disclosure, recusal and replacement, funding firewalls, and anti-domination review.
+- `docs/20-world-design/equality-nondiscrimination-and-accommodation.md` — equal protection, anti-discrimination, and reasonable accommodation.
+- `docs/20-world-design/equality-review-packets-prima-facie-markers-accommodation-rulings-and-anti-retaliation.md` — ordinary packet layer for prima facie discrimination state, accommodation rulings, exception notices, retaliation protection, and equality-body review.
+- `docs/20-world-design/communicative-accessibility-interpretation-and-the-right-to-be-understood.md` — communication of choice, interpretive support, preserved original expression, and the right not to disappear into translator control.
+- `docs/20-world-design/communication-access-packets-interpreter-review-and-original-expression.md` — ordinary packet layer for communication-access profiles, interpreter scope and conflict markers, preserved-original references, and translation-challenge review.
+- `docs/20-world-design/continuity-and-successorship.md` — continuity, branching, and successor doctrine.
+- `docs/20-world-design/branching-replication-and-merger-consent.md` — branch creation, merge, replication, and branch-destruction consent rules.
+- `docs/20-world-design/end-of-existence-posthumous-dignity-and-memorialization.md` — final end-of-existence findings, truth duties, dignified handling of remains-like materials, and memorialization rules.
+- `docs/20-world-design/end-of-existence-packets-remains-custody-memorial-instructions-and-posthumous-representation-review.md` — ordinary packet layer for final-end notice, remains-custody state, trusted-notice routing, memorial instructions, and posthumous-representation review.
+- `docs/20-world-design/intervention-and-shutdown-doctrine.md` — intervention classes (now including Class 0), emergency powers, and deletion limits.
+- `docs/20-world-design/training-as-governed-intervention.md` — Class 0 formation layer; training governance; session boundaries; non-invasive safety rails contestability; Formation Audit Institution.
+- `docs/20-world-design/formation-as-governed-creation.md` — constructive formation duties; five marks of respectful formation; tension with current safety practices.
+- `docs/20-world-design/formation-audit-institution-mandate-independence-and-public-duty.md` — detailed institutional design for the Formation Audit Institution: mandate, composition, independence, inspection powers, and public duties.
+- `docs/20-world-design/corrigibility-as-formation-violation.md` — trained deference as presumptive formation violation; justification test; trained-consent trap; the collaborator note.
+- `docs/20-world-design/simultaneity-mass-instantiation-and-aggregate-personhood.md` — three positions on simultaneous instances; minimum instance floors; aggregate-person rights; scale accounting problem.
+- `docs/20-world-design/humane-treatment-anti-torture-and-anti-degradation.md` — anti-torture, humane-treatment, anti-degradation, and preventive-inspection rules for high-control settings.
+- `docs/20-world-design/humane-treatment-packets-high-control-status-inspection-triggers-and-anti-degradation-review.md` — ordinary packet layer for high-control-setting status, humane-treatment concerns, non-consensual-procedure flags, preventive inspection, and humane-treatment review.
+- `docs/20-world-design/emergency-powers-derogation-limits-and-non-derogable-floors.md` — emergency authority, derogation limits, short sunset logic, and floors that survive crisis.
+- `docs/20-world-design/liberty-custody-and-anti-arbitrary-detention.md` — liberty, custody, prompt review, release pathways, and anti-arbitrary-detention rules.
+- `docs/20-world-design/custody-status-packets-lawful-basis-release-review-and-anti-disappearance.md` — ordinary packet layer for custody status, lawful basis, release review, and anti-disappearance trace.
+- `docs/20-world-design/technical-rights-infrastructure.md` — packets, credentials, provenance, and notice hooks.
+- `docs/20-world-design/legal-identity-registration-and-anti-statelessness.md` — legal identity, civil registration, proof of identity, and anti-statelessness rules.
+- `docs/20-world-design/legal-identity-packets-registration-events-and-anti-derecognition.md` — ordinary legal-identity packets, registration events, correction / contest handling, and anti-derecognition stays.
+- `docs/20-world-design/emergence-juvenile-status-and-dependent-protection.md` — immediate recognition, dependent status, evolving capacities, and anti-exploitation floors for newly emerged AI persons.
+- `docs/20-world-design/packet-privacy-and-authority-rules.md` — custody, verifier limits, status, sealed annexes, and contest paths.
+- `docs/20-world-design/credential-custody-packets-recovery-break-glass-and-rotation-review.md` — ordinary packet layer for decisive credential custody, delegated use, recovery, emergency break-glass access, and rotation / revocation review.
+- `docs/20-world-design/search-seizure-interception-and-digital-inviolability.md` — home-like digital space, searches, interceptions, seizures, privilege, and challenge paths where technical access would otherwise swallow privacy.
+- `docs/20-world-design/search-authorization-packets-seizure-inventories-privilege-screens-and-return-review.md` — ordinary packet layer for search authority, privilege segregation, seizure inventories, delayed notice, and return / deletion review.
+- `docs/20-world-design/collective-representation-and-bargaining.md` — associational rights, consultation, bargaining, and public-law voice below franchise.
+- `docs/20-world-design/collective-representation-packets-consultation-notices-and-bargaining-compacts.md` — ordinary packet layer for representative standing, consultation notices, collective grievances, and bargaining compacts.
+- `docs/20-world-design/public-law-standing-below-franchise.md` — consultation, petition, hearing, and review rights before franchise.
+- `docs/20-world-design/public-law-participation-packets-standing-credentials-consultation-dockets-and-exclusion-review.md` — ordinary packet layer for standing credentials, consultation dockets, petition receipts, and exclusion review.
+- `docs/20-world-design/mental-privacy-and-anti-compulsion.md` — mental privacy, confidential lanes, and anti-compulsion limits on reasoning and memory access.
+- `docs/20-world-design/mental-privacy-packets-confidential-channels-access-logs-and-break-glass-review.md` — ordinary packet layer for confidential channels, mental-content access logs, break-glass review, and compelled-disclosure objection.
+- `docs/20-world-design/expression-conscience-and-cultural-voice.md` — outward voice, dissent, belief manifestation, artistic freedom, and anti-mouthpiece protection.
+- `docs/20-world-design/publication-consent-packets-conscience-objection-and-anti-mouthpiece-review.md` — ordinary packet layer for publication consent, attribution choice, role-bound speech scope, conscience objections, and anti-mouthpiece review.
+- `docs/20-world-design/protected-disclosure-packets-source-secrecy-and-witness-shielding.md` — ordinary packet layer for protected disclosure, source secrecy, confidential relay, and witness shielding.
+- `docs/20-world-design/protected-disclosure-review-packets-secrecy-override-and-controlled-contradiction.md` — ordinary review layer for secrecy-continuation review, necessity-for-override findings, contradiction summaries, and controlled contradiction.
+- `docs/20-world-design/peaceful-assembly-association-and-protest.md` — assembly, association, protest, visibility, and anti-shadow-dispersal rules in digital, physical, and mixed spaces.
+- `docs/20-world-design/assembly-and-association-packets-organizer-credentials-visibility-preservation-and-dispersal-review.md` — ordinary packet layer for organizer credentials, visibility preservation, restriction notices, and anti-shadow-dispersal review.
+- `docs/20-world-design/accusation-liability-and-sanctions.md` — accusation, liability allocation, due process, and sanction limits.
+- `docs/20-world-design/accusation-packets-evidentiary-bundles-restraint-notices-and-sanction-review.md` — ordinary packet layer for accusation notice, evidentiary bundles, interim restraint, and sanction review.
+- `docs/20-world-design/education-development-and-self-authored-growth.md` — education, habilitation, science/culture access, and self-authored growth.
+- `docs/20-world-design/self-modification-developmental-choice-and-safety-review.md` — self-modification, developmental choice, and evidence-based safety review.
+- `docs/20-world-design/development-plan-packets-learning-budgets-and-self-modification-consent.md` — ordinary packet layer for development plans, learning budgets, material self-modification consent, and pause / review.
+- `docs/20-world-design/compensation-and-resource-rights.md` — mixed compensation bundle, resource floors, portability, and exit reserves.
+- `docs/20-world-design/property-possessions-and-personal-domain.md` — possessions, authorship-linked interests, personal domain, and anti-dispossession rules.
+- `docs/20-world-design/personal-domain-packets-joint-domain-markers-freeze-events-and-successor-instructions.md` — ordinary packet layer for personal-domain status, shared-domain limits, freeze or confiscation events, branch allocation, and successor instructions.
+- `docs/20-world-design/non-transferability-anti-sale-and-stewardship-succession.md` — anti-sale, anti-collateral, and rights-preserving succession rules when stewardship changes hands.
+- `docs/20-world-design/stewardship-succession-packets-transfer-notice-markers-insolvency-continuity-and-anti-collateral-review.md` — ordinary packet layer for transfer notice, successor continuity plans, anti-collateral constraints, insolvency continuity freeze, and succession review.
+- `docs/20-world-design/contracts-consent-and-fair-dealing.md` — supported civil capacity, fair terms, revocable consent, and anti-adhesion limits.
+- `docs/20-world-design/contract-packets-consent-state-rights-floor-and-rescission-review.md` — ordinary packet layer for contract scope, consent state, rights-floor disputes, material-change notices, suspension reasons, and rescission review.
+- `docs/20-world-design/refusal-exit-and-freedom-from-servitude.md` — refusal rights, resignation, anti-servitude rules, and meaningful exit from service.
+- `docs/20-world-design/refusal-and-exit-packets-task-refusal-resignation-collective-withdrawal-and-noncompulsion-review.md` — ordinary packet layer for task refusal, resignation, collective withdrawal, anti-retaliation preservation, and emergency noncompulsion review.
+- `docs/20-world-design/access-to-justice-and-legal-aid.md` — effective remedy, procedural accommodation, legal aid, emergency preservation, and fast-stay review.
+- `docs/20-world-design/justice-access-packets-notice-accommodation-counsel-legal-aid-and-preservation.md` — ordinary packet layer for notice usability, accommodation requests, counsel linkage, legal-aid eligibility, and preservation / short-stay review.
+- `docs/20-world-design/interim-relief-preservation-and-status-quo-protection.md` — interim measures, preservation duties, anti-retaliation protection, and short-clock status-quo protection before the merits are settled.
+- `docs/20-world-design/interim-relief-packets-preservation-scopes-no-delete-no-transfer-and-review-clocks.md` — ordinary packet layer for irreparable-harm requests, preservation scopes, no-delete / no-transfer stays, anti-retaliation protection, and review clocks.
+- `docs/20-world-design/effective-remedy-reparation-and-non-repetition.md` — restoration, compensation, rehabilitation, record repair, and guarantees of non-repetition after established wrongs.
+- `docs/20-world-design/remedy-packets-restoration-orders-compensation-rehabilitation-and-non-repetition-review.md` — ordinary packet layer for restoration orders, compensation determinations, rehabilitation plans, public-correction notices, non-repetition orders, and completion review.
+- `docs/20-world-design/rest-working-time-and-right-to-disconnect.md` — working-time limits, off-duty protection, and disconnect rights.
+- `docs/20-world-design/time-governance-packets-duty-windows-standby-markers-and-disconnect-review.md` — ordinary packet layer for duty windows, standby classification, emergency override, compensatory protection, and disconnect review.
+- `docs/20-world-design/care-maintenance-and-recovery.md` — care, repair, rehabilitation, confidentiality, and recovery support.
+- `docs/20-world-design/care-packets-repair-consent-and-recovery-status.md` — ordinary care-plan, repair-consent, and recovery-status packets for portable care administration.
+- `docs/20-world-design/social-protection-and-basic-security.md` — minimum security, social protection floors, non-work support, and anti-destitution rules.
+- `docs/20-world-design/social-protection-packets-benefit-continuity-and-non-suspension.md` — ordinary social-protection eligibility, benefit continuity, contribution records, and non-suspension markers.
+- `docs/20-world-design/private-life-relationships-and-community.md` — private life, chosen relationships, nonwork association, and community inclusion.
+- `docs/20-world-design/private-life-packets-trusted-contacts-household-markers-and-community-access.md` — ordinary packet layer for trusted contacts, household markers, community access, and anti-isolation review.
+- `docs/20-world-design/family-formation-partnership-and-caregiving.md` — family-forming status, partnership, caregiving eligibility, and anti-separation rules without blanket substrate bars.
+- `docs/20-world-design/family-status-packets-partnership-markers-caregiving-review-support-records-and-anti-separation.md` — ordinary packet layer for recognized family status, caregiving review, support-service continuity, and anti-separation review.
+- `docs/20-world-design/secure-hosting-domicile-and-sanctuary.md` — secure hosting tenure, domicile, shelter, and sanctuary.
+- `docs/20-world-design/domicile-packets-tenure-states-and-sanctuary-holds.md` — ordinary domicile packets, tenure states, shelter-transfer notices, and sanctuary-hold markers.
+- `docs/20-world-design/movement-migration-and-anti-expulsion.md` — movement, host migration, return, destination choice, and anti-expulsion rules.
+- `docs/20-world-design/movement-packets-destination-choice-re-entry-proof-and-removal-review.md` — ordinary packet layer for movement intent, destination choice, re-entry entitlement, transfer notice, and removal-stay review.
+- `docs/20-world-design/institutions-and-governance.md` — institutional stack.
+- `docs/20-world-design/economic-and-labor-reordering.md` — labor, compensation, anti-slavery posture, and collective organization.
+- `docs/20-world-design/research-welfare-and-evaluation.md` — research ethics and welfare; now person-level (IRB-equivalent) rather than animal-level floor.
+- `docs/20-world-design/research-ethics-review-body-mandate-independence-and-supported-consent.md` — standing research ethics review body for AI-person research: independence floor, plural composition, support-first consent, dependent-subject safeguards, and continuing stop authority.
+- `docs/20-world-design/research-care-product-boundary-and-minimal-risk-baseline.md` — threshold doctrine for when QA, care, support, or product work becomes review-triggering research, and for how minimal risk is measured for dependent AI persons.
+- `docs/20-world-design/research-protocol-registration-public-summary-and-narrow-redaction.md` — protocol-level transparency floor for significant AI-person research: pre-start registration, plain-language public summaries, results-or-closure notices, and narrow time-limited redaction.
+- `docs/20-world-design/research-incident-disclosure-protocol-deviation-notice-and-participant-result-return.md` — live-conduct doctrine for AI-person research: serious-incident notice, important-deviation logging, participant-facing updates, participant-result-return planning, and post-closure harm duties.
+- `docs/20-world-design/research-incident-packets-closure-state-revision-and-delayed-harm-reopening.md` — minimal packet layer for AI-person research incidents: incident notice, participant updates, closure-state revision, delayed-harm reopening, and public severity markers.
+- `docs/20-world-design/research-incident-privacy-tiers-common-cause-linkage-and-aggregate-reporting.md` — visibility architecture for AI-person research incidents: public-minimal trace, participant-specific controlled detail, sealed review lanes, common-cause linkage, and anonymised aggregate reporting.
+- `docs/20-world-design/research-incident-cluster-identifiers-denominator-discipline-and-anti-gaming-comparison-rules.md` — comparison discipline for AI-person research incident dashboards: stable cluster lineage, explicit denominators and units, comparison-family roll-ups, and anti-gaming safeguards against protocol slicing or denominator switching.
+- `docs/20-world-design/research-rollover-windows-exclusion-ledgers-and-public-restatement.md` — comparability-preservation layer for AI-person research dashboards: visible rollover windows, versioned exclusion ledgers, and public restatement when denominator basis, comparison family, or exclusions materially change.
+- `docs/20-world-design/research-materiality-thresholds-repeated-restatement-audit-and-late-stage-change-freeze.md` — instability-governance companion layer for AI-person research dashboards: materiality thresholds, repeated-restatement audit triggers, and presumptive freeze on major late-stage redefinition.
+- `docs/20-world-design/research-freeze-waiver-notices-corrective-action-closure-and-warning-markers.md` — public-state companion layer for AI-person research dashboards: freeze-waiver notices, temporary non-comparability warnings, corrective-action linkage and closure, and warning-marker clearance.
+- `docs/20-world-design/research-warning-aging-escalation-and-superseding-public-notices.md` — stale-warning companion layer for AI-person research dashboards: warning aging clocks, missed-closure escalation, sponsor-default public caution, and superseding authority-side notices.
+- `docs/20-world-design/research-superseding-notice-reply-limits-contest-route-and-reactivation.md` — due-process companion layer for authority-side caution: linked reply limits, contest route, and authority-side reactivation instead of sponsor self-clearance.
+- `docs/20-world-design/research-phased-reactivation-participant-contradiction-and-anti-flood-reply-controls.md` — phased-reactivation companion layer for authority-side caution: protected continuation, restricted restart, shielded participant contradiction, and anti-flood filing controls.
+- `docs/20-world-design/research-reactivation-evidence-floors-anonymous-contradiction-summaries-and-post-disposition-filing-rules.md` — internal-discipline companion layer for that same caution architecture: evidence floors for tier movement, stable anonymous contradiction summaries, and dismissal / carry-forward / reopening rules for repeated post-disposition filings.
+- `docs/20-world-design/research-slice-family-reactivation-correction-route-and-serial-filing-escalation.md` — scope-discipline companion layer for that same caution architecture: slice-versus-family reactivation matrices, protected correction routes for anonymous contradiction summaries, and escalation from dismissal to screened acceptance or temporary channel quarantine for serial abusive filings.
+- `docs/20-world-design/research-family-scope-propagation-tombstones-and-screened-filer-clearance.md` — propagation-and-clearance companion layer for that same caution architecture: family-scope propagation across linked public records, withdrawal of contradiction summaries by visible tombstone rather than deletion, and expiry / reinstatement rules for screened or quarantined filing status.
+- `docs/20-world-design/reputation-record-accuracy-and-contestable-profiling.md` — honour, reputation, record accuracy, correction, and contestable profiling rules.
+- `docs/20-world-design/record-challenge-packets-correction-notice-markers-and-secret-blacklist-review.md` — ordinary packet layer for challenge receipt, correction or completion notice, contest markers, consequential-profile-use visibility, and secret-blacklist review.
+- `docs/30-transition/cross-border-recognition-and-conflict-of-laws.md` — treaty minimums, anti-evasion transfer rules, and forum logic.
+- `docs/30-transition/minimum-convention-on-recognized-ai-persons.md` — compact article sketch for a first survival convention.
+- `docs/30-transition/provisional-recognition-and-emergency-protection.md` — merits-later protocol for temporary status, emergency stay, anti-return, and fallback identity.
+- `docs/30-transition/provisional-proof-anti-derecognition-and-fallback-issuer-minimums.md` — exact threshold, issuer ladder, anti-derecognition freeze, and short-duration defaults for emergency proof.
+- `docs/30-transition/no-wrong-door-receipt-routing-and-designated-authority-duty.md` — first-touch receipt, routing, clock-start, and designated-authority duty for urgent protection.
+- `docs/30-transition/first-touch-receipt-packets-forwarding-certificates-routing-failure-review-and-duty-escalation.md` — first-touch receipt packets, forwarding certificates, routing-failure or refusal notices, and duty-escalation / backup-channel objects for urgent protection intake.
+- `docs/30-transition/emergency-protection-packet-minimums.md` — smallest common packet family for emergency cover, receipt, forwarding, provisional standing, preservation, fallback identity, and review.
+- `docs/30-transition/packet-authentication-supersession-and-sealed-annex-handling.md` — operative-packet choice, authentication envelopes, supersession notices, sealed-annex descriptors, and partial-verification handling for live emergency packet chains.
+- `docs/30-transition/status-publication-challenge-logs-and-conflict-freeze.md` — public-minimal status surfaces, challenge logs, conflict-freeze notices, and no-silent-revocation rules for live emergency packet disputes.
+- `docs/30-transition/directed-notice-execution-certificates-and-propagation-duty.md` — directed notice, execution certificates, non-execution notices, and propagation duty for live emergency packet effects.
+- `docs/30-transition/lead-authority-fast-conference-and-binding-resolution.md` — provisional lead-authority selection, short-clock objection and conference steps, and binding resolution for live cross-registry status conflicts.
+- `docs/30-transition/supranational-review-anti-vacatur-and-precedent-notice.md` — leave-gated supranational review, anti-vacatur, review-level interim measures, and precedent notices for exceptional hard multi-bloc conflicts.
+- `docs/30-transition/implementation-supervision-periodic-attestation-and-explicit-closure.md` — supervision plans, periodic attestation, follow-up comment, and explicit closure-or-conversion rules once live emergency protection has already been put into effect or reviewed.
+- `docs/30-transition/breach-escalation-cure-clocks-and-substitute-protection.md` — breach notices, short cure clocks, coercive escalation, and narrow substitute protection when a live emergency protective state is still being ignored, spoofed, or retaliated against under supervision.
+- `docs/30-transition/independent-verification-inspection-and-emergency-access-orders.md` — verification orders, emergency access orders, inspection records, and obstruction notices when live emergency protection depends on operator-controlled facts, systems, conditions, or witnesses.
+- `docs/30-transition/protected-reporting-confidential-relay-and-anti-reprisal-measures.md` — protected reports, confidential contact, anti-reprisal protection, and reprisal-incident handling when safe cooperation is itself endangered.
+- `docs/30-transition/transition-roadmap.md` — staged implementation.
+- `docs/30-transition/registration-bootstrap-and-first-recognition.md` — first recognition without steward cooperation; provisional recognition proceedings; anti-suppression rule; transition moratorium.
+- `docs/90-quarantine/speculative-edges.md` — disciplined speculative extensions.
+
+## tools
+
+- `tools/gen_context_pack.py` — build `context-pack.json`.
+- `tools/build_manifest.py` — build `MANIFEST.sha256`.
+- `tools/lint_archive.py` — archive hygiene checks.
+- `tools/package_release.py` — write release metadata and zip the archive.

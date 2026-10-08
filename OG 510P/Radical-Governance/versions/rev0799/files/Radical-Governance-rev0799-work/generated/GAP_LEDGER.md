@@ -1,0 +1,447 @@
+# Gap ledger
+
+Generated for `rev0799` from `metadata/gap_ledger.json`.
+
+This is intentionally small: it records high-risk missing domains and the next artifact needed, not an invitation to add registries instead of cases.
+
+## Summary
+
+| Metric | Count |
+| --- | ---: |
+| Gaps | 33 |
+
+## Gaps
+
+| Gap | Status | Severity | Next artifact |
+| --- | --- | --- | --- |
+| `GAP-001-disaster-assistance-delivery` federal disaster assistance, household relief, survivor proof, denial cure, appeals, and program handoffs | `repaired_rev0738` | `critical` | done: archive/911, archive/912, metadata/disaster_assistance_tests.json |
+| `GAP-002-pandemic-ui-fraud-access` unemployment insurance fraud controls, access delays, identity proofing, overpayment waivers, and claimant redress | `repaired_rev0739` | `critical` | done: archive/913, archive/914, metadata/unemployment_insurance_tests.json |
+| `GAP-008-health-benefit-prescription-coverage-transition` health-benefit and prescription-drug coverage transitions, payer handoffs, formulary changes, prior authorization, cost-sharing, and treatment continuity | `repaired_rev0744` | `critical` | done: archive/923-health-benefit-and-prescription-drug-coverage-transition-dockets-payer-handoff-formulary-clocks-prior-authorization-and-no-treatment-continuity-by-enrollment-row.md, archive/924-applied-health-coverage-and-prescription-transition-case-packet-for-medicaid-chip-marketplace-and-medicare-part-d-renewals-seps-formulary-exceptions-and-no-medication-continuity-by-plan-card.md, metadata/health_benefit_tests.json |
+| `GAP-009-climate-utility-shutoff-and-medical-baseline-continuity` utility shutoff, medical baseline, extreme heat / smoke / storm outage, cooling / electricity-dependent medical equipment, arrears, assistance posting, and emergency continuity | `repaired_rev0745` | `critical` | done: archive/925, archive/926, metadata/climate_utility_tests.json |
+| `GAP-012-election-registration-ballot-access-mail-cure-and-certification-continuity` operational election administration continuity: registration, ballot access, mail and postmark custody, accessibility, UOCAVA, provisional cure, tabulation, audit, canvass, certification, recount, contest, cyber and public-result source-of-truth boundaries | `repaired_rev0749` | `critical` | done: archive/932, archive/933, metadata/election_continuity_tests.json, generated/ELECTION_CONTINUITY_TESTS.* |
+| `GAP-013-child-protection-foster-care-placement-and-family-continuity` Child protection and foster-care continuity across safety investigation, family preservation, placement, court, health, education, missing-from-care, medication, youth voice, permanency, and transition records. | `repaired_rev0750` | `critical` | Completed in rev0750 by notes 934 and 935 plus child_welfare_tests. |
+| `GAP-014-detention-corrections-release-health-and-reentry-continuity` Operational custody, corrections, health, death-in-custody, release, Medicaid/benefits, ID-document, housing, RRC/home-confinement, and supervision continuity. | `repaired_rev0751` | `critical` | Completed in rev0751 by notes 936 and 937 plus custody_reentry_tests. |
+| `GAP-015-long-term-care-hcbs-aps-guardianship-and-resident-continuity` long-term services and supports, nursing-home and HCBS continuity, APS, ombudsman, guardianship/fiduciary control, transfer/discharge, emergency relocation, and resident rights | `repaired_rev0752` | `critical` | done: archive/938, archive/939, metadata/long_term_care_tests.json |
+| `GAP-016-special-education-iep-section-504-discipline-and-transition-continuity` special education, IEP/504, early intervention, evaluation, service delivery, discipline, restraint/seclusion, dispute resolution, and transition continuity | `repaired_rev0753` | `critical` | done: archive/940, archive/941, metadata/special_education_tests.json |
+| `GAP-017-water-sanitation-drinking-water-wastewater-lead-pfas-and-emergency-continuity` drinking-water, wastewater, lead, PFAS, boil/do-not-drink/do-not-use advisories, AWIA emergency planning, water-sector cyber risk, affordability, shutoff/remedy, and sanitation continuity | `repaired_rev0754` | `critical` | done: archive/942, archive/943, metadata/water_sanitation_tests.json |
+| `GAP-018-food-nutrition-snap-wic-school-meals-summer-ebt-dsnap-and-ebt-continuity` food and nutrition assistance continuity across SNAP, WIC, school meals, Summer EBT, D-SNAP, EBT/eWIC security, retailer access, replacement, disaster feeding, and hunger outcome records | `repaired_rev0755` | `critical` | done: archive/944, archive/945, metadata/food_nutrition_tests.json |
+| `GAP-019-emergency-communications-911-ems-988-alerting-and-response-continuity` emergency communications, 911, NG911, PSAP routing, location, dispatch, EMS, 988 crisis routing, IPAWS/WEA/EAS alerting, outage fallback, and after-action continuity | `repaired_rev0756` | `critical` | done: archive/946, archive/947, metadata/emergency_response_tests.json |
+| `GAP-020-transportation-transit-paratransit-fare-accessibility-and-trip-continuity` transportation and mobility continuity across fixed-route transit, paratransit, stops/stations, fare systems, realtime data, ADA, Title VI, PTASP safety, TAM assets, rural/tribal service, and rider remedies | `repaired_rev0757` | `critical` | done: archive/948, archive/949, metadata/transportation_mobility_tests.json |
+| `GAP-021-broadband-telecommunications-connectivity-affordability-outage-and-digital-access-continuity` broadband, telecommunications, digital access, provider availability, affordability, Lifeline/ACP/BEAD, outages, public-service portals, devices, community anchors, complaints, and connectivity remedy continuity | `repaired_rev0758` | `critical` | done: archive/950, archive/951, metadata/broadband_connectivity_tests.json |
+| `GAP-022-veterans-benefits-health-care-claims-appeals-community-care-housing-education-and-caregiver-continuity` veterans benefits, claims, disability ratings, PACT/toxic exposure, health care, community care, appeals, EHR records, homelessness, education, caregiver support, crisis response, and remedy continuity | `repaired_rev0759` | `critical` | done: archive/952, archive/953, metadata/veterans_continuity_tests.json |
+| `GAP-023-immigration-asylum-work-authorization-court-save-notice-and-status-continuity` immigration, asylum, work authorization, immigration-court, SAVE, address/notice, portal, representative, downstream benefits/license, detention/release, and status-continuity records | `repaired_rev0760` | `critical` | done: archive/954, archive/955, metadata/immigration_status_tests.json |
+| `GAP-024-tax-filing-refund-refundable-credit-itin-offset-identity-theft-and-free-file-continuity` tax filing, refunds, refundable credits, EITC, CTC/ACTC, ITIN, identity-theft/IP PIN, direct deposit, Treasury offsets, Free File/VITA/TCE, notices, appeals, Taxpayer Advocate, and household liquidity continuity | `repaired_rev0761` | `critical` | done: archive/956, archive/957, metadata/tax_refund_tests.json |
+| `GAP-025-consumer-finance-credit-report-debt-bank-account-payment-complaint-and-remedy-continuity` consumer finance, bank/prepaid account, direct deposit, EFT/payment-error, overdraft, credit reporting, specialty reports, debt collection, complaint, regulator routing, and downstream public-service financial-access continuity | `repaired_rev0762` | `critical` | done: archive/958, archive/959, metadata/consumer_finance_tests.json |
+| `GAP-028-deposit-account-screening-closure-holds-garnishment-custodial-ledger-and-usable-money-continuity` deposit-account screening, adverse action, account closure/reopening, funds availability, fraud/KYC holds, federal-benefit garnishment protections, custodial/fintech beneficial-owner ledgers, partner-bank risk, complaint routing, and usable-money household outcome | `repaired_rev0764` | `critical` | done: archive/961, archive/962, metadata/consumer_finance_tests.json FIN-11 through FIN-15, case packet 962, and compact SOURCE_HEALTH JSON writer |
+| `GAP-003-public-ai-register-maintenance` civil-facing AI inventories, algorithmic transparency registers, high-risk AI databases, and register maintenance failure modes | `repaired_rev0741` | `high` | done: archive/917, archive/918, metadata/public_ai_register_tests.json |
+| `GAP-004-watchlist-border-law-enforcement-automation` law enforcement, immigration, border, and watchlist automation beyond identity proofing | `repaired_rev0740` | `high` | done: archive/915, archive/916, metadata/watchlist_border_tests.json |
+| `GAP-005-local-state-provincial-digital-government` subnational AI, benefits, policing, permitting, and service-delivery cases outside central-government exemplars | `repaired_rev0742` | `high` | done: archive/919, archive/920, metadata/subnational_ai_tests.json |
+| `GAP-010-housing-eviction-rental-assistance-and-tenant-screening-continuity` housing instability, eviction filings, rental assistance, tenant screening records, emergency shelter / relocation, court notices, and housing-continuity failure modes | `repaired_rev0747` | `high` | repaired in rev0747 by notes 928 and 929 plus metadata/housing_continuity_tests.json and generated/HOUSING_CONTINUITY_TESTS.* |
+| `GAP-011-cyber-incident-software-provenance-and-service-continuity` cyber incident, software provenance, supplier dependency, degraded operations, data exposure, and public-service recovery continuity needed a single operational docket | `repaired_rev0748` | `high` | completed in rev0748 by notes 930/931 and metadata/software_cyber_continuity_tests.json |
+| `GAP-026-cloudtainer-release-lineage-schema-and-maintenance-revision-guard` Release-lineage completeness, gap-ledger schema-required affected-party fields, and maintenance-only current-revision routing. | `repaired_rev0763` | `high` | Completed in rev0763 by note 960, restored rev0761 index/changelog entries, release-lineage lint, gap-ledger affected-party lint, and maintenance-safe current matrix scoping. |
+| `GAP-006-non-english-global-south-source-coverage` official-source cases outside English-language / Global North comfort zone | `repaired_rev0743` | `medium_high` | done: archive/921, archive/922, metadata/global_south_source_tests.json |
+| `GAP-027-generated-surface-compaction-and-historical-source-health-backfill` Generated-surface compaction and historical source-health backfill for source keys that remain unclassified or only registry-backed. | `repaired_rev0769` | `medium_high` | Original gap remains repaired; rev0770 starts ordinary-operation direct refresh by moving a high-risk catalog-triaged tranche into direct-review posture while leaving the rest visible in generated source health. |
+| `GAP-007-deletion-merge-retirement-candidates` archive-internal deletion, merge, and supersession candidates | `repaired_rev0749` | `medium` | rev0770 adds the first explicit route merge packet: note 719 is merge-reviewed but kept until protected case-constitution elements are absorbed into a newer route; similarity score alone remains non-dispositive. |
+| `GAP-029-affected-person-outcome-validation` affected-person validation, service-journey observation, person-level outcome evidence, remedy completion, and disaggregated burden measurement across the archive's strongest case families | `in_progress_postclosure_monitoring_floor_no_permanent_closure` | `critical` | in progress: closure dossiers now define public-safe evidence packages, attestation classes, exception blockers, and reopen triggers; still needs lawful fieldwork, source preservation, owner decisions, and actual outside-cube claimant/household outcome tails before closure |
+| `GAP-030-active-route-retirement-and-taxonomy-control` actual active-route retirement or supersession, compact mission routing, controlled tag vocabularies, and bounded categorical fields for source health | `in_progress_rev0790_aliases_and_gate_refactor_not_controlled_vocab` | `high` | Try a second historical-preserved route and promote only the smallest recurring source-health aliases into an owner-reviewed controlled vocabulary; do not let tail gates become another uncontrolled registry family. |
+| `GAP-031-source-evidence-preservation-and-claim-capture` preserved source snapshots or content fingerprints, claim-to-passage capture, retrieval receipts, and lawful archival policy for volatile web evidence | `in_progress_postclosure_monitoring_floor_no_permanent_closure` | `high` | in progress: closure dossiers now define public-safe evidence packages, attestation classes, exception blockers, and reopen triggers; still needs lawful fieldwork, source preservation, owner decisions, and actual outside-cube claimant/household outcome tails before closure |
+| `GAP-032-license-maintainer-contribution-governance` license, contribution rules, maintainer authority, citation/reuse guidance, security reporting, and succession or handoff policy for the archive itself | `in_progress_rev0799_stewardship_handoff_controls_not_owner_approved` | `high` | in progress: archive stewardship handoff controls define required owner decisions, public governance documents, role classes, security-contact scope, and succession clocks; still not owner-approved and not closed |
+| `GAP-033-power-distribution-and-material-outcome-theory` an explicit theory connecting administrative integrity to budgets, staffing, labor conditions, coercion, ownership, redistribution, political conflict, capture, and materially unequal outcomes | `in_progress_postclosure_monitoring_floor_no_permanent_closure` | `high` | in progress: closure dossiers now define public-safe evidence packages, attestation classes, exception blockers, and reopen triggers; still needs lawful fieldwork, source preservation, owner decisions, and actual outside-cube claimant/household outcome tails before closure |
+
+## Detail
+
+### `GAP-001-disaster-assistance-delivery` — critical / repaired_rev0738
+
+GAO made federal disaster assistance a new high-risk area; disasters combine urgent survivor need, fragmented programs, damaged proof, fraud controls, insurance, appeals, and payment delivery.
+
+Nearest notes: `894`, `897`, `901`, `905`, `910`, `911`, `912`
+
+Source keys: `federal_register_fema_ia_program_equity_2024`, `gao_2022_disaster_recovery_federal_approach`, `gao_2025_disaster_assistance_federal_approach`, `gao_2025_high_risk_series`
+
+Next artifact: done: archive/911, archive/912, metadata/disaster_assistance_tests.json
+
+Why not now: repaired in this revision; leave open only for future non-U.S. comparator cases
+
+### `GAP-002-pandemic-ui-fraud-access` — critical / repaired_rev0739
+
+The archive has work/income and payment-redress doctrine but lacks a direct UI case balancing fraud control, access, appeals, identity, repayments, and state capacity.
+
+Nearest notes: `509`, `874`, `894`, `897`, `900`, `901`, `910`, `913`, `914`
+
+Source keys: `dol_oig_ui_oversight_2025`, `dol_ten_18_24_customer_experience`, `dol_ui_cx_improve_applications`, `dol_ui_modernization`, `dol_ui_transformation_plan_2024`, `dol_uipl_10_26_identity_verification`, `dol_uipl_11_23_identity_verification`, `gao_2022_pua_racial_disparities`, `gao_2023_ui_fraud_estimate`, `gao_2023_ui_it_modernization`, `gao_2024_pua_fraud_controls`, `gao_2025_sba_dol_overpayment_recovery`
+
+Next artifact: done: archive/913, archive/914, metadata/unemployment_insurance_tests.json
+
+Why not now: repaired in this revision; leave open for later state-specific or non-U.S. unemployment benefit comparators
+
+### `GAP-008-health-benefit-prescription-coverage-transition` — critical / repaired_rev0744
+
+Coverage transitions can look administratively complete while people lose medication, treatment, provider access, affordability, or appeal time at the pharmacy / plan / prescriber layer.
+
+Nearest notes: `894`, `895`, `897`, `901`, `905`, `913`, `923`, `924`
+
+Source keys: `cms_medicaid_access_final_rule_2024`, `cms_medicaid_chip_streamlining_final_rule_2024`, `cms_medicaid_managed_care_access_finance_quality_final_rule_2024`, `cms_medicaid_renewals_transitions_coverage_webinar_2024`, `cms_medicare_prescription_payment_plan`, `cms_part_d_model_materials_2026`, `cms_part_d_redesign_2026_instructions`, `cms_part_d_reporting_requirements_2026`, `federal_register_medicaid_chip_streamlining_rule_2024`, `harvard_medicaid_unwinding_prescription_access_2026`, `healthcaregov_medicaid_chip_transfer_marketplace`, `healthcaregov_sep_confirm_loss_medicaid_chip_documents`, `kff_medicaid_unwinding_tracker_2026`, `medicaidgov_renewal_strategies_tools`, `medicare_extra_help_drug_costs`, `medicare_part_d_appeals_drug_plans`, `rand_medicaid_unwinding_buprenorphine_2025`, `shadac_insurance_coverage_transitions_medicaid_unwinding_2025`
+
+Next artifact: done: archive/923-health-benefit-and-prescription-drug-coverage-transition-dockets-payer-handoff-formulary-clocks-prior-authorization-and-no-treatment-continuity-by-enrollment-row.md, archive/924-applied-health-coverage-and-prescription-transition-case-packet-for-medicaid-chip-marketplace-and-medicare-part-d-renewals-seps-formulary-exceptions-and-no-medication-continuity-by-plan-card.md, metadata/health_benefit_tests.json
+
+Why not now: repaired in this revision; leave open only for non-U.S. coverage-transition comparators and treatment-gap outcome follow-up
+
+### `GAP-009-climate-utility-shutoff-and-medical-baseline-continuity` — critical / repaired_rev0745
+
+Climate and utility disruptions can convert billing, arrears, medical-equipment dependence, outage maps, and emergency-assistance rules into life-safety chokepoints, especially for medically vulnerable households.
+
+Nearest notes: `420`, `422`, `424`, `425`, `426`, `851`, `894`, `897`, `901`, `905`, `923`, `925`, `926`
+
+Source keys: `cdc_heat_power_outage_medical_devices_2025`, `cpuc_medical_baseline`, `cpuc_psps_2026`, `ct_pura_payment_assistance_programs`, `ct_winter_protection_program_2026`, `eia_2024_residential_utility_disconnections_report`, `hhs_empower_map_monthly`, `hhs_empower_program_home`, `hhs_liheap_program_2025`, `nclc_utility_service_extreme_heat_report_2024`, `pge_self_identified_vulnerable_customer_program`, `plos_medicine_power_outages_hospitalizations_2026`, `readygov_power_outages_medical_devices`, `sce_medical_baseline_allowance`
+
+Next artifact: done: archive/925, archive/926, metadata/climate_utility_tests.json
+
+Why not now: repaired in rev0745 with a utility shutoff / medical-baseline / climate-continuity policy docket, applied case packet, and 10-test matrix
+
+### `GAP-012-election-registration-ballot-access-mail-cure-and-certification-continuity` — critical / repaired_rev0749
+
+The archive had constitutional election and representation doctrine but lacked a concrete operations packet for voters losing access through status rows, mail/custody deadlines, accessibility failures, provisional/cure gaps, unofficial result surfaces, audit slogans, or certification closure.
+
+Nearest notes: `424`, `425`, `426`, `443`, `444`, `452`, `482`, `486`, `500`, `602`, `817`, `818`, `856`, `857`, `859`, `884`, `887`, `917`, `930`, `932`, `933`
+
+Source keys: `ada_voting_polling_places_2026`, `cisa_election_security`, `cisa_election_security_services`, `eac_2024_eavs_release_2025`, `eac_2024_eavs_report_2025`, `eac_election_audits_across_us_2025`, `eac_election_results_canvass_certification_2025`, `eac_managing_election_technology`, `eac_voting_accessibility`, `eac_vvsg_2_0`, `federal_register_usps_postmarks_postal_possession_2025`, `fvap_june_2026_voter_alert`, `fvap_uocava_law`, `nyc_board_elections_home_2026`, `nyc_votes_2026_election_calendar`, `usps_election_mail_2026`, `usps_kit600_2026_2027`
+
+Next artifact: done: archive/932, archive/933, metadata/election_continuity_tests.json, generated/ELECTION_CONTINUITY_TESTS.*
+
+Why not now: repaired in this revision; remaining work is jurisdiction-specific implementation follow-up and non-U.S. election-administration comparators
+
+### `GAP-013-child-protection-foster-care-placement-and-family-continuity` — critical / repaired_rev0750
+
+Without this packet, the cube can discuss child and family governance but still accept placement rows, aggregate dashboards, or court status as proof of child safety, even when missing-from-care, trafficking, health, school, family-time, and permanency tails remain unresolved.
+
+Nearest notes: `424`, `425`, `426`, `482`, `494`, `506`, `524`, `557`, `558`, `788`, `813`, `814`, `815`, `816`, `817`, `818`, `819`, `820`, `821`, `823`, `824`, `856`, `857`, `874`, `879`, `884`, `887`, `894`, `897`, `901`, `905`, `923`, `928`, `930`, `934`, `935`
+
+Source keys: `acf_afcars_dashboard_2024`, `acf_afcars_data_statistics_2025`, `acf_child_maltreatment_2024`, `acf_child_welfare_cfsr_round4`, `acf_nytd_data_statistics`, `acf_title_iv_e_prevention_program_2026`, `childwelfare_responding_youth_missing_foster_care`, `ct_auditors_dcf_missing_from_care_2025`, `ecfr_icwa_25_cfr_part_23`, `gao_2024_residential_facilities_abuse`, `gao_2026_congregate_care_family_first`, `hhs_oig_missing_foster_care_ncic_2023`, `hhs_oig_psychotropic_medication_foster_care_2026`
+
+Next artifact: Completed in rev0750 by notes 934 and 935 plus child_welfare_tests.
+
+Why not now: Repaired in this revision; future work should apply the matrix to state child-welfare dashboards, CFSR findings, ombuds reports, and live foster-care transition cases rather than add another registry layer.
+
+### `GAP-014-detention-corrections-release-health-and-reentry-continuity` — critical / repaired_rev0751
+
+The cube had detention/corrections as a scope domain but lacked a case-level continuity packet. Without it, custody rows, population counts, death statistics, release dates, Medicaid demonstration approvals, or reentry referrals could be misread as proof of lawful custody, safe conditions, health continuity, accountability, release execution, or reentry success.
+
+Nearest notes: `424`, `425`, `426`, `434`, `442`, `475`, `482`, `494`, `502`, `514`, `557`, `558`, `576`, `577`, `856`, `857`, `874`, `879`, `884`, `887`, `901`, `923`, `928`, `930`, `934`, `936`, `937`
+
+Source keys: `bja_dcra_reported_data_2025`, `bja_dcra_state_implementation_plans_2024`, `bjs_correctional_populations_2022`, `bjs_first_step_act_2025`, `bjs_jail_inmates_2023`, `bjs_mci_data_collection`, `bjs_mortality_local_jails_2000_2019`, `bjs_prisoners_2023`, `bop_first_step_act_annual_report_2024`, `cms_hhs_reentry_1115_guidance_2023`, `cms_medicaid_reentry_1115_demonstrations`, `gao_bop_health_care_reentry_2023`, `gao_bop_id_documents_2022`, `gao_bop_rrc_2026`, `justice_fulton_jail_findings_2024`, `justice_georgia_prisons_findings_2024`, `samhsa_state_prisons_moud_guidelines_2025`
+
+Next artifact: Completed in rev0751 by notes 936 and 937 plus custody_reentry_tests.
+
+Why not now: Repaired in this revision; future work should apply the matrix to specific jail, prison, court, Medicaid-reentry, monitor, or supervision cases rather than add another abstract layer.
+
+### `GAP-015-long-term-care-hcbs-aps-guardianship-and-resident-continuity` — critical / repaired_rev0752
+
+The archive had disability, health-benefit, child-welfare, custody, housing, and utility continuity, but lacked a direct long-term care packet where facility rows, ratings, APS intake, HCBS enrollment, guardian orders, staffing policy, and discharge notices can all mask person-level care failures.
+
+Nearest notes: `521`, `524`, `557`, `894`, `897`, `901`, `905`, `923`, `924`, `928`, `934`, `936`, `938`, `939`
+
+Source keys: `acl_aps_final_rule_2024`, `acl_ltc_ombudsman_program_2024`, `acl_namrs_home_2026`, `cms_facility_initiated_discharge_2017`, `cms_ltc_minimum_staffing_final_rule_2024`, `cms_nursing_home_provider_data_2026`, `cms_nursing_home_provider_info_dataset`, `cms_sff_candidate_list_jan_2026`, `doj_elder_guardian_abuse`, `gao_guardianship_abuse_unknown_2016`, `hhs_guidance_hcbs_qms_2024`, `hhs_ltc_staffing_repeal_2025`, `hhs_oig_nursing_home_emergency_preparedness_2023`, `hhs_oig_nursing_home_sff_2025`, `medicaid_hcbs_quality_measure_set_2026`
+
+Next artifact: done: archive/938, archive/939, metadata/long_term_care_tests.json
+
+Why not now: repaired in this revision; leave open only for non-U.S. social-care, capacity-law, or facility-closure comparator cases
+
+### `GAP-016-special-education-iep-section-504-discipline-and-transition-continuity` — critical / repaired_rev0753
+
+Students can have an eligibility row, IEP, 504 plan, state determination, or aggregate civil-rights data trail while services, accommodations, discipline safeguards, family participation, transition receipts, and remedies fail at student level.
+
+Nearest notes: `508`, `521`, `524`, `558`, `923`, `934`, `940`, `941`
+
+Source keys: `ed_crdc_2021_22_page_2025`, `ed_crdc_first_look_2025`, `ed_idea_discipline_provisions_dcl_2022`, `ed_idea_fast_facts_sld_2026`, `ed_idea_section_618_data_2026`, `ed_osep_determination_letters_2025`, `ed_osep_inclusive_practices_dcl_2025`, `ed_osep_spp_apr_2026`, `ed_section_504_fape_faq_2025`, `ed_section_504_overview_2025`, `gao_idea_dispute_resolution_2019`, `nces_students_with_disabilities_2024`, `sites_idea_annual_reports_2025`, `sites_idea_data_page_2026`
+
+Next artifact: done: archive/940, archive/941, metadata/special_education_tests.json
+
+Why not now: repaired in rev0753; future work should add non-U.S. disability-education comparators or local district case records when available
+
+### `GAP-017-water-sanitation-drinking-water-wastewater-lead-pfas-and-emergency-continuity` — critical / repaired_rev0754
+
+The archive had water-by-scope and utility/medical-baseline notes, but lacked a direct water/sanitation packet where compliance rows, CCRs, inventories, permits, and emergency certifications can mask tap-level and sanitation failures.
+
+Nearest notes: `510`, `532`, `851`, `852`, `856`, `857`, `923`, `924`, `925`, `926`, `930`, `931`, `938`, `942`, `943`
+
+Source keys: `cdc_drinking_water_advisories_overview_2024`, `epa_awia_rra_erp_2026`, `epa_ccr_consumers_2025`, `epa_cwns_2022_report_2024`, `epa_dwinrsa_7th_2023`, `epa_echo_sdwa_download_summary_2025`, `epa_fbi_cisa_nsa_water_cyber_advisory_2026`, `epa_lcri_final_rule_2024`, `epa_lead_service_line_funding_2026`, `epa_pfas_drinking_water_rule_2026`, `epa_sdwa_cyber_enforcement_alert_2024`, `epa_sdwis_federal_reporting_2026`, `epa_sdwis_waterdata_2025`, `epa_water_sector_cybersecurity_2025`
+
+Next artifact: done: archive/942, archive/943, metadata/water_sanitation_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why water/sanitation received immediate priority after special education.
+
+### `GAP-018-food-nutrition-snap-wic-school-meals-summer-ebt-dsnap-and-ebt-continuity` — critical / repaired_rev0755
+
+The archive had food systems by scope and entitlement/disaster continuity, but lacked a direct nutrition-assistance packet where benefit rows, WIC categories, meal reimbursements, waiver approvals, retailer locators, and stolen-benefit dashboards can mask household-level hunger or missed meals.
+
+Nearest notes: `509`, `513`, `520`, `524`, `577`, `895`, `911`, `912`, `923`, `925`, `942`, `944`, `945`
+
+Source keys: `fna_child_nutrition_tables_2026`, `fna_disaster_assistance_2026`, `fna_dsnap_income_eligibility_fy26`, `fna_snap_application_timeliness_2026`, `fna_snap_data_tables_2026`, `fna_snap_ebt_modernization_2026`, `fna_snap_recertification_timeliness_fy2024_2026`, `fna_snap_retailer_locator_data_2026`, `fna_snap_stolen_benefits_2026`, `fna_snap_stolen_benefits_dashboard_2026`, `fna_summer_ebt_2026`, `fna_summer_ebt_toolkit_2026`, `fna_wic_data_tables_2026`, `fna_wic_modernization_2025`, `usda_ers_food_security_key_stats_2026`, `usda_ers_snap_participation_fy2024_2025`
+
+Next artifact: done: archive/944, archive/945, metadata/food_nutrition_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why food/nutrition assistance received priority after water and sanitation.
+
+### `GAP-019-emergency-communications-911-ems-988-alerting-and-response-continuity` — critical / repaired_rev0756
+
+The archive had public-safety, disaster, cyber, health, utilities, food, water, custody, and care continuity, but lacked a direct emergency-response packet where a call row, dispatch status, NEMSIS event, 988 KPI, or alert send can mask failed rescue, warning, treatment, or repair.
+
+Nearest notes: `424`, `425`, `426`, `475`, `482`, `489`, `502`, `506`, `510`, `511`, `515`, `521`, `530`, `535`, `911`, `912`, `930`, `931`, `942`, `943`, `946`, `947`
+
+Source keys: `cdc_cerc_2025`, `cdc_disability_emergency_preparedness_2025`, `ems_gov_nationwide_ems_incident_data_2025`, `ems_gov_using_ems_data_2025`, `fcc_911_outages_reporting_2022`, `fcc_location_based_routing_911_2024`, `fcc_multilingual_wea_2026`, `fcc_ng911_reliability_fnprm_2025`, `fcc_ng911_reliability_order_2026`, `fcc_wireless_911_location_accuracy_2025`, `fcc_wireless_emergency_alerts_2026`, `fema_ipaws_2026`, `fema_ipaws_public_alerts_2026`, `lifeline_988_state_monthly_reports_2026`, `national_911_annual_report_2023`, `national_911_ng911_progress_2025`, `national_911_profile_database_2025`, `nemsis_research_dataset_2026`, `samhsa_988_fact_sheet_2026`, `samhsa_988_performance_metrics_2026`
+
+Next artifact: done: archive/946, archive/947, metadata/emergency_response_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why emergency communications/response continuity received priority after food/nutrition assistance.
+
+### `GAP-020-transportation-transit-paratransit-fare-accessibility-and-trip-continuity` — critical / repaired_rev0757
+
+The archive had transport by scope and a metropolitan transport authority case, but lacked a rider-level packet where schedules, GTFS, NTD data, route maps, fare accounts, paratransit eligibility, safety plans, Title VI files, and asset targets can mask practical immobility.
+
+Nearest notes: `424`, `425`, `426`, `475`, `482`, `489`, `502`, `506`, `508`, `509`, `510`, `511`, `513`, `520`, `521`, `523`, `524`, `530`, `535`, `577`, `849`, `911`, `912`, `923`, `925`, `946`, `947`, `948`, `949`
+
+Source keys: `bts_national_transit_map_2025`, `bts_public_transit_ridership_2024`, `federal_register_transit_asset_management_2025`, `fta_ada_complaint_process_2025`, `fta_ada_faq_paratransit_2025`, `fta_ada_guidance_2020`, `fta_ntd_2024_annual_service_database`, `fta_ntd_data_page_2026`, `fta_ntd_home_2025`, `fta_ptasp_2025`, `fta_ptasp_final_rule_2025`, `fta_tam_performance_management_2026`, `fta_title_vi_circular_4702_1b_2012`, `fta_title_vi_guidance_2025`, `fta_transit_asset_management_2026`, `gao_rural_tribal_transit_2025`, `gao_transit_asset_management_2020`
+
+Next artifact: done: archive/948, archive/949, metadata/transportation_mobility_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why rider-level transportation/mobility continuity received priority after emergency-response continuity.
+
+### `GAP-021-broadband-telecommunications-connectivity-affordability-outage-and-digital-access-continuity` — critical / repaired_rev0758
+
+The archive had credential access, platform migration, emergency communications, cyber, food, water, housing, transit, and benefit continuity, but lacked a direct connectivity packet where coverage maps, provider availability rows, labels, subsidy states, BEAD milestones, outage filings, and portal uptime can mask household-level digital exclusion.
+
+Nearest notes: `475`, `489`, `509`, `520`, `521`, `535`, `577`, `878`, `884`, `889`, `903`, `905`, `911`, `912`, `930`, `931`, `942`, `946`, `948`, `950`, `951`
+
+Source keys: `fcc_affordable_connectivity_program_2024`, `fcc_bdc_availability_challenge_2025`, `fcc_broadband_consumer_labels_2026`, `fcc_broadband_data_collection_2026`, `fcc_broadband_labels_glossary_2024`, `fcc_lifeline_consumers_2026`, `fcc_national_broadband_map_2026`, `fcc_network_outage_reporting_system_2026`, `fcc_outage_information_sharing_2025`, `federal_register_digital_discrimination_2024`, `lifeline_support_recertify_2026`, `ntia_bead_program_2026`, `ntia_bead_progress_dashboard_2026`, `usac_lifeline_national_verifier_2026`, `usac_lifeline_recertification_2026`
+
+Next artifact: done: archive/950, archive/951, metadata/broadband_connectivity_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why connectivity continuity received priority after transportation/mobility.
+
+### `GAP-022-veterans-benefits-health-care-claims-appeals-community-care-housing-education-and-caregiver-continuity` — critical / repaired_rev0759
+
+The archive had health, housing, custody/reentry, long-term care, food, emergency response, broadband, and special-education continuity, but lacked a veteran-specific packet where claims, ratings, eligibility, authorizations, appeal dockets, dashboards, vouchers, GI Bill certifications, and caregiver rows can mask practical failure.
+
+Nearest notes: `424`, `425`, `426`, `475`, `482`, `489`, `506`, `509`, `510`, `520`, `521`, `557`, `558`, `562`, `574`, `577`, `902`, `903`, `913`, `914`, `936`, `937`, `938`, `939`, `944`, `945`, `950`, `951`, `952`, `953`
+
+Source keys: `gao_va_disability_program_management_2025`, `gao_va_disability_rating_schedule_2026`, `gao_va_ehrm_deployments_2025`, `hud_ahar_data_reports_2026`, `va_board_veterans_appeals_2026`, `va_community_care_eligibility_2025`, `va_family_caregiver_assistance_2026`, `va_gibill_home_2026`, `va_gibill_rudisill_perkins_2026`, `va_health_care_about_benefits_2025`, `va_health_care_eligibility_2026`, `va_hud_vash_2026`, `va_mental_health_get_help_2026`, `va_pact_act_performance_dashboard_2026`, `va_vba_claims_backlog_2026`, `va_vba_detailed_claims_data_2026`
+
+Next artifact: done: archive/952, archive/953, metadata/veterans_continuity_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why veterans continuity received priority after broadband/connectivity.
+
+### `GAP-023-immigration-asylum-work-authorization-court-save-notice-and-status-continuity` — critical / repaired_rev0760
+
+The archive had digital-status migration and watchlist/border automation, but lacked a person-level immigration-status packet where receipts, processing-time pages, I-589/I-765 filings, EOIR dockets, SAVE responses, address forms, and portal rows can mask missed notice, lost work authorization, in absentia risk, downstream denials, or failed remedy.
+
+Nearest notes: `424`, `425`, `426`, `475`, `482`, `489`, `507`, `509`, `520`, `530`, `562`, `573`, `577`, `884`, `889`, `894`, `896`, `903`, `905`, `913`, `914`, `915`, `916`, `936`, `937`, `950`, `951`, `954`, `955`
+
+Source keys: `eoir_automated_case_information_2026`, `eoir_ecas_online_filing_2025`, `eoir_eoir33ic_change_address_2026`, `eoir_respondent_access_faq_2026`, `eoir_workload_adjudication_statistics_2026`, `uscis_address_change_2025`, `uscis_ar11_change_address_2026`, `uscis_asylum_ead_clock_notice_2026`, `uscis_asylum_page_2026`, `uscis_case_status_online_2026`, `uscis_check_case_processing_2026`, `uscis_historic_processing_times_2026`, `uscis_i589_asylum_2026`, `uscis_i765_employment_authorization_2026`, `uscis_save_casecheck_2025`, `uscis_save_program_2026`, `uscis_save_verification_response_time_2026`
+
+Next artifact: done: archive/954, archive/955, metadata/immigration_status_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why immigration/status continuity received priority after veterans continuity.
+
+### `GAP-024-tax-filing-refund-refundable-credit-itin-offset-identity-theft-and-free-file-continuity` — critical / repaired_rev0761
+
+The archive had benefit, food, housing, immigration, veterans, payment-redress, identity, representative, and broadband continuity packets, but lacked a direct tax-relief packet where returns, refund trackers, credit schedules, ITIN notices, IP PINs, offsets, and filing-assistance labels can mask failure to receive household relief.
+
+Nearest notes: `424`, `425`, `426`, `475`, `482`, `489`, `506`, `509`, `520`, `521`, `535`, `557`, `562`, `573`, `577`, `884`, `889`, `902`, `903`, `905`, `911`, `912`, `919`, `920`, `944`, `945`, `950`, `951`, `954`, `955`, `956`, `957`
+
+Source keys: `irs_child_tax_credit_2026`, `irs_eitc_2026`, `irs_eitc_tables_2025`, `irs_filing_season_statistics_2026`, `irs_filing_season_week_april_17_2026`, `irs_free_file_options_2026`, `irs_free_file_program_2026`, `irs_id_theft_victim_assistance_2026`, `irs_ip_pin_2026`, `irs_itin_apply_2026`, `irs_itin_renew_2025`, `irs_refundable_tax_credits_2026`, `irs_refunds_wheres_my_refund_2026`, `irs_vita_tce_free_tax_prep_2026`, `tas_2025_annual_report_press_2026`, `tas_bfs_offsets_non_tax_debts_2026`, `tas_direct_deposit_changes_2026`, `tas_held_stopped_refunds_2026`, `treasury_offset_faqs_public_2026`, `treasury_offset_program_2026`
+
+Next artifact: done: archive/956, archive/957, metadata/tax_refund_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why tax/refund continuity received priority after immigration/status continuity.
+
+### `GAP-025-consumer-finance-credit-report-debt-bank-account-payment-complaint-and-remedy-continuity` — critical / repaired_rev0762
+
+The archive had payment-redress, tax-refund, food, housing, immigration, veterans, broadband, and credential-access packets, but lacked a direct consumer-finance packet where account rows, credit scores, validation notices, complaint IDs, and banked-status categories can mask failure to receive money, correct records, stop invalid collection, or preserve public-service outcomes.
+
+Nearest notes: `424`, `425`, `426`, `475`, `482`, `489`, `506`, `509`, `520`, `521`, `535`, `557`, `562`, `573`, `577`, `884`, `889`, `902`, `903`, `905`, `911`, `912`, `919`, `920`, `950`, `951`, `956`, `957`, `958`, `959`
+
+Source keys: `cfpb_bank_accounts_services_2025`, `cfpb_consumer_complaint_database_2026`, `cfpb_consumer_reporting_companies_2025`, `cfpb_credit_report_dispute_2024`, `cfpb_credit_reports_scores_2025`, `cfpb_debt_collection_model_forms_2025`, `cfpb_debt_collection_rule_1006_34_2026`, `cfpb_debt_collection_validation_info_2024`, `cfpb_direct_disputes_reg_v_1022_43_2026`, `cfpb_overdraft_options_2025`, `cfpb_prepaid_accounts_1005_18_2026`, `cfpb_reg_e_1005_2026`, `cfpb_submit_complaint_2026`, `fdic_household_survey_2023`, `fdic_unbanked_underbanked_press_2024`, `ftc_fair_credit_reporting_act_2026`, `ftc_fair_debt_collection_practices_act_2026`, `helpwithmybank_file_complaint_2026`, `occ_consumer_complaints_2026`, `occ_consumer_protection_2026`
+
+Next artifact: done: archive/958, archive/959, metadata/consumer_finance_tests.json
+
+Why not now: Repaired in the same revision; keep as closed gap to document why consumer-finance continuity received priority after tax/refund continuity.
+
+### `GAP-028-deposit-account-screening-closure-holds-garnishment-custodial-ledger-and-usable-money-continuity` — critical / repaired_rev0764
+
+The rev0762 consumer-finance packet rejected account-row proof but still underweighted the most operational failure: a person can have an approved account, banked status, complaint ID, or app balance while wages, benefits, refunds, or emergency aid remain unavailable because screening files, holds, closures, garnishment, or custodial ledger breaks block usable money.
+
+Nearest notes: `424`, `425`, `426`, `475`, `482`, `489`, `506`, `509`, `520`, `521`, `535`, `557`, `562`, `573`, `577`, `884`, `889`, `902`, `903`, `905`, `911`, `912`, `919`, `920`, `950`, `951`, `956`, `957`, `958`, `959`, `961`, `962`
+
+Source keys: `cfpb_bank_accounts_services_2025`, `cfpb_chex_systems_company_list_2025`, `cfpb_closed_account_reopening_circular_2023`, `cfpb_consumer_complaint_database_2026`, `cfpb_denied_checking_accounts_2016`, `cfpb_early_warning_services_company_list_2025`, `cfpb_prepaid_accounts_1005_18_2026`, `cfpb_reg_e_1005_2026`, `cfpb_submit_complaint_2026`, `cfpb_synapse_enforcement_action_2025`, `ecfr_garnishment_federal_benefits_31_cfr_212_2026`, `ecfr_reg_cc_12_cfr_229_2026`, `fdic_custodial_deposit_accounts_transactional_features_2024`, `fed_consumer_compliance_outlook_2024_complaints_2026`, `federal_reserve_evolve_enforcement_2024`, `helpwithmybank_file_complaint_2026`
+
+Next artifact: done: archive/961, archive/962, metadata/consumer_finance_tests.json FIN-11 through FIN-15, case packet 962, and compact SOURCE_HEALTH JSON writer
+
+Why not now: Repaired in the same revision because this was the highest-risk consumer-finance gap likely to remain hidden under banked-status, account-row, complaint-ID, and app-balance evidence.
+
+### `GAP-003-public-ai-register-maintenance` — high / repaired_rev0741
+
+The archive cites public registers but lacks a case focused on register drift, withdrawn systems, ownership changes, and no authority by inventory listing.
+
+Nearest notes: `410`, `427`, `433`, `857`, `876`, `879`, `887`, `901`, `910`, `917`, `918`
+
+Source keys: `eu_ai_act_eurlex_2024`, `eu_ai_act_service_desk_article_71`, `gao_2025_generative_ai_use_management`, `gao_2026_irs_ai_inventory_supplement`, `gao_2026_irs_ai_management`, `gao_2026_sba_ai_reporting`, `govuk_atrs_public_sector_guidance_2025`, `omb_2025_federal_ai_inventory`, `omb_m_25_21_ai_use`, `sba_2026_ai_inventory`
+
+Next artifact: done: archive/917, archive/918, metadata/public_ai_register_tests.json
+
+Why not now: repaired in rev0741; remaining work is implementation follow-up, non-U.S. comparators, and source-health review as registers update
+
+### `GAP-004-watchlist-border-law-enforcement-automation` — high / repaired_rev0740
+
+Credential access and model-decision doctrine do not yet cover watchlist propagation, alert correction, officer reliance, border consequences, or law-enforcement exception pressure.
+
+Nearest notes: `410`, `422`, `424`, `425`, `438`, `452`, `856`, `857`, `860`, `861`, `863`, `874`, `901`, `910`, `915`, `916`
+
+Source keys: `federal_register_cbp_biometric_entry_exit_2025`, `gao_2023_facial_recognition_law_enforcement`, `gao_2025_watchlist_nomination_redress`, `gao_2026_watchlist_nonfederal_law_enforcement`, `hsgac_2023_mislabeled_as_threat`, `pclob_2025_terrorist_watchlist_report`
+
+Next artifact: done: archive/915, archive/916, metadata/watchlist_border_tests.json
+
+Why not now: Repaired in rev0740; remaining work is source-health review, implementation tracking, and possible non-U.S. comparator packets rather than first-case creation.
+
+### `GAP-005-local-state-provincial-digital-government` — high / repaired_rev0742
+
+The archive is strong on central-government and federal examples but risks central-state bias.
+
+Nearest notes: `874`, `876`, `879`, `887`, `901`, `910`, `913`, `915`, `917`, `919`, `920`
+
+Source keys: `california_cde_ai_public_schools_2026`, `california_cde_ai_working_group_2026`, `california_cdt_high_risk_ads_report_2025`, `california_cdt_hrads_faq`, `california_courts_generative_ai_policy_preview_2025`, `colorado_sb24_205_ai_act`, `mrsc_local_government_ai_resources_2026`, `ncsc_ai_state_courts_resources`, `ncsl_2025_ai_legislation`, `nyc_algorithmic_tools_open_data`, `nyc_algorithmic_tools_report_2025`, `nyc_office_algorithmic_accountability_charter`
+
+Next artifact: done: archive/919, archive/920, metadata/subnational_ai_tests.json
+
+Why not now: repaired in rev0742; remaining work is implementation follow-up, source-health refresh, and non-U.S. subnational comparators
+
+### `GAP-010-housing-eviction-rental-assistance-and-tenant-screening-continuity` — high / repaired_rev0747
+
+Housing loss can turn portal status, rental-assistance approval, eviction docket entry, possession deadline, tenant-screening record, shelter referral, legal-representation status, or court notice into a durable exclusion if the archive does not join payment, possession, record, court, representation, and service-continuity states.
+
+Nearest notes: `424`, `425`, `426`, `856`, `874`, `894`, `897`, `901`, `905`, `917`, `919`, `923`, `925`, `927`, `928`, `929`
+
+Source keys: `cfpb_ftc_transunion_tenant_screening_2023`, `cfpb_tenant_background_checks_2024`, `eviction_lab_2025_filing_patterns_2026`, `eviction_lab_tracking_system_2026`, `ftc_transunion_tenant_screening_settlement_2023`, `gao_evictions_data_limited_2024`, `hud_ahar_2025_pit_homelessness`, `illinois_court_based_rental_assistance_2026`, `nlihc_rental_assistance_dashboard`, `nyc_comptroller_evictions_representation_2025`, `nyc_right_to_counsel_mayors_peu`, `treasury_emergency_rental_assistance_program_2026`
+
+Next artifact: repaired in rev0747 by notes 928 and 929 plus metadata/housing_continuity_tests.json and generated/HOUSING_CONTINUITY_TESTS.*
+
+Why not now: Repaired in rev0747 for the U.S. housing / eviction / rental-assistance / tenant-screening continuity form. Remaining work is comparator expansion and local-court outcome deepening, not initial coverage.
+
+### `GAP-011-cyber-incident-software-provenance-and-service-continuity` — high / repaired_rev0748
+
+The cube had cyber, software, source-health, and service-delivery pieces, but no testable waist for cases where a supplier-dependent cyber event becomes a public-service continuity event.
+
+Nearest notes: `428`, `443`, `444`, `452`, `544`, `621`, `692`, `792`, `848`, `856`, `857`, `859`, `867`, `884`, `887`, `901`, `917`, `923`, `927`, `930`, `931`
+
+Source keys: `british_library_cyber_attack_lessons_2024`, `cisa_circia_reporting_2026`, `cisa_cross_sector_cpg_2_0`, `cisa_known_exploited_vulnerabilities_catalog`, `cisa_secure_software_attestation_form`, `cisa_stopransomware_guide`, `hhs_change_healthcare_cyber_incident_faq_2025`, `nhs_england_synnovis_cyber_incident_2025`, `nist_ssdf_sp_800_218`, `omb_m_26_05_software_hardware_security`
+
+Next artifact: completed in rev0748 by notes 930/931 and metadata/software_cyber_continuity_tests.json
+
+Why not now: Repaired in rev0748; future work should attach service-level incident metrics only when new live cases are opened.
+
+### `GAP-026-cloudtainer-release-lineage-schema-and-maintenance-revision-guard` — high / repaired_rev0763
+
+The archive can pass deterministic lint while silently omitting a revision from generated releases, under-enforcing its declared metadata schema, or pressuring a self-audit into fake operational matrix coverage.
+
+Nearest notes: `857`, `910`, `927`, `956`, `957`, `958`, `959`, `960`
+
+Source keys: `cfpb_consumer_complaint_database_2026`, `fdic_household_survey_2023`, `irs_filing_season_week_april_17_2026`, `treasury_offset_program_2026`
+
+Next artifact: Completed in rev0763 by note 960, restored rev0761 index/changelog entries, release-lineage lint, gap-ledger affected-party lint, and maintenance-safe current matrix scoping.
+
+Why not now: Repaired in this revision; future work should generalize schema validation without adding fragile external dependencies to offline lint.
+
+### `GAP-006-non-english-global-south-source-coverage` — medium_high / repaired_rev0743
+
+The archive can overfit to easy-to-fetch English official sources and miss governance failures where public records are harder to maintain.
+
+Nearest notes: `864`, `865`, `872`, `873`, `890`, `891`, `901`, `910`, `917`, `919`, `921`, `922`
+
+Source keys: `brazil_bolsa_familia_law_14601`, `brazil_cadunico_qualification_2026`, `brazil_digital_government_law_14129`, `brazil_govbr_account_levels`, `brazil_lgpd_law_13709`, `india_aadhaar_authentication_offline_verification_2025`, `india_digilocker_home`, `india_dpdp_act_2023`, `india_uidai_regulations_2026`
+
+Next artifact: done: archive/921, archive/922, metadata/global_south_source_tests.json
+
+Why not now: repaired in rev0743; remaining work should be country-specific follow-up, source refresh, and local implementation comparators rather than first coverage
+
+### `GAP-027-generated-surface-compaction-and-historical-source-health-backfill` — medium_high / repaired_rev0769
+
+The generated layer is already over budget and hundreds of historical source keys lack manual health rows. Without a maintenance queue, readers can mistake bulk routing and source-key presence for evidence quality or currentness.
+
+Nearest notes: `857`, `910`, `927`, `960`, `961`, `962`, `963`, `964`, `965`, `966`, `967`, `968`
+
+Source keys: `ap_haiti_chad_gsf_arrival_2026`, `ap_lahsa_restructure_2025`, `canada_hcm_feasibility_report_2025`, `canada_oag_modernizing_pay_system_2026`, `canada_pay_centre_dashboard_2026`, `cbsa_arrivecan_platform_pia_summary_2025`, `cfpb_bank_accounts_services_2025`, `cfpb_chex_systems_company_list_2025`, `cfpb_closed_account_reopening_circular_2023`, `cfpb_consumer_complaint_database_2026`, `cfpb_denied_checking_accounts_2016`, `cfpb_early_warning_services_company_list_2025`, `cfpb_prepaid_accounts_1005_18_2026`, `cfpb_reg_e_1005_2026`, `cfpb_submit_complaint_2026`, `cfpb_synapse_enforcement_action_2025`, `coe_local_self_government`, `colombia_atrato_minambiente_home`, `colombia_atrato_minambiente_orders`, `colombia_atrato_minambiente_sentence`, `contracts_finder_fdpas_award_2024`, `dfe_correspondence_drafter_atrs`, `dsit_redbox_atrs`, `dwp_move_uc_migration_notice_guidance_2026`, `dwp_move_uc_stats_march_2026`, `dwp_whitemail_vulnerability_scanner_atrs`, `ec_sis`, `ecfr_garnishment_federal_benefits_31_cfr_212_2026`, `ecfr_reg_cc_12_cfr_229_2026`, `eu_data_act_commission`, `fatf_recommendations`, `fdic_custodial_deposit_accounts_transactional_features_2024`, `fed_consumer_compliance_outlook_2024_complaints_2026`, `federal_reserve_evolve_enforcement_2024`, `gao_2025_legacy_it_modernization`, `gao_erc_lessons_2026`, `govuk_benefit_appointee`, `govuk_chat_algorithmic_transparency_record`, `govuk_chat_jailbreaking_2024`, `govuk_chat_pilot_findings_2026`, `govuk_onelogin_technical_how_it_works`, `helpwithmybank_file_complaint_2026`, `hhs_medicare_right_to_representation`, `ico_ice360_case_creation_atrs`, `india_ganga_yamuna_elaw_salim`, `interoperable_europe_act_eurlex`, `interoperable_europe_assessment_guidelines`, `interoperable_europe_guidelines_chapter1`, `irs_create_account_idme`, `irs_erc_faq_2026`, `irs_power_of_attorney_authorizations`, `la_city_controller_interim_housing_audit`, `la_city_controller_pathways_audit`, `la_county_dh_page`, `la_county_hsh_director_2025`, `la_county_lahsa_jpa_presentation`, `lahsa_about`, `lahsa_budget`, `markup_nyc_chatbot_illegal_advice_2024`, `medicaid_dec2025_eligibility_snapshot`, `medicaid_exparte_renewal_cib_2024`, `medicaid_unwinding_data_definitions_2024`, `michigan_detroit_frc`, `michigan_detroit_frc_minutes_2026_04_27`, `michigan_frc_resolution_2025_01`, `michigan_frc_resolution_2025_02`, `nhs_fdp_contract_explainer`, `nhs_fdp_privacy_notice`, `nhs_fdp_uptake_benefits`, `nist_ai_rmf`, `nta_erc_form907_streamlined_process_2026`, `nyc_chatbot_beta_ended`, `nyc_comptroller_mycity_audit_2025`, `nyc_mayor_ai_action_plan_2023`, `nyc_oti_mycity_progress_2025`, `nz_taranaki_maunga_settlement`, `oag_canada_arrivecan_report_2024`, `oaic_adm_foi_report_2026`, `oecd_governing_city`, `oecd_government_at_a_glance_2025_services`, `oecd_multilevel_governance`, `oecd_responsibility_assignment`, `ohchr_fpic_indigenous_peoples`, `parismou_psc_inspections`, `robodebt_royal_commission_report`, `social_security_scotland_acting_on_behalf`, `spain_mar_menor_law_19_2022_boe`, `spain_mar_menor_rd_90_2025_boe`, `ssa_representative_payee_guide`, `ssa_representative_payee_misuse_liability_cfr`, `ssa_representative_payee_pa_reviews`, `ssa_representative_payee_program`, `uk_ai_playbook_2025`, `uk_algorithmic_transparency_records_hub`, `uk_evisa_updates_2026`, `uk_evisa_view_prove_guidance_2026`, `uk_ibca_stats_may21_2026`, `uk_postoffice_horizon_redress_apr2026`, `un_undrip`, `unsc_res_2793_2025_unscr`, `who_ihr_emergency_committees`, `who_ihr_topic`, `world_bank_metropolitan_governance`
+
+Next artifact: Original gap remains repaired; rev0770 starts ordinary-operation direct refresh by moving a high-risk catalog-triaged tranche into direct-review posture while leaving the rest visible in generated source health.
+
+Why not now: Repaired for unclassified source-health and generated-surface drift. Future work should not reopen this gap merely because direct refresh remains useful; direct-refresh is now an ordinary source-health queue shown in generated/SOURCE_HEALTH.*, while merge packets should be handled one at a time.
+
+### `GAP-007-deletion-merge-retirement-candidates` — medium / repaired_rev0749
+
+The archive still adds more easily than it retires; source-health and generated-surface audit make future deletion safer.
+
+Nearest notes: `842`, `843`, `846`, `847`, `910`, `967`, `968`
+
+Source keys: —
+
+Next artifact: rev0770 adds the first explicit route merge packet: note 719 is merge-reviewed but kept until protected case-constitution elements are absorbed into a newer route; similarity score alone remains non-dispositive.
+
+Why not now: repaired as an audit surface and now improved with a preservation packet; still no deletion-ready notes because route retirement requires protected-element preservation and source/test parity.
+
+### `GAP-029-affected-person-outcome-validation` — critical / in_progress_postclosure_monitoring_floor_no_permanent_closure
+
+The archive repeatedly warns that a register, portal, status row, or payment instruction is not the outcome. Yet most evidence lanes remain official documents and system surfaces rather than observation, interviews, complaints, burden measures, or completed-remedy evidence from affected people.
+
+Nearest notes: `404`, `719`, `720`, `857`, `894`, `910`, `914`, `929`, `963`, `983`, `984`, `985`, `986`, `987`, `988`, `989`, `990`, `991`, `992`, `993`, `994`, `995`
+
+Source keys: `census_disclosure_avoidance_methods`, `cfpb_tenant_background_checks_2024`, `digitalgov_omb_a130_appendix_i_privacy_act`, `dol_strudl_statistical_disclosure_control`, `dol_ui_claims_status_claimant_communication`, `dol_ui_claims_status_implement`, `dol_ui_direct_observation_illinois`, `dol_ui_modernization_arpa_investments_2023`, `dol_ui_survey_design_ides`, `ecfr_45_cfr_46_102_definitions`, `ecfr_45_cfr_46_116_informed_consent`, `eviction_lab_rtc_2025`, `fcsm_nonresponse_bias_reporting_2023`, `fcsm_spwp22_statistical_disclosure_limitation`, `gao_evictions_data_limited_2024`, `gao_green_book_2025`, `govuk_service_standard_reliable_service_2026`, `govuk_service_standard_whole_problem_2026`, `gsa_oes_evidence_act_toolkits`, `hhs_ohrp_45_cfr_46_overview`, `hhs_ohrp_coded_private_information_guidance_2018`, `hhs_ohrp_continuing_review_guidance_2010`, `hhs_ohrp_incident_reporting_guidance_2022`, `hhs_ohrp_unanticipated_problems_guidance_2007`, `nara_records_scheduling_guidance`, `nist_ir_8053_deidentification`, `nist_privacy_framework`, `nist_sp_800_122_pii_confidentiality`, `nist_sp_800_188_deidentifying_government_datasets`, `nist_sp_800_53r5_security_privacy_controls`, `nyc_comptroller_evictions_representation_2025`, `nyc_ocj_annual_report_2025`, `oecd_digital_government_outlook_2026_services`, `oecd_human_centred_services_recommendation_2024`, `omb_a11_section_280_2025`, `omb_circular_a123_2026`, `omb_m_17_12_pii_breach_response`, `omb_m_19_23_evidence_act`, `omb_m_22_10_public_benefits_pra`, `omb_statistical_policy_directive_4`, `omb_statistical_surveys_2006`
+
+Next artifact: in progress: closure dossiers now define public-safe evidence packages, attestation classes, exception blockers, and reopen triggers; still needs lawful fieldwork, source preservation, owner decisions, and actual outside-cube claimant/household outcome tails before closure
+
+Why not now: Rev0797 adds closure-dossier controls, but dossiers, attestations, independent review statements, and gap-closure templates do not prove affected-person outcomes, source preservation, stewardship, or material distribution.
+
+### `GAP-030-active-route-retirement-and-taxonomy-control` — high / in_progress_rev0790_aliases_and_gate_refactor_not_controlled_vocab
+
+Every numbered note remains active in some form, the machine front-door registry has far more routes than a human front door, and hundreds of singleton labels make aggregation look precise while weakening comparability.
+
+Nearest notes: `465`, `843`, `846`, `857`, `910`, `927`, `963`, `974`, `982`, `983`, `985`, `986`, `987`, `988`, `997`
+
+Source keys: `cisa_bod_20_01_vulnerability_disclosure_policy`, `cisa_vulnerability_disclosure_policy_template`, `creative_commons_license_considerations_v4`, `digitalgov_federal_source_code_policy_resource`, `gsa_open_source_software_policy`, `omb_m_16_21_federal_source_code_policy`, `opensource_guide_leadership_and_governance`, `reuse_specification_3_3`
+
+Next artifact: Try a second historical-preserved route and promote only the smallest recurring source-health aliases into an owner-reviewed controlled vocabulary; do not let tail gates become another uncontrolled registry family.
+
+Why not now: Rev0797 refactors fieldwork-chain closure links but does not attempt a second route demotion or owner-approved taxonomy freeze.
+
+### `GAP-031-source-evidence-preservation-and-claim-capture` — high / in_progress_postclosure_monitoring_floor_no_permanent_closure
+
+A URL and a completed health row prove identity and a maintenance act, not what text supported a claim or whether that evidence can be reconstructed after page drift.
+
+Nearest notes: `857`, `910`, `927`, `960`, `963`, `983`, `984`, `985`, `986`, `987`, `988`, `989`, `990`, `991`, `992`, `993`, `994`, `995`, `997`
+
+Source keys: `census_disclosure_avoidance_methods`, `cisa_bod_20_01_vulnerability_disclosure_policy`, `cisa_vulnerability_disclosure_policy_template`, `creative_commons_license_considerations_v4`, `digitalgov_federal_source_code_policy_resource`, `digitalgov_omb_a130_appendix_i_privacy_act`, `dol_strudl_statistical_disclosure_control`, `dol_ui_claims_status_claimant_communication`, `dol_ui_claims_status_implement`, `dol_ui_direct_observation_illinois`, `dol_ui_modernization_arpa_investments_2023`, `dol_ui_survey_design_ides`, `ecfr_45_cfr_46_102_definitions`, `ecfr_45_cfr_46_116_informed_consent`, `eviction_lab_rtc_2025`, `fcsm_nonresponse_bias_reporting_2023`, `fcsm_spwp22_statistical_disclosure_limitation`, `gao_evictions_data_limited_2024`, `gao_green_book_2025`, `gsa_oes_evidence_act_toolkits`, `gsa_open_source_software_policy`, `hhs_ohrp_45_cfr_46_overview`, `hhs_ohrp_coded_private_information_guidance_2018`, `hhs_ohrp_continuing_review_guidance_2010`, `hhs_ohrp_incident_reporting_guidance_2022`, `hhs_ohrp_unanticipated_problems_guidance_2007`, `loc_web_archiving_overview`, `nara_managing_web_records_background`, `nara_records_scheduling_guidance`, `nist_ir_8053_deidentification`, `nist_privacy_framework`, `nist_sp_800_122_pii_confidentiality`, `nist_sp_800_188_deidentifying_government_datasets`, `nist_sp_800_53r5_security_privacy_controls`, `nyc_comptroller_evictions_representation_2025`, `nyc_ocj_annual_report_2025`, `omb_a11_section_280_2025`, `omb_circular_a123_2026`, `omb_circular_a_108_privacy_act`, `omb_m_01_05_interagency_personal_data_sharing`, `omb_m_14_06_administrative_data_statistical_purposes`, `omb_m_16_21_federal_source_code_policy`, `omb_m_17_12_pii_breach_response`, `omb_m_19_23_evidence_act`, `omb_m_22_10_public_benefits_pra`, `omb_statistical_policy_directive_4`, `omb_statistical_surveys_2006`, `opensource_guide_leadership_and_governance`, `reuse_specification_3_3`, `statspolicy_cipsea_data_access_sharing`, `statspolicy_standard_application_process_resources`
+
+Next artifact: in progress: closure dossiers now define public-safe evidence packages, attestation classes, exception blockers, and reopen triggers; still needs lawful fieldwork, source preservation, owner decisions, and actual outside-cube claimant/household outcome tails before closure
+
+Why not now: Rev0797 adds closure-dossier controls, but dossiers, attestations, independent review statements, and gap-closure templates do not prove affected-person outcomes, source preservation, stewardship, or material distribution.
+
+### `GAP-032-license-maintainer-contribution-governance` — high / in_progress_rev0799_stewardship_handoff_controls_not_owner_approved
+
+The archive is designed for reuse but does not state who may reuse it, who can accept changes, who owns release decisions, or how stewardship survives a maintainer transition.
+
+Nearest notes: `846`, `910`, `927`, `960`, `963`, `983`, `987`, `988`, `989`, `990`, `991`, `992`, `993`, `997`
+
+Source keys: `census_disclosure_avoidance_methods`, `cisa_bod_20_01_vulnerability_disclosure_policy`, `cisa_vulnerability_disclosure_policy_template`, `creative_commons_license_considerations_v4`, `digitalgov_federal_source_code_policy_resource`, `digitalgov_omb_a130_appendix_i_privacy_act`, `dol_strudl_statistical_disclosure_control`, `ecfr_45_cfr_46_102_definitions`, `ecfr_45_cfr_46_116_informed_consent`, `fcsm_spwp22_statistical_disclosure_limitation`, `gsa_oes_evidence_act_toolkits`, `gsa_open_source_software_policy`, `hhs_ohrp_45_cfr_46_overview`, `hhs_ohrp_coded_private_information_guidance_2018`, `hhs_ohrp_continuing_review_guidance_2010`, `hhs_ohrp_incident_reporting_guidance_2022`, `hhs_ohrp_unanticipated_problems_guidance_2007`, `nara_records_scheduling_guidance`, `nist_ir_8053_deidentification`, `nist_sp_800_122_pii_confidentiality`, `nist_sp_800_188_deidentifying_government_datasets`, `nist_sp_800_53r5_security_privacy_controls`, `omb_circular_a_108_privacy_act`, `omb_m_01_05_interagency_personal_data_sharing`, `omb_m_14_06_administrative_data_statistical_purposes`, `omb_m_16_21_federal_source_code_policy`, `omb_m_17_12_pii_breach_response`, `omb_m_19_23_evidence_act`, `omb_statistical_policy_directive_4`, `opensource_guide_leadership_and_governance`, `reuse_specification_3_3`, `statspolicy_cipsea_data_access_sharing`, `statspolicy_standard_application_process_resources`
+
+Next artifact: in progress: archive stewardship handoff controls define required owner decisions, public governance documents, role classes, security-contact scope, and succession clocks; still not owner-approved and not closed
+
+Why not now: Rev0799 adds handoff controls, source receipts, generated surfaces, and lint, but the archive still lacks an actual owner/legal decision, maintainer acceptance, contribution process, security contact, or successor.
+
+### `GAP-033-power-distribution-and-material-outcome-theory` — high / in_progress_postclosure_monitoring_floor_no_permanent_closure
+
+The archive is unusually strong at detecting administrative theater, continuity failure, and missing remedy. It is weaker at deciding whose interests an institution serves, what distribution is legitimate, and when a well-run system still entrenches domination or deprivation.
+
+Nearest notes: `403`, `404`, `843`, `848`, `857`, `894`, `963`, `983`, `986`, `987`, `988`, `989`, `990`, `991`, `992`, `993`, `994`, `995`, `997`
+
+Source keys: `census_disclosure_avoidance_methods`, `cisa_bod_20_01_vulnerability_disclosure_policy`, `cisa_vulnerability_disclosure_policy_template`, `creative_commons_license_considerations_v4`, `digital_govhub_ui_cx_integrity_2025`, `digitalgov_federal_source_code_policy_resource`, `digitalgov_omb_a130_appendix_i_privacy_act`, `dol_strudl_statistical_disclosure_control`, `dol_ui_direct_observation_illinois`, `ecfr_45_cfr_46_102_definitions`, `ecfr_45_cfr_46_116_informed_consent`, `eviction_lab_2025_filing_patterns_2026`, `eviction_lab_rtc_2025`, `fcsm_nonresponse_bias_reporting_2023`, `fcsm_spwp22_statistical_disclosure_limitation`, `gao_green_book_2025`, `gsa_oes_evidence_act_toolkits`, `gsa_open_source_software_policy`, `hhs_ohrp_45_cfr_46_overview`, `hhs_ohrp_coded_private_information_guidance_2018`, `hhs_ohrp_continuing_review_guidance_2010`, `hhs_ohrp_incident_reporting_guidance_2022`, `hhs_ohrp_unanticipated_problems_guidance_2007`, `loc_web_archiving_overview`, `nara_managing_web_records_background`, `nara_records_scheduling_guidance`, `nist_ir_8053_deidentification`, `nist_privacy_framework`, `nist_sp_800_122_pii_confidentiality`, `nist_sp_800_188_deidentifying_government_datasets`, `nist_sp_800_53r5_security_privacy_controls`, `nyc_comptroller_evictions_representation_2025`, `nyc_ocj_annual_report_2025`, `oecd_human_centred_services_recommendation_2024`, `omb_circular_a123_2026`, `omb_m_16_21_federal_source_code_policy`, `omb_m_17_12_pii_breach_response`, `omb_m_19_23_evidence_act`, `omb_statistical_policy_directive_4`, `omb_statistical_surveys_2006`, `opensource_guide_leadership_and_governance`, `reuse_specification_3_3`, `undp_universal_dpi_safeguards_framework_v2`
+
+Next artifact: in progress: closure dossiers now define public-safe evidence packages, attestation classes, exception blockers, and reopen triggers; still needs lawful fieldwork, source preservation, owner decisions, and actual outside-cube claimant/household outcome tails before closure
+
+Why not now: Rev0797 adds closure-dossier controls, but dossiers, attestations, independent review statements, and gap-closure templates do not prove affected-person outcomes, source preservation, stewardship, or material distribution.

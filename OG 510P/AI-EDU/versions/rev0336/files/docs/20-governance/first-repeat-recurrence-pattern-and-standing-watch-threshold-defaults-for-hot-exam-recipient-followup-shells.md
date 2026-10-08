@@ -1,0 +1,175 @@
+# First repeat-recurrence pattern and standing-watch threshold defaults for hot-exam recipient followup shells
+
+The archive can now publish one still smaller pattern layer for the hottest exam-like
+learner-request routes.
+
+It can already say:
+
+- whether a restored ordinary shell has materially recurred;
+- which minimized proof may be recalled without republication;
+- who has authority to see or use the recalled proof;
+- how learner-facing notice stays prospective and privacy-preserving; and
+- how a reopened surface returns to minimized residue, local-only proof, no-active-route residue, or
+  ordinary status after the recurrence closes.
+
+That is still not enough.
+
+The same URL can reappear after more than one temporary block. The same source owner can correct a
+page, restore ordinary status, and then republish the same stale copy. The same recipient office can
+repeatedly fail to confirm a sent score or artifact even though the owner-side send evidence is
+real. A mirror, archive slice, search snippet, social repost, or downstream record can recur often
+enough that another one-off reopen / reclose cycle no longer describes the risk. But the opposite
+error is just as dangerous: once a surface has recurred twice, a system may create a permanent
+watchlist, keep name-bearing screenshots public, scan every search/archive/social surface
+indefinitely, or treat any remotely similar copy as part of one institutional pattern.
+
+This document adds one thing only:
+
+- a **tiny repeat-recurrence pattern / standing-watch threshold field set** for hot-exam recipient
+  followup shells after a restored or minimized surface has recurred more than once or in a way that
+  suggests a current owner/workflow defect.
+
+That means the archive now asks a different question than before. It no longer asks only **whether
+this later event is material enough to reopen a restored surface**. It now asks **whether repeated
+material recurrence has crossed a named threshold that justifies a bounded standing-watch, owner
+repair, or local redesign posture — and what stops that watch from becoming permanent monitoring or
+a public dossier**.
+
+Current official signals support a deliberately narrow answer. Google Search Console exposes
+temporary removal, snippet clearing, current and expired request histories, about-six-month
+temporary removal, exact-URL handling, and reappearance eligibility after expiry rather than
+permanent all-surface disappearance. Google’s Refresh Outdated Content route exposes request states
+and approval expiry while staying limited to Google Search reflection. Google personal-content
+routes can involve URLs, screenshots, alerts, status, and Search-removal/source-site separation,
+which supports current proof needs but not public evidence revival by default. Princeton
+distinguishes local deletion, Google, Bing, custom search, cache, and Wayback persistence. WiscWeb
+separates emergency local edits, primary-contact follow-up, campus search, lookahead, directory,
+major search engines, provider timelines, and no-control/no-expedite boundaries. Internet Archive
+requires URL, time-period, and control-period facts and gives no guaranteed outcome before review;
+its Wayback documentation also explains capture incompleteness, exclusions, and lag. Bing exposes
+temporary blocks, up-to-90-day expiry, cached/outdated-content handling, and permanent-removal
+prerequisites rather than one durable closure state. Together those signals support a tighter
+archive rule: **the next truthful portability gain here is one tiny repeat-recurrence and
+standing-watch threshold layer for deciding when recurrence is a pattern, who owns a bounded watch,
+what exact surface is watched, and how the watch exits — but not one universal monitoring duty, one
+automatic pattern finding, one all-owner dashboard, one permanent public evidence vault, or one rule
+that every related copy is the same recurrence.** See `B251`.
+
+## Small field set for repeat recurrence and standing-watch threshold
+
+| Code | Meaning | Default archive action |
+|---|---|---|
+| `XV0-NO-PERMANENT-STANDING-WATCH-UNIVERSAL-SCAN-OR-PATTERN-BY-ANECDOTE` | recurrence does not by itself create a permanent watchlist, universal scan duty, public evidence vault, or automatic pattern label | require a named material threshold, affected surface, and current owner before any standing-watch state is published |
+| `XV1-PUBLISH-REPEAT-PATTERN-THRESHOLD-AND-SCOPE` | a repeat pattern must identify what repeated, how often, over what route-native window, and whether the repetition is same URL, same owner, same surface family, same recipient effect, or merely a new unrelated copy | distinguish repeated recurrence from ordinary maintenance, crawler lag, provider-history expiry, and unrelated third-party reposts |
+| `XV2-PUBLISH-STANDING-WATCH-OWNER-PURPOSE-AND-CADENCE-LIMIT` | a standing watch, if justified, must have a named owner, a narrow purpose, and a bounded cadence or event trigger tied to the route/surface | publish whether the watch is source-owner repair, search-provider recheck, archive/platform follow-up, recipient-confirmation watch, official-record watch, privacy/safety review, or local redesign review; do not imply all-surface monitoring |
+| `XV3-PUBLISH-OWNER-REPAIR-OR-LOCAL-REDESIGN-TRIGGER-BEFORE-WIDENING` | repeated recurrence may justify owner repair, route redesign, or local process review only when the pattern points to a current owner/workflow defect or repeated live learner dependency | avoid widening the shell merely because old proof exists; publish the repair/redesign question separately from learner-facing action |
+| `XV4-PUBLISH-WATCH-EXIT-MINIMIZATION-AND-ORDINARY-RETURN` | standing-watch status must have an exit/minimization condition so repeated recurrence does not keep old proof public forever | after the bounded watch closes, publish whether the shell returns to ordinary status, minimized residue, local-only proof, no-active-route residue, repaired-owner status, or a new live route |
+
+## Field values that now travel together
+
+When this layer is used, the shell should publish only six concrete fields:
+
+1. `repeat_recurrence_pattern_token` — `same exact URL recurred twice`, `same source page regressed
+   twice`, `same snippet or image copy recurred after closure`, `route-native temporary block
+   expired more than once`, `same owner missed or reclosed repeatedly`, `same recipient confirmation
+   failed repeatedly`, `official record effect recurred`, `materially linked mirror cluster`,
+   `archive time-slice recurrence`, `privacy or safety recurrence`, `no repeat pattern`, `pattern
+   local only`, `none inherited`, or `not published`;
+2. `standing_watch_threshold_token` — `two material recurrences in one route-native cycle`, `two
+   closures followed by same-surface reappearance`, `one recurrence plus live score or record
+   effect`, `one recurrence plus safety or privacy exposure`, `three materially linked third-party
+   copies`, `repeated same-owner workflow failure`, `repeated recipient confirmation failure`,
+   `threshold explicitly local`, `threshold not met`, `threshold waived by current official route`,
+   `none inherited`, or `not published`;
+3. `standing_watch_owner_token` — `current source owner`, `current campus web owner`, `current
+   search-provider route`, `current archive or platform reviewer`, `current recipient-confirmation
+   owner`, `official record or score owner`, `appeal or remedy reviewer`, `privacy or safety
+   reviewer`, `local process redesign owner`, `no standing-watch owner`, `none inherited`, or `not
+   published`;
+4. `standing_watch_scope_and_cadence_token` — `one exact URL only`, `one source page only`, `one
+   search-result family`, `one archive time slice`, `one recipient cycle`, `one official-record
+   field`, `one owner repair cycle`, `event-triggered only`, `single route-native expiry recheck`,
+   `until one clean cycle closes`, `local-only watch`, `no active scan`, `none inherited`, or `not
+   published`;
+5. `repair_or_redesign_trigger_token` — `source workflow repair`, `content-owner review`,
+   `search-provider refile pattern`, `archive/platform exclusion review`, `recipient confirmation
+   process check`, `official-record correction process check`, `privacy/safety escalation review`,
+   `route wording repair`, `learner notice template repair`, `no repair trigger`, `none inherited`,
+   or `not published`;
+6. `standing_watch_exit_state_token` — `return to ordinary status`, `return to minimized residue
+   pointer`, `retain proof local-only`, `owner repair completed`, `one clean watch cycle completed`,
+   `route-native expiry passed with no recurrence`, `watch reclosed as no-active-route residue`,
+   `new live route opened`, `escalate to local redesign`, `pattern not confirmed`, `none inherited`,
+   or `not published`.
+
+That is deliberately small. It is enough to decide whether repeated recurrence has become a pattern,
+whether that pattern justifies a bounded standing-watch, who owns it, what surface/cadence is in
+scope, whether owner repair or local redesign should be considered, and how the shell exits. It is
+not enough to create an all-copy surveillance job, one central recurrence dashboard, one permanent
+learner-facing proof vault, one pattern label based only on anecdote, or one rule that every future
+mirror/search/archive/social mention belongs to the same watch.
+
+## First repeat-recurrence and standing-watch assignments
+
+| Route or family | Repeat-recurrence / watch truth now admitted | Why |
+|---|---|---|
+| Google Search Console temporary-removal or snippet-clear route after the same URL reappears after more than one blackout or closure | `same exact URL recurred twice`, `two closures followed by same-surface reappearance`, `current search-provider route`, `one exact URL only`, `single route-native expiry recheck`, and `return to minimized residue pointer` after the watch closes | Search Console removals are temporary/search-only, can expire, and require exact URL handling and permanent-removal steps outside the temporary block |
+| Google Refresh Outdated Content route after repeated approved refreshes or repeated old-snippet reappearance | `same snippet or image copy recurred after closure`, `two material recurrences in one route-native cycle`, `current search-provider route`, `search-provider refile pattern`, and `until one clean cycle closes` | the route is for changed or removed content in Google Search and exposes request states/expiry, but does not prove source-page or all-platform disappearance |
+| Google personal-content / Results-about-you style route where sensitive personal-result recurrences repeat after minimization | `privacy or safety recurrence`, `one recurrence plus safety or privacy exposure`, `privacy or safety reviewer`, `event-triggered only`, `redacted/local-only proof`, and `retain proof local-only` unless current learner action requires more | personal-content routes need concrete URL/screenshot proof and may notify on new results, but Search removal remains distinct from source-site or other-engine removal and sensitive proof should not become a public dossier |
+| campus source, media, file, redirect, or local-search route where the same page is corrected and then regresses again | `same source page regressed twice`, `repeated same-owner workflow failure`, `current campus web owner`, `one source page only`, `source workflow repair`, and `owner repair completed` before ordinary return | repeated source regression points to a current local workflow defect more than to a search-engine proof problem, but only the affected source/local-search surface should enter watch |
+| WiscWeb-style emergency edit where local content recurs after primary-contact notification | `privacy or safety recurrence` or `same source page regressed twice`, `one recurrence plus safety or privacy exposure`, `privacy or safety reviewer`, `event-triggered only`, and `local-only watch` by default | emergency local edits may need safety-sensitive standing attention, but WiscWeb separates local action from major-search timing/status and normal-hours availability, so the watch should not imply 24/7 all-engine control |
+| Princeton-style local deletion plus Google/Bing/custom-search/Wayback split where different surfaces recur at different times | `materially linked mirror cluster` or `archive time-slice recurrence`, `three materially linked third-party copies`, `current source owner` plus route-specific search/archive owners, `one search-result family` or `one archive time slice`, and split exit states | local deletion, documents/media, cache, Google, Bing, custom search, and Wayback persistence are distinct surfaces; recurring one surface does not automatically prove a global pattern |
+| Bing temporary block or content-removal route after a 90-day block repeatedly expires with the same result visible | `route-native temporary block expired more than once`, `two closures followed by same-surface reappearance`, `current search-provider route`, `one search-result family`, `search-provider refile pattern`, and `route-native expiry passed with no recurrence` as the clean exit | Bing blocks are temporary unless extended or paired with permanent-removal methods; repeated expiry may justify a narrow Bing watch but not an all-engine watch |
+| Wayback Machine / Internet Archive review after multiple captures, time slices, or exclusions are at issue | `archive time-slice recurrence`, `three materially linked third-party copies` only if the copies are materially linked, `current archive or platform reviewer`, `one archive time slice`, `archive/platform exclusion review`, and `new live route opened` only for the affected capture/slice | archive requests require URL/time/control-period context and review; additional captures can matter, but each capture/time slice needs scoped proof rather than one all-archive pattern label |
+| social, mirror, repost, or third-party platform copy after a campus/search route has already closed more than once | `materially linked mirror cluster`, `three materially linked third-party copies`, `current archive or platform reviewer` or `no standing-watch owner`, `event-triggered only`, and `watch reclosed as no-active-route residue` where no current owner exists | repeated mirror copies may be a pattern for learner notice, but campus/search proof does not create authority over unrelated platforms or owners |
+| recipient record, downstream confirmation, or official score/report surface repeatedly failing after owner-side send evidence exists | `same recipient confirmation failed repeatedly` or `official record effect recurred`, `repeated recipient confirmation failure`, `current recipient-confirmation owner` or `official record or score owner`, `one recipient cycle` or `one official-record field`, `recipient confirmation process check`, and `official-record correction process check` | downstream recurrence may be the live learner dependency even when source/search/archive surfaces are ordinary; the watch belongs to the recipient/record path rather than to public search monitoring |
+| learner-access or remedy route where the learner repeatedly needs minimized proof for separate live remedies | `official record effect recurred` or `same recipient confirmation failed repeatedly`, `one recurrence plus live score or record effect`, `appeal or remedy reviewer`, `local-only watch`, `learner notice template repair`, and `retain proof local-only` | repeated proof need may show that the local remedy packet is underspecified, but it still does not justify republishing old screenshots, owner emails, or request IDs |
+| ordinary maintenance reflection, crawler lag, history-row expiry, or unrelated copy with no current owner path or learner dependency | `no repeat pattern`, `threshold not met`, `no standing-watch owner`, `no active scan`, `no repair trigger`, and `pattern not confirmed` | repeated artifacts only become a standing-watch problem when they materially affect a current surface, owner path, learner remedy, recipient record, or safety/privacy need |
+
+## What this layer now makes portable
+
+Hot-exam recipient followup shells may now publish one tiny `XV0-XV4` layer after `XU0-XU4` when the
+archive needs to say not merely that **a restored surface recurred and minimized proof may be
+recalled**, but that **repeated material recurrence has crossed, or has not crossed, a bounded
+standing-watch threshold**.
+
+That means a shell may now truthfully say things like:
+
+- `the same exact Google-visible URL reappeared after two closures; open a one-URL search-provider
+  watch until one route-native expiry cycle passes cleanly`;
+- `the source page regressed twice; assign a source workflow repair owner rather than restarting
+  every search/archive/recipient surface`;
+- `the same recipient confirmation failure has recurred; watch the recipient-record path, not the
+  public source page`;
+- `three mirror copies look related, but no current owner can act on all of them; publish a
+  mirror-cluster orientation note and keep prior proof local-only`; or
+- `provider history expired and an old screenshot exists, but no current URL, owner path, record
+  effect, or learner remedy is live; threshold not met`.
+
+It still may not pretend:
+
+- that recurrence alone creates a permanent monitoring duty;
+- that every related copy is part of one pattern;
+- that old screenshots are enough to label a current owner defect;
+- that search, source, archive, social, recipient, and official-record surfaces share one
+  standing-watch owner;
+- that standing-watch proof must remain public after its live purpose ends;
+- that repeated provider expiry means learner fault; or
+- that a standing watch can run without an exit/minimization condition.
+
+## Why this matters for the larger archive
+
+The archive's education-with-AI program is not only about preventing premature closure. It is also
+about preventing repeated small failures from becoming invisible because each one is treated as a
+one-off.
+
+This layer matters because repeat recurrence creates two opposite institutional temptations. One
+temptation is endless reopening: every recurrence, mirror, crawler reflection, expired history row,
+or recipient uncertainty keeps the shell hot forever and keeps old proof public. The other
+temptation is false normalization: because each recurrence can be individually explained, no one
+names the owner workflow, recipient process, or route design problem that keeps recreating the
+learner-facing dependency. The point here is narrower: publish **what repeated**, **what threshold
+was or was not crossed**, **who owns a bounded watch**, **what surface and cadence are in scope**,
+**whether owner repair or local redesign is now required**, and **how the watch exits back to the
+narrowest truthful state**. Everything else remains ordinary maintenance, local-only proof
+retention, source/search/archive/platform-specific casework, or no-active-route residue.

@@ -1,0 +1,97 @@
+# Legislative Process & Drafting Rails (Make lawmaking legible, inspectable, and reversible)
+
+**Stack relation:** use `300-lawmaking-rulemaking-and-regulatory-change-routing-guide.md` for the canonical route across the lawmaking / rulemaking / regulatory-change family. This memo is the legislative-process / drafting / amendment-trace specialization; `118` is the generic rule-change-control front door; `317` is the primary-to-secondary-legislation / parliamentary-scrutiny seam; `316` is the post-passage finalization / promulgation / commencement seam; `216` is the impact-assessment / ex-post-review specialization; `208` is the implementation / release-engineering neighbor; `25` and `39` remain the legal-legibility and rulebook substrate neighbors. Use `309-representative-chambers-committees-opposition-rights-and-confidence-architecture.md` when the real issue is not bill flow but chamber design, committee architecture, opposition protections, or investiture / dissolution / confidence rules. Use `310-cabinet-government-coalition-agreements-portfolio-architecture-and-centre-of-government-rails.md` when the real issue is executive-side portfolio ownership, cabinet-committee routing, coalition consultation, or centre-of-government coordination before a bill reaches the chamber. Use `317-delegated-legislation-empowering-provisions-henry-viii-powers-and-parliamentary-scrutiny-rails.md` when the real issue is what the bill may delegate to future regulations, what must stay on the face of the Act, or what scrutiny should attach to delegated powers. Use `316-bill-finalization-assent-promulgation-publication-commencement-and-constitutional-referral-rails.md` when the real issue is no longer drafting or amendment traceability but the final stage after passage: enrolled text, assent, promulgation, publication, commencement, or pre-promulgation constitutional referral.
+
+**Problem:** lawmaking routinely fails as an interface: omnibus bundles hide tradeoffs; amendments land as unreadable deltas; implementation surprises arrive post‑passage; “intent” is unknowable to outsiders.
+
+**Design goal:** treat legislation as a **versioned, testable change** to the rule stack with **public diffs**, **plain‑language explanations**, and **receipted process steps** that connect (a) participation → (b) reasons → (c) text → (d) implementation → (e) remedy.
+
+**Non‑goal:** redesign a whole constitutional order. This memo specifies a **minimum viable lawmaking interface** that can be adopted inside many systems.
+
+---
+
+## A. Core invariants
+
+1) **Diff-first**: every proposed legal change is published as a machine‑diffable, human‑readable delta against the current “as‑of” rulebook. (Join: `39-rulebook-and-instruments-registry.md`, `118-rulemaking-and-change-control.md`.)
+
+2) **Plain-language companion**: every bill has explanatory material that makes it easier for non‑insiders to understand what changes and why (without changing legal meaning). Legislative drafting guidance widely emphasizes clarity as a drafting objective.
+
+3) **Single-subject / anti‑bundling discipline**: material changes are not tied together solely to force passage. When bundling is unavoidable, it is explicit and contestable.
+
+4) **Implementation realism**: a bill is incomplete without a minimal implementation plan and readiness checks (staffing, procurement, data, enforcement, remedy). (Join: `208-change-management-and-release-engineering-for-government.md`, `110-budget-procurement-integrity.md`.)
+
+5) **Contestability survives passage**: the public can trace what was proposed, what changed, who changed it, and how to challenge results once in force.
+
+---
+
+## B. Minimal artifacts (publishable packets)
+
+### 1) Bill Packet (`BPK-*`) — required for introduction
+A compact bundle (single URL) that includes:
+- **Text** (versioned) + **diff** vs current law (`as‑of` pointer)
+- **Plain-language summary** (who is affected, what changes, what stays)
+- **Authority & scope note** (why this level of government)
+- **Rights & equity impact note** (who bears burden; accessibility/language access implications)
+- **Fiscal note** (operating + capital + long-run liability)
+- **Implementation note** (systems/processes, procurement changes, hiring/training)
+- **Delegation map** (what is left to delegated legislation, who makes it, what procedure applies, and whether draft instruments already exist)
+- **Enforcement & compliance note** (how discretion is bounded; escalation ladder)
+- **Data/record impact note** (new data collections/sharing corridors; retention; audit trail)
+- **Remedy readiness** (where appeals/complaints go; time budgets; interim protections)
+
+### 2) Amendment Receipt (`AMR-*`) — required for material amendments
+For each material amendment:
+- what changed (diff)
+- sponsor + timestamp
+- rationale
+- expected effect (if known)
+- any changes to fiscal/implementation/remedy assumptions
+
+### 3) Deliberation & Response Log (`DRL-*`) — required for public participation
+A structured log linking submissions → responses → resulting changes (or reasons for non‑change). OGP’s co‑creation standards emphasize inclusive participation with transparency and accountability across stages.
+
+### 4) Enactment Release Note (`REL-*`) — required at passage
+A release note for the law as shipped:
+- final diff vs introduced version
+- effective dates + transition rules
+- “what to do now” guidance for affected people
+- known risks + monitoring plan
+
+---
+
+## C. Process rails (minimum sequence)
+
+1) **Pre-introduction scoping**
+- publish the problem statement + success metric(s)
+- publish options considered + why rejected
+
+2) **Introduction gate**
+- no introduction without a complete `BPK-*`
+
+3) **Committee / deliberation stage**
+- all hearings/submissions listed in `DRL-*`
+- every material change produces an `AMR-*`
+
+4) **Finalization gate**
+- no vote without a **final** `BPK-*` including implementation + remedy readiness updates
+
+5) **Post-enactment operationalization**
+- publish `REL-*` and link to the rule inventory / “as‑of” state
+- schedule ex post review date(s) (join: `207-sunset-review-and-rollback-rails.md`, `216-regulatory-impact-assessment-and-ex-post-review-rails.md`)
+
+---
+
+## D. Anti-patterns (failures to catch)
+- **Omnibus laundering**: unrelated provisions smuggled in late.
+- **Amendment fog**: last‑minute amendments without diffs/reasons.
+- **Implementation cliff**: law passes without operational capacity, producing discretionary chaos.
+- **Zombie law**: rules remain on books without evaluation, even after repeated failure signals.
+
+---
+
+## E. Quick checks (link to the test suite)
+- Can a person read the **diff** and understand the practical effect?
+- Can the public see **who amended what and why**?
+- Is there a credible implementation plan (people, money, systems) and a remedy lane?
+
+(See `107-governance-test-suite.md`.)

@@ -1,0 +1,93 @@
+# Fieldwork closure dossiers
+
+Generated for `rev0799` from `metadata/fieldwork_closure_dossiers.json`.
+
+Non-private closure-readiness controls after redress verification. These rows define what a future public-safe gap-closure package would need, but they do not collect evidence, approve fieldwork, verify outcomes, preserve source snapshots, or close any live gap.
+
+## Closure policy
+
+A closure dossier cannot close a live gap while its closure_readiness_status is not_ready. Even a future ready dossier can only support a gap-ledger decision if owner-approved closure evidence, unresolved-exception handling, source preservation, privacy/disclosure review, and reopen triggers are all recorded outside private data custody.
+
+## Summary counts
+
+| Metric | Count |
+| --- | ---: |
+| Closure dossiers | 2 |
+| Gap blockers | 4 |
+| Redress verification controls linked | 2 |
+
+## Closure readiness status counts
+
+| Status | Count |
+| --- | ---: |
+| `not_ready_no_verified_tail_or_owner_attestation` | 2 |
+
+## Gap blockers
+
+| Gap | Closure dossiers |
+| --- | --- |
+| `GAP-029-affected-person-outcome-validation` | `FCD-HC-001`, `FCD-UI-001` |
+| `GAP-031-source-evidence-preservation-and-claim-capture` | `FCD-HC-001`, `FCD-UI-001` |
+| `GAP-032-license-maintainer-contribution-governance` | `FCD-HC-001`, `FCD-UI-001` |
+| `GAP-033-power-distribution-and-material-outcome-theory` | `FCD-HC-001`, `FCD-UI-001` |
+
+## Control details
+
+### `FCD-HC-001` — Housing household closure dossier and no-outcome-by-attestation control
+
+Status: `not_ready_no_verified_tail_or_owner_attestation`
+
+Redress verification control: `FRV-HC-001`  
+Correction control: `FCC-HC-001`  
+Release control: `FRC-HC-001`  
+Execution control: `FEC-HC-001`  
+Authorization gate: `FWAG-HC-001`  
+Field-intake control: `FIC-HC-001`  
+Sampling gate: `TSG-HC-001`  
+Outcome-tail plan: `OTP-HC-001`
+
+Closure blocker: Blocks housing affected-person and material-outcome closure until a public-safe closure dossier is supported by actual outside-cube outcome verification, source-preservation posture, unresolved-exception handling, privacy/disclosure review, and owner-approved gap-ledger action. An attestation is not the outcome.
+
+| Closure family | Items |
+| --- | --- |
+| Evidence required | outside-cube verification that possession was retained or a safe move was completed for the required household cohorts; outside-cube verification that lockout, exclusion, emergency access, or shelter handoff failures were repaired where applicable; outside-cube verification that rehousing, shelter stability, arrears cure, subsidy restoration, or relocation assistance actually occurred; outside-cube verification that screening, judgment, debt, or record harm was corrected where the housing pathway created downstream exclusion; outside-cube retaliation, coercion, disability, immigration, family-safety, and provider-dependence risk check before any follow-up reliance; public-safe exception ledger for informal exits, default cases, doubled-up households, shelter returns, nonresponse, partial repair, disputes, and rare cohorts; source-preservation status for every claim receipt relied on in the closure recommendation |
+| Material outcome fields | possession_retained_or_safe_move_verified; lockout_or_exclusion_repair_verified; rehousing_or_shelter_stability_verified; arrears_or_subsidy_cure_verified; screening_or_record_harm_corrected; retaliation_or_coercion_risk_checked; durable_stability_window_checked |
+| Attestation requirements | named program or partner owner attests only to the public-safe closure dossier, not to private household facts stored in the cube; independent review posture identifies what was tested, what was sampled, what was excluded, and what remains unresolved; privacy/disclosure reviewer confirms no addresses, docket identifiers, provider records, or household compositions enter the cube; gap owner records whether the dossier is sufficient for closure, partial closure, continued in-progress status, or reopening |
+| Unresolved exceptions | informal_exit; default_or_unrepresented_case; doubled_up_or_shelter_return; partial_repair; disputed_repair; unreachable_household; rare_cohort_suppressed; source_receipt_unpreserved |
+| Reopen triggers | later household evidence contradicts the closure finding; durable-stability window shows renewed displacement, lockout, arrears, screening harm, or shelter return; source receipt fails preservation or locator integrity; privacy/disclosure review finds address, building, docket-path, or rare-cohort exposure; nonresponse-bias analysis changes the material conclusion; owner attestation is withdrawn, qualified, or found unsupported |
+| Allowed cube artifacts | public-safe closure readiness status; linked control identifiers; source-claim receipt identifiers; material outcome field names; exception class counts after disclosure review; attestation class; scope limitation statement; reopen trigger list |
+| Prohibited cube artifacts | name; address; docket_number; contact_roster; linkage_key; court_file; possession_record; shelter_record; screening_record; landlord_or_provider_record; raw_transcript; raw_audio; private_screenshot; partner_case_record; household_composition; redress_case_file |
+
+Next action: Draft the public-safe housing closure dossier template columns: cohort class, material field, verification status class, unresolved exception class, source receipt level, attestation class, limitation, and reopen trigger. Do not collect household records.
+
+### `FCD-UI-001` — Unemployment-insurance claimant closure dossier and no-outcome-by-attestation control
+
+Status: `not_ready_no_verified_tail_or_owner_attestation`
+
+Redress verification control: `FRV-UI-001`  
+Correction control: `FCC-UI-001`  
+Release control: `FRC-UI-001`  
+Execution control: `FEC-UI-001`  
+Authorization gate: `FWAG-UI-001`  
+Field-intake control: `FIC-UI-001`  
+Sampling gate: `TSG-UI-001`  
+Outcome-tail plan: `OTP-UI-001`
+
+Closure blocker: Blocks UI affected-person and material-outcome closure until a public-safe closure dossier is supported by actual outside-cube outcome verification, source-preservation posture, unresolved-exception handling, privacy/disclosure review, and owner-approved gap-ledger action. An attestation is not the outcome.
+
+| Closure family | Items |
+| --- | --- |
+| Evidence required | outside-cube verification that each sampled claimant cohort received payment or backpay when due; outside-cube verification that identity, fraud, access, or integrity holds were removed or converted into appealable decisions; outside-cube verification that overpayment waiver, refund, reconsideration, or appeal correction actually posted where applicable; outside-cube verification that assisted or representative access failures were cured without penalty to the claimant; outside-cube burden and recurrence-window check showing whether delay, repeated verification, debt collection, or appeal friction reappeared; public-safe exception ledger with nonresponse, partial repair, disputed, unreachable, deceased, withdrawn, and recurrence classes; source-preservation status for every claim receipt relied on in the closure recommendation |
+| Material outcome fields | payment_or_backpay_verified; hold_removed_or_decision_issued; waiver_refund_or_debt_cure_verified; appeal_or_reconsideration_correction_verified; assisted_or_representative_access_restored; burden_reduction_checked; recurrence_window_checked |
+| Attestation requirements | named program owner attests only to the public-safe closure dossier, not to private facts stored in the cube; independent review posture identifies what was tested, what was sampled, what was excluded, and what remains unresolved; privacy/disclosure reviewer confirms no prohibited claimant artifacts enter the cube; gap owner records whether the dossier is sufficient for closure, partial closure, continued in-progress status, or reopening |
+| Unresolved exceptions | nonresponse; partial_repair; disputed_repair; unreachable_claimant; withdrawn_or_deceased_case; recurrence_after_apparent_repair; rare_cohort_suppressed; source_receipt_unpreserved |
+| Reopen triggers | later claimant evidence contradicts the closure finding; recurrence window shows new hold, debt, payment delay, or appeal friction; source receipt fails preservation or locator integrity; privacy/disclosure review finds private artifact leakage or rare-cohort exposure; nonresponse-bias analysis changes the material conclusion; owner attestation is withdrawn, qualified, or found unsupported |
+| Allowed cube artifacts | public-safe closure readiness status; linked control identifiers; source-claim receipt identifiers; material outcome field names; exception class counts after disclosure review; attestation class; scope limitation statement; reopen trigger list |
+| Prohibited cube artifacts | name; claim_number; social_security_number; contact_roster; linkage_key; payment_record; debt_record; appeal_file; administrative_extract; raw_transcript; raw_audio; private_screenshot; partner_case_record; redress_case_file |
+
+Next action: Draft the public-safe UI closure dossier template columns: cohort class, material field, verification status class, unresolved exception class, source receipt level, attestation class, limitation, and reopen trigger. Do not collect claimant records.
+
+
+## Privacy posture
+
+The cube may hold public-safe closure status, source-claim receipt identifiers, attestation class, disclosed counts, limitation classes, and reopen triggers. It must not hold private claimant or household evidence, linkage keys, contact rosters, claim numbers, docket numbers, addresses, payment records, court files, partner case records, transcripts, recordings, or raw audit logs.

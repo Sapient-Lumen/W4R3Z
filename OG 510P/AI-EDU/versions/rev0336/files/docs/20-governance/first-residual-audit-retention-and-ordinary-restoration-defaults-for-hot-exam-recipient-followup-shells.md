@@ -1,0 +1,168 @@
+# First residual-audit retention and ordinary-restoration defaults for hot-exam recipient followup shells
+
+The archive can now publish one still smaller retention layer for the hottest exam-like
+learner-request routes.
+
+It can already say:
+
+- what was true at reclosure;
+- which later reflected fact changed only one source, search, archive, mirror, social, or recipient
+  surface;
+- how old or durable the supporting evidence is;
+- which residual surface is still being watched or annotated; and
+- whether material new proof reopens only the affected surface.
+
+That is still not enough.
+
+A residual audit snapshot can become its own harm. A learner-facing shell may keep naming an old
+result long after no current action depends on it. A request-status history row may age out of a
+provider dashboard. A platform may have only a limited request-history window. A campus office may
+need to retain a private ticket for accountability while removing names, screenshots, exact URLs, or
+old proof from the learner-facing ordinary shell. A source correction, search reflection, or
+recipient-record update may settle the affected surface enough that the public shell should return
+to ordinary status, even though a local record, private proof note, or route-specific history still
+exists. If the archive stops at residual audit, an automated service can turn transparency into an
+indefinite public dossier, or swing the other way and purge the only proof that a learner may still
+need.
+
+This document adds one thing only:
+
+- a **tiny residual-audit retention / ordinary-restoration field set** for hot-exam recipient
+  followup shells after a post-reclosure residual-audit fact has been published.
+
+That means the archive now asks a different question than before. It no longer asks only **what
+later fact changed and whether that fact reopens the affected surface**. It now asks **whether any
+live learner-facing dependency remains, what evidence may move to local-only retention, how public
+minimization is disclosed without pretending the prior action never happened, and when the affected
+shell may truthfully return to ordinary status**.
+
+Current official signals support a deliberately narrow answer. Google Search Console exposes current
+and expired removal-request histories only for a limited past window and distinguishes temporary
+removal, snippet clearing, expiry, clearing, cancellation, denial, and owner versus non-owner
+request history. Google’s Refresh Outdated Content tool exposes request states and expiry after
+approval while also saying the tool updates Google Search rather than removing a page from the web.
+Google’s personal-content routes require concrete URLs and sometimes screenshots, distinguish full
+or partial Search removal, and warn that removed Search results can still exist through links,
+social media, other search engines, or the source site. WiscWeb separates local WiscWeb removal,
+campus search, lookahead search, campus directory, Google, Bing, Yahoo, and normal-hours
+availability, and states that it cannot control major search-engine status or timing. Princeton
+distinguishes local deletion, Google verification, Bing 90-day blocks, Princeton custom-search
+exclusion, and Wayback persistence. Rowan publishes service-specific intake and review signals
+rather than one all-platform completion certificate. Internet Archive requests require URLs, time
+periods, control-period facts, and review context, with no guaranteed outcome before review. Bing
+exposes temporary blocks and 90-day expiry rather than permanent disappearance by default. Together
+those signals support a tighter archive rule: **the next truthful portability gain here is one tiny
+retention/minimization and ordinary-restoration layer for residual-audit facts, but not one
+perpetual public audit trail, one universal purge timer, one automatic ordinary-restoration
+certificate, one rule that history-row expiry erases prior action, or one rule that local retention
+must remain learner-facing forever.** See `B249`.
+
+## Small field set for residual-audit retention and ordinary restoration
+
+| Code | Meaning | Default archive action |
+|---|---|---|
+| `XT0-NO-PERPETUAL-PUBLIC-AUDIT-TRAIL-OR-UNIVERSAL-PURGE-TIMER` | no one universal public audit trail, permanent named residue note, all-surface retention duty, or single purge clock applies merely because a residual-audit fact was once published | decide retention by live dependency, route-native history visibility, privacy/name-surface risk, and local record obligations rather than by a global timer |
+| `XT1-PUBLISH-LIVE-DEPENDENCY-BASIS-BEFORE-KEEPING-LEARNER-FACING-RESIDUE` | learner-facing residue may remain only while some current learner action, owner action, appeal/remedy window, score/record effect, recipient-confirmation dependency, or surface-specific route is still live | publish why the residual-audit fact is still visible instead of leaving old proof permanently hot by inertia |
+| `XT2-PUBLISH-MINIMIZATION-WITHOUT-EVIDENCE-FICTION` | names, screenshots, exact URLs, ticket numbers, owner emails, request IDs, and stale status rows may be compressed, redacted, moved local-only, or replaced by an as-of pointer when no live learner-facing dependency remains | minimize public exposure while preserving truthful local proof or an as-of residue marker where accountability, record policy, or later review still needs it |
+| `XT3-PUBLISH-ORDINARY-RESTORATION-SCOPE-AND-CARVEOUTS` | ordinary status may be restored only for the surface whose live dependency has settled; other source, search, archive, mirror, social, recipient, or record surfaces remain separate | avoid issuing an all-copy ordinary-restoration certificate where only one affected surface has settled |
+| `XT4-PUBLISH-REACTIVATION-ONLY-ON-MATERIAL-LIVE-DEPENDENCY` | after minimization or ordinary restoration, the shell reopens learner-facing residue only on material new proof, current owner/action path, route-native expiry or reappearance, corrected source state, official score/record effect, or a required local-review trigger | treat small later reflections as ordinary maintenance unless they again create a live dependency for the affected surface |
+
+## Field values that now travel together
+
+When this layer is used, the shell should publish only five concrete fields:
+
+1. `residual_audit_retention_token` — `learner-facing until current route closes`, `learner-facing
+   until appeal or remedy window closes`, `learner-facing until recipient confirmation settles`,
+   `learner-facing while official score or record effect remains live`, `local-only retention under
+   record policy`, `minimized public residue pointer`, `privacy or name-surface minimized`,
+   `route-native history expired`, `ordinary maintenance log only`, `not retained by shell`, `none
+   inherited`, or `not published`;
+2. `retention_dependency_basis_token` — `current owner action path`, `current learner action
+   required`, `unresolved score or record effect`, `open appeal or remedy window`, `recipient
+   confirmation dependency`, `source surface still affected`, `search surface still affected`,
+   `archive or platform surface still affected`, `privacy or name-surface risk`, `institution record
+   obligation only`, `no live dependency`, `none inherited`, or `not published`;
+3. `public_minimization_token` — `keep exact URL while live`, `keep request ID while live`, `redact
+   learner name`, `redact third-party identifiers`, `suppress screenshots from learner-facing view`,
+   `collapse to surface class only`, `replace with as-of residue pointer`, `retain evidence
+   local-only`, `purge learner-facing note after restoration`, `no minimization allowed yet`, `none
+   inherited`, or `not published`;
+4. `ordinary_restoration_scope_token` — `no restoration yet`, `affected source surface ordinary`,
+   `affected search surface ordinary`, `affected archive surface ordinary`, `affected campus surface
+   ordinary`, `affected recipient record ordinary`, `split surfaces partially ordinary`, `fully
+   ordinary settled shell`, `local discretionary review closed`, `ordinary only absent new proof`,
+   `none inherited`, or `not published`;
+5. `post_restoration_reactivation_token` — `annotate maintenance only no reopen`, `reopen affected
+   surface on material proof`, `reopen on current owner action path`, `reopen on route-native expiry
+   or reappearance`, `reopen on corrected source state`, `reopen on official score or record
+   effect`, `redirect to current provider or source owner`, `new learner notice required`, `no
+   current action path`, `none inherited`, or `not published`.
+
+That is deliberately small. It is enough to decide whether residue remains learner-facing, name the
+live dependency for that decision, minimize public proof without falsifying the record, restore
+ordinary status only for the settled surface, and say what later fact would reactivate the shell. It
+is not enough to create a universal retention schedule, one public audit dossier, one global erasure
+rule, one ordinary-restoration certificate for all copies, or one rule that local retention must
+remain visible to the learner forever.
+
+## First residual-audit retention and ordinary-restoration assignments
+
+| Route or family | Retention / restoration truth now admitted | Why |
+|---|---|---|
+| Google Refresh Outdated Content route after approved, expired, denied, or cancelled state | `route-native history expired` or `ordinary maintenance log only`, `search surface still affected` only while a current Search result or snippet dependency remains, `replace with as-of residue pointer`, `affected search surface ordinary`, and `reopen on route-native expiry or reappearance` where current proof again fits the tool | the tool exposes states and expiry, updates Google Search only, and does not remove the source page or certify all-platform disappearance |
+| Google Search Console temporary-removal or snippet-clearing history after current and expired rows age | `learner-facing until current route closes`, then `local-only retention under record policy` or `minimized public residue pointer`; dependency is `search surface still affected` or `institution record obligation only`; restoration is `affected search surface ordinary` when the block, snippet, or owner-side action has settled | Search Console exposes current and expired histories for a limited past period and names temporary, expired, cleared, denied, and canceled states rather than a perpetual public case log |
+| Google personal-content / Results about you style route after a request is approved, partially removed, denied, or no longer actionable | `privacy or name-surface minimized`, `privacy or name-surface risk`, `redact learner name`, `collapse to surface class only`, and `new learner notice required` for a new matching result | Google requires URLs and may use screenshots, can remove results from Search, but says content may remain on the web, through links, social media, or other search engines |
+| campus source page, media item, file, redirect, or local-search route after correction is reflected | `learner-facing until current route closes`, then `local-only retention under record policy`; dependency is `source surface still affected` or `institution record obligation only`; minimization may `replace with as-of residue pointer`; restoration is `affected campus surface ordinary` | WiscWeb, Princeton, and Rowan separate local source/page/file/search work from broader search-engine, archive, and third-party persistence and expose local route boundaries rather than all-copy certificates |
+| campus emergency removal that involves a name, safety, harassment, accessibility, or sensitive personal surface | `privacy or name-surface minimized`, `privacy or name-surface risk`, `redact learner name`, `suppress screenshots from learner-facing view`, and `local-only retention under record policy` while any proof must be kept | WiscWeb’s emergency policy is about immediate local removal where safety/security may be at stake, but it also separates local action from public search-engine persistence |
+| Bing temporary block or content-removal route after the 90-day block settles or expires | `learner-facing until current route closes`, then `ordinary maintenance log only` or `local-only retention under record policy`; dependency is `search surface still affected`; restoration is `affected search surface ordinary`; reactivation is `reopen on route-native expiry or reappearance` | Bing exposes temporary block and 90-day expiry boundaries and requires source-side permanent-removal methods for durable disappearance |
+| Princeton custom-search or campus-search exclusion after Google/Bing/source truth changes | `minimized public residue pointer`, `search surface still affected`, `collapse to surface class only`, `affected campus surface ordinary`, and `annotate maintenance only no reopen` unless current search proof returns | Princeton separates its custom search, Google index, Bing blocks, local deletion, and Wayback persistence, so ordinary restoration may be campus-search-only |
+| Wayback Machine or Internet Archive review after exclusion is reflected or no further current route exists | `local-only retention under record policy`, `archive or platform surface still affected`, `retain evidence local-only`, `affected archive surface ordinary` only where the archive surface has settled, and `reopen affected surface on material proof` for new URL/time/control facts | Internet Archive requires concrete URL, time-period, control-period, and review information and does not guarantee outcome before review |
+| social, mirror, repost, or third-party platform copy after source/search/campus residue is minimized | `minimized public residue pointer`, `archive or platform surface still affected` or `no live dependency`, `collapse to surface class only`, `split surfaces partially ordinary`, and `redirect to current provider or source owner` only where a current route exists | external copies are controlled by their own owners or platforms; retaining learner-facing details from another surface can outlive any current institutional action path |
+| recipient record or downstream confirmation surface after external/public residue settles | `learner-facing until recipient confirmation settles`, then `local-only retention under record policy`; dependency is `recipient confirmation dependency` or `unresolved score or record effect`; restoration is `affected recipient record ordinary` or `fully ordinary settled shell` | recipient-side reflection can be the only remaining live learner-facing dependency even after search, source, or archive residue has become ordinary maintenance |
+| repeated later reflections after a shell has already restored ordinary status | `ordinary maintenance log only`, `no live dependency`, `purge learner-facing note after restoration`, `fully ordinary settled shell`, and `annotate maintenance only no reopen` unless the later fact creates a material live dependency | repeated disappearance, refresh, or non-adverse reflection is not live learner casework unless it changes a current owner/action path, score/record effect, proof state, or affected-surface route |
+
+## What this layer now makes portable
+
+Hot-exam recipient followup shells may now publish one tiny `XT0-XT4` layer after `XA0-XA4` when the
+archive needs to say not merely that **a residual-audit fact exists**, but that **the learner-facing
+residue must either remain visible for a named live dependency, be minimized into an as-of or
+local-only proof record, or restore the affected surface to ordinary status**.
+
+That means a shell may now truthfully say things like:
+
+- `the outdated-content history row expired; keep only an as-of Google-search residue pointer unless
+  a current result reappears`;
+- `the temporary-removal ticket remains locally retained, but the learner-facing note is minimized
+  because no current search-surface action depends on it`;
+- `the source page is ordinary again, while archive and social-copy residue remain separate
+  non-ordinary surfaces`;
+- `the recipient record has now settled, so downstream confirmation residue may move to local-only
+  retention under ordinary record policy`; or
+- `a later provider reflection is ordinary maintenance, not a reopened learner case, because it
+  creates no current owner action path, learner duty, score effect, or affected-surface route`.
+
+It still may not pretend:
+
+- that all residual audit notes stay public forever;
+- that one universal purge timer governs every route;
+- that minimization means the prior request, proof, or owner action never existed;
+- that a settled search surface makes archive, social, source, or recipient surfaces ordinary;
+- that provider history-row expiry erases prior action;
+- that local-only retention must remain learner-facing; or
+- that ordinary restoration is a permanent no-reopen certificate if material new proof or official
+  score/record effect later appears.
+
+## Why this matters for the larger archive
+
+The archive's education-with-AI program is not only about classroom AI use. It is also about
+preventing automated support systems from turning transparency into either surveillance or amnesia.
+
+This layer matters because residual audit trails are especially prone to automation error. A system
+can keep publishing a learner’s name, URL, screenshot, or ticket history long after no current
+action depends on it. Another system can delete the only local proof that an institution acted,
+leaving a learner unable to show that a correction, recipient confirmation, or search-route attempt
+happened. The point here is narrower: after a residual-audit fact has served its live learner-facing
+function, publish **why any residue remains visible**, **what can be minimized or moved
+local-only**, **which affected surface is ordinary again**, and **what material live dependency
+would reactivate the shell**. Everything else becomes ordinary maintenance, local record retention,
+privacy-aware minimization, or a new proof-bearing route.

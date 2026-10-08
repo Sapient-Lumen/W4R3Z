@@ -1,0 +1,495 @@
+# Design Toolkit (Reusable Primitives)
+
+Use these as “lego bricks” across scopes. Each module is a *minimal spec* with common failure modes.
+
+**Module keys:** `DEC` (decision & legitimacy), `ACC` (accountability & integrity), `LAW` (rule of law & remedy),  
+`OPEN` (transparency & participation), `SAFE` (coercion controls), `CAP` (capacity & finance), `IOP` (interfaces & infrastructure).
+
+---
+
+## DEC — Decision & deliberation (legitimacy generators)
+
+For how to **compose** these modules into a small “legitimacy pipeline” (by decision type and by scope), see `21-legitimacy-architecture.md`.
+
+**DEC-1 Elected body (representation)**
+- MUST: competitive elections; fair districts; transparent party finance; accessible voting.
+- Best at: scalable allocation and trade-offs.
+- Fails via: gerrymander, money/capture, polarization.
+
+**DEC-2 Sortition / citizens’ assembly (deliberation)**
+- SHOULD: stratified random selection; compensation; expert testimony rules; public evidence pack; duty-to-respond.
+- Best at: agenda-setting, constitutional review, high-salience long-horizon issues.
+- Design evidence base: see [BIB-OECD-DEL] (principles) and OECD comparative cases (use bibliography anchors).
+
+**DEC-3 Participatory budgeting (bounded allocation)**
+- MUST: fixed % or per-capita envelope; clear eligibility; public results; audit trail.
+- Best at: local capital + services where preferences differ by neighborhood.
+
+**DEC-4 Direct democracy (guard-railed)**
+- MAY: initiative/referendum with (a) constitutional review, (b) fiscal note, (c) deliberative phase, (d) signature integrity.
+- Fails via: manipulation, minority rights erosion, fiscal sabotage.
+
+**DEC-5 Electoral system as a design variable**
+- MUST: choose representation incentives intentionally (fragmentation vs. inclusion, localism vs. proportionality).
+- Anchor: see [BIB-IDEA-ESD].
+
+
+**DEC-6 Future generations review (long-horizon constraint)**
+- SHOULD: require “future impact statements” for major laws/plans; publish assumptions; mandate to trigger review or deliberation when long-term risks are ignored.
+- MAY: create a Future Council/Commission with independence protections and a duty-to-respond from elected bodies.
+- Anchor: see [BIB-UN-DFG].
+
+
+---
+
+## ACC — Accountability & integrity (anti-capture core)
+
+**ACC-1 Supreme audit / independent audit office**
+- MUST: publish audits; protected budget formula; access to records; follow-up requirements.
+- Anchors: see [BIB-INTOSAI-P10]; [BIB-INTOSAI-P1].
+- Pairs with: OPEN (budget/procurement transparency).
+- See: `32-oversight-institutions-and-follow-through.md` (independence + follow-through loop + OFRR).
+
+**ACC-2 Inspector general / anti-corruption bureau**
+- SHOULD: subpoena power; protected leadership removal rules; publish redacted findings.
+- Norm anchor: see [BIB-UNCAC].
+
+**ACC-3 Ombuds + low-cost remedy channel**
+- MUST: rapid timelines; compel agency response; publish patterns; protect complainants.
+- Anchor: see [BIB-VENICE-OMB-2019].
+- See: `32-oversight-institutions-and-follow-through.md` (independence + pattern reporting + follow-through).
+
+**ACC-4 Public integrity system (whole-of-government)**
+- SHOULD: integrity strategy, risk assessments, conflict-of-interest rules, enforcement, culture, and open engagement.
+- SHOULD: procurement integrity baseline + open contracting discipline (see `22-public-integrity-and-procurement.md`).
+- Anchor: see [BIB-OECD-PI].
+
+**ACC-5 Influence transparency (lobbying / revolving door)**
+- SHOULD: disclosure of lobbying and political finance; cooling-off periods; foreign influence transparency.
+- Anchor: see [BIB-OECD-LOB].
+
+**ACC-6 Oversight stack + follow-through (OFRR)**
+- MUST: treat oversight as a closed loop (publish findings → duty-to-respond → action plan → independent closure verification).
+- MUST: maintain an Oversight Files & Responses Register (OFRR) conforming to `IOP-9` (stable IDs + change logs).
+- See: `32-oversight-institutions-and-follow-through.md`.
+
+**ACC-7 Audit lotteries + incentive-compatible compliance**
+- SHOULD: mix **risk scoring** with **random selection** for audits/spot checks; publish the selection policy and keep an auditable trail.
+- SHOULD: create **compliance dividends** where high artifact-conformance earns faster approvals/disbursement and lighter reporting, while persistent nonconformance escalates to typed sanctions.
+- MAY: use bounded whistleblower rewards / integrity bounties with anti-retaliation and due process (avoid “bounty hunting” dynamics).
+- Evidence: randomized audits/monitoring can reduce leakage; public audit disclosure can shift electoral accountability (see [BIB-OLKEN-2007]; [BIB-FERRAZFINAN-2008]).
+
+
+**ACC-8 Safe harbor + self-correction (reduce concealment incentives)**
+- SHOULD: provide a typed **self-report** path for agencies and contractors to disclose artifact failures (missing receipts/logs, wrong `RULE-*` basis, data-release errors) using a correction `DRR` (often `DRR-TYPE: INTEGRITY`) that links the affected artifacts.
+- SHOULD: calibrate incentives—**timely self-report + correction** (and restitution where relevant) earns reduced sanctions and faster normalization; *no immunity* for intentional rights violations or serious harm.
+- MUST: log self-reports and their disposition in the OFRR so repeat patterns trigger deeper audit (see `32-oversight-institutions-and-follow-through.md`).
+- ASSUMPTION: safe-harbor design can shift behavior from concealment to correction when paired with credible audits (see `ACC-7`).
+
+---
+
+## LAW — Rule of law & dispute resolution (constraints + remedy)
+
+**LAW-1 Rights charter / constitution with justiciable rights**
+- MUST: participation rights, due process, equality, remedies; supremacy over ordinary law.
+
+**LAW-2 Independent courts + constitutional review**
+- SHOULD: appointments insulated from partisan capture; transparent decisions; enforceable remedies.
+
+**LAW-3 Administrative tribunals (fast specialized review)**
+- SHOULD: appealable; published decisions; accessible to non-lawyers.
+
+**LAW-4 Rule-of-law checklist method**
+- SHOULD: periodic “rule-of-law health check” using a stable rubric (legality, oversight, equality, access to justice, checks & balances).
+- Anchor: Venice Commission Updated Rule of Law Checklist (2025) ([BIB-VENICE-ROL-2025]).
+
+
+**LAW-5 Effective remedy (grievance + enforceable fixes)**
+- MUST: accessible complaint intake; time-bound escalation; independent review for high-risk harms.
+- MUST: for rights-/resource-affecting actions, issue a Decision Record/Receipt (`DRR`) with reasons + cited Rule IDs, portable reason code(s) (`RC-*`), and appeal lane(s) (`AL-*`).
+- MUST: when a challenge/review is decided, issue a review-result `DRR` that includes `AO-*` outcome code(s) + the challenged `DRR` (so contestation is measurable).
+- SHOULD: ombuds + tribunals to absorb volume; courts set rights standards.
+- SHOULD: for listings/watchlists/sanctions, publish a delisting path with independent review and time bounds (anchors: [BIB-UNSC-OMB]; [BIB-UNSC-OMB-PROC]).
+- Anchors (effective remedy): [BIB-UN-REMEDY-60147], [BIB-ICCPR], and [BIB-EU-CHARTER-A47].
+- See: `08-remedy-and-grievance.md`.
+
+**LAW-6 Emergency powers & derogations discipline**
+- MUST: formal declaration; typed and time-bounded powers; renewal votes; independent review remains on; publish an Emergency Measures Register.
+- SHOULD: heightened constraints on election changes; ex-post audits for emergency procurement and fiscal actions.
+- See: `23-emergency-governance-and-exceptions.md`.
+
+**LAW-7 Permissioning & approvals discipline**
+- MUST: publish criteria + legal basis (Rule IDs) and (where relevant) referenced `STD-*` IDs.
+- MUST: time bounds and queue discipline by permit type; define deadline-miss behavior (deemed approval only when safe; otherwise escalation or deemed denial with reasons).
+- MUST: maintain a Public Permit/Approval Register (PAR) conforming to `IOP-9` (stable IDs + change logs); publish aggregate queue stats.
+- SHOULD: risk-tier permits; fast paths for low-risk; randomized assignment/rotation for high-risk classes; separation-of-duties for review vs inspection.
+- See: `29-permissioning-and-approvals.md`.
+
+**LAW-8 Personal data governance (privacy baseline)**
+- MUST: lawful basis + purpose limitation for major processing; prohibit function creep without a new legal basis.
+- MUST: minimization + retention discipline linked to the records/retention system (`OPEN-9`).
+- MUST: enforceable rights channel for access/correction/objection with time bounds + appeal path (`LAW-5`).
+- MUST: maintain a Public Data Processing Register (DPR) conforming to `IOP-9` (stable IDs + change logs); link `DPR-*` IDs to `ADS-*` registers and `PROG-*` IDs where relevant.
+- SHOULD: high-risk processing gate for sensitive/coercion-adjacent or rights-affecting use cases.
+- Anchors: see [BIB-EU-GDPR]; [BIB-OECD-PRIV-2013]; [BIB-COE-C108].
+- See: `33-data-protection-and-personal-data-governance.md`.
+
+---
+
+## OPEN — Transparency & participation (public learning)
+
+**OPEN-1 FOI + proactive disclosure**
+- MUST: budgets, contracts, outcomes, audits; clear exemptions; appeal channel.
+- Rights anchor: see [BIB-COE-TROMSO].
+- Precondition: FOI works only if records are captured and retained (see `31-records-foi-and-government-memory.md`).
+- Norm anchor: see [BIB-OECD-OG].
+
+**OPEN-2 Open contracting**
+- SHOULD: publish all contracting stages with stable IDs; enable monitoring, competition, and anti-capture auditing.
+- See: `22-public-integrity-and-procurement.md` for Minimum Viable Procurement Integrity (MVPI).
+- Anchor: see [BIB-OCDS].
+
+**OPEN-3 Environmental information + participation rights**
+- SHOULD: access to environmental information, participation in decisions, access to justice.
+- Anchor: see [BIB-AARHUS].
+
+**OPEN-4 Public statistics office / measurement independence**
+- MUST: publish methods; protect independence; open microdata where safe; audit trails.
+- See: `26-epistemic-infrastructure-and-public-knowledge.md` (Minimum Viable Epistemic Infrastructure).
+
+
+**OPEN-5 Information integrity (public knowledge commons)**
+- MUST: publish official information with provenance (source, method, uncertainty); separate facts from policy arguments.
+- SHOULD: protect independence of official statistics and evaluation; publish corrections/errata; ensure equal access.
+- For digital/public discourse risks: align transparency and accountability with the Global Digital Compact ([BIB-UN-GDC]).
+- Anchor for statistics governance: see [BIB-UNFPOS].
+- See: `26-epistemic-infrastructure-and-public-knowledge.md`.
+
+
+**OPEN-6 Commons & ecological budgets**
+- SHOULD: define ecological ceilings/floors, publish registries (permits/emissions/discharges), allocate transparently, and provide standing + access to justice.
+- SHOULD: govern at ecological scales (watershed/airshed/bioregion) using compacts and joint bodies; prevent leakage with comparable measurement.
+- Anchors: see [BIB-UNGA-76300]; [BIB-SEEA-CF]; [BIB-SEEA-EA]; [BIB-UNECE-WATER]; [BIB-PARIS]; [BIB-CBD-GBF].
+- See also: `11-commons-and-ecological-governance.md`.
+
+**OPEN-7 Public rules register (legal legibility)**
+- MUST: a canonical public rules register with stable IDs, effective dates, and versioning (and binding guidance discipline).
+- SHOULD: decisions cite Rule IDs so enforcement logs and appeals can travel across systems.
+- See: `25-legal-legibility-and-rule-inventory.md`.
+
+**OPEN-8 Program register & evaluation commitments (testable governance)**
+- MUST: a public Program Register for major programs/policies with stable `PROG-*` IDs, legal basis (Rule IDs), predicted effects, and ≤10 success metrics (metric IDs where possible).
+- MUST: an Evaluation Registry with stable `EVAL-*` IDs, publication timelines, independence/conflict disclosure, and a decision hook (revise/scale/stop).
+- SHOULD: a small learning agenda (≤15 questions) and an annual evaluation plan mapping questions → `EVAL-*` IDs.
+- See: `28-program-register-and-evaluation-commitments.md`.
+- Implementation scaffold: use an OGP-style action-plan cycle with co-creation + “reasoned response” for public commitments (see [BIB-OGP-NHB-2025]).
+
+**OPEN-9 Records + government memory (FOI precondition)**
+- MUST: define “official records” (decisions + reasons + legal basis); capture official communications; retention schedule + legal holds.
+- Anchors: see [BIB-COE-TROMSO]; [BIB-ISO-15489-1]; [BIB-ICA-ACCESS-2012].
+- MUST: FOI/RTI request pipeline with Request IDs, time bounds, typed exemptions, disclosure log, and an appeal path.
+- SHOULD: archival transfer + declassification cadence for high-stakes categories.
+- See: `31-records-foi-and-government-memory.md`.
+
+**OPEN-10 Influence transparency (regulatory footprint)**
+- MUST: lobbying register + senior-official meeting log for major decisions; enforce revolving-door restrictions.
+- SHOULD: “legislative/regulatory footprint” linking consultation inputs → draft text → final Rule IDs (publish dispositions).
+- SHOULD: advisory committee/expert registers with conflicts, terms, and outputs.
+- Anchor: see [BIB-OECD-LOB]; integrity framing: [BIB-OECD-PI].
+
+
+---
+
+## SAFE — Coercion controls (minimum-violence constraint)
+
+**SAFE-1 Use-of-force policy codified in law**
+- MUST: legality; necessity + proportionality; de-escalation-first; medical aid; mandatory reporting for *all* force.
+- SHOULD: independent review of serious incidents; publish training doctrine + outcome audits (injury, complaints, racial equity).
+- Anchors: see [BIB-UN-UOF].  
+  UNODC resource book (implementation guidance): see [BIB-UNODC-UOF-RB].
+
+**SAFE-2 Independent oversight for coercive agencies**
+- MUST: independent appointment + protected budget; investigatory access (incl. documents/bodycam); complaint intake; referral power; public reporting.
+- SHOULD: separate (a) integrity/corruption and (b) rights/use-of-force review; random audits of stops/searches/detentions.
+
+**SAFE-3 Emergency powers protocol**
+- MUST: narrow scope; sunsets; renewal votes; judicial review; after-action report; compensation for rights infringements.
+- SHOULD: strict documentation for “exceptions” (incl. emergency procurement); publish an “exceptions ledger.”
+- See: `23-emergency-governance-and-exceptions.md` (Minimum Viable Emergency Governance + Emergency Measures Register).
+
+**SAFE-4 Custody & detention safeguards**
+- MUST: prompt access to counsel; medical screening; time limits + judicial review; recording of interviews; humane minimum conditions; independent inspection access.
+- SHOULD: a national preventive mechanism / regular visiting bodies for all places of detention.
+- Anchors: Nelson Mandela Rules (UNODC edition): see [BIB-MANDELA].  
+  Optional Protocol to CAT (OPCAT): see [BIB-OPCAT].  
+  Méndez Principles on Effective Interviewing (2021): see [BIB-MENDEZ-2021].
+  Code of Conduct for Law Enforcement Officials (OHCHR): see [BIB-UN-LEO-CODE].
+
+
+**SAFE-5 Security-sector governance (anti-politicization)**
+- MUST: clear mandates and separation (police vs intelligence vs military); civilian control with legislative oversight; transparent procurement; sanctions for partisan enforcement.
+- SHOULD: mutual aid agreements with audit trails; demilitarization defaults; rotation rules in sensitive units; protection for internal reporting.
+
+
+---
+
+## CAP — Capacity & finance (making decisions executable)
+
+**CAP-1 Civil service merit + professional administration**
+- MUST: protected hiring rules; transparent procurement; performance reviews; whistleblower protection.
+- Anchor: see [BIB-OECD-PSLC].
+
+**CAP-2 Budget system with readable public accounts**
+- MUST: comprehensible budget; program objectives; quarterly execution reporting; public balance sheet.
+
+**CAP-3 Fiscal transparency + risk management**
+- SHOULD: publish fiscal risks, contingent liabilities, and tax expenditures; independent fiscal scrutiny.
+- Anchor: see [BIB-IMF-FTC-2019].
+
+
+**CAP-4 Independent fiscal institution (IFI)**
+- SHOULD: independent forecasts/costings and rule compliance analysis; public methods; access to data.
+- Anchor: see [BIB-OECD-IFI].
+- See: `07-fiscal-and-budgetary-governance.md`.
+
+**CAP-5 Intergovernmental fiscal transfers + equalisation**
+- SHOULD: formula-based transfers; predictable timing; transparent objectives; “no unfunded mandate” rule; hard budget constraints (avoid bailout expectations).
+- See: `18-intergovernmental-finance.md`.
+- Anchor: see [BIB-OECD-IGFT-2025].
+- Anchor: see [BIB-IMF-IGF-2018].
+- Anchor: see [BIB-WB-IGFT-2007].
+
+**CAP-6 Public service leadership + capability**
+- SHOULD: workforce planning; competency frameworks; training pipelines; mobility; protected technical roles.
+- Anchor: see [BIB-OECD-PSLC].
+- See: `09-public-service-and-state-capacity.md`.
+
+**CAP-7 Regulatory policy + rulemaking quality**
+- MUST: public regulatory inventory; publish drafts; allow public comment; publish responses.
+- SHOULD: RIA for major rules; publish assumptions; ex-post review triggers (sunset/review clauses).
+- Anchor: see [BIB-OECD-RPG-0390].
+- Measurement anchor: see [BIB-WB-GIRG].
+- See: `13-regulation-utilities-and-soes.md`.
+
+**CAP-8 State-owned enterprise (SOE) governance**
+- SHOULD: explicit ownership policy; professional boards; separate ownership from regulation; competitive neutrality where relevant.
+- MUST: publish audited financials and state support/guarantees; consolidate fiscal risks (`CAP-3`).
+- Anchor: see [BIB-OECD-SOE-2024].
+- See: `13-regulation-utilities-and-soes.md`.
+
+---
+
+## IOP — Interfaces & infrastructure (how systems plug together)
+
+**IOP-1 Compacts (contract-like intergovernmental agreements)**
+- MUST: scope + competence boundaries; contributions and money discipline; transparency + audit; 3–10 metrics; enforcement ladder; dispute path; exit/sunset + continuity plan.
+- See: `19-compacts-and-cooperative-governance.md`.
+
+**IOP-2 Mutual recognition with minimum standards**
+- SHOULD: portability of credentials/benefits/judgments with rights safeguards.
+
+**IOP-3 Shared data schemas (interoperability with privacy)**
+- SHOULD: standard schemas for budgets/procurement/outcomes; role-based access; audit logs.
+
+**IOP-4 Digital public infrastructure as a public good**
+- SHOULD: open standards, open source where feasible, privacy-by-design, “do no harm”.
+- Anchors: DPG Standard [BIB-DPG-STANDARD] and UN framing of digital public goods: see [BIB-UN-DPG].
+
+**IOP-5 Automated decision systems (ADS) governance**
+- MUST: public `ADS-*` system register (purpose, legal basis, vendor/`CON-*`, data sources/`DPR-*`, risk tier, appeal `AL-*`).
+- **Canonical spec:** `42-automated-decision-systems-and-model-registry.md` (includes optional `MOD-*` model entries for reused/high-impact models).
+- MUST: audit logs, versioning, and **Reason Code(s)** (`RC-*`, portable taxonomy in `70-interoperability.md`) sufficient for accountability and remedy.
+- SHOULD: risk-tiered review (impact assessment + independent audit for high-stakes domains).
+- MUST: meaningful human review + fast appeal channel for rights-affecting decisions (`LAW-3`, `ACC-3`).
+- SHOULD: procurement clauses for auditability, portability/exit, security, and independent testing rights.
+- Anchors: see [BIB-OECD-AI]; [BIB-NIST-AIRMF]; [BIB-EU-AIACT]; [BIB-COE-AI].
+
+**IOP-6 Identity, civil registration, and recognition (who counts)**
+- MUST: universal CRVS backbone (birth/death at minimum) with practical access and late-registration paths.
+- MUST: legal identity issuance that avoids exclusion-by-design (non-discrimination, feasible enrollment without perfect documents).
+- MUST: correction + appeal pathways for identity/status errors (`LAW-5`).
+- MUST: purpose limitation + minimization + independent oversight to prevent function creep.
+- SHOULD: cross-boundary document authentication / recognition rules (default recognize; document exceptions).
+- SHOULD: open standards for digital credentials and portability (avoid proprietary lock-in).
+- Anchors: see [BIB-UN-LIA]; [BIB-WB-ID-PRINCIPLES]; [BIB-HCCH-APOSTILLE]; [BIB-W3C-VC2].
+
+**IOP-7 Mutual aid & serious incident protocol (cross-scope safety operations)**
+- MUST: mutual-aid activation log (who requested/assisted/command/legal basis/time bounds/cost rules).
+- MUST: independent serious-incident pipeline (case IDs, evidence integrity, public timelines).
+- See: `24-mutual-aid-and-serious-incident-protocol.md`.
+
+**IOP-8 Standards register & open standards governance (technical rules as governance)**
+- MUST: a **Public Standards Register (PSR)** for any standard that is required for access, incorporated by reference, or required in essential procurement; include pinned versions and transition/deprecation plans.
+- MUST: conformance statement + test/validator link (standards without tests are aspirational).
+- MUST: incorporated standards are publicly accessible (avoid “paywalled law”); PRR Rule IDs MUST reference PSR `STD-*` IDs.
+- SHOULD: open, balanced process with conflict disclosure and a light appeals route; disclose licensing/IP terms.
+- See: `27-standards-and-technical-governance.md`.
+
+**IOP-9 Public registers & stable IDs (register pattern)**
+- MUST: any governance register (rules, standards, data releases, compacts, emergency measures, transfers, ADS) assigns stable IDs, publishes machine-readable entries, and keeps a change log (no silent revisions).
+- MUST: IDs are join-keys referenced in notices/reasons, audits, and remedies.
+- SHOULD: rights-affecting decisions issue a short **decision receipt** with a stable Decision ID (`DRR`), citing Rule IDs, **Reason Code(s)** (`RC-*`), evidence/release IDs, and the appeal lane (`AL-*`) / time limits (see `08-remedy-and-grievance.md`, `31-records-foi-and-government-memory.md`).
+- SHOULD: exemptions and non-public entries are typed, justified, and time-bounded where feasible.
+- See: `70-interoperability.md` (register pattern) and the specific register memos (`18`, `19`, `23`, `25`, `26`, `27`, `06`).
+
+
+**IOP-10 Scope assignment & mandate transfer protocol (subsidiarity made auditable)**
+- MUST: creating a new authority, delegating decision rights in a compact, changing boundaries, or transferring a mandate produces a public `DRR` tagged `DRR-TYPE: SCOPE` that records:
+  - the scope tests (local knowledge, spillovers, scale economies, rights/capture risk, enforceability),
+  - funding alignment (who pays/bears residual risk),
+  - remedy continuity (where appeals go during/after transition),
+  - the competence-ledger change (old → new entry/version) and effective date,
+  - the review/sunset trigger (when we reconsider the assignment).
+- SHOULD: cite the smallest credible evidence (spillover mapping, scale/capex constraints, capacity floor) rather than narratives.
+- See: `14-scope-ladder.md`, `17-jurisdiction-formation-and-boundaries.md`, `70-interoperability.md`. Anchors: [BIB-FAGUET-2014-WORLDDEV]; [BIB-WEINGAST-MPF-1995-JLEO]; [BIB-OSTROM-POLYCENTRIC-2010].
+
+**IOP-11 Competence ledger & mandate registry (public jurisdiction map)**
+- MUST: publish and maintain a versioned competence ledger of **Unit IDs** that states who can decide what, who funds it, and where remedy goes.
+- MUST: include functional authorities / special districts (otherwise they become “hidden government”).
+- SHOULD: publish a ledger staleness report (entries not reviewed in X months) and treat it as a governance risk.
+- SHOULD: tag fiscal-facing mandates using a shared taxonomy (baseline: **COFOG**) to keep scope transfers auditable.
+- See: `34-competence-ledger-and-mandate-registry.md`, `70-interoperability.md`.
+- Anchors: [BIB-UNSD-COFOG]; [BIB-IMF-GFSM-2014]; [BIB-USCENSUS-SPECIALDIST-2022].
+
+**IOP-12 Transfer register & conditionality log (make money portable and contestable)**
+- MUST: publish a versioned **Transfer Register** of `TRF` objects for all material intergovernmental flows (formula, amounts, timing, payer/recipient Unit IDs, and any conditions).
+- MUST: type any conditionality and publish withholding/clawback events with reasons and a dispute path (no discretionary fiscal punishment).
+- SHOULD: link transfers to compacts (`CMP`) where relevant and to `DRR-TYPE: SCOPE` when transfers finance mandate moves.
+- See: `35-transfer-register-and-conditionality.md`, `18-intergovernmental-finance.md`, `70-interoperability.md`.
+- Anchors: [BIB-OECD-IGFT-2025]; [BIB-IMF-IGF-2018]; [BIB-IMF-FTC-2019].
+
+
+**IOP-13 Appeal lanes & redress registry (ALR) (contestability interface)**
+- MUST: publish a versioned **Redress Registry** of `AL-*` lanes (coverage, deadlines, filing channels, remedies, interim protection, costs/waivers, and independence notes).
+- MUST: every enforceable rights-/resource-affecting decision receipt (`DRR`) cites ≥1 `AL-*` lane that can provide **effective relief** (or a narrow, logged exception).
+- MUST: lane changes publish a crosswalk (old → new) and effective date; scope/competence changes (`DRR-TYPE: SCOPE/COMPETENCE`) include a remedy-continuity plan mapping decisions to lanes.
+- SHOULD: define an urgent-protection lane for high-stakes harms (stay/suspension or equivalent) and publish aggregate outcomes (`AO-*`) + timeliness/backlog signals by lane.
+- See: `36-appeal-lanes-and-redress-registry.md`, `08-remedy-and-grievance.md`, `31-records-foi-and-government-memory.md`, `70-interoperability.md`.
+- Anchors: [BIB-EU-CHARTER-A47]; [BIB-COE-GOODADMIN-2007]; [BIB-UN-REMEDY-60147]; [BIB-VENICE-OMB-2019].
+
+
+**IOP-14 Claims & evidence discipline (make predictions joinable)**
+- MUST: major programs/policies maintain ≥1 testable claim (`CLM-*`) that names the outcome, metrics, baseline, target range, plausible harms/guardrails, and a review trigger.
+- MUST: evaluations (`EVAL-*`) cite the `CLM-*` IDs they test and publish a response (program revision or follow-on `DRR`) that updates claim status (supported/contested/falsified/retired).
+- SHOULD: decision receipts (`DRR`) cite `CLM-*` when asserting predictions, alongside the evidence docket (`REL/EVAL/OFR/EXT`).
+- See: `37-claims-evidence-and-update-discipline.md`, `28-program-register-and-evaluation-commitments.md`, `03-metrics-and-evidence.md`, `70-interoperability.md`.
+- Anchors: [BIB-UK-MAGENTA-2025]; [BIB-US-EVIDENCEACT-EVALGOV]; [BIB-OECD-GAAG2025-EXPOST].
+
+
+**IOP-15 Open contracting (make procurement joinable)**
+- MUST: publish a Contracting & Procurement Register keyed by a stable `CON` (prefer OCID where using OCDS) covering tender→award→delivery→close-out, including amendment/change-order logs.
+- MUST: awards and major amendments cite a `DRR` (legal basis + reason) and name the `AL-*` lane(s) for bid protest / supplier sanctions.
+- SHOULD: link procurement to funding (`TRF` when transferred) and programs/claims (`PROG` / `CLM`) when procurement is part of a policy intervention.
+- See: `38-contracting-and-procurement-register.md`, `22-public-integrity-and-procurement.md`, `70-interoperability.md`, `07-fiscal-and-budgetary-governance.md`.
+- Anchors: [BIB-OCDS]; [BIB-OECD-PROC]; [BIB-UNCAC].
+
+
+---
+
+## Cross-cutting anti-capture patterns (use everywhere)
+- **Budget independence** for watchdogs (formula-based; difficult to starve quietly).
+- **Staggered terms + transparent appointments** with multi-branch approval.
+- **Rotation + cooling-off periods** for high-risk roles.
+- **Randomized audits + red-team reviews** for programs with discretion.
+
+
+## GATE — Shipping discipline (meta-engineering)
+
+**GATE-0 Problem framing (fast, written, required for anything that expands discretion)**
+Before designing a new rule/program/system, write (and publish where feasible) one tight page:
+
+- **Problem:** what harm/failure mode are we fixing (and what happens if we do nothing)?
+- **Scope/authority:** which unit and competence boundary owns this?
+- **Threat scan:** pick the top 3 plausible `TM-*` failures and name the smallest design countermeasure for each.
+- **Baseline:** pick ≤10 metric IDs (and, where possible, the Release IDs) that will govern revision/sunset.
+- **Non-goals:** what this does *not* attempt to solve (prevents mandate creep).
+
+**GATE-1 Pre-launch design review (one page, required for high-impact changes)**
+Before shipping a new rule/program/system (especially anything coercive, rights-affecting, or high-budget), publish a short review that answers:
+
+- **Authority:** which competence-ledger entry + `RULE-*` IDs authorize this?
+- **Contestability:** what is the appeal lane (`AL-*`), and what is the Decision Receipt / `DRR` plan?
+- **Openness:** what registers/releases will be public by default (and what exemptions are typed/time-bounded)?
+- **Threats:** which `TM-*` failure modes are plausible, and which mitigations are in the design?
+- **Metrics:** which ≤10 metric IDs will govern revisions (and what is the decision hook)?
+- **Exit:** what is the rollback/sunset plan (and what happens to ongoing cases/contracts/data)?
+
+This prevents “policy by slide deck” and keeps the archive’s primitives operational.
+
+**GATE-2 Post-launch reality check (fast, published)**
+After deploying a high-impact rule/program/system, publish a short review on a fixed cadence (e.g., 90 days, then annually):
+
+- **What happened vs. predicted:** the ≤10 metric IDs used at launch, what moved, and what didn’t.
+- **Harms and contestation:** incidents (`DAG-4`), appeals/complaints volume, time-to-remedy, and any pattern findings (`OFR-*`).
+- **Exceptions and drift:** emergency/exception usage, scope expansion, and any new data processing (`DPR-*`) since launch.
+- **Procurement and vendor claims:** uptime/outages, audit results, portability/exit readiness (no “forever pilots”).
+- **Decision hook:** keep / revise / scale / sunset, with a dated next review.
+
+This keeps “ideal” designs reversible and forces learning loops into the default lifecycle.
+
+
+
+**IOP-16 Public Rules Register (make enforceable norms queryable)**
+- MUST: maintain a Public Rules Register (PRR) with stable `RULE` IDs, effective windows, versioning, and `AL-*` appeal lanes.
+- MUST: enforcement-facing `DRR`s cite `RULE` **versions/as-of**; prohibit “dark enforcement” (rules that are enforced but not findable).
+- SHOULD: flag guidance that functions like law (`GLAW`) until clarified; sunset low-value rules.
+- MAY: publish machine-readable legal interchange and derivative “rules as code” implementations, explicitly subordinate to the legal text.
+- See: `39-rulebook-and-instruments-registry.md`, `25-legal-legibility-and-rule-inventory.md`, `31-records-foi-and-government-memory.md`, `70-interoperability.md`.
+- Anchors: [BIB-OECD-RPG-0390]; [BIB-OASIS-AKN-2018]; [BIB-CIGI-RAC-2025].
+
+
+**IOP-17 Participation & Deliberation Register (make legitimacy inputs joinable)**
+- MUST: maintain a Public Participation & Deliberation Register keyed by stable `ENG` IDs for any process intended to influence public decisions (consultations, PB, citizens' assemblies, etc.).
+- MUST: every `ENG` entry names a **decision hook** (authorizing or target `DRR`) and a **duty-to-respond** deadline; the official response MUST be a linked `DRR`.
+- MUST: publish a process complaint lane (`AL-*`) and link any facilitation/platform procurement (`CON`) and funding (`TRF`) when relevant.
+- SHOULD: for representative deliberative processes, publish sampling and inclusion parameters (aggregates; protect participant safety) and evaluate against minimum standards.
+- See: `41-public-participation-and-deliberation-register.md`, `21-legitimacy-architecture.md`, `70-interoperability.md`.
+- Anchors: [BIB-OECD-CITPART-2022]; [BIB-OECD-DEL-EVAL-2021]; [BIB-IAP2-COREVALUES].
+**IOP-18 Enforcement & custody event logging (no dark enforcement)**
+- MUST: maintain an Enforcement & Custody Event Register keyed by `ENF` IDs for any action affecting liberty/property/bodily integrity (stop/search/seizure/arrest/detention/use-of-force).
+- MUST: subjects receive a Decision Receipt that cites `ENF-*`, `RULE-*` basis (as-of), and the complaint/review lane `AL-*`—unless a documented safety exception applies.
+- MUST: custody episodes are logged start→end with welfare/medical checkpoints; serious incidents trigger independent pipeline and link to `OFR-*`.
+- SHOULD: publish a de-identified public release (with `REL-*` revision logs) plus typed FOI exemptions for protected details.
+- **Canonical spec:** `43-enforcement-and-custody-event-register.md` (see also `05-...`, `24-...`, `31-...`, `36-...`, `70-...`).
+
+**IOP-19 Identity & credential gate transparency (make access gates auditable)**
+- MUST: maintain an Identity & Credential Systems Register keyed by `IDN` IDs for any identity proofing / credential issuance / verification system used to gate access to public services or status.
+- MUST: any denial/restriction due to identity/eligibility MUST issue a `DRR` receipt citing `RULE` basis (as-of), the relevant `IDN-*`, and the appeal lane `AL-*` (and `ADS-*`/`MOD-*` when automation is material).
+- MUST: link identity-gate procurement (`CON-*`) and conditional funding (`TRF-*`) when relevant; link the data processing activity (`DPR-*`) and correction deadlines.
+- SHOULD: publish explicit “prohibited joins” to prevent identity infrastructure from becoming stealth surveillance; cross-boundary recognition should be governed by compacts (`CMP-*`) and prefer verifiable claims where feasible.
+- **Canonical spec:** `44-identity-credential-and-eligibility-systems-register.md` (see also `12-...`, `33-...`, `36-...`, `39-...`, `42-...`, `70-...`).
+- Anchors: [BIB-NIST-800-63-4]; [BIB-OECD-DIGID-REC]; [BIB-W3C-VC2].
+
+
+
+**IOP-20 Emergency Measures Register (no “dark emergency government”)**
+- MUST: publish an Emergency Measures Register keyed by stable `EMR` IDs (episode + measures) with explicit sunsets and renewal/termination receipts.
+- MUST: declaration/renewal/termination are `DRR` decisions citing `RULE` versions/as-of and relevant `AL-*` lanes.
+- MUST: any emergency exception in procurement (`CON`), data access (`DPR`), coercion (`ENF`), transfers (`TRF`), or permitting (`PAR`) MUST cite `EMR-*`.
+- SHOULD: require after-action review and closure artifacts (`OFR-*`/`EVAL-*`).
+- **Canonical spec:** `45-emergency-measures-register.md` (see also `23-...`, `70-...`, `80-...`).
+
+
+**IOP-21 Influence & Interests Register (make influence joinable)**
+- MUST: maintain a public Influence & Interests Register keyed by `INF` (influence interactions: meetings/contacts/gifts/travel above threshold) and `INT` (interest declarations / COI management actions).
+- MUST: for high-risk decision classes, issuing `DRR`s MUST either cite relevant `INF-*` disclosures or declare `INF: NONE DECLARED` (ex parte disclosure discipline).
+- MUST: recusals / ethics determinations that alter decision authority MUST be issued as `DRR`s citing the relevant `INT-*` and (when needed) competence-ledger updates.
+- SHOULD: link procurement (`CON-*`) and transfer conditionality (`TRF-*`) to relevant `INF/INT` integrity joins where conflicts exist.
+- **Canonical spec:** `46-influence-and-interests-register.md` (see also `22-...`, `32-...`).
+
+
+**IOP-22 Service Catalog & Access Journeys Register (make service power legible)**
+- MUST: maintain a public Service Catalog & Access Journeys Register keyed by stable `SRV` IDs (service definitions, not personal cases).
+- MUST: each `SRV` entry cites `RULE` basis (versions/as-of), owning Unit ID, channels/fees/time commitments, and `AL-*` remedy lanes.
+- MUST: rights-/resource-affecting decisions inside a service MUST issue `DRR` receipts that cite `SRV-*` + `RULE-*` (as-of) + `AL-*` (and `IDN` / `ADS` / `CON` / `TRF` / `EMR` when relevant).
+- SHOULD: publish a small “burden budget” (step/doc/time/abandonment/rework) keyed by `SRV-*` and feed it into delivery metrics (CAD-2).
+- **Canonical spec:** `47-service-catalog-and-access-journeys-register.md` (see also `09-...`, `31-...`, `08-...`, `70-...`).
+- Anchors: [BIB-RSF-ADMINBURDEN-2018]; [BIB-OECD-GPP-SERVICE-2022]; [BIB-UK-SERVICESTANDARD].
+
+
+**IOP-23 Asset & Infrastructure Register (make physical power auditable)**
+- MUST: maintain a public Asset & Infrastructure Register keyed by stable `AST` IDs for material public/critical assets.
+- MUST: capital approvals/awards and major maintenance deferrals MUST cite affected `AST-*` (and link `CON-*` / `PROG-*` / `TRF-*` / `EMR-*` when relevant).
+- SHOULD: publish condition grades + inspection cadence, and a backlog estimate, with methods referenced via `REL-*` releases (prevents “hand-wavy” condition claims).
+- SHOULD: link critical service outages to `AST-*` and affected `SRV-*` for accountability and learning.
+- **Canonical spec:** `48-asset-and-infrastructure-register.md` (anchors: [BIB-OECD-INFRA-2020]; [BIB-IMF-PIMA-2022]; [BIB-ISO-55000]).
