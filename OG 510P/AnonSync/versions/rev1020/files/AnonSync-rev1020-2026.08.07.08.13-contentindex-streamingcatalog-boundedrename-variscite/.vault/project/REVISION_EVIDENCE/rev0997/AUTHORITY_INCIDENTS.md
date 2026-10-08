@@ -1,0 +1,8 @@
+# Rev0997 authority incidents
+
+- A competing validator erased the first frozen worktree and partial GCC build. Those results were excluded. The retained source was reconstructed from external Git objects, then frozen at commit `9405e70e352e64eb1aa67895aa6e055443905573` and tree `856d26aa73cd0b68b326f22b6efac4db9f87bfd7`.
+- Two complementary unsealed branches existed: direct source-frame/TLS ownership and borrowed receiver staging. They were reviewed as separate patches and merged only after confirming generation-7 wire compatibility and complementary authority boundaries.
+- The sealed rev0996 package carried stale visible goshenite/20.48 labels despite petalite/20.52 lineage and gate records. Rev0997 corrects the visible handoff without rewriting the historical incident record.
+- Audit imports created four ignored `tools/__pycache__/*.pyc` files. A preseal projection incorrectly counted them. They were deleted, bytecode writing was disabled for sealing tools, and the projection was regenerated as 607 files / 27,989,270 bytes. No contaminated projection or bytecode is release authority.
+- The first direct sanitizer folder-owner measurement was launched outside the build working directory and crossed the tool boundary. Its empty output is excluded. The build-directory rerun passed 536 checks in 28.20 seconds at 1,688,636 KiB peak RSS.
+- A preseal registry intentionally observed the two rev0997 focused audits fail only at their final placeholder checks. The final 279-test registry and independent 3-test documentation reproof passed after archive identity and validation prose were sealed.

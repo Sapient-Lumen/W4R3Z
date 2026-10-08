@@ -1,0 +1,1747 @@
+diff --git src/anonsync_sync.cpp src/anonsync_sync.cpp
+index 47d310d..5ccb588 100644
+--- src/anonsync_sync.cpp
++++ src/anonsync_sync.cpp
+@@ -881,0 +882,2 @@ void append_cutpoint_json(
++           << ",\"remote_apply_resume_after_path\":"
++           << json_quote(cutpoint.remote_apply_resume_after_path)
+@@ -975,0 +978,15 @@ void append_pass_json(
++        << ",\"remote_payload_snapshot_observations\":"
++        << report->remote_payload_snapshot_observation_count
++        << ",\"remote_payload_snapshot_entries\":"
++        << report->remote_payload_snapshot_entry_count
++        << ",\"deferred_remote_payload_candidates\":"
++        << report->deferred_remote_payload_candidate_count
++        << ",\"remote_apply_revalidated_catalog_predecessors\":"
++        << report
++               ->remote_apply_revalidated_catalog_predecessor_count
++        << ",\"remote_apply_started_after_path\":"
++        << json_quote(report->remote_apply_started_after_path)
++        << ",\"remote_apply_resume_after_path\":"
++        << json_quote(report->remote_apply_resume_after_path)
++        << ",\"remote_apply_wrapped_projection\":"
++        << json_bool(report->remote_apply_wrapped_projection)
+@@ -2235,0 +2253,14 @@ void append_local_share_creation_json(
++        << ",\"remote_payload_snapshot_observations\":"
++        << pass.remote_payload_snapshot_observation_count
++        << ",\"remote_payload_snapshot_entries\":"
++        << pass.remote_payload_snapshot_entry_count
++        << ",\"deferred_remote_payload_candidates\":"
++        << pass.deferred_remote_payload_candidate_count
++        << ",\"remote_apply_revalidated_catalog_predecessors\":"
++        << pass.remote_apply_revalidated_catalog_predecessor_count
++        << ",\"remote_apply_started_after_path\":"
++        << json_quote(pass.remote_apply_started_after_path)
++        << ",\"remote_apply_resume_after_path\":"
++        << json_quote(pass.remote_apply_resume_after_path)
++        << ",\"remote_apply_wrapped_projection\":"
++        << json_bool(pass.remote_apply_wrapped_projection)
+diff --git src/sync_replica_folder_scan_owner.cpp src/sync_replica_folder_scan_owner.cpp
+index f8e02b6..5bcbdac 100644
+--- src/sync_replica_folder_scan_owner.cpp
++++ src/sync_replica_folder_scan_owner.cpp
+@@ -129,2 +129,3 @@ constexpr std::string_view kFairScanMetaSchemaSql =
+-// long enough to prove the complete v2 cutpoint and add an independently
+-// attested continuation journal transactionally.
++// long enough to prove the complete v2 cutpoint, add the authenticated scan
++// journal plus independent remote scheduling cursor, and migrate directly to
++// the current v4 digest domain transactionally.
+@@ -150 +151 @@ constexpr std::string_view kPreviousEntriesSchemaSql = kEntriesSchemaSql;
+-// v3. A near-match is neither repaired nor partially adopted.
++// v4. A near-match is neither repaired nor partially adopted.
+@@ -1871,0 +1873,108 @@ void insert_genesis_scan_progress_or_throw(
++struct FolderRemoteApplyProgressHead final {
++    std::string resume_after_path;
++
++    bool operator==(const FolderRemoteApplyProgressHead&) const = default;
++};
++
++void validate_remote_apply_progress_path_or_throw(
++    std::string_view canonical_path,
++    const SyncReplicaFolderScanLimits& limits,
++    const std::string& label) {
++    if (canonical_path.empty()) return;
++    validate_scan_progress_path_or_throw(
++        canonical_path, limits, label + " remote-apply cursor");
++}
++
++[[nodiscard]] FolderRemoteApplyProgressHead
++load_remote_apply_progress_head_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaFolderScanLimits& limits,
++    const std::string& label) {
++    SyncSqliteStmt progress = sqlite_prepare_or_throw(
++        db,
++        "SELECT resume_after_path FROM "
++        "main.sync_replica_folder_catalog_remote_apply_progress WHERE id=1;",
++        label + " remote-apply progress prepare");
++    if (step_row_or_done_or_throw(
++            progress.stmt,
++            label + " remote-apply progress step") != SQLITE_ROW) {
++        throw std::runtime_error(
++            label + " remote-apply progress singleton is missing");
++    }
++    FolderRemoteApplyProgressHead head;
++    head.resume_after_path = sqlite_column_text_or_throw(
++        progress.stmt, 0, 4096U, label + " remote-apply cursor");
++    if (step_row_or_done_or_throw(
++            progress.stmt,
++            label + " remote-apply progress trailing step") != SQLITE_DONE) {
++        throw std::runtime_error(
++            label + " remote-apply progress singleton is not unique");
++    }
++    validate_remote_apply_progress_path_or_throw(
++        head.resume_after_path, limits, label);
++    return head;
++}
++
++void insert_genesis_remote_apply_progress_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& label) {
++    sqlite_exec_or_throw(
++        db,
++        "INSERT INTO "
++        "main.sync_replica_folder_catalog_remote_apply_progress("
++        "id,resume_after_path) VALUES(1,'');",
++        label + " remote-apply progress genesis");
++}
++
++[[nodiscard]] FolderRemoteApplyProgressHead
++advance_remote_apply_progress_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaFolderScanLimits& limits,
++    const FolderRemoteApplyProgressHead& expected,
++    std::string next_resume_after_path,
++    const std::string& label) {
++    if (next_resume_after_path.empty()) {
++        throw std::invalid_argument(
++            label + " remote-apply cursor cannot advance to an empty path");
++    }
++    validate_remote_apply_progress_path_or_throw(
++        expected.resume_after_path, limits, label + " expected");
++    validate_remote_apply_progress_path_or_throw(
++        next_resume_after_path, limits, label + " next");
++
++    SyncSqliteTransaction transaction(
++        db, label + " remote-apply cursor publication",
++        SyncSqliteTransactionMode::Immediate);
++    const FolderRemoteApplyProgressHead current =
++        load_remote_apply_progress_head_or_throw(
++            db, limits, label + " current");
++    if (current != expected) {
++        throw std::runtime_error(
++            label + " remote-apply cursor changed before publication");
++    }
++
++    SyncSqliteStmt update = sqlite_prepare_or_throw(
++        db,
++        "UPDATE "
++        "main.sync_replica_folder_catalog_remote_apply_progress SET "
++        "resume_after_path=? WHERE id=1 AND resume_after_path=?;",
++        label + " remote-apply progress update prepare");
++    sqlite_bind_text_or_throw(
++        update.stmt, 1, next_resume_after_path, label);
++    sqlite_bind_text_or_throw(
++        update.stmt, 2, expected.resume_after_path, label);
++    sqlite_step_done_or_throw(
++        update.stmt, label + " remote-apply progress update step");
++
++    const FolderRemoteApplyProgressHead staged =
++        load_remote_apply_progress_head_or_throw(
++            db, limits, label + " staged");
++    const FolderRemoteApplyProgressHead wanted{next_resume_after_path};
++    if (staged != wanted) {
++        throw std::runtime_error(
++            label + " staged remote-apply cursor did not advance exactly");
++    }
++    transaction.commit();
++    return staged;
++}
++
+@@ -1909 +2018 @@ void migrate_legacy_catalog_or_throw(
+-        "SELECT id,3,folder_id,absolute_root_path,root_attestation_digest,"
++        "SELECT id,4,folder_id,absolute_root_path,root_attestation_digest,"
+@@ -1928,0 +2038 @@ void migrate_legacy_catalog_or_throw(
++    insert_genesis_remote_apply_progress_or_throw(db, label);
+@@ -1983 +2093 @@ void migrate_previous_catalog_or_throw(
+-        "SELECT id,3,folder_id,absolute_root_path,root_attestation_digest,"
++        "SELECT id,4,folder_id,absolute_root_path,root_attestation_digest,"
+@@ -2002,0 +2113 @@ void migrate_previous_catalog_or_throw(
++    insert_genesis_remote_apply_progress_or_throw(db, label);
+@@ -2019,0 +2131,83 @@ void migrate_previous_catalog_or_throw(
++void migrate_fair_scan_catalog_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& folder_id,
++    const std::string& root_path,
++    const std::string& root_attestation_digest,
++    const SyncReplicaSqliteDeploymentBinding* deployment_binding,
++    const std::string& label,
++    bool detached_binding) {
++    const SyncReplicaFolderCatalogSnapshot fair_scan =
++        load_fair_scan_catalog_or_throw(
++            db, folder_id, root_path, root_attestation_digest,
++            deployment_binding, label + " v3 proof", detached_binding);
++    const FolderScanProgressHead retained_scan_progress =
++        load_scan_progress_head_or_throw(
++            db, fair_scan.limits, label + " v3 scan-progress proof");
++
++    // The v3 entries and authenticated scan journal already have their final
++    // representation. Rename only metadata, add the independent scheduling
++    // singleton, and change the catalog digest domain. This avoids copying a
++    // potentially large journal merely to add state that authorizes no content.
++    sqlite_exec_or_throw(
++        db,
++        "ALTER TABLE main.sync_replica_folder_catalog_meta "
++        "RENAME TO sync_replica_folder_catalog_meta_v3;",
++        label + " v3 metadata rename");
++    sqlite_exec_or_throw(
++        db, std::string(kMetaSchemaSql), label + " create v4 metadata");
++    sqlite_exec_or_throw(
++        db, std::string(kRemoteApplyProgressSchemaSql),
++        label + " create remote-apply progress");
++
++    const std::string migrated_digest = catalog_digest(
++        fair_scan.folder_id, fair_scan.absolute_root_path,
++        fair_scan.root_attestation_digest, fair_scan.limits,
++        fair_scan.state_generation, fair_scan.entries);
++    SyncSqliteStmt insert_meta = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_folder_catalog_meta("
++        "id,schema_version,folder_id,absolute_root_path,"
++        "root_attestation_digest,state_generation,max_catalog_entries,"
++        "max_catalog_path_bytes,max_payload_bytes,entry_count,"
++        "catalog_path_bytes,catalog_digest)"
++        "SELECT id,4,folder_id,absolute_root_path,root_attestation_digest,"
++        "state_generation,max_catalog_entries,max_catalog_path_bytes,"
++        "max_payload_bytes,entry_count,catalog_path_bytes,? "
++        "FROM main.sync_replica_folder_catalog_meta_v3 WHERE id=1;",
++        label + " migrated metadata prepare");
++    sqlite_bind_text_or_throw(
++        insert_meta.stmt, 1, migrated_digest, label);
++    sqlite_step_done_or_throw(
++        insert_meta.stmt, label + " migrated metadata step");
++    insert_genesis_remote_apply_progress_or_throw(db, label);
++    sqlite_exec_or_throw(
++        db,
++        "DROP TABLE main.sync_replica_folder_catalog_meta_v3;",
++        label + " retire v3 metadata");
++
++    const SyncReplicaFolderCatalogSnapshot migrated = load_catalog_or_throw(
++        db, folder_id, root_path, root_attestation_digest,
++        deployment_binding, label + " migrated proof", detached_binding);
++    SyncReplicaFolderCatalogSnapshot expected = fair_scan;
++    expected.catalog_digest = migrated_digest;
++    if (migrated != expected) {
++        throw std::runtime_error(
++            label + " migrated catalog changed v3 authority");
++    }
++    const FolderScanProgressHead migrated_scan_progress =
++        load_scan_progress_head_or_throw(
++            db, migrated.limits, label + " migrated scan-progress proof");
++    if (migrated_scan_progress != retained_scan_progress) {
++        throw std::runtime_error(
++            label + " migration changed authenticated scan continuation");
++    }
++    const FolderRemoteApplyProgressHead remote_apply_progress =
++        load_remote_apply_progress_head_or_throw(
++            db, migrated.limits,
++            label + " migrated remote-apply progress proof");
++    if (!remote_apply_progress.resume_after_path.empty()) {
++        throw std::runtime_error(
++            label + " migrated remote-apply progress is not genesis");
++    }
++}
++
+@@ -2112 +2306 @@ void initialize_or_attest_catalog_or_throw(
+-            "VALUES(1,3,?,?,?,0,?,?,?,0,0,?);",
++            "VALUES(1,4,?,?,?,0,?,?,?,0,0,?);",
+@@ -2127,0 +2322 @@ void initialize_or_attest_catalog_or_throw(
++        insert_genesis_remote_apply_progress_or_throw(db, label);
+@@ -2134 +2329 @@ void initialize_or_attest_catalog_or_throw(
+-                deployment_binding, label + " catalog v1 to v3 migration",
++                deployment_binding, label + " catalog v1 to v4 migration",
+@@ -2139 +2334,6 @@ void initialize_or_attest_catalog_or_throw(
+-                deployment_binding, label + " catalog v2 to v3 migration",
++                deployment_binding, label + " catalog v2 to v4 migration",
++                detached_binding);
++        } else if (version == kFairScanSchemaVersion) {
++            migrate_fair_scan_catalog_or_throw(
++                db, folder_id, root_path, root_attestation_digest,
++                deployment_binding, label + " catalog v3 to v4 migration",
+@@ -2151,0 +2352,2 @@ void initialize_or_attest_catalog_or_throw(
++    (void)load_remote_apply_progress_head_or_throw(
++        db, initialized.limits, label + " remote-apply progress proof");
+@@ -2554,6 +2755,0 @@ void validate_convergence_pass_limits_or_throw(
+-    if (limits.maximum_remote_apply_operations <
+-        limits.maximum_local_scan_segment_regular_files) {
+-        throw std::invalid_argument(
+-            label +
+-            " pass remote-apply operation limit is smaller than the local scan segment regular-file limit");
+-    }
+@@ -2988,0 +3185,4 @@ SyncReplicaFolderScanOwner::scan_progress_snapshot_or_throw() {
++    const FolderRemoteApplyProgressHead remote_apply =
++        load_remote_apply_progress_head_or_throw(
++            *state_->catalog_db, state_->limits,
++            state_->label + " remote-apply progress snapshot");
+@@ -2994,0 +3195 @@ SyncReplicaFolderScanOwner::scan_progress_snapshot_or_throw() {
++        .remote_apply_resume_after_path = remote_apply.resume_after_path,
+@@ -3586,0 +3788,10 @@ SyncReplicaFolderScanOwner::apply_visible_regular_file_or_throw(
++    return apply_visible_regular_file_with_payload_snapshot_or_throw(
++        std::move(operation_id), nullptr);
++}
++
++SyncReplicaFolderApplyResult
++SyncReplicaFolderScanOwner::
++    apply_visible_regular_file_with_payload_snapshot_or_throw(
++        std::string operation_id,
++        const SyncReplicaFilePayloadStoreSnapshot*
++            retained_payload_snapshot) {
+@@ -3607,4 +3818,12 @@ SyncReplicaFolderScanOwner::apply_visible_regular_file_or_throw(
+-    // through the filesystem/catalog protocol. The descriptor is the byte
+-    // capability; no store-wide lease is held across potentially large I/O.
+-    SyncReplicaFilePayloadStoreSnapshot payload_snapshot =
+-        state_->payload_store->snapshot_or_throw();
++    // through the filesystem/catalog protocol. A whole-folder pass supplies
++    // one shared verified inventory for every selected remote file; the public
++    // one-path API constructs its own. The descriptor remains the byte
++    // capability, and no store-wide lease is held across potentially large I/O.
++    std::optional<SyncReplicaFilePayloadStoreSnapshot> owned_payload_snapshot;
++    if (retained_payload_snapshot == nullptr) {
++        owned_payload_snapshot.emplace(
++            state_->payload_store->snapshot_or_throw());
++        retained_payload_snapshot = &*owned_payload_snapshot;
++    }
++    retained_payload_snapshot->require_folder_or_throw(
++        state_->folder_id, state_->label + " apply payload snapshot");
+@@ -3612 +3831 @@ SyncReplicaFolderScanOwner::apply_visible_regular_file_or_throw(
+-        payload_snapshot.open_payload_for_operation_or_throw(
++        retained_payload_snapshot->open_payload_for_operation_or_throw(
+@@ -3887,0 +4107,4 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++    FolderRemoteApplyProgressHead remote_apply_progress =
++        load_remote_apply_progress_head_or_throw(
++            *state_->catalog_db, state_->limits,
++            state_->label + " pass remote-apply progress start");
+@@ -3892,0 +4116,4 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++    report.remote_apply_started_after_path =
++        remote_apply_progress.resume_after_path;
++    report.remote_apply_resume_after_path =
++        remote_apply_progress.resume_after_path;
+@@ -4173,0 +4401,4 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++        const FolderScanProgressHead fresh_scan_progress =
++            load_scan_progress_head_or_throw(
++                *state_->catalog_db, state_->limits,
++                state_->label + " idle scan-progress reproof");
+@@ -4175,0 +4407,4 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++        const FolderRemoteApplyProgressHead fresh_remote_apply_progress =
++            load_remote_apply_progress_head_or_throw(
++                *state_->catalog_db, state_->limits,
++                state_->label + " idle remote-apply progress reproof");
+@@ -4177 +4412,3 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-            fresh_replica != replica_cutpoint) {
++            fresh_scan_progress != scan_progress ||
++            fresh_replica != replica_cutpoint ||
++            fresh_remote_apply_progress != remote_apply_progress) {
+@@ -4184,0 +4422,4 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++        idle.remote_apply_started_after_path =
++            remote_apply_progress.resume_after_path;
++        idle.remote_apply_resume_after_path =
++            remote_apply_progress.resume_after_path;
+@@ -4216,0 +4458,6 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++    // A present remote successor is eligible for later cyclic materialization
++    // only after this invocation opened and hashed the exact cataloged
++    // predecessor. Retain just those canonical paths; the authoritative apply
++    // owner reopens and revalidates every selected predecessor immediately
++    // before its effect.
++    std::vector<std::string> observed_remote_successor_paths;
+@@ -4440,45 +4687,9 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-                            // Remote materialization obtains a shared payload
+-                            // snapshot. It must never nest beneath the exclusive
+-                            // local-publication batch.
+-                            release_payload_batch();
+-                            if (report.remote_apply_operation_count >=
+-                                limits.maximum_remote_apply_operations) {
+-                                throw std::logic_error(
+-                                    state_->label +
+-                                    " local traversal exhausted the remote-apply operation frontier");
+-                            }
+-                            SyncReplicaFolderApplyResult applied;
+-                            if (visible.front().kind ==
+-                                SyncReplicaValueKind::File) {
+-                                if (visible.front().size_bytes >
+-                                    limits.maximum_file_bytes) {
+-                                    throw std::runtime_error(
+-                                        state_->label +
+-                                        " pass remote file exceeds its per-file "
+-                                        "byte limit");
+-                                }
+-                                if (report.exact_remote_file_bytes >
+-                                        limits.maximum_total_file_bytes ||
+-                                    visible.front().size_bytes >
+-                                        limits.maximum_total_file_bytes -
+-                                            report.exact_remote_file_bytes) {
+-                                    throw std::runtime_error(
+-                                        state_->label +
+-                                        " pass remote files exceed its aggregate "
+-                                        "byte limit");
+-                                }
+-                                applied =
+-                                    apply_visible_regular_file_or_throw(
+-                                        visible.front().operation_id);
+-                                report.exact_remote_file_bytes = add_or_throw(
+-                                    report.exact_remote_file_bytes,
+-                                    visible.front().size_bytes,
+-                                    state_->label +
+-                                        " pass exact remote file bytes");
+-                            } else {
+-                                applied = apply_visible_tombstone_or_throw(
+-                                    visible.front().operation_id);
+-                            }
+-                            record_apply_disposition(
+-                                report, applied.disposition);
+-                            update_catalog_hint(applied.entry);
++                            // Do not let traversal order choose a remote winner.
++                            // The exact predecessor proof above makes this path
++                            // eligible, but all remote file/tombstone effects are
++                            // selected later through one crash-surviving cyclic
++                            // cursor. This prevents a continuously changing early
++                            // pathname from consuming every bounded pass before a
++                            // later remote path is ever considered.
++                            observed_remote_successor_paths.push_back(
++                                canonical_path);
+@@ -4491,3 +4702,3 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-                    // A preserved conflict or completed remote apply must not
+-                    // leave a local exclusive payload lease spanning the next
+-                    // unrelated path.
++                    // A preserved conflict or a predecessor reserved for the
++                    // cyclic remote planner must not leave a local exclusive
++                    // payload lease spanning the next unrelated path.
+@@ -4657,3 +4868,4 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-    // complete-scan absence handling. Files materialize missing paths;
+-    // tombstones remove only an exact cataloged predecessor or adopt already
+-    // durable absence. Paths blocked above remain untouched in both directions.
++    // complete-scan absence handling. Files materialize missing paths or replace
++    // an exact predecessor observed by this invocation; tombstones remove that
++    // same proven predecessor or adopt already durable absence. Paths blocked
++    // above remain untouched in both directions.
+@@ -4670,0 +4883,4 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++    struct RemoteProjectionEntry final {
++        std::string canonical_path;
++        SyncReplicaOperation operation;
++    };
+@@ -4671,0 +4888 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++        std::string canonical_path;
+@@ -4676,17 +4892,0 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-    if (report.remote_apply_operation_count >
+-        limits.maximum_remote_apply_operations) {
+-        throw std::logic_error(
+-            state_->label +
+-            " local traversal exceeded the remote-apply operation frontier");
+-    }
+-    const std::uint64_t remaining_remote_apply_operations =
+-        limits.maximum_remote_apply_operations -
+-        report.remote_apply_operation_count;
+-    std::vector<RemoteApplyCandidate> remote_candidates;
+-    remote_candidates.reserve(static_cast<std::size_t>(
+-        std::min<std::uint64_t>(
+-            static_cast<std::uint64_t>(remote_paths.size()),
+-            remaining_remote_apply_operations)));
+-    std::uint64_t remote_candidate_bytes =
+-        report.exact_remote_file_bytes;
+-    bool remote_apply_frontier_reached = false;
+@@ -4694,10 +4894,27 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-    // Preflight the complete visible projection before materializing a selected
+-    // prefix. Path, depth, and per-file ceilings remain hard admission checks
+-    // across every sole-visible value, including candidates after a scheduling
+-    // frontier. Aggregate bytes and operation count instead select one
+-    // deterministic effect prefix. Once either frontier is reached, every later
+-    // eligible candidate is deferred even when it would individually fit. That
+-    // preserves sorted progress: successful prefix effects become catalog/file
+-    // no-ops on the next pass, allowing the deferred suffix to advance without a
+-    // separate remote cursor. Authoritative apply still revalidates evidence,
+-    // catalog, and pathname immediately before each effect.
++    // Refresh immediately before planning. Local scanning can be long-lived,
++    // while this cursor is independent scheduling state and may have advanced in
++    // another process. The optimistic publication below still rejects movement
++    // between this cutpoint and completion of the selected effects.
++    remote_apply_progress = load_remote_apply_progress_head_or_throw(
++        *state_->catalog_db, state_->limits,
++        state_->label + " pass remote-apply planning cursor");
++    report.remote_apply_started_after_path =
++        remote_apply_progress.resume_after_path;
++    report.remote_apply_resume_after_path =
++        remote_apply_progress.resume_after_path;
++
++    std::sort(
++        observed_remote_successor_paths.begin(),
++        observed_remote_successor_paths.end());
++    observed_remote_successor_paths.erase(
++        std::unique(
++            observed_remote_successor_paths.begin(),
++            observed_remote_successor_paths.end()),
++        observed_remote_successor_paths.end());
++
++    // First perform hard admission over the complete sole-visible projection.
++    // No post-scan filesystem or catalog effect occurs until even the cyclic
++    // suffix has passed path, depth, evidence, and per-file limits. Scheduling
++    // may rotate; safety admission never does.
++    std::vector<RemoteProjectionEntry> remote_projection;
++    remote_projection.reserve(remote_paths.size());
+@@ -4734,0 +4952,82 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++        if (operation->kind == SyncReplicaValueKind::File &&
++            operation->size_bytes > limits.maximum_file_bytes) {
++            throw std::runtime_error(
++                state_->label +
++                " pass remote file exceeds its per-file byte limit");
++        }
++        remote_projection.push_back(
++            RemoteProjectionEntry{path.canonical_path, *operation});
++    }
++
++    // A payload snapshot retained from the speculative/local phase predates
++    // any payload inserted by this pass. It remains exact for its frozen
++    // entries, but it cannot advertise the new digest. Refresh at most once for
++    // remote planning when local publication extended the append-only store;
++    // otherwise reuse the already verified inventory.
++    if (report.payload_mutation_inserted_count != 0U) {
++        payload_cutpoint.reset();
++    }
++    const auto require_remote_payload_snapshot = [&]()
++        -> const SyncReplicaFilePayloadStoreSnapshot& {
++        if (!payload_cutpoint.has_value()) {
++            payload_cutpoint.emplace(
++                state_->payload_store->snapshot_or_throw());
++        }
++        if (report.remote_payload_snapshot_observation_count == 0U) {
++            report.remote_payload_snapshot_observation_count = 1U;
++            report.remote_payload_snapshot_entry_count =
++                payload_cutpoint->entry_count();
++        }
++        return *payload_cutpoint;
++    };
++
++    if (report.remote_apply_operation_count >
++        limits.maximum_remote_apply_operations) {
++        throw std::logic_error(
++            state_->label +
++            " local traversal exceeded the remote-apply operation frontier");
++    }
++    const std::uint64_t remaining_remote_apply_operations =
++        limits.maximum_remote_apply_operations -
++        report.remote_apply_operation_count;
++    std::vector<RemoteApplyCandidate> remote_candidates;
++    remote_candidates.reserve(static_cast<std::size_t>(
++        std::min<std::uint64_t>(
++            static_cast<std::uint64_t>(remote_projection.size()),
++            remaining_remote_apply_operations)));
++    std::uint64_t remote_candidate_bytes =
++        report.exact_remote_file_bytes;
++    bool remote_apply_frontier_reached = false;
++
++    // Rotate strictly after the last successfully selected path. A stale cursor
++    // is valid: upper_bound either starts at its insertion point or wraps from
++    // the end. The complete projection is still inspected so deferred counts and
++    // hard admission cannot hide behind the cursor.
++    std::size_t start_index = 0U;
++    if (!remote_projection.empty() &&
++        !remote_apply_progress.resume_after_path.empty()) {
++        const auto start = std::upper_bound(
++            remote_projection.begin(), remote_projection.end(),
++            std::string_view(remote_apply_progress.resume_after_path),
++            [](std::string_view cursor,
++               const RemoteProjectionEntry& retained) {
++                return cursor < retained.canonical_path;
++            });
++        start_index = static_cast<std::size_t>(
++            std::distance(remote_projection.begin(), start));
++        if (start_index == remote_projection.size()) {
++            start_index = 0U;
++            report.remote_apply_wrapped_projection = true;
++        }
++    }
++
++    for (std::size_t offset = 0U; offset < remote_projection.size();
++         ++offset) {
++        const std::size_t unwrapped_index = start_index + offset;
++        if (unwrapped_index >= remote_projection.size()) {
++            report.remote_apply_wrapped_projection = true;
++        }
++        const RemoteProjectionEntry& projected = remote_projection[
++            unwrapped_index % remote_projection.size()];
++        const std::string& canonical_path = projected.canonical_path;
++        const SyncReplicaOperation& operation = projected.operation;
+@@ -4738,2 +5037,2 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-                path.canonical_path)) {
+-            if (operation->kind == SyncReplicaValueKind::Tombstone) {
++                canonical_path)) {
++            if (operation.kind == SyncReplicaValueKind::Tombstone) {
+@@ -4747 +5046 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-                state_->root_authority, path.canonical_path,
++                state_->root_authority, canonical_path,
+@@ -4749,11 +5048,16 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-        if (operation->kind == SyncReplicaValueKind::Tombstone) {
+-            if (local.has_value()) {
+-                // A present local file must be adjudicated while its stable
+-                // bytes and catalog predecessor are observed together by the
+-                // local traversal callback. During an incomplete epoch this
+-                // path may be behind the durable cursor; applying the generic
+-                // remote tombstone here could turn a legitimate local edit
+-                // into a terminal race or deletion attempt. Defer it until a
+-                // later epoch revisits the path. Current-segment tombstones
+-                // were already applied or conflict-fenced above.
+-                ++report.skipped_tombstone_remote_path_count;
++        const std::optional<SyncReplicaFolderCatalogEntry> prior =
++            find_catalog_entry(catalog_hints, canonical_path);
++        if (local.has_value()) {
++            // A current-pass observation already hashed the exact cataloged
++            // predecessor. Otherwise the durable catalog may nominate the path
++            // only after fresh rooted descriptor metadata reproduces its source
++            // snapshot. Neither route authorizes bytes: the selected apply owner
++            // reopens, hashes, and compares the file immediately before effect.
++            const bool observed_this_pass = std::binary_search(
++                observed_remote_successor_paths.begin(),
++                observed_remote_successor_paths.end(), canonical_path);
++            if (!prior.has_value() ||
++                prior->kind != SyncReplicaValueKind::File) {
++                if (operation.kind == SyncReplicaValueKind::Tombstone) {
++                    ++report.skipped_tombstone_remote_path_count;
++                }
+@@ -4762,2 +5066,44 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-            const std::optional<SyncReplicaFolderCatalogEntry> prior =
+-                find_catalog_entry(catalog_hints, path.canonical_path);
++            const SyncReplicaOperation prior_operation =
++                require_catalog_operation_or_throw(
++                    remote_model, *prior,
++                    state_->label + " cyclic remote catalog base");
++            if (operation.operation_id == prior_operation.operation_id) {
++                continue;
++            }
++            bool revalidated_catalog_predecessor = false;
++            if (!observed_this_pass) {
++                const SyncPosixRegularFileSnapshotMetadata metadata =
++                    observe_sync_posix_regular_file_descriptor_or_throw(
++                        local->get(),
++                        SyncPosixDescriptorLinkPolicy::stable_named_object,
++                        state_->label +
++                            " catalog predecessor metadata reproof");
++                if (metadata.size_bytes != prior->size_bytes ||
++                    source_snapshot_digest(
++                        state_->root_attestation_digest, canonical_path,
++                        metadata, prior->content_sha256) !=
++                        prior->source_snapshot_sha256) {
++                    ++report.skipped_conflicted_remote_path_count;
++                    if (operation.kind ==
++                        SyncReplicaValueKind::Tombstone) {
++                        ++report.skipped_tombstone_remote_path_count;
++                    }
++                    continue;
++                }
++                revalidated_catalog_predecessor = true;
++            }
++            if (!sync_replica_operation_supersedes(
++                    operation, prior_operation)) {
++                ++report.skipped_conflicted_remote_path_count;
++                continue;
++            }
++            if (revalidated_catalog_predecessor) {
++                report.remote_apply_revalidated_catalog_predecessor_count =
++                    add_or_throw(
++                        report
++                            .remote_apply_revalidated_catalog_predecessor_count,
++                        1U,
++                        state_->label +
++                            " revalidated catalog predecessors");
++            }
++        } else if (operation.kind == SyncReplicaValueKind::Tombstone) {
+@@ -4766 +5112 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-                prior->operation_id == operation->operation_id) {
++                prior->operation_id == operation.operation_id) {
+@@ -4769,4 +5115 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-        }
+-        if (operation->kind == SyncReplicaValueKind::File) {
+-            if (local.has_value()) continue;
+-
++        } else {
+@@ -4778,6 +5121,2 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-            // it before the final suffix. In both cases the next authoritative
+-            // local epoch must adjudicate the absence. Distinct remote
+-            // successors remain eligible: the established policy gives those
+-            // successors priority over an uncommitted local absence.
+-            const std::optional<SyncReplicaFolderCatalogEntry> prior =
+-                find_catalog_entry(catalog_hints, path.canonical_path);
++            // it before the final suffix. Distinct remote successors remain
++            // eligible and retain their established priority.
+@@ -4786 +5125 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-                prior->operation_id == operation->operation_id) {
++                prior->operation_id == operation.operation_id) {
+@@ -4791,2 +5130,16 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-            if (operation->size_bytes > limits.maximum_file_bytes) {
+-                throw std::runtime_error(
++        }
++
++        // Remote evidence can arrive before the corresponding bounded payload
++        // transfer completes. Missing bytes are ordinary scheduling remainder,
++        // not a reason to abort ready suffix work. One frozen verified payload
++        // inventory serves every candidate in this pass; the apply owner still
++        // opens and re-proves the exact digest-named file before publication.
++        if (operation.kind == SyncReplicaValueKind::File) {
++            const SyncReplicaFilePayloadStoreSnapshot& payload_snapshot =
++                require_remote_payload_snapshot();
++            const std::optional<std::uint64_t> indexed_size =
++                payload_snapshot.payload_size_or_none(
++                    operation.content_sha256);
++            if (!indexed_size.has_value()) {
++                report.deferred_remote_payload_candidate_count = add_or_throw(
++                    report.deferred_remote_payload_candidate_count, 1U,
+@@ -4794 +5147,7 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-                    " pass remote file exceeds its per-file byte limit");
++                        " deferred remote payload candidates");
++                continue;
++            }
++            if (*indexed_size != operation.size_bytes) {
++                throw std::logic_error(
++                    state_->label +
++                    " remote payload inventory size disagrees with visible operation");
+@@ -4803 +5162 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-            operation->kind == SyncReplicaValueKind::File &&
++            operation.kind == SyncReplicaValueKind::File &&
+@@ -4805 +5164 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-             operation->size_bytes >
++             operation.size_bytes >
+@@ -4823,2 +5182,4 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-        if (operation->kind == SyncReplicaValueKind::File) {
+-            remote_candidate_bytes += operation->size_bytes;
++        if (operation.kind == SyncReplicaValueKind::File) {
++            remote_candidate_bytes = add_or_throw(
++                remote_candidate_bytes, operation.size_bytes,
++                state_->label + " planned remote file bytes");
+@@ -4827 +5188,2 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-            operation_id, operation->kind, operation->size_bytes});
++            canonical_path, operation.operation_id, operation.kind,
++            operation.size_bytes});
+@@ -4843 +5205,5 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+-                ? apply_visible_regular_file_or_throw(candidate.operation_id)
++                ? apply_visible_regular_file_with_payload_snapshot_or_throw(
++                      candidate.operation_id,
++                      payload_cutpoint.has_value()
++                          ? &*payload_cutpoint
++                          : nullptr)
+@@ -4853,0 +5220,9 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
++    if (!remote_candidates.empty()) {
++        remote_apply_progress = advance_remote_apply_progress_or_throw(
++            *state_->catalog_db, state_->limits, remote_apply_progress,
++            remote_candidates.back().canonical_path,
++            state_->label + " pass remote-apply progress");
++        report.remote_apply_resume_after_path =
++            remote_apply_progress.resume_after_path;
++    }
++
+diff --git src/sync_replica_folder_scan_owner.hpp src/sync_replica_folder_scan_owner.hpp
+index 86c369c..473b42b 100644
+--- src/sync_replica_folder_scan_owner.hpp
++++ src/sync_replica_folder_scan_owner.hpp
+@@ -173,5 +173,4 @@ struct SyncReplicaFolderConvergencePassLimits final {
+-    // pass. A local traversal can apply at most one remote successor per
+-    // delivered regular path, so this value must be at least the local segment
+-    // frontier. The post-scan planner spends the remaining allowance and defers
+-    // the first non-fitting candidate plus its suffix. Unlike
+-    // maximum_remote_paths, this is a scheduling boundary, not admission.
++    // pass. Local traversal only proves exact predecessor eligibility or records
++    // a conflict; every materialization is selected later by the cyclic planner.
++    // This frontier is therefore independent of the local scan segment size.
++    // Unlike maximum_remote_paths, it is a scheduling boundary, not admission.
+@@ -285,5 +284,13 @@ struct SyncReplicaFolderConvergencePassReport final {
+-    // counters above partition this value. deferred_remote_apply_candidate_count
+-    // counts otherwise eligible post-scan candidates left for a later pass after
+-    // the first count or aggregate-byte frontier was reached. The cursor fields
+-    // expose the exact persisted rotation boundary used by this pass; they are
+-    // scheduling diagnostics, not replicated evidence or catalog authority.
++    // counters above partition this value. One pass-scoped verified payload
++    // snapshot is shared by every remote file readiness check and apply. Its
++    // observation count is therefore either zero or one; entry_count records the
++    // exact frozen inventory used when it is one. A file whose authenticated
++    // operation is visible but whose payload is absent from that inventory is
++    // deferred without blocking later ready paths.
++    //
++    // deferred_remote_apply_candidate_count counts otherwise eligible post-scan
++    // candidates left for a later pass after the first count or aggregate-byte
++    // frontier was reached. The cursor fields expose the exact persisted
++    // rotation boundary used by this pass. Wrapped is true when the cyclic
++    // eligibility walk crossed canonical namespace end. These are scheduling
++    // diagnostics, not replicated evidence or authority.
+@@ -290,0 +298,8 @@ struct SyncReplicaFolderConvergencePassReport final {
++    std::uint64_t remote_payload_snapshot_observation_count = 0U;
++    std::uint64_t remote_payload_snapshot_entry_count = 0U;
++    std::uint64_t deferred_remote_payload_candidate_count = 0U;
++    // Count of present catalog predecessors not already hashed by this
++    // invocation's local traversal and then revalidated from fresh rooted
++    // descriptor metadata before becoming eligible. Catalog metadata only
++    // nominates work: the apply owner still reopens and hashes the exact bytes.
++    std::uint64_t remote_apply_revalidated_catalog_predecessor_count = 0U;
+@@ -422,6 +437,6 @@ public:
+-    // Processes regular files one at a time, then materializes sole-visible
+-    // remote file values whose paths remain absent. A cataloged local base is
+-    // replaced by a causal remote successor only while its exact bytes and
+-    // metadata are still materialized; otherwise local publication remains the
+-    // only allowed action. The first unsafe path or infrastructure failure stops
+-    // the pass. Earlier per-path progress is durable and restart-idempotent.
++    // Processes local regular files one at a time, then cyclically selects
++    // sole-visible remote files or tombstones. A present cataloged local base is
++    // replaced by a causal remote successor only when this invocation observed
++    // its exact predecessor bytes; otherwise local publication remains the only
++    // allowed action. The first unsafe path or infrastructure failure stops the
++    // pass. Earlier per-path progress is durable and restart-idempotent.
+@@ -444,0 +460,6 @@ private:
++    [[nodiscard]] SyncReplicaFolderApplyResult
++    apply_visible_regular_file_with_payload_snapshot_or_throw(
++        std::string operation_id,
++        const SyncReplicaFilePayloadStoreSnapshot*
++            retained_payload_snapshot);
++
+diff --git src/sync_replica_sync_once.cpp src/sync_replica_sync_once.cpp
+index 8b41481..c671eda 100644
+--- src/sync_replica_sync_once.cpp
++++ src/sync_replica_sync_once.cpp
+@@ -33,0 +34,2 @@ namespace {
++        .remote_apply_resume_after_path =
++            scan_progress.remote_apply_resume_after_path,
+@@ -56,0 +59 @@ namespace {
++        pass->deferred_remote_payload_candidate_count != 0U ||
+diff --git src/sync_replica_sync_once.hpp src/sync_replica_sync_once.hpp
+index a5faf36..f9960a0 100644
+--- src/sync_replica_sync_once.hpp
++++ src/sync_replica_sync_once.hpp
+@@ -26 +26,3 @@ namespace anonsync {
+-// entry or replica operation.
++// entry or replica operation. The remote-apply cursor is included for the
++// same reason: advancing it is durable fairness progress even when every
++// selected idempotent apply resolves to an exact no-op.
+@@ -35,0 +38 @@ struct SyncReplicaSyncOnceCutpoint final {
++    std::string remote_apply_resume_after_path;
+diff --git tests/sync_replica_folder_scan_owner_test.cpp tests/sync_replica_folder_scan_owner_test.cpp
+index 9ddfd0a..2dc57f9 100644
+--- tests/sync_replica_folder_scan_owner_test.cpp
++++ tests/sync_replica_folder_scan_owner_test.cpp
+@@ -347,2 +347,5 @@ void append_test_string(
+-[[nodiscard]] std::string previous_catalog_digest_for_test(
+-    const anonsync::SyncReplicaFolderCatalogSnapshot& snapshot) {
++[[nodiscard]] std::string modern_catalog_digest_for_test(
++    const anonsync::SyncReplicaFolderCatalogSnapshot& snapshot,
++    std::string_view domain,
++    std::uint64_t schema_version,
++    std::string_view fixture_label) {
+@@ -350,3 +353,2 @@ void append_test_string(
+-    append_test_string(
+-        digest, "anonsync:sync-replica-folder-catalog:v2");
+-    append_test_u64(digest, 2U);
++    append_test_string(digest, domain);
++    append_test_u64(digest, schema_version);
+@@ -372 +374,2 @@ void append_test_string(
+-                fail("v2 catalog fixture received an invalid value kind");
++                fail(std::string(fixture_label) +
++                     " catalog fixture received an invalid value kind");
+@@ -382,0 +386,12 @@ void append_test_string(
++[[nodiscard]] std::string previous_catalog_digest_for_test(
++    const anonsync::SyncReplicaFolderCatalogSnapshot& snapshot) {
++    return modern_catalog_digest_for_test(
++        snapshot, "anonsync:sync-replica-folder-catalog:v2", 2U, "v2");
++}
++
++[[nodiscard]] std::string fair_scan_catalog_digest_for_test(
++    const anonsync::SyncReplicaFolderCatalogSnapshot& snapshot) {
++    return modern_catalog_digest_for_test(
++        snapshot, "anonsync:sync-replica-folder-catalog:v3", 3U, "v3");
++}
++
+@@ -1348,0 +1364,4 @@ void test_bounded_whole_folder_pass_remote_catchup_and_divergence() {
++                catchup.remote_apply_operation_count == 2U &&
++                catchup.remote_payload_snapshot_observation_count == 1U &&
++                catchup.remote_payload_snapshot_entry_count == 3U &&
++                catchup.deferred_remote_payload_candidate_count == 0U &&
+@@ -2157,0 +2177,17 @@ void test_scan_progress_tampering_fails_closed() {
++
++    {
++        Fixture cursor_fixture("anonsync-folder-pass-remote-cursor-tamper");
++        anonsync::SyncSqliteDb cursor_db = open_database(
++            cursor_fixture.catalog_path(), "remote-cursor-tamper catalog");
++        auto cursor_owner = cursor_fixture.make_scan_owner(cursor_db);
++        cursor_owner.reset();
++        anonsync::sqlite_exec_or_throw(
++            cursor_db.db,
++            "UPDATE sync_replica_folder_catalog_remote_apply_progress "
++            "SET resume_after_path='../escape' WHERE id=1;",
++            "remote-cursor-tamper fixture mutation");
++        require_error(
++            [&] { (void)cursor_fixture.make_scan_owner(cursor_db); },
++            "remote-apply cursor scan-progress path is invalid",
++            "folder owner accepted a noncanonical remote scheduling cursor");
++    }
+@@ -2180,7 +2216,2 @@ void test_bounded_whole_folder_pass_missing_payload_and_remote_limit() {
+-        require_error(
+-            [&] {
+-                (void)scan->run_convergence_pass_or_throw(
+-                    Fixture::pass_limits());
+-            },
+-            "has no indexed payload",
+-            "folder pass materialized a remote value without its verified payload");
++        const auto pass = scan->run_convergence_pass_or_throw(
++            Fixture::pass_limits());
+@@ -2188 +2219,9 @@ void test_bounded_whole_folder_pass_missing_payload_and_remote_limit() {
+-            !fs::exists(fixture.shared_root / path) &&
++            pass.remote_apply_operation_count == 0U &&
++                pass.remote_payload_snapshot_observation_count == 1U &&
++                pass.remote_payload_snapshot_entry_count == 0U &&
++                pass.deferred_remote_payload_candidate_count == 1U &&
++                pass.deferred_remote_apply_candidate_count == 0U &&
++                pass.remote_apply_stop_reason ==
++                    anonsync::SyncReplicaFolderRemoteApplyStopReason::
++                        EndOfProjection &&
++                !fs::exists(fixture.shared_root / path) &&
+@@ -2191 +2230,45 @@ void test_bounded_whole_folder_pass_missing_payload_and_remote_limit() {
+-            "missing-payload refusal changed the folder, catalog, or replica evidence");
++            "missing remote payload was not retained as bounded scheduling remainder");
++    }
++
++    {
++        Fixture fixture("anonsync-folder-pass-missing-payload-ready-suffix");
++        const std::string missing_bytes = "missing prefix bytes";
++        const std::string ready_bytes = "ready suffix bytes";
++        anonsync::SyncReplicaModel remote(
++            Fixture::folder_id,
++            {"device-folder-pass-missing-ready-suffix", 351U});
++        const auto missing = remote.create_local_file_or_throw(
++            "a-missing.txt", missing_bytes.size(),
++            anonsync::sha256_hex(missing_bytes));
++        const auto ready = remote.create_local_file_or_throw(
++            "z-ready.txt", ready_bytes.size(),
++            anonsync::sha256_hex(ready_bytes));
++        require(
++            fixture.replica.accept_remote_or_throw(missing) ==
++                    anonsync::SyncReplicaAdmission::InsertedActive &&
++                fixture.replica.accept_remote_or_throw(ready) ==
++                    anonsync::SyncReplicaAdmission::InsertedActive &&
++                fixture.payload_store.put_payload_or_throw(ready_bytes)
++                        .content_sha256 == ready.content_sha256,
++            "missing-payload suffix fixture did not retain its ready payload");
++
++        anonsync::SyncSqliteDb catalog_db = open_database(
++            fixture.catalog_path(),
++            "folder-pass missing-payload ready-suffix catalog");
++        auto scan = fixture.make_scan_owner(catalog_db);
++        const auto pass = scan->run_convergence_pass_or_throw(
++            Fixture::pass_limits());
++        require(
++            pass.remote_applied_count == 1U &&
++                pass.remote_apply_operation_count == 1U &&
++                pass.remote_payload_snapshot_observation_count == 1U &&
++                pass.remote_payload_snapshot_entry_count == 1U &&
++                pass.deferred_remote_payload_candidate_count == 1U &&
++                pass.deferred_remote_apply_candidate_count == 0U &&
++                pass.remote_apply_resume_after_path == "z-ready.txt" &&
++                pass.remote_apply_stop_reason ==
++                    anonsync::SyncReplicaFolderRemoteApplyStopReason::
++                        EndOfProjection &&
++                !fs::exists(fixture.shared_root / "a-missing.txt") &&
++                read_file(fixture.shared_root / "z-ready.txt") == ready_bytes,
++            "an unavailable remote prefix blocked a ready suffix or forced repeated inventories");
+@@ -2413 +2496 @@ void test_bounded_whole_folder_pass_remote_work_bounds() {
+-            "remote prefix scheduling weakened complete-projection path preflight");
++            "remote cyclic scheduling weakened complete-projection path preflight");
+@@ -2459,0 +2543,3 @@ void test_remote_apply_count_frontier_bounds_zero_byte_and_tombstone_work() {
++            first_pass.remote_payload_snapshot_observation_count == 1U &&
++            first_pass.remote_payload_snapshot_entry_count == 1U &&
++            first_pass.deferred_remote_payload_candidate_count == 0U &&
+@@ -2461,0 +2548,3 @@ void test_remote_apply_count_frontier_bounds_zero_byte_and_tombstone_work() {
++            first_pass.remote_apply_started_after_path.empty() &&
++            first_pass.remote_apply_resume_after_path == "b-empty.txt" &&
++            !first_pass.remote_apply_wrapped_projection &&
+@@ -2480,0 +2570,3 @@ void test_remote_apply_count_frontier_bounds_zero_byte_and_tombstone_work() {
++            second_pass.remote_apply_started_after_path == "b-empty.txt" &&
++            second_pass.remote_apply_resume_after_path == "d-empty.txt" &&
++            second_pass.remote_apply_wrapped_projection &&
+@@ -2492,0 +2585,333 @@ void test_remote_apply_count_frontier_bounds_zero_byte_and_tombstone_work() {
++void test_remote_apply_cursor_survives_restart_and_defeats_prefix_churn() {
++    Fixture fixture("anonsync-folder-pass-remote-cyclic-cursor");
++    const std::string base_bytes = "a base";
++    const std::string first_successor_bytes = "a successor one";
++    const std::string second_successor_bytes = "a successor two";
++    const std::string suffix_bytes = "z suffix";
++    write_file(fixture.shared_root / "a.txt", base_bytes);
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "remote cyclic-cursor catalog");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    const auto base = scan->scan_regular_file_or_throw("a.txt");
++    require(
++        base.published_operation.has_value(),
++        "remote cyclic-cursor fixture did not publish its local base");
++
++    anonsync::SyncReplicaModel remote(
++        Fixture::folder_id, {"device-folder-pass-cyclic-cursor", 42U});
++    require(
++        remote.accept_remote_or_throw(*base.published_operation) ==
++            anonsync::SyncReplicaAdmission::InsertedActive,
++        "remote cyclic-cursor fixture did not admit its common base");
++    const auto first_successor = remote.create_local_file_or_throw(
++        "a.txt", first_successor_bytes.size(),
++        anonsync::sha256_hex(first_successor_bytes));
++    const auto suffix = remote.create_local_file_or_throw(
++        "z.txt", suffix_bytes.size(), anonsync::sha256_hex(suffix_bytes));
++    require(
++        fixture.replica.accept_remote_or_throw(first_successor) ==
++                anonsync::SyncReplicaAdmission::InsertedActive &&
++            fixture.replica.accept_remote_or_throw(suffix) ==
++                anonsync::SyncReplicaAdmission::InsertedActive &&
++            fixture.payload_store.put_payload_or_throw(first_successor_bytes)
++                    .content_sha256 == first_successor.content_sha256 &&
++            fixture.payload_store.put_payload_or_throw(suffix_bytes)
++                    .content_sha256 == suffix.content_sha256,
++        "remote cyclic-cursor fixture did not retain its first remote projection");
++
++    auto limits = Fixture::pass_limits();
++    limits.maximum_local_scan_segment_regular_files = 1U;
++    limits.maximum_remote_apply_operations = 1U;
++
++    const auto first_pass = scan->run_convergence_pass_or_throw(limits);
++    const auto first_progress = scan->scan_progress_snapshot_or_throw();
++    require(
++        first_pass.remote_applied_count == 1U &&
++            first_pass.remote_apply_operation_count == 1U &&
++            first_pass.deferred_remote_apply_candidate_count == 1U &&
++            first_pass.remote_apply_started_after_path.empty() &&
++            first_pass.remote_apply_resume_after_path == "a.txt" &&
++            !first_pass.remote_apply_wrapped_projection &&
++            first_pass.remote_apply_stop_reason ==
++                anonsync::SyncReplicaFolderRemoteApplyStopReason::
++                    OperationCountFrontier &&
++            first_progress.remote_apply_resume_after_path == "a.txt" &&
++            read_file(fixture.shared_root / "a.txt") ==
++                first_successor_bytes &&
++            !fs::exists(fixture.shared_root / "z.txt"),
++        "first cyclic pass did not select and persist the early-path boundary");
++
++    const auto second_successor = remote.create_local_file_or_throw(
++        "a.txt", second_successor_bytes.size(),
++        anonsync::sha256_hex(second_successor_bytes));
++    require(
++        fixture.replica.accept_remote_or_throw(second_successor) ==
++                anonsync::SyncReplicaAdmission::InsertedActive &&
++            fixture.payload_store.put_payload_or_throw(second_successor_bytes)
++                    .content_sha256 == second_successor.content_sha256,
++        "remote cyclic-cursor fixture did not retain sustained prefix churn");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    require(
++        scan->scan_progress_snapshot_or_throw()
++                .remote_apply_resume_after_path == "a.txt",
++        "remote apply cursor did not survive owner restart");
++
++    const auto second_pass = scan->run_convergence_pass_or_throw(limits);
++    require(
++        second_pass.remote_applied_count == 1U &&
++            second_pass.remote_apply_operation_count == 1U &&
++            second_pass.deferred_remote_apply_candidate_count == 1U &&
++            second_pass.remote_apply_started_after_path == "a.txt" &&
++            second_pass.remote_apply_resume_after_path == "z.txt" &&
++            second_pass.remote_apply_wrapped_projection &&
++            second_pass.remote_apply_stop_reason ==
++                anonsync::SyncReplicaFolderRemoteApplyStopReason::
++                    OperationCountFrontier &&
++            read_file(fixture.shared_root / "a.txt") ==
++                first_successor_bytes &&
++            read_file(fixture.shared_root / "z.txt") == suffix_bytes,
++        "sustained early-path churn starved the later remote path after restart");
++
++    const auto third_pass = scan->run_convergence_pass_or_throw(limits);
++    require(
++        third_pass.remote_applied_count == 1U &&
++            third_pass.remote_apply_operation_count == 1U &&
++            third_pass.deferred_remote_apply_candidate_count == 0U &&
++            third_pass.remote_apply_started_after_path == "z.txt" &&
++            third_pass.remote_apply_resume_after_path == "a.txt" &&
++            third_pass.remote_apply_wrapped_projection &&
++            third_pass.remote_apply_stop_reason ==
++                anonsync::SyncReplicaFolderRemoteApplyStopReason::
++                    EndOfProjection &&
++            read_file(fixture.shared_root / "a.txt") ==
++                second_successor_bytes &&
++            read_file(fixture.shared_root / "z.txt") == suffix_bytes,
++        "cyclic cursor did not wrap and settle the continuously changing prefix");
++}
++
++void test_catalog_predecessor_reproof_decouples_remote_apply_from_scan_cursor() {
++    {
++        Fixture fixture("anonsync-folder-pass-catalog-reproof-restart");
++        const std::string base_bytes = "a base";
++        const std::string successor_bytes = "a remote successor";
++        write_file(fixture.shared_root / "a.txt", base_bytes);
++        write_file(fixture.shared_root / "b.txt", "b base");
++        write_file(fixture.shared_root / "c.txt", "c base");
++
++        anonsync::SyncSqliteDb catalog_db = open_database(
++            fixture.catalog_path(), "catalog reproof restart catalog");
++        auto scan = fixture.make_scan_owner(catalog_db);
++        const auto a_base = scan->scan_regular_file_or_throw("a.txt");
++        const auto b_base = scan->scan_regular_file_or_throw("b.txt");
++        const auto c_base = scan->scan_regular_file_or_throw("c.txt");
++        require(
++            a_base.published_operation.has_value() &&
++                b_base.published_operation.has_value() &&
++                c_base.published_operation.has_value(),
++            "catalog reproof restart fixture did not publish its local bases");
++
++        anonsync::SyncReplicaModel remote(
++            Fixture::folder_id,
++            {"device-folder-pass-catalog-reproof-restart", 43U});
++        require(
++            remote.accept_remote_or_throw(*a_base.published_operation) ==
++                anonsync::SyncReplicaAdmission::InsertedActive,
++            "catalog reproof restart fixture did not admit its common base");
++        const auto successor = remote.create_local_file_or_throw(
++            "a.txt", successor_bytes.size(),
++            anonsync::sha256_hex(successor_bytes));
++        require(
++            fixture.replica.accept_remote_or_throw(successor) ==
++                anonsync::SyncReplicaAdmission::InsertedActive,
++            "catalog reproof restart fixture did not retain its remote successor");
++
++        auto limits = Fixture::pass_limits();
++        limits.maximum_local_scan_segment_regular_files = 1U;
++        limits.maximum_remote_apply_operations = 1U;
++
++        const auto first_pass = scan->run_convergence_pass_or_throw(limits);
++        const auto first_progress = scan->scan_progress_snapshot_or_throw();
++        require(
++            !first_pass.completed_local_scan_epoch &&
++                first_pass.local_scan_seen_path_count == 1U &&
++                first_pass.local_scan_resume_after_path == "a.txt" &&
++                first_pass.remote_apply_operation_count == 0U &&
++                first_pass.deferred_remote_payload_candidate_count == 1U &&
++                first_pass.remote_payload_snapshot_observation_count == 1U &&
++                first_progress.seen_path_count == 1U &&
++                first_progress.resume_after_path == "a.txt" &&
++                read_file(fixture.shared_root / "a.txt") == base_bytes,
++            "missing payload did not leave the exact predecessor behind a durable scan cursor");
++
++        scan.reset();
++        require(
++            fixture.payload_store.put_payload_or_throw(successor_bytes)
++                    .content_sha256 == successor.content_sha256,
++            "catalog reproof restart fixture did not retain the delayed payload");
++        scan = fixture.make_scan_owner(catalog_db);
++        require(
++            scan->scan_progress_snapshot_or_throw().resume_after_path ==
++                "a.txt",
++            "catalog reproof scan cursor did not survive owner restart");
++
++        const auto second_pass = scan->run_convergence_pass_or_throw(limits);
++        const auto second_progress = scan->scan_progress_snapshot_or_throw();
++        require(
++            !second_pass.completed_local_scan_epoch &&
++                second_pass.local_scan_seen_path_count == 2U &&
++                second_pass.local_scan_resume_after_path == "b.txt" &&
++                second_pass.remote_applied_count == 1U &&
++                second_pass.remote_apply_operation_count == 1U &&
++                second_pass
++                        .remote_apply_revalidated_catalog_predecessor_count ==
++                    1U &&
++                second_pass.deferred_remote_payload_candidate_count == 0U &&
++                second_pass.remote_apply_resume_after_path == "a.txt" &&
++                second_progress.seen_path_count == 2U &&
++                second_progress.resume_after_path == "b.txt" &&
++                read_file(fixture.shared_root / "a.txt") == successor_bytes,
++            "restart waited for a whole scan-epoch wrap before applying the cataloged predecessor");
++    }
++
++    {
++        Fixture fixture("anonsync-folder-pass-completed-epoch-catalog-reproof");
++        const std::string successor_bytes = "late remote successor";
++        write_file(fixture.shared_root / "a.txt", "a base");
++        write_file(fixture.shared_root / "b.txt", "b base");
++        write_file(fixture.shared_root / "c.txt", "c base");
++
++        anonsync::SyncSqliteDb catalog_db = open_database(
++            fixture.catalog_path(), "completed-epoch catalog reproof catalog");
++        auto scan = fixture.make_scan_owner(catalog_db);
++        const auto c_base = scan->scan_regular_file_or_throw("c.txt");
++        (void)scan->scan_regular_file_or_throw("a.txt");
++        (void)scan->scan_regular_file_or_throw("b.txt");
++        require(
++            c_base.published_operation.has_value(),
++            "completed-epoch catalog reproof fixture lost its base operation");
++
++        anonsync::SyncReplicaModel remote(
++            Fixture::folder_id,
++            {"device-folder-pass-completed-epoch-reproof", 431U});
++        require(
++            remote.accept_remote_or_throw(*c_base.published_operation) ==
++                anonsync::SyncReplicaAdmission::InsertedActive,
++            "completed-epoch catalog reproof fixture rejected its common base");
++        const auto successor = remote.create_local_file_or_throw(
++            "c.txt", successor_bytes.size(),
++            anonsync::sha256_hex(successor_bytes));
++        require(
++            fixture.replica.accept_remote_or_throw(successor) ==
++                anonsync::SyncReplicaAdmission::InsertedActive,
++            "completed-epoch catalog reproof fixture rejected its successor");
++
++        auto completion_limits = Fixture::pass_limits();
++        completion_limits.maximum_local_scan_segment_regular_files = 4U;
++        completion_limits.maximum_remote_apply_operations = 1U;
++        const std::uint64_t epoch_before =
++            scan->scan_progress_snapshot_or_throw().scan_epoch;
++        const auto completed =
++            scan->run_convergence_pass_or_throw(completion_limits);
++        const auto reset_progress = scan->scan_progress_snapshot_or_throw();
++        require(
++            completed.completed_local_scan_epoch &&
++                completed.local_scan_seen_path_count == 0U &&
++                completed.local_scan_resume_after_path.empty() &&
++                completed.remote_apply_operation_count == 0U &&
++                completed.deferred_remote_payload_candidate_count == 1U &&
++                reset_progress.scan_epoch != epoch_before &&
++                reset_progress.seen_path_count == 0U &&
++                reset_progress.resume_after_path.empty(),
++            "completed scan epoch did not reset before delayed remote payload arrival");
++
++        scan.reset();
++        require(
++            fixture.payload_store.put_payload_or_throw(successor_bytes)
++                    .content_sha256 == successor.content_sha256,
++            "completed-epoch catalog reproof fixture lost its delayed payload");
++        scan = fixture.make_scan_owner(catalog_db);
++        auto restart_limits = Fixture::pass_limits();
++        restart_limits.maximum_local_scan_segment_regular_files = 1U;
++        restart_limits.maximum_remote_apply_operations = 1U;
++        const auto restarted =
++            scan->run_convergence_pass_or_throw(restart_limits);
++        require(
++            !restarted.completed_local_scan_epoch &&
++                restarted.local_scan_seen_path_count == 1U &&
++                restarted.local_scan_resume_after_path == "a.txt" &&
++                restarted.remote_applied_count == 1U &&
++                restarted.remote_apply_operation_count == 1U &&
++                restarted.remote_apply_revalidated_catalog_predecessor_count ==
++                    1U &&
++                restarted.deferred_remote_payload_candidate_count == 0U &&
++                restarted.remote_apply_resume_after_path == "c.txt" &&
++                read_file(fixture.shared_root / "c.txt") == successor_bytes,
++            "completed scan-epoch reset stranded a cataloged predecessor behind the new scan cursor");
++    }
++
++    {
++        Fixture fixture("anonsync-folder-pass-catalog-metadata-is-not-authority");
++        const std::string base_bytes = "a base";
++        const std::string successor_bytes = "a remote successor";
++        const std::string local_edit = "independent local edit";
++        write_file(fixture.shared_root / "a.txt", base_bytes);
++        write_file(fixture.shared_root / "b.txt", "b base");
++        write_file(fixture.shared_root / "c.txt", "c base");
++
++        anonsync::SyncSqliteDb catalog_db = open_database(
++            fixture.catalog_path(), "catalog metadata non-authority catalog");
++        auto scan = fixture.make_scan_owner(catalog_db);
++        const auto a_base = scan->scan_regular_file_or_throw("a.txt");
++        (void)scan->scan_regular_file_or_throw("b.txt");
++        (void)scan->scan_regular_file_or_throw("c.txt");
++        require(
++            a_base.published_operation.has_value(),
++            "catalog metadata non-authority fixture did not publish its local base");
++
++        anonsync::SyncReplicaModel remote(
++            Fixture::folder_id,
++            {"device-folder-pass-catalog-nonauthority", 44U});
++        require(
++            remote.accept_remote_or_throw(*a_base.published_operation) ==
++                anonsync::SyncReplicaAdmission::InsertedActive,
++            "catalog metadata non-authority fixture did not admit its common base");
++        const auto successor = remote.create_local_file_or_throw(
++            "a.txt", successor_bytes.size(),
++            anonsync::sha256_hex(successor_bytes));
++        require(
++            fixture.replica.accept_remote_or_throw(successor) ==
++                anonsync::SyncReplicaAdmission::InsertedActive,
++            "catalog metadata non-authority fixture did not retain its remote successor");
++
++        auto limits = Fixture::pass_limits();
++        limits.maximum_local_scan_segment_regular_files = 1U;
++        limits.maximum_remote_apply_operations = 1U;
++        const auto first_pass = scan->run_convergence_pass_or_throw(limits);
++        require(
++            first_pass.local_scan_resume_after_path == "a.txt" &&
++                first_pass.deferred_remote_payload_candidate_count == 1U,
++            "catalog metadata non-authority fixture did not retain its first-pass nomination");
++
++        scan.reset();
++        write_file(fixture.shared_root / "a.txt", local_edit);
++        require(
++            fixture.payload_store.put_payload_or_throw(successor_bytes)
++                    .content_sha256 == successor.content_sha256,
++            "catalog metadata non-authority fixture did not retain the delayed payload");
++        scan = fixture.make_scan_owner(catalog_db);
++        const auto second_pass = scan->run_convergence_pass_or_throw(limits);
++        require(
++            second_pass.local_scan_resume_after_path == "b.txt" &&
++                second_pass.remote_apply_operation_count == 0U &&
++                second_pass
++                        .remote_apply_revalidated_catalog_predecessor_count ==
++                    0U &&
++                second_pass.skipped_conflicted_remote_path_count == 1U &&
++                read_file(fixture.shared_root / "a.txt") == local_edit,
++            "catalog metadata reproof authorized stale remote publication after a local edit");
++    }
++}
++
+@@ -2569,4 +2994,2 @@ void test_bounded_whole_folder_pass_limit_contract() {
+-    require_error(
+-        [&] { (void)scan.run_convergence_pass_or_throw(pass_limits); },
+-        "remote-apply operation limit is smaller than the local scan segment regular-file limit",
+-        "composed pass accepted a remote-apply frontier smaller than its local successor-apply bound");
++    const auto independently_bounded =
++        scan.run_convergence_pass_or_throw(pass_limits);
+@@ -2574,2 +2997,4 @@ void test_bounded_whole_folder_pass_limit_contract() {
+-        scan.snapshot_or_throw() == catalog_cutpoint,
+-        "invalid local/remote effect composition touched the catalog");
++        independently_bounded.used_idle_fast_path &&
++            independently_bounded.remote_apply_operation_count == 0U &&
++            scan.snapshot_or_throw() == catalog_cutpoint,
++        "independent local-scan and cyclic remote-apply frontiers were not accepted");
+@@ -3655,0 +4081,97 @@ void test_remote_apply_path_fence_and_crash_recovery() {
++void test_rev0950_fair_scan_catalog_migrates_without_losing_journal() {
++    Fixture fixture("anonsync-folder-scan-v3-migration");
++    write_file(fixture.shared_root / "a.txt", "retained fair-scan prefix");
++    write_file(fixture.shared_root / "z.txt", "deferred fair-scan suffix");
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "v3 migration catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    auto limits = Fixture::pass_limits();
++    limits.maximum_local_scan_segment_regular_files = 1U;
++    const auto partial = scan->run_convergence_pass_or_throw(limits);
++    const auto v4_snapshot = scan->snapshot_or_throw();
++    const auto retained_progress = scan->scan_progress_snapshot_or_throw();
++    require(
++        !partial.completed_local_scan_epoch &&
++            retained_progress.seen_path_count == 1U &&
++            retained_progress.resume_after_path == "a.txt" &&
++            retained_progress.remote_apply_resume_after_path.empty(),
++        "v3 migration fixture did not retain a non-genesis scan journal");
++    scan.reset();
++
++    const std::string v3_digest =
++        fair_scan_catalog_digest_for_test(v4_snapshot);
++    anonsync::sqlite_exec_or_throw(
++        catalog_db.db,
++        "BEGIN IMMEDIATE;"
++        "DROP TABLE sync_replica_folder_catalog_remote_apply_progress;"
++        "ALTER TABLE sync_replica_folder_catalog_meta "
++        "RENAME TO sync_replica_folder_catalog_meta_v4_fixture;"
++        "CREATE TABLE sync_replica_folder_catalog_meta("
++        "id INTEGER PRIMARY KEY CHECK(id=1),"
++        "schema_version INTEGER NOT NULL CHECK(schema_version=3),"
++        "folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),"
++        "absolute_root_path TEXT NOT NULL CHECK(length(absolute_root_path) BETWEEN 1 AND 16384),"
++        "root_attestation_digest TEXT NOT NULL CHECK(length(root_attestation_digest)=64),"
++        "state_generation INTEGER NOT NULL CHECK(state_generation>=0),"
++        "max_catalog_entries INTEGER NOT NULL CHECK(max_catalog_entries>0),"
++        "max_catalog_path_bytes INTEGER NOT NULL CHECK(max_catalog_path_bytes>0),"
++        "max_payload_bytes INTEGER NOT NULL CHECK(max_payload_bytes>0),"
++        "entry_count INTEGER NOT NULL CHECK(entry_count>=0),"
++        "catalog_path_bytes INTEGER NOT NULL CHECK(catalog_path_bytes>=0),"
++        "catalog_digest TEXT NOT NULL CHECK(length(catalog_digest)=64)) STRICT;",
++        "v3 migration fixture schema");
++    anonsync::SyncSqliteStmt insert = anonsync::sqlite_prepare_or_throw(
++        catalog_db.db,
++        "INSERT INTO sync_replica_folder_catalog_meta("
++        "id,schema_version,folder_id,absolute_root_path,"
++        "root_attestation_digest,state_generation,max_catalog_entries,"
++        "max_catalog_path_bytes,max_payload_bytes,entry_count,"
++        "catalog_path_bytes,catalog_digest) "
++        "SELECT id,3,folder_id,absolute_root_path,root_attestation_digest,"
++        "state_generation,max_catalog_entries,max_catalog_path_bytes,"
++        "max_payload_bytes,entry_count,catalog_path_bytes,? "
++        "FROM sync_replica_folder_catalog_meta_v4_fixture WHERE id=1;",
++        "v3 migration fixture metadata prepare");
++    anonsync::sqlite_bind_text_or_throw(
++        insert.stmt, 1, v3_digest, "v3 migration fixture");
++    anonsync::sqlite_step_done_or_throw(
++        insert.stmt, "v3 migration fixture metadata step");
++    anonsync::sqlite_exec_or_throw(
++        catalog_db.db,
++        "DROP TABLE sync_replica_folder_catalog_meta_v4_fixture;COMMIT;",
++        "v3 migration fixture commit");
++
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto migrated = scan->snapshot_or_throw();
++    const auto migrated_progress = scan->scan_progress_snapshot_or_throw();
++    require(
++        migrated == v4_snapshot && migrated.catalog_digest != v3_digest &&
++            migrated_progress == retained_progress,
++        "rev0950 migration changed catalog authority or authenticated scan continuation");
++
++    anonsync::SyncSqliteStmt schema = anonsync::sqlite_prepare_or_throw(
++        catalog_db.db,
++        "SELECT m.schema_version,r.resume_after_path,"
++        "(SELECT count(*) FROM sqlite_schema WHERE sql IS NOT NULL AND "
++        "name GLOB 'sync_replica_folder_catalog_*') "
++        "FROM sync_replica_folder_catalog_meta AS m "
++        "JOIN sync_replica_folder_catalog_remote_apply_progress AS r "
++        "ON m.id=r.id WHERE m.id=1;",
++        "v3 migrated schema prepare");
++    require(
++        sqlite3_step(schema.stmt) == SQLITE_ROW &&
++            sqlite3_column_int64(schema.stmt, 0) == 4 &&
++            std::string_view(reinterpret_cast<const char*>(
++                sqlite3_column_text(schema.stmt, 1))).empty() &&
++            sqlite3_column_int64(schema.stmt, 2) == 5 &&
++            sqlite3_step(schema.stmt) == SQLITE_DONE,
++        "rev0950 migration did not create the exact v4 cursor schema");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    require(
++        scan->snapshot_or_throw() == migrated &&
++            scan->scan_progress_snapshot_or_throw() == migrated_progress,
++        "rev0950 migration was not a stable one-time upgrade");
++}
++
+@@ -3686,0 +4209 @@ void test_rev0946_catalog_migrates_to_fair_scan_schema_exactly_once() {
++        "DROP TABLE sync_replica_folder_catalog_remote_apply_progress;"
+@@ -3785 +4308,2 @@ void test_rev0946_catalog_migrates_to_fair_scan_schema_exactly_once() {
+-            "p.seen_path_count,p.seen_path_bytes,length(p.seen_chain_digest) "
++            "p.seen_path_count,p.seen_path_bytes,length(p.seen_chain_digest),"
++            "r.resume_after_path "
+@@ -3788 +4312,3 @@ void test_rev0946_catalog_migrates_to_fair_scan_schema_exactly_once() {
+-            "ON m.id=p.id WHERE m.id=1;",
++            "ON m.id=p.id "
++            "JOIN sync_replica_folder_catalog_remote_apply_progress AS r "
++            "ON m.id=r.id WHERE m.id=1;",
+@@ -3792 +4318 @@ void test_rev0946_catalog_migrates_to_fair_scan_schema_exactly_once() {
+-            sqlite3_column_int64(version_and_progress.stmt, 0) == 3 &&
++            sqlite3_column_int64(version_and_progress.stmt, 0) == 4 &&
+@@ -3798,0 +4325,2 @@ void test_rev0946_catalog_migrates_to_fair_scan_schema_exactly_once() {
++            std::string_view(reinterpret_cast<const char*>(
++                sqlite3_column_text(version_and_progress.stmt, 6))).empty() &&
+@@ -3800 +4328 @@ void test_rev0946_catalog_migrates_to_fair_scan_schema_exactly_once() {
+-        "rev0946 migration did not create one exact fair-scan genesis cutpoint");
++        "rev0946 migration did not create exact scan and remote-apply genesis cutpoints");
+@@ -3830,0 +4359 @@ void test_rev0939_file_catalog_migrates_exactly_once() {
++        "DROP TABLE sync_replica_folder_catalog_remote_apply_progress;"
+@@ -3928,2 +4457,2 @@ void test_rev0939_file_catalog_migrates_exactly_once() {
+-            sqlite3_column_int64(version.stmt, 0) == 3,
+-        "migrated folder catalog did not attest schema version 3");
++            sqlite3_column_int64(version.stmt, 0) == 4,
++        "migrated folder catalog did not attest schema version 4");
+@@ -4071,0 +4601,2 @@ int main() {
++        test_remote_apply_cursor_survives_restart_and_defeats_prefix_churn();
++        test_catalog_predecessor_reproof_decouples_remote_apply_from_scan_cursor();
+@@ -4084,0 +4616 @@ int main() {
++        test_rev0950_fair_scan_catalog_migrates_without_losing_journal();
+diff --git tests/sync_replica_sync_once_test.cpp tests/sync_replica_sync_once_test.cpp
+index 0e00697..2575f60 100644
+--- tests/sync_replica_sync_once_test.cpp
++++ tests/sync_replica_sync_once_test.cpp
+@@ -173,0 +174,6 @@ void test_durable_progress_contract() {
++
++    result.after = result.before;
++    result.after.remote_apply_resume_after_path = "later/path.txt";
++    require(
++        anonsync::sync_replica_sync_once_made_durable_progress(result),
++        "remote scheduling cursor change did not report durable progress");
+diff --git tools/audit_sync_file_payload_store.py tools/audit_sync_file_payload_store.py
+index 39f124d..bc4e431 100644
+--- tools/audit_sync_file_payload_store.py
++++ tools/audit_sync_file_payload_store.py
+@@ -401 +401 @@ def main() -> int:
+-    apply_file = function_body(
++    apply_file_entry = function_body(
+@@ -404,0 +405,5 @@ def main() -> int:
++    apply_file = function_body(
++        folder_scan,
++        "SyncReplicaFolderScanOwner::\n"
++        "    apply_visible_regular_file_with_payload_snapshot_or_throw(",
++    )
+@@ -411,0 +417,2 @@ def main() -> int:
++        and "apply_visible_regular_file_with_payload_snapshot_or_throw" in apply_file_entry
++        and "retained_payload_snapshot" in apply_file
+@@ -1151,0 +1159,2 @@ def main() -> int:
++            "observed_remote_successor_paths.push_back(",
++            "if (handled_without_local_publication)",
+@@ -1153 +1161,0 @@ def main() -> int:
+-            "apply_visible_regular_file_or_throw",
+@@ -1193 +1201 @@ def main() -> int:
+-        "one exact append-only payload cutpoint proves unchanged local payloads, while genuinely new digests reuse a warm verified index only inside explicit put and exact-work segments; resumable traversal records successful path effects in one durable journal segment after directory reproof, and no-op, conflict, and remote paths release the exclusive lease before unrelated work",
++        "one exact append-only payload cutpoint proves unchanged local payloads, while genuinely new digests reuse a warm verified index only inside explicit put and exact-work segments; traversal retains only exact remote-predecessor eligibility and releases exclusive payload authority before the independent cyclic apply phase",
+@@ -1371,0 +1380,17 @@ def main() -> int:
++    require(
++        ordered(
++            idle_fast_path,
++            "const SyncReplicaFolderCatalogSnapshot fresh_catalog",
++            "const FolderScanProgressHead fresh_scan_progress",
++            "idle scan-progress reproof",
++            "const SyncReplicaSqliteSnapshot fresh_replica",
++            "const FolderRemoteApplyProgressHead fresh_remote_apply_progress",
++            "fresh_catalog != catalog_hints",
++            "fresh_scan_progress != scan_progress",
++            "fresh_replica != replica_cutpoint",
++            "fresh_remote_apply_progress != remote_apply_progress",
++        ),
++        "idle_fast_path_reproves_all_mutable_sqlite_cutpoints",
++        "the speculative no-effect path rechecks catalog authority, authenticated local scan continuation, replica authority, and the independent remote scheduling cursor before it may report idle; this lexical check does not prove race freedom",
++    )
++
+@@ -1427,0 +1453,3 @@ def main() -> int:
++                "std::string remote_apply_started_after_path",
++                "std::string remote_apply_resume_after_path",
++                "bool remote_apply_wrapped_projection",
+@@ -1428,0 +1457 @@ def main() -> int:
++                "This frontier is therefore independent of the local scan segment size.",
+@@ -1435,2 +1464 @@ def main() -> int:
+-                "pass remote-apply operation limit is smaller than the local scan segment regular-file limit",
+-                "local traversal exhausted the remote-apply operation frontier",
++                "remote apply plan exceeded its operation frontier",
+@@ -1438,0 +1467,4 @@ def main() -> int:
++        and "remote-apply operation limit is smaller than the local scan segment regular-file limit"
++        not in folder_scan
++        and "local traversal exhausted the remote-apply operation frontier"
++        not in folder_scan
+@@ -1440,2 +1472,2 @@ def main() -> int:
+-        "folder_remote_apply_effects_have_a_composed_count_frontier",
+-        "one production pass bounds completed remote file/tombstone apply-owner calls independently of bytes and composes that allowance above local path callbacks and below remote-path admission",
++        "folder_remote_apply_effects_have_an_independent_cyclic_count_frontier",
++        "one production pass bounds completed remote file/tombstone apply-owner calls independently of local traversal and bytes; local scanning proves eligibility, while a later cyclic planner owns the scheduling allowance below full remote-path admission",
+@@ -1454,3 +1486,4 @@ def main() -> int:
+-            "remaining_remote_apply_operations",
+-            "remote_candidates.reserve",
+-            "Preflight the complete visible projection",
++            "load_remote_apply_progress_head_or_throw",
++            "std::sort(",
++            "observed_remote_successor_paths.begin()",
++            "First perform hard admission over the complete sole-visible projection.",
+@@ -1460,0 +1494,4 @@ def main() -> int:
++            "remote_projection.push_back",
++            "remaining_remote_apply_operations",
++            "remote_candidates.reserve",
++            "std::upper_bound",
+@@ -1464,0 +1502 @@ def main() -> int:
++            "advance_remote_apply_progress_or_throw",
+@@ -1470,2 +1508,2 @@ def main() -> int:
+-        "remote_projection_preflights_all_hard_bounds_then_schedules_one_prefix",
+-        "path, depth, projection, and per-file admission still inspect the full visible projection before effects, while byte/count limits defer a deterministic suffix without whole-projection candidate allocation or zero-progress aggregate rejection",
++        "remote_projection_preflights_all_hard_bounds_then_schedules_one_cyclic_segment",
++        "path, depth, projection, and per-file admission inspect the full visible projection before post-scan effects; the persisted cursor rotates candidate order, byte/count limits defer eligible work, and cursor publication follows all selected idempotent effects",
+@@ -1482 +1520 @@ def main() -> int:
+-                "remote prefix scheduling weakened complete-projection path preflight",
++                "remote cyclic scheduling weakened complete-projection path preflight",
+@@ -1485 +1523,129 @@ def main() -> int:
+-                "remote-apply operation limit is smaller than the local scan segment regular-file limit",
++                "independent local-scan and cyclic remote-apply frontiers were not accepted",
++                "test_remote_apply_cursor_survives_restart_and_defeats_prefix_churn",
++                "sustained early-path churn starved the later remote path after restart",
++                "cyclic cursor did not wrap and settle the continuously changing prefix",
++            )
++        )
++        and "remote-apply operation limit is smaller than the local scan segment regular-file limit"
++        not in folder_scan_runtime,
++        "compiled_tests_cover_remote_byte_count_cyclic_progress_and_suffix_preflight",
++        "focused runtime tests bind two-pass byte progress, mixed zero-byte/tombstone count progress, independent scan/apply frontiers, full-suffix hard preflight, restart persistence, and service of a later path despite sustained early-prefix churn",
++    )
++
++    require(
++        all(
++            token in folder_scan
++            for token in (
++                "constexpr std::uint64_t kFairScanSchemaVersion = 3U",
++                "constexpr std::uint64_t kSchemaVersion = 4U",
++                "kRemoteApplyProgressSchemaSql",
++                "sync_replica_folder_catalog_remote_apply_progress",
++                "load_modern_catalog_or_throw",
++                "migrate_fair_scan_catalog_or_throw",
++                "migration changed authenticated scan continuation",
++                "migrated remote-apply progress is not genesis",
++            )
++        )
++        and all(
++            token in folder_scan_runtime
++            for token in (
++                "test_rev0950_fair_scan_catalog_migrates_without_losing_journal",
++                "rev0950 migration changed catalog authority or authenticated scan continuation",
++                "rev0950 migration did not create the exact v4 cursor schema",
++                "sqlite3_column_int64(schema.stmt, 2) == 5",
++                "folder owner accepted a noncanonical remote scheduling cursor",
++            )
++        ),
++        "v4_migration_adds_scheduling_cursor_without_rewriting_scan_authority",
++        "the exact v3 schema is proved, metadata alone is replaced, the authenticated scan journal is retained in place, and a path-validated genesis scheduling singleton is added under the v4 schema before the new catalog digest is re-proved",
++    )
++
++    local_traversal = folder_scan[
++        folder_scan.find("const SyncReplicaFolderTraversalSegment local_segment") :
++        folder_scan.find("report.traversal = local_segment.traversal")
++    ]
++    require(
++        "observed_remote_successor_paths.push_back(" in local_traversal
++        and "apply_visible_regular_file_or_throw" not in local_traversal
++        and "apply_visible_tombstone_or_throw" not in local_traversal
++        and ordered(
++            remote_planner,
++            "std::sort(",
++            "observed_remote_successor_paths.begin()",
++            "std::upper_bound",
++            "std::binary_search(",
++            "observed_remote_successor_paths.begin()",
++            "apply_visible_regular_file_with_payload_snapshot_or_throw",
++            "apply_visible_tombstone_or_throw",
++            "advance_remote_apply_progress_or_throw",
++        ),
++        "local_traversal_proves_predecessors_but_cyclic_planner_owns_all_remote_effects",
++        "local namespace order can no longer spend remote-effect capacity: traversal records exact predecessor eligibility or conflict only, and every remote file/tombstone effect is selected through the persisted cyclic scheduler",
++    )
++
++    require(
++        all(
++            token in folder_scan_h
++            for token in (
++                "remote_payload_snapshot_observation_count",
++                "remote_payload_snapshot_entry_count",
++                "deferred_remote_payload_candidate_count",
++                "apply_visible_regular_file_with_payload_snapshot_or_throw",
++            )
++        )
++        and ordered(
++            remote_planner,
++            "if (report.payload_mutation_inserted_count != 0U)",
++            "payload_cutpoint.reset()",
++            "require_remote_payload_snapshot",
++            "remote_payload_snapshot_observation_count",
++            "payload_size_or_none",
++            "deferred_remote_payload_candidate_count",
++            "operation_count_full",
++            "apply_visible_regular_file_with_payload_snapshot_or_throw",
++            "advance_remote_apply_progress_or_throw",
++        )
++        and all(
++            token in folder_scan_runtime
++            for token in (
++                "catchup.remote_payload_snapshot_observation_count == 1U",
++                "catchup.remote_payload_snapshot_entry_count == 3U",
++                "missing remote payload was not retained as bounded scheduling remainder",
++                "an unavailable remote prefix blocked a ready suffix or forced repeated inventories",
++            )
++        ),
++        "remote_apply_reuses_one_verified_payload_inventory_and_defers_missing_bytes",
++        "one frozen verified payload inventory serves all eligible remote files in a pass, is refreshed after local insertion, and missing bytes remain bounded scheduling remainder without blocking a ready cyclic suffix",
++    )
++
++    require(
++        all(
++            token in folder_scan_h
++            for token in (
++                "remote_apply_revalidated_catalog_predecessor_count",
++                "Catalog metadata only",
++                "nominates work",
++            )
++        )
++        and ordered(
++            remote_planner,
++            "observed_remote_successor_paths.begin()",
++            "require_catalog_operation_or_throw",
++            "operation.operation_id == prior_operation.operation_id",
++            "catalog predecessor metadata reproof",
++            "source_snapshot_digest",
++            "sync_replica_operation_supersedes",
++            "remote_apply_revalidated_catalog_predecessor_count",
++            "apply_visible_regular_file_with_payload_snapshot_or_throw",
++        )
++        and "durable_scan_journal_contains" not in remote_planner
++        and "scan_epoch=? AND canonical_path=? AND ordinal<=?" not in folder_scan
++        and "observe_optional_regular_file_beneath_root_or_throw" in apply_file
++        and "observation_matches_catalog_entry" in apply_file
++        and all(
++            token in folder_scan_runtime
++            for token in (
++                "test_catalog_predecessor_reproof_decouples_remote_apply_from_scan_cursor",
++                "restart waited for a whole scan-epoch wrap before applying the cataloged predecessor",
++                "completed scan-epoch reset stranded a cataloged predecessor behind the new scan cursor",
++                "catalog metadata reproof authorized stale remote publication after a local edit",
+@@ -1488,2 +1654,2 @@ def main() -> int:
+-        "compiled_tests_cover_remote_byte_count_progress_and_suffix_preflight",
+-        "focused runtime tests bind two-pass byte progress, mixed zero-byte/tombstone count progress, fail-fast composition, and rejection of a valid selected prefix when a later projection path violates a hard limit",
++        "catalog_predecessor_reproof_decouples_remote_apply_from_scan_journal_lifetime",
++        "a present cataloged predecessor can be scheduled independently of the active or reset local scan cursor after fresh rooted metadata reproof, while the exact apply owner still reopens and fully hashes bytes before any effect",
+@@ -1499,0 +1666 @@ def main() -> int:
++                "std::string remote_apply_resume_after_path",
+@@ -1506,0 +1674 @@ def main() -> int:
++            "load_remote_apply_progress_head_or_throw",
+@@ -1517,0 +1686 @@ def main() -> int:
++                "remote_apply_resume_after_path",
+@@ -1527,3 +1696,14 @@ def main() -> int:
+-        in sync_once_runtime,
+-        "sync_once_cutpoint_counts_authenticated_scan_continuation_as_durable_progress",
+-        "the process-visible cutpoint includes the validated durable scan head, so a crash-surviving cursor/epoch transition cannot be mislabeled as no progress merely because catalog content and replica evidence were unchanged",
++        in sync_once_runtime
++        and "remote scheduling cursor change did not report durable progress"
++        in sync_once_runtime
++        and "sync-once cutpoint did not expose remote cursor advancement"
++        in sync_process_runtime
++        and sync_cli.count("\\\"remote_apply_started_after_path\\\"") == 2
++        and sync_cli.count("\\\"remote_apply_resume_after_path\\\"") == 3
++        and sync_cli.count("\\\"remote_apply_wrapped_projection\\\"") == 2
++        and sync_cli.count("\\\"remote_payload_snapshot_observations\\\"") == 2
++        and sync_cli.count("\\\"remote_payload_snapshot_entries\\\"") == 2
++        and sync_cli.count("\\\"deferred_remote_payload_candidates\\\"") == 2
++        and sync_cli.count("\\\"remote_apply_revalidated_catalog_predecessors\\\"") == 2,
++        "sync_once_cutpoint_counts_scan_and_remote_scheduler_progress",
++        "the process-visible cutpoint includes both authenticated local scan continuation and the validated scheduling cursor, so a crash-surviving rotation cannot be mislabeled as no progress even when catalog content and replica evidence were unchanged",
+@@ -1537,0 +1718 @@ def main() -> int:
++                "pass->deferred_remote_payload_candidate_count != 0U",
+diff --git tools/test_anonsync_sync_process.py tools/test_anonsync_sync_process.py
+index b1db951..7b24680 100644
+--- tools/test_anonsync_sync_process.py
++++ tools/test_anonsync_sync_process.py
+@@ -494,0 +495,7 @@ def main() -> int:
++            "remote_payload_snapshot_observations": 1,
++            "remote_payload_snapshot_entries": 3,
++            "deferred_remote_payload_candidates": 0,
++            "remote_apply_revalidated_catalog_predecessors": 0,
++            "remote_apply_started_after_path": "",
++            "remote_apply_resume_after_path": "batch/item-000.txt",
++            "remote_apply_wrapped_projection": False,
+@@ -500,0 +508,12 @@ def main() -> int:
++        for phase in ("before", "after_local_pass", "after_pull"):
++            if require_object(
++                first_receiver, phase, "first receiver bounded sync"
++            ).get("remote_apply_resume_after_path") != "":
++                fail(
++                    "first receiver cursor advanced before the remote apply "
++                    f"stage: {phase}"
++                )
++        if require_object(
++            first_receiver, "after", "first receiver bounded sync"
++        ).get("remote_apply_resume_after_path") != "batch/item-000.txt":
++            fail("sync-once cutpoint did not expose remote cursor advancement")
+@@ -532,0 +552,7 @@ def main() -> int:
++            "remote_payload_snapshot_observations": 1,
++            "remote_payload_snapshot_entries": 3,
++            "deferred_remote_payload_candidates": 0,
++            "remote_apply_revalidated_catalog_predecessors": 0,
++            "remote_apply_started_after_path": "batch/item-000.txt",
++            "remote_apply_resume_after_path": "batch/item-001.txt",
++            "remote_apply_wrapped_projection": True,
+@@ -556,0 +583,7 @@ def main() -> int:
++            "remote_payload_snapshot_observations": 1,
++            "remote_payload_snapshot_entries": 3,
++            "deferred_remote_payload_candidates": 0,
++            "remote_apply_revalidated_catalog_predecessors": 0,
++            "remote_apply_started_after_path": "batch/item-001.txt",
++            "remote_apply_resume_after_path": "batch/item-002.txt",
++            "remote_apply_wrapped_projection": True,
+@@ -585,0 +619,3 @@ def main() -> int:
++            "remote_apply_started_after_path": "batch/item-002.txt",
++            "remote_apply_resume_after_path": "batch/item-002.txt",
++            "remote_apply_wrapped_projection": True,
+@@ -608,0 +645,3 @@ def main() -> int:
++            "remote_apply_started_after_path": "batch/item-002.txt",
++            "remote_apply_resume_after_path": "batch/item-002.txt",
++            "remote_apply_wrapped_projection": True,
+@@ -622,0 +662 @@ def main() -> int:
++            "remote_apply_resume_after_path",

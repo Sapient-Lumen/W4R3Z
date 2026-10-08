@@ -1,0 +1,1796 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f1b449f..9f5c5b1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -902,6 +902,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+   target_link_libraries(anonsync_sqlite_replay_ledger_selftests_lib PRIVATE
+     anonsync_self_exec_test_process)
+ 
++  foreach(ANONSYNC_SELF_EXEC_ATOMIC_TARGET
++      anonsync_sync_atomic_file_publication_test
++      anonsync_sync_atomic_file_publication_cutpoint_test)
++    target_include_directories(${ANONSYNC_SELF_EXEC_ATOMIC_TARGET} PRIVATE
++      ${CMAKE_CURRENT_SOURCE_DIR}/tests)
++    target_link_libraries(${ANONSYNC_SELF_EXEC_ATOMIC_TARGET} PRIVATE
++      anonsync_self_exec_test_process)
++  endforeach()
++
+   add_executable(anonsync_self_exec_test_process_test
+     tests/self_exec_test_process_test.cpp)
+   target_include_directories(anonsync_self_exec_test_process_test PRIVATE
+@@ -1156,6 +1165,10 @@ if(ANONSYNC_USE_BUNDLED_SQLITE)
+   target_compile_definitions(anonsync_sqlite_runtime_payload_store_test PRIVATE
+     ANONSYNC_BUNDLED_SQLITE=1)
+ endif()
++if(TARGET anonsync_self_exec_test_process)
++  target_link_libraries(anonsync_sqlite_runtime_payload_store_test PRIVATE
++    anonsync_self_exec_test_process)
++endif()
+ add_executable(anonsync_canonical_projection_verifier_test
+   tests/persistence/canonical_projection_verifier_tests.cpp)
+ target_include_directories(anonsync_canonical_projection_verifier_test PRIVATE
+@@ -1200,6 +1213,12 @@ target_link_libraries(anonsync_peer_ingress_schema_attestation_test PRIVATE
+   anonsync_peer_ingress_schema)
+ target_compile_options(anonsync_peer_ingress_schema_attestation_test PRIVATE
+   -Wall -Wextra -Wpedantic)
++if(TARGET anonsync_self_exec_test_process)
++  target_include_directories(anonsync_peer_ingress_schema_attestation_test PRIVATE
++    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
++  target_link_libraries(anonsync_peer_ingress_schema_attestation_test PRIVATE
++    anonsync_self_exec_test_process)
++endif()
+ # rev0789: independently compiled and executable proof for the durable,
+ # exact-VFS peer-ingress connection publication boundary.  Linking this test
+ # back through anonsync_core_lib would silently restore the 26-translation-unit
+@@ -1515,12 +1534,6 @@ if(TARGET anonsync_sync_atomic_file_publication_unlink_authority_test)
+     anonsync_sync_atomic_file_publication_unlink_authority_test
+     PROPERTIES TIMEOUT 30)
+ endif()
+-set_tests_properties(
+-  anonsync_sync_atomic_file_publication_test
+-  anonsync_sync_atomic_file_publication_prepared_test
+-  anonsync_sync_atomic_file_publication_state_test
+-  anonsync_sync_atomic_file_publication_cutpoint_test
+-  PROPERTIES TIMEOUT 90)
+ add_test(NAME anonsync_sync_checkpoint_scheduler_policy_test
+   COMMAND anonsync_sync_checkpoint_scheduler_policy_test)
+ add_test(NAME anonsync_sync_checkpoint_owner_fence_policy_test
+@@ -1548,6 +1561,18 @@ add_test(NAME anonsync_peer_ingress_retention_integrity_test
+   COMMAND anonsync_peer_ingress_retention_integrity_test)
+ add_test(NAME anonsync_peer_ingress_schema_attestation_test
+   COMMAND anonsync_peer_ingress_schema_attestation_test)
++set_tests_properties(
++  anonsync_sync_atomic_file_publication_state_test
++  PROPERTIES TIMEOUT 90)
++set_tests_properties(
++  anonsync_sync_atomic_file_publication_test
++  anonsync_sync_atomic_file_publication_prepared_test
++  anonsync_peer_ingress_schema_attestation_test
++  PROPERTIES TIMEOUT 60)
++set_tests_properties(
++  anonsync_sync_atomic_file_publication_cutpoint_test
++  anonsync_sqlite_runtime_payload_store_test
++  PROPERTIES TIMEOUT 120)
+ add_test(NAME anonsync_peer_ingress_connection_profile_test
+   COMMAND anonsync_peer_ingress_connection_profile_test)
+ find_package(Python3 COMPONENTS Interpreter QUIET)
+@@ -1668,6 +1693,12 @@ if(Python3_Interpreter_FOUND)
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   set_tests_properties(anonsync_self_exec_test_process_source_audit
+     PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_raw_fork_boundary_source_audit
++    COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_raw_fork_boundaries.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_raw_fork_boundary_source_audit
++    PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_sqlite_replay_ledger_reset_source_audit
+     COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_replay_ledger_reset.py
+diff --git a/src/sync_atomic_file_publication.cpp b/src/sync_atomic_file_publication.cpp
+index 39f4770..340861a 100644
+--- a/src/sync_atomic_file_publication.cpp
++++ b/src/sync_atomic_file_publication.cpp
+@@ -947,12 +947,9 @@ void atomic_file_publication_detail::
+     std::unique_ptr<SyncPreparedImmutableJsonPublication::Impl> implementation =
+         std::move(publication.implementation_);
+     try {
+-        if (!sync_process_incarnation_is_current(
+-                implementation->owner_process_incarnation)) {
+-            throw std::runtime_error(
+-                implementation->label +
+-                " prepared destination authority belongs to a different process incarnation");
+-        }
++        require_sync_process_incarnation_or_fail_stop(
++            implementation->owner_process_incarnation,
++            "prepared immutable JSON publication destination authority");
+ #if defined(_WIN32)
+         publish_windows_or_throw(
+             implementation->final_path, byte_span(implementation->payload),
+diff --git a/src/sync_atomic_file_publication.hpp b/src/sync_atomic_file_publication.hpp
+index 56cabb3..419d35d 100644
+--- a/src/sync_atomic_file_publication.hpp
++++ b/src/sync_atomic_file_publication.hpp
+@@ -72,7 +72,8 @@ private:
+ // the no-replace namespace transition. Those effects are reported through
+ // SyncAtomicFilePublicationError. A parent-path rebind detected before temp
+ // reservation is NotPublished with no possible temp residue. Inherited use
+-// after fork is rejected before filesystem mutation.
++// after fork is a process-capability violation: it fail-stops without C++
++// unwinding before filesystem mutation.
+ class SyncPreparedImmutableJsonPublication final {
+ public:
+     SyncPreparedImmutableJsonPublication() noexcept;
+@@ -90,6 +91,8 @@ public:
+ 
+     // Consumes this capability exactly once. A second call is a typed
+     // NotPublished error and never reuses stale parent or pathname evidence.
++    // A nonempty capability inherited by another process fail-stops before
++    // pathname or retained-directory authority can be exercised.
+     void publish_or_throw();
+ 
+ private:
+diff --git a/tests/peer_ingress_schema_attestation_test.cpp b/tests/peer_ingress_schema_attestation_test.cpp
+index 4a7755a..931403d 100644
+--- a/tests/peer_ingress_schema_attestation_test.cpp
++++ b/tests/peer_ingress_schema_attestation_test.cpp
+@@ -4,6 +4,10 @@
+ #include "sync_sqlite_support.hpp"
+ #include "sync_sqlite_schema_identity.hpp"
+ 
++#if defined(__linux__)
++#include "self_exec_test_process.hpp"
++#endif
++
+ #include <chrono>
+ #include <cstdint>
+ #include <filesystem>
+@@ -18,7 +22,6 @@
+ #include <sqlite3.h>
+ 
+ #if defined(__unix__) || defined(__APPLE__)
+-#include <sys/wait.h>
+ #include <unistd.h>
+ #endif
+ 
+@@ -755,35 +758,47 @@ void test_owner_generation_pin_and_move(std::uint64_t& checks) {
+     ++checks;
+ }
+ 
+-#if defined(__unix__) || defined(__APPLE__)
+-void test_live_attestation_blocks_owner_close(std::uint64_t& checks) {
+-    const pid_t child = ::fork();
+-    require(child >= 0, "owner-pin fork failed", checks);
+-    if (child == 0) {
+-        try {
+-            SqlitePtr db = open_database(":memory:");
+-            PeerTransportIngressSchemaAttestation attestation =
+-                initialize_or_inspect_peer_transport_ingress_schema_or_throw(
+-                    db.owner.db, true, false, "owner-pin child");
+-            if (attestation.owner_generation() != db.owner.db.generation() ||
+-                db.owner.db.active_borrows() != 1) {
+-                ::_exit(12);
+-            }
+-            // Strict owner destruction must fail before sqlite3_close() while
+-            // the exact schema-generation capability remains live.
+-            db.owner.db.reset();
+-            ::_exit(13);
+-        } catch (...) {
+-            ::_exit(14);
++#if defined(__linux__)
++constexpr std::string_view kOwnerCloseHelper =
++    "--anonsync-peer-schema-owner-close-helper-v1";
++
++int run_owner_close_helper(int argc, char** argv) {
++    try {
++        anonsync::test::verify_self_exec_child_boundary_or_throw();
++        if (argc != 2 || argv == nullptr || argv[1] == nullptr ||
++            std::string_view(argv[1]) != kOwnerCloseHelper) {
++            throw std::runtime_error("invalid schema owner-close helper instruction");
+         }
++        SqlitePtr db = open_database(":memory:");
++        PeerTransportIngressSchemaAttestation attestation =
++            initialize_or_inspect_peer_transport_ingress_schema_or_throw(
++                db.owner.db, true, false, "self-exec owner-pin helper");
++        if (attestation.owner_generation() != db.owner.db.generation() ||
++            db.owner.db.active_borrows() != 1) {
++            return 12;
++        }
++        // Strict owner destruction must fail before sqlite3_close() while the
++        // exact schema-generation capability remains live. This is executed in
++        // a fresh image rather than a child carrying parent SQLite state.
++        db.owner.db.reset();
++        return 13;
++    } catch (const std::exception& error) {
++        std::cerr << "schema owner-close helper failed: " << error.what() << '\n';
++        return 14;
+     }
++}
+ 
+-    int status = 0;
+-    require(::waitpid(child, &status, 0) == child,
+-            "owner-pin waitpid failed", checks);
+-    require(WIFEXITED(status),
+-            "owner-pin child did not exit normally", checks);
+-    require(WEXITSTATUS(status) == kSyncProcessCapabilityViolationExitCode,
++void test_live_attestation_blocks_owner_close(std::uint64_t& checks) {
++    anonsync::test::SelfExecTestProcess child =
++        anonsync::test::spawn_self_exec_test_process_or_throw(
++            anonsync::test::current_self_executable_or_throw(),
++            {std::string(kOwnerCloseHelper)});
++    child.wait_for_exact_exit(
++        kSyncProcessCapabilityViolationExitCode, std::chrono::seconds(10),
++        "live schema attestation owner-close fail-stop");
++    require(true, "owner-pin self-exec helper was launched", checks);
++    require(!child.active(), "owner-pin helper authority was consumed", checks);
++    require(true,
+             "live schema attestation did not fail-stop owner close", checks);
+ }
+ #endif
+@@ -836,9 +851,18 @@ void test_generation_and_handle_binding(std::uint64_t& checks) {
+ 
+ }  // namespace
+ 
+-int main() {
++int main(int argc, char** argv) {
++#if defined(__linux__)
++    if (argc >= 2 && argv != nullptr && argv[1] != nullptr &&
++        std::string_view(argv[1]) == kOwnerCloseHelper) {
++        return run_owner_close_helper(argc, argv);
++    }
++#endif
+     std::uint64_t checks = 0;
+     try {
++        if (argc != 1) {
++            throw std::runtime_error("unexpected schema attestation test arguments");
++        }
+         test_schema_token_identity(checks);
+         test_atomic_payload_schema_ensure(checks);
+         test_fresh_bootstrap(checks);
+@@ -850,7 +874,7 @@ int main() {
+         test_schema_program_and_shadow_rejection(checks);
+         test_authorizer_ownership_and_generation(checks);
+         test_owner_generation_pin_and_move(checks);
+-#if defined(__unix__) || defined(__APPLE__)
++#if defined(__linux__)
+         test_live_attestation_blocks_owner_close(checks);
+ #endif
+         test_generation_and_handle_binding(checks);
+diff --git a/tests/sqlite_runtime_payload_store_test.cpp b/tests/sqlite_runtime_payload_store_test.cpp
+index 6230c98..7971300 100644
+--- a/tests/sqlite_runtime_payload_store_test.cpp
++++ b/tests/sqlite_runtime_payload_store_test.cpp
+@@ -1,9 +1,15 @@
+ #include "peer_ingress_test_fixture.hpp"
++#include "sha256_digest.hpp"
+ #include "sync_peer_ingress_payload_store.hpp"
+ #include "sync_peer_ingress_wire.hpp"
+ #include "sync_sqlite_runtime.hpp"
+ #include "sync_sqlite_support.hpp"
+ 
++#if defined(__linux__)
++#include "self_exec_test_process.hpp"
++#endif
++
++#include <charconv>
+ #include <chrono>
+ #include <cstdint>
+ #include <exception>
+@@ -12,11 +18,11 @@
+ #include <memory>
+ #include <stdexcept>
+ #include <string>
++#include <string_view>
+ 
+ #include <sqlite3.h>
+ 
+ #if defined(__unix__) || defined(__APPLE__)
+-#include <sys/wait.h>
+ #include <unistd.h>
+ #endif
+ 
+@@ -178,77 +184,131 @@ PeerTransportIngressStoredPayload load_payload_in_snapshot(
+     return out;
+ }
+ 
+-#if defined(__unix__) || defined(__APPLE__)
+-[[noreturn]] void run_payload_crash_child(
+-    const std::filesystem::path& path,
+-    const std::string& session_id,
+-    const EncodedFixture& fixture,
+-    const PeerTransportIngressWireLimits& limits,
+-    std::uint64_t stored_at_epoch,
+-    bool commit_before_crash) {
++#if defined(__linux__)
++constexpr std::string_view kPayloadCrashHelper =
++    "--anonsync-payload-crash-helper-v1";
++
++[[nodiscard]] std::uint64_t parse_u64_or_throw(std::string_view text,
++                                               std::string_view label) {
++    std::uint64_t value = 0;
++    const auto parsed =
++        std::from_chars(text.data(), text.data() + text.size(), value);
++    if (parsed.ec != std::errc{} ||
++        parsed.ptr != text.data() + text.size()) {
++        fail(std::string("invalid payload crash ") + std::string(label));
++    }
++    return value;
++}
++
++[[noreturn]] void run_payload_crash_helper(int argc, char** argv) {
+     try {
++        anonsync::test::verify_self_exec_child_boundary_or_throw();
++        if (argc != 13 || argv == nullptr || argv[1] == nullptr ||
++            std::string_view(argv[1]) != kPayloadCrashHelper) {
++            fail("invalid payload crash helper instruction shape");
++        }
++        const std::filesystem::path path(argv[2]);
++        const std::string session_id(argv[3]);
++        const std::string key_seed(argv[4]);
++        PeerTransportIngressWireLimits limits;
++        limits.max_frame_bytes = parse_u64_or_throw(argv[5], "frame budget");
++        limits.max_chunk_count = parse_u64_or_throw(argv[6], "chunk budget");
++        limits.max_metadata_field_bytes =
++            parse_u64_or_throw(argv[7], "metadata budget");
++        const std::uint64_t stored_at_epoch =
++            parse_u64_or_throw(argv[8], "stored epoch");
++        const std::string_view mode(argv[9]);
++        const std::string expected_key(argv[10]);
++        const std::string expected_payload_digest(argv[11]);
++        const std::string expected_frame_sha256(argv[12]);
++        if (!path.is_absolute() || path != path.lexically_normal() ||
++            path.filename().string().find(
++                "anonsync-rev0773-payload-store-") != 0 ||
++            session_id.empty() || session_id.size() > 256 ||
++            key_seed.empty() || key_seed.size() > 256 || stored_at_epoch == 0 ||
++            (mode != "commit" && mode != "rollback") ||
++            !is_lowercase_sha256_hex(expected_payload_digest) ||
++            !is_lowercase_sha256_hex(expected_frame_sha256)) {
++            fail("payload crash helper instruction failed bounds or syntax");
++        }
++        const EncodedFixture fixture = encode_fixture(key_seed, limits);
++        if (fixture.fixture.envelope.transport_envelope_idempotency_key !=
++                expected_key ||
++            fixture.payload_digest != expected_payload_digest ||
++            sha256_hex(fixture.frame) != expected_frame_sha256) {
++            fail("payload crash helper evidence reconstruction mismatch");
++        }
++
++        // The SQLite connection is created only in this fresh exec image. No
++        // parent SQLite object, descriptor, lock bookkeeping, or allocator
++        // state crosses the process boundary.
+         SqlitePtr child_db = open_database(path);
+-        configure_durable_database(child_db.get(), "crash child");
++        configure_durable_database(child_db.get(), "self-exec crash helper");
+         SyncSqliteTransaction transaction(
+-            child_db.get(), "crash child parent and payload");
+-        insert_parent(
+-            child_db.get(),
+-            session_id,
+-            fixture.fixture.envelope.transport_envelope_idempotency_key,
+-            "crash child parent");
++            child_db.get(), "self-exec crash helper parent and payload");
++        insert_parent(child_db.get(), session_id, expected_key,
++                      "self-exec crash helper parent");
+         const PeerTransportIngressPayloadStoreOutcome outcome =
+             store_or_verify_peer_transport_ingress_payload_or_throw(
+-                child_db.get(),
+-                transaction,
+-                session_id,
+-                fixture.fixture.envelope.transport_envelope_idempotency_key,
+-                fixture.frame,
+-                fixture.payload_digest,
+-                limits,
+-                stored_at_epoch,
+-                "crash child payload");
+-        if (outcome != PeerTransportIngressPayloadStoreOutcome::Inserted) _exit(90);
+-        if (commit_before_crash) transaction.commit();
++                child_db.get(), transaction, session_id, expected_key,
++                fixture.frame, fixture.payload_digest, limits, stored_at_epoch,
++                "self-exec crash helper payload");
++        if (outcome != PeerTransportIngressPayloadStoreOutcome::Inserted) {
++            ::_exit(90);
++        }
++        if (mode == "commit") transaction.commit();
+         // Deliberately skip every C++ and SQLite destructor. This models a
+         // process disappearing immediately after COMMIT or with a live write.
+-        _exit(0);
++        ::_exit(0);
++    } catch (const std::exception& error) {
++        std::cerr << "payload crash helper failed: " << error.what() << '\n';
++        ::_exit(91);
+     } catch (...) {
+-        _exit(91);
++        ::_exit(92);
+     }
+ }
+ 
+ void spawn_payload_crash_child_or_throw(
+     const std::filesystem::path& path,
+     const std::string& session_id,
++    const std::string& key_seed,
+     const EncodedFixture& fixture,
+     const PeerTransportIngressWireLimits& limits,
+     std::uint64_t stored_at_epoch,
+     bool commit_before_crash) {
+-    const pid_t pid = ::fork();
+-    if (pid < 0) fail("payload crash test fork failed");
+-    if (pid == 0) {
+-        run_payload_crash_child(
+-            path,
+-            session_id,
+-            fixture,
+-            limits,
+-            stored_at_epoch,
+-            commit_before_crash);
+-    }
+-    int status = 0;
+-    if (::waitpid(pid, &status, 0) != pid) fail("payload crash test waitpid failed");
+-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+-        fail("payload crash child failed with status " + std::to_string(status));
+-    }
++    const std::filesystem::path executable =
++        anonsync::test::current_self_executable_or_throw();
++    anonsync::test::SelfExecTestProcess child =
++        anonsync::test::spawn_self_exec_test_process_or_throw(
++            executable,
++            {std::string(kPayloadCrashHelper), path.string(), session_id,
++             key_seed, std::to_string(limits.max_frame_bytes),
++             std::to_string(limits.max_chunk_count),
++             std::to_string(limits.max_metadata_field_bytes),
++             std::to_string(stored_at_epoch),
++             commit_before_crash ? "commit" : "rollback",
++             fixture.fixture.envelope.transport_envelope_idempotency_key,
++             fixture.payload_digest, sha256_hex(fixture.frame)});
++    child.wait_for_exact_exit(
++        0, std::chrono::seconds(15),
++        commit_before_crash ? "committed payload crash helper"
++                            : "uncommitted payload crash helper");
+ }
+ #endif
+ 
+ }  // namespace
+ 
+-int main() {
++int main(int argc, char** argv) {
++#if defined(__linux__)
++    if (argc >= 2 && argv != nullptr && argv[1] != nullptr &&
++        std::string_view(argv[1]) == kPayloadCrashHelper) {
++        run_payload_crash_helper(argc, argv);
++    }
++#endif
+     std::uint64_t checks = 0;
+     const std::filesystem::path db_path = unique_database_path();
+     try {
++        if (argc != 1) fail("unexpected payload-store test arguments");
+         require(!sync_sqlite_version_has_wal_reset_fix(3044005),
+                 "3.44.5 was incorrectly classified fixed", checks);
+         require(sync_sqlite_version_has_wal_reset_fix(3044006),
+@@ -800,14 +860,21 @@ int main() {
+             transaction.rollback();
+         }
+ 
+-#if defined(__unix__) || defined(__APPLE__)
+-        EncodedFixture crash_committed = encode_fixture("payload-crash-committed", limits);
+-        EncodedFixture crash_uncommitted = encode_fixture("payload-crash-uncommitted", limits);
++#if defined(__linux__)
++        constexpr std::string_view crash_committed_seed =
++            "payload-crash-committed";
++        constexpr std::string_view crash_uncommitted_seed =
++            "payload-crash-uncommitted";
++        EncodedFixture crash_committed =
++            encode_fixture(std::string(crash_committed_seed), limits);
++        EncodedFixture crash_uncommitted =
++            encode_fixture(std::string(crash_uncommitted_seed), limits);
+         db.reset();
+ 
+         spawn_payload_crash_child_or_throw(
+             db_path,
+             session_id,
++            std::string(crash_committed_seed),
+             crash_committed,
+             limits,
+             1100,
+@@ -836,6 +903,7 @@ int main() {
+         spawn_payload_crash_child_or_throw(
+             db_path,
+             session_id,
++            std::string(crash_uncommitted_seed),
+             crash_uncommitted,
+             limits,
+             1101,
+diff --git a/tests/sync_atomic_file_publication_cutpoint_test.cpp b/tests/sync_atomic_file_publication_cutpoint_test.cpp
+index 39dbbf4..52fe197 100644
+--- a/tests/sync_atomic_file_publication_cutpoint_test.cpp
++++ b/tests/sync_atomic_file_publication_cutpoint_test.cpp
+@@ -1,9 +1,14 @@
+ #include "sync_atomic_file_publication.hpp"
+ #include "sync_atomic_file_publication_internal.hpp"
+ 
++#if defined(__linux__)
++#include "self_exec_test_process.hpp"
++#endif
++
+ #include <algorithm>
+ #include <cerrno>
+ #include <chrono>
++#include <charconv>
+ #include <cstdint>
+ #include <exception>
+ #include <filesystem>
+@@ -11,13 +16,13 @@
+ #include <iostream>
+ #include <stdexcept>
+ #include <string>
++#include <string_view>
+ #include <utility>
+ #include <vector>
+ 
+ #if !defined(_WIN32)
+ #include <sys/stat.h>
+ #include <sys/types.h>
+-#include <sys/wait.h>
+ #include <unistd.h>
+ #endif
+ 
+@@ -120,6 +125,20 @@ bool is_private_regular_file_with_size(const fs::path& path,
+ }
+ #endif
+ 
++constexpr int kCrashExitBase = 120;
++constexpr std::string_view kCrashHelper =
++    "--anonsync-atomic-publication-crash-helper-v1";
++
++const std::string& old_generation_payload() {
++    static const std::string payload = "{\"generation\":\"old\"}\n";
++    return payload;
++}
++
++const std::string& new_generation_payload() {
++    static const std::string payload(256 * 1024 + 17, 'N');
++    return payload;
++}
++
+ const std::vector<AtomicFilePublicationCutpoint>& posix_cutpoints() {
+     static const std::vector<AtomicFilePublicationCutpoint> points = {
+         AtomicFilePublicationCutpoint::TempReserved,
+@@ -227,6 +246,58 @@ void crash_observer(const AtomicFilePublicationObservation& observation,
+     }
+ }
+ 
++#if defined(__linux__)
++[[nodiscard]] std::size_t parse_crash_point_index_or_throw(
++    std::string_view text) {
++    std::size_t value = 0;
++    const auto parsed =
++        std::from_chars(text.data(), text.data() + text.size(), value);
++    if (parsed.ec != std::errc{} ||
++        parsed.ptr != text.data() + text.size() ||
++        value >= posix_cutpoints().size()) {
++        throw std::runtime_error("invalid atomic crash cutpoint index");
++    }
++    return value;
++}
++
++int run_atomic_crash_helper(int argc, char** argv) {
++    try {
++        anonsync::test::verify_self_exec_child_boundary_or_throw();
++        if (argc != 5 || argv == nullptr || argv[1] == nullptr ||
++            std::string_view(argv[1]) != kCrashHelper) {
++            throw std::runtime_error("invalid atomic crash helper instruction");
++        }
++        const std::size_t index = parse_crash_point_index_or_throw(argv[2]);
++        const AtomicFilePublicationCutpoint point = posix_cutpoints()[index];
++        const std::string expected_name =
++            anonsync::atomic_file_publication_detail::
++                atomic_file_publication_cutpoint_name(point);
++        if (std::string_view(argv[3]) != expected_name) {
++            throw std::runtime_error("atomic crash cutpoint name mismatch");
++        }
++        const fs::path final_path(argv[4]);
++        if (!final_path.is_absolute() ||
++            final_path != final_path.lexically_normal() ||
++            final_path.filename() != "report.json" ||
++            read_binary(final_path) != old_generation_payload() ||
++            !publication_temps(final_path.parent_path()).empty()) {
++            throw std::runtime_error(
++                "atomic crash helper initial-state binding failed");
++        }
++        CrashContext context{
++            point, kCrashExitBase + static_cast<int>(index)};
++        anonsync::atomic_file_publication_detail::
++            write_sync_json_file_atomically_with_observer_or_throw(
++                final_path, new_generation_payload(),
++                "self-exec crash cutpoint trace", &crash_observer, &context);
++        return 98;
++    } catch (const std::exception& error) {
++        std::cerr << "atomic crash helper failed: " << error.what() << '\n';
++        return 96;
++    }
++}
++#endif
++
+ struct RebindContext {
+     fs::path parent;
+     fs::path displaced_parent;
+@@ -319,13 +390,22 @@ void create_competing_final_observer(
+ 
+ }  // namespace
+ 
+-int main() {
++int main(int argc, char** argv) {
++#if defined(__linux__)
++    if (argc >= 2 && argv != nullptr && argv[1] != nullptr &&
++        std::string_view(argv[1]) == kCrashHelper) {
++        return run_atomic_crash_helper(argc, argv);
++    }
++#endif
+     try {
++        if (argc != 1) {
++            throw std::runtime_error("unexpected cutpoint test arguments");
++        }
+         TestState state;
+         TemporaryDirectory root;
+         const fs::path final_path = root.path() / "report.json";
+-        const std::string old_payload = "{\"generation\":\"old\"}\n";
+-        const std::string new_payload(256 * 1024 + 17, 'N');
++        const std::string& old_payload = old_generation_payload();
++        const std::string& new_payload = new_generation_payload();
+ 
+ #if defined(_WIN32)
+         state.check(true,
+@@ -638,7 +718,9 @@ int main() {
+             for (const fs::path& temp : caught_temps) fs::remove(temp);
+         }
+ 
+-        constexpr int kCrashExitBase = 120;
++#if defined(__linux__)
++        const fs::path crash_executable =
++            anonsync::test::current_self_executable_or_throw();
+         for (std::size_t index = 0; index < posix_cutpoints().size(); ++index) {
+             const AtomicFilePublicationCutpoint point = posix_cutpoints()[index];
+             write_binary(final_path, old_payload);
+@@ -646,30 +728,18 @@ int main() {
+                 fs::remove(temp);
+             }
+             const int exit_code = kCrashExitBase + static_cast<int>(index);
+-            const pid_t child = ::fork();
+-            if (child < 0) throw std::runtime_error("cutpoint fork failed");
+-            if (child == 0) {
+-                CrashContext context{point, exit_code};
+-                try {
+-                    anonsync::atomic_file_publication_detail::
+-                        write_sync_json_file_atomically_with_observer_or_throw(
+-                            final_path, new_payload, "crash cutpoint trace",
+-                            &crash_observer, &context);
+-                } catch (...) {
+-                    ::_exit(91);
+-                }
+-                ::_exit(92);
+-            }
+-            int status = 0;
+-            pid_t waited;
+-            do {
+-                waited = ::waitpid(child, &status, 0);
+-            } while (waited < 0 && errno == EINTR);
+             const std::string point_name =
+                 anonsync::atomic_file_publication_detail::
+                     atomic_file_publication_cutpoint_name(point);
+-            state.check(waited == child && WIFEXITED(status) &&
+-                            WEXITSTATUS(status) == exit_code,
++            anonsync::test::SelfExecTestProcess child =
++                anonsync::test::spawn_self_exec_test_process_or_throw(
++                    crash_executable,
++                    {std::string(kCrashHelper), std::to_string(index),
++                     point_name, final_path.string()});
++            child.wait_for_exact_exit(
++                exit_code, std::chrono::seconds(10),
++                point_name + " atomic publication crash helper");
++            state.check(true,
+                         point_name + " process exits at the exact frontier");
+ 
+             const std::vector<fs::path> temps = publication_temps(root.path());
+@@ -711,6 +781,7 @@ int main() {
+                             point_name + " post-rename state needs no residue size check");
+             }
+         }
++#endif
+ #endif
+ 
+         return state.finish();
+diff --git a/tests/sync_atomic_file_publication_prepared_test.cpp b/tests/sync_atomic_file_publication_prepared_test.cpp
+index 42e9a09..3071a5a 100644
+--- a/tests/sync_atomic_file_publication_prepared_test.cpp
++++ b/tests/sync_atomic_file_publication_prepared_test.cpp
+@@ -1,12 +1,16 @@
+ #include "sync_atomic_file_publication.hpp"
++#include "sync_process_incarnation.hpp"
+ 
++#include <cerrno>
+ #include <chrono>
++#include <csignal>
+ #include <cstdint>
+ #include <filesystem>
+ #include <fstream>
+ #include <iostream>
+ #include <stdexcept>
+ #include <string>
++#include <thread>
+ #include <utility>
+ 
+ #if !defined(_WIN32)
+@@ -130,6 +134,42 @@ std::pair<std::uint64_t, std::uint64_t> inode_identity(const fs::path& path) {
+ }
+ #endif
+ 
++#if !defined(_WIN32)
++int wait_for_inherited_capability_probe_or_throw(
++    pid_t child, std::chrono::milliseconds timeout) {
++    if (child <= 0 || timeout <= std::chrono::milliseconds::zero()) {
++        throw std::runtime_error("invalid inherited-capability wait request");
++    }
++    const auto deadline = std::chrono::steady_clock::now() + timeout;
++    for (;;) {
++        int status = 0;
++        const pid_t waited = ::waitpid(child, &status, WNOHANG);
++        if (waited == child) return status;
++        if (waited < 0 && errno != EINTR) {
++            throw std::runtime_error("inherited-capability waitpid failed");
++        }
++        if (std::chrono::steady_clock::now() >= deadline) {
++            int kill_error = 0;
++            if (::kill(child, SIGKILL) != 0 && errno != ESRCH) {
++                kill_error = errno;
++            }
++            pid_t reaped = -1;
++            do {
++                status = 0;
++                reaped = ::waitpid(child, &status, 0);
++            } while (reaped < 0 && errno == EINTR);
++            if (kill_error != 0 || (reaped != child && errno != ECHILD)) {
++                throw std::runtime_error(
++                    "inherited-capability timeout cleanup failed");
++            }
++            throw std::runtime_error(
++                "inherited-capability probe timed out and was killed and reaped");
++        }
++        std::this_thread::sleep_for(std::chrono::milliseconds(2));
++    }
++}
++#endif
++
+ }  // namespace
+ 
+ int main() {
+@@ -307,28 +347,26 @@ int main() {
+             anonsync::prepare_sync_json_file_atomically_create_new_no_symlink_or_throw(
+                 fork_final, normal_payload,
+                 "fork inherited prepared publication");
++        // Raw fork is intentional here: the inherited prepared object is the
++        // capability under test. The child performs exactly one production
++        // call; any return or C++ exception is a failed fail-stop boundary.
+         const pid_t child = ::fork();
+         if (child < 0) throw std::runtime_error("fork failed");
+         if (child == 0) {
+-            const TypedFailure child_failure =
+-                capture_failure([&] { fork_plan.publish_or_throw(); });
+-            const bool denied =
+-                child_failure.caught &&
+-                child_failure.outcome ==
+-                    SyncAtomicFilePublicationOutcome::NotPublished &&
+-                child_failure.residue == SyncAtomicFilePublicationResidue::None &&
+-                child_failure.message.find("different process incarnation") !=
+-                    std::string::npos &&
+-                !fs::exists(fork_final) &&
+-                publication_temp_count(fork_parent) == 0;
+-            ::_exit(denied ? 0 : 91);
++            try {
++                fork_plan.publish_or_throw();
++                ::_exit(91);
++            } catch (...) {
++                ::_exit(92);
++            }
+         }
+-        int child_status = 0;
+-        if (::waitpid(child, &child_status, 0) != child) {
+-            throw std::runtime_error("waitpid failed");
+-        }
+-        state.check(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0,
+-                    "fork child cannot exercise inherited publication authority");
++        const int child_status = wait_for_inherited_capability_probe_or_throw(
++            child, std::chrono::seconds(5));
++        state.check(
++            WIFEXITED(child_status) &&
++                WEXITSTATUS(child_status) ==
++                    anonsync::kSyncProcessCapabilityViolationExitCode,
++            "fork child cannot exercise inherited publication authority");
+         state.check(fork_plan.valid() && !fs::exists(fork_final) &&
+                         publication_temp_count(fork_parent) == 0,
+                     "child denial leaves parent capability and namespace untouched");
+diff --git a/tests/sync_atomic_file_publication_test.cpp b/tests/sync_atomic_file_publication_test.cpp
+index 18b68f1..a5aa3a9 100644
+--- a/tests/sync_atomic_file_publication_test.cpp
++++ b/tests/sync_atomic_file_publication_test.cpp
+@@ -1,6 +1,12 @@
+ #include "sync_atomic_file_publication.hpp"
+ 
++#if defined(__linux__)
++#include "self_exec_test_process.hpp"
++#endif
++
+ #include <algorithm>
++#include <cerrno>
++#include <charconv>
+ #include <barrier>
+ #include <chrono>
+ #include <cstdint>
+@@ -10,6 +16,7 @@
+ #include <mutex>
+ #include <stdexcept>
+ #include <string>
++#include <string_view>
+ #include <thread>
+ #include <utility>
+ #include <vector>
+@@ -17,10 +24,13 @@
+ #if !defined(_WIN32)
+ #include <sys/stat.h>
+ #include <sys/types.h>
+-#include <sys/wait.h>
+ #include <unistd.h>
+ #endif
+ 
++#if defined(__linux__)
++#include <fcntl.h>
++#endif
++
+ namespace {
+ 
+ namespace fs = std::filesystem;
+@@ -239,66 +249,164 @@ void exercise_distinct_payload_threads(TestState& state,
+                 "distinct-payload campaign leaves no owned temp residue");
+ }
+ 
+-#if !defined(_WIN32)
+-void exercise_same_payload_processes(TestState& state, const fs::path& root) {
+-    constexpr int kChildCount = 8;
+-    const fs::path final_path = root / "process-payload.json";
+-    const std::string payload = patterned_payload(512 * 1024, 'K');
+-    int start_pipe[2] = {-1, -1};
+-    if (::pipe(start_pipe) != 0) {
+-        throw std::runtime_error("process test pipe failed");
++#if defined(__linux__)
++constexpr std::string_view kAtomicWriterHelper =
++    "--anonsync-atomic-publication-writer-helper-v1";
++constexpr std::string_view kStartGatePayload = "go\n";
++
++[[nodiscard]] int parse_writer_index_or_throw(std::string_view text) {
++    int value = -1;
++    const auto parsed =
++        std::from_chars(text.data(), text.data() + text.size(), value);
++    if (parsed.ec != std::errc{} ||
++        parsed.ptr != text.data() + text.size() || value < 0 || value >= 8) {
++        throw std::runtime_error("invalid atomic writer helper index");
+     }
++    return value;
++}
+ 
+-    std::vector<pid_t> children;
+-    for (int index = 0; index != kChildCount; ++index) {
+-        const pid_t child = ::fork();
+-        if (child < 0) throw std::runtime_error("process test fork failed");
+-        if (child == 0) {
+-            ::close(start_pipe[1]);
+-            char token = 0;
+-            ssize_t got;
+-            do {
+-                got = ::read(start_pipe[0], &token, 1);
+-            } while (got < 0 && errno == EINTR);
+-            ::close(start_pipe[0]);
+-            if (got != 1) _exit(91);
+-            try {
+-                anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
+-                    final_path, payload,
+-                    "same-payload child " + std::to_string(index));
+-            } catch (...) {
+-                _exit(92);
++void require_absolute_normal_path_or_throw(const fs::path& path,
++                                           std::string_view label) {
++    if (!path.is_absolute() || path != path.lexically_normal() ||
++        path.filename().empty()) {
++        throw std::runtime_error(std::string(label) +
++                                 " must be an absolute normalized path");
++    }
++}
++
++void await_private_start_gate_or_throw(const fs::path& gate_path) {
++    const auto deadline = std::chrono::steady_clock::now() +
++                          std::chrono::seconds(10);
++    while (std::chrono::steady_clock::now() < deadline) {
++        struct stat named_status {};
++        if (::lstat(gate_path.c_str(), &named_status) != 0) {
++            if (errno == ENOENT) {
++                std::this_thread::sleep_for(std::chrono::milliseconds(2));
++                continue;
+             }
+-            _exit(0);
++            throw std::runtime_error("atomic writer gate lstat failed");
++        }
++        if (!S_ISREG(named_status.st_mode) || named_status.st_nlink != 1 ||
++            (named_status.st_mode & 0077) != 0) {
++            throw std::runtime_error(
++                "atomic writer gate is not one private regular file");
++        }
++        const int descriptor =
++            ::open(gate_path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
++        if (descriptor < 0) {
++            if (errno == ENOENT) continue;
++            throw std::runtime_error("atomic writer gate open failed");
++        }
++        struct stat opened_status {};
++        const bool identity_ok =
++            ::fstat(descriptor, &opened_status) == 0 &&
++            opened_status.st_dev == named_status.st_dev &&
++            opened_status.st_ino == named_status.st_ino &&
++            S_ISREG(opened_status.st_mode) && opened_status.st_nlink == 1 &&
++            (opened_status.st_mode & 0077) == 0;
++        char bytes[4] = {};
++        ssize_t total = 0;
++        while (identity_ok && total < 4) {
++            const ssize_t got =
++                ::read(descriptor, bytes + total, sizeof(bytes) - total);
++            if (got < 0 && errno == EINTR) continue;
++            if (got <= 0) break;
++            total += got;
++        }
++        const int close_result = ::close(descriptor);
++        if (!identity_ok || close_result != 0 || total != 3 ||
++            std::string_view(bytes, 3) != kStartGatePayload) {
++            throw std::runtime_error(
++                "atomic writer gate bytes or identity are invalid");
+         }
+-        children.push_back(child);
++        return;
+     }
+-    ::close(start_pipe[0]);
+-    std::string tokens(kChildCount, 'x');
++    throw std::runtime_error("atomic writer gate timed out");
++}
++
++int run_atomic_writer_helper(int argc, char** argv) {
++    try {
++        anonsync::test::verify_self_exec_child_boundary_or_throw();
++        if (argc != 5 || argv == nullptr || argv[1] == nullptr ||
++            std::string_view(argv[1]) != kAtomicWriterHelper) {
++            throw std::runtime_error("invalid atomic writer helper instruction");
++        }
++        const fs::path final_path(argv[2]);
++        const fs::path gate_path(argv[3]);
++        require_absolute_normal_path_or_throw(final_path, "final path");
++        require_absolute_normal_path_or_throw(gate_path, "gate path");
++        if (final_path.parent_path() != gate_path.parent_path() ||
++            final_path.filename() != "process-payload.json" ||
++            gate_path.filename() != ".process-start-v1") {
++            throw std::runtime_error("atomic writer helper path binding failed");
++        }
++        const int writer_index = parse_writer_index_or_throw(argv[4]);
++        await_private_start_gate_or_throw(gate_path);
++        anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++            final_path, patterned_payload(512 * 1024, 'K'),
++            "same-payload self-exec writer " + std::to_string(writer_index));
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "atomic writer helper failed: " << error.what() << '\n';
++        return 96;
++    }
++}
++
++void publish_start_gate_or_throw(const fs::path& gate_path) {
++    const int descriptor = ::open(gate_path.c_str(),
++                                  O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC |
++                                      O_NOFOLLOW,
++                                  0600);
++    if (descriptor < 0) throw std::runtime_error("start gate create failed");
+     std::size_t offset = 0;
+-    while (offset != tokens.size()) {
++    while (offset != kStartGatePayload.size()) {
+         const ssize_t wrote =
+-            ::write(start_pipe[1], tokens.data() + offset,
+-                    tokens.size() - offset);
++            ::write(descriptor, kStartGatePayload.data() + offset,
++                    kStartGatePayload.size() - offset);
+         if (wrote < 0 && errno == EINTR) continue;
+-        if (wrote <= 0) throw std::runtime_error("process barrier write failed");
++        if (wrote <= 0) {
++            (void)::close(descriptor);
++            throw std::runtime_error("start gate write failed");
++        }
+         offset += static_cast<std::size_t>(wrote);
+     }
+-    ::close(start_pipe[1]);
+-
+-    bool all_children_ok = true;
+-    for (pid_t child : children) {
+-        int status = 0;
+-        pid_t waited;
+-        do {
+-            waited = ::waitpid(child, &status, 0);
+-        } while (waited < 0 && errno == EINTR);
+-        if (waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+-            all_children_ok = false;
+-        }
++    const int sync_result = ::fsync(descriptor);
++    const int sync_error = sync_result == 0 ? 0 : errno;
++    const int close_result = ::close(descriptor);
++    if (sync_result != 0 || close_result != 0) {
++        throw std::runtime_error(
++            "start gate sync or close failed (sync errno " +
++            std::to_string(sync_error) + ")");
+     }
+-    state.check(all_children_ok,
+-                "all cross-process same-payload writers succeed");
++}
++
++void exercise_same_payload_processes(TestState& state, const fs::path& root) {
++    constexpr int kChildCount = 8;
++    const fs::path final_path = (root / "process-payload.json").lexically_normal();
++    const fs::path gate_path = (root / ".process-start-v1").lexically_normal();
++    const fs::path executable =
++        anonsync::test::current_self_executable_or_throw();
++    std::vector<anonsync::test::SelfExecTestProcess> children;
++    children.reserve(kChildCount);
++    for (int index = 0; index != kChildCount; ++index) {
++        children.push_back(
++            anonsync::test::spawn_self_exec_test_process_or_throw(
++                executable,
++                {std::string(kAtomicWriterHelper), final_path.string(),
++                 gate_path.string(), std::to_string(index)}));
++    }
++    publish_start_gate_or_throw(gate_path);
++    for (int index = 0; index != kChildCount; ++index) {
++        children[static_cast<std::size_t>(index)].wait_for_exact_exit(
++            0, std::chrono::seconds(15),
++            "same-payload self-exec writer " + std::to_string(index));
++    }
++    std::error_code remove_error;
++    const bool gate_removed = fs::remove(gate_path, remove_error);
++    state.check(gate_removed && !remove_error && !fs::exists(gate_path),
++                "cross-process start gate is removed exactly once");
++    const std::string payload = patterned_payload(512 * 1024, 'K');
++    state.check(true, "all cross-process same-payload writers succeed");
+     state.check(read_binary(final_path) == payload,
+                 "cross-process final bytes are exact");
+     state.check(publication_temp_count(root) == 0,
+@@ -308,8 +416,17 @@ void exercise_same_payload_processes(TestState& state, const fs::path& root) {
+ 
+ }  // namespace
+ 
+-int main() {
++int main(int argc, char** argv) {
++#if defined(__linux__)
++    if (argc >= 2 && argv != nullptr && argv[1] != nullptr &&
++        std::string_view(argv[1]) == kAtomicWriterHelper) {
++        return run_atomic_writer_helper(argc, argv);
++    }
++#endif
+     try {
++        if (argc != 1) {
++            throw std::runtime_error("unexpected atomic publication test arguments");
++        }
+         TestState state;
+         TemporaryDirectory root;
+ 
+@@ -549,7 +666,7 @@ int main() {
+ 
+         exercise_same_payload_threads(state, root.path());
+         exercise_distinct_payload_threads(state, root.path());
+-#if !defined(_WIN32)
++#if defined(__linux__)
+         exercise_same_payload_processes(state, root.path());
+ #endif
+ 
+diff --git a/tools/audit_peer_ingress_schema_owner_generation.py b/tools/audit_peer_ingress_schema_owner_generation.py
+index 159972a..9cd27c3 100644
+--- a/tools/audit_peer_ingress_schema_owner_generation.py
++++ b/tools/audit_peer_ingress_schema_owner_generation.py
+@@ -22,6 +22,7 @@ REQUIRED = (
+     Path("src/sync_sqlite_schema_identity.cpp"),
+     Path("src/sync_peer_ingress_lifecycle.cpp"),
+     Path("tests/peer_ingress_schema_attestation_test.cpp"),
++    Path("tests/self_exec_test_process.hpp"),
+ )
+ 
+ 
+@@ -148,9 +149,16 @@ def main() -> int:
+             "focused_test_proves_exact_pin_accounting",
+             "the test must observe one retained pin and its exact generation")
+     require("test_live_attestation_blocks_owner_close" in test
+-            and "kSyncProcessCapabilityViolationExitCode" in test,
++            and "kSyncProcessCapabilityViolationExitCode" in test
++            and '#include "self_exec_test_process.hpp"' in test
++            and "--anonsync-peer-schema-owner-close-helper-v1" in test
++            and "verify_self_exec_child_boundary_or_throw();" in test
++            and "spawn_self_exec_test_process_or_throw(" in test
++            and "wait_for_exact_exit(" in test
++            and "::fork(" not in test
++            and "::waitpid(" not in test,
+             "focused_test_proves_close_is_blocked",
+-            "a live attestation must fail-stop owner destruction before sqlite3_close")
++            "a fresh exec image must fail-stop owner destruction before sqlite3_close, with no raw post-fork application path")
+     require("test_owner_generation_pin_and_move" in test
+             and "PeerTransportIngressSchemaAttestation moved(std::move(attestation))" in test,
+             "focused_test_proves_unique_pin_transfer",
+diff --git a/tools/audit_raw_fork_boundaries.py b/tools/audit_raw_fork_boundaries.py
+new file mode 100755
+index 0000000..acd8157
+--- /dev/null
++++ b/tools/audit_raw_fork_boundaries.py
+@@ -0,0 +1,393 @@
++#!/usr/bin/env python3
++"""Fail-closed inventory of raw fork() boundaries in AnonSync.
++
++Raw fork is allowlisted only for explicit inherited-state probes or for one
++reviewed fork-exec bridge whose child performs descriptor syscalls and exec only.
++Crash/fail-stop campaigns that need application or SQLite work in a separate
++process must cross the Linux self-exec boundary and begin in a fresh image.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import re
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
++FORK_CALL = re.compile(r"(?<![A-Za-z0-9_])(?:::)?fork\s*\(")
++RAW_LITERAL_START = re.compile(
++    r'(?:u8|u|U|L)?R"([^ ()\\\t\r\n]{0,16})\('
++)
++QUOTED_LITERAL_START = re.compile(r'(?:u8|u|U|L)?(["\'])')
++EXPECTED_TEST_CALLS = {
++    "tests/persistence/sqlite_persistence_process_authority_fork_test.cpp": 2,
++    "tests/process_incarnation_tests.cpp": 4,
++    "tests/sqlite_connection_authority_test.cpp": 1,
++    "tests/sqlite_owner_generation_borrow_test.cpp": 2,
++    "tests/sqlite_process_authority_fork_test.cpp": 1,
++    "tests/sqlite_replay_ledger_selftests.cpp": 3,
++    "tests/sqlite_source_first_move_test.cpp": 1,
++    "tests/sqlite_transaction_allocator_fault_test.cpp": 1,
++    "tests/sync_atomic_file_publication_prepared_test.cpp": 1,
++}
++
++FORK_EXEC_BRIDGE = "tests/sqlite_transaction_allocator_fault_test.cpp"
++
++MIGRATED_CAMPAIGNS = {
++    "tests/sync_atomic_file_publication_test.cpp":
++        "--anonsync-atomic-publication-writer-helper-v1",
++    "tests/sync_atomic_file_publication_cutpoint_test.cpp":
++        "--anonsync-atomic-publication-crash-helper-v1",
++    "tests/sqlite_runtime_payload_store_test.cpp":
++        "--anonsync-payload-crash-helper-v1",
++    "tests/peer_ingress_schema_attestation_test.cpp":
++        "--anonsync-peer-schema-owner-close-helper-v1",
++}
++
++REQUIRED = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_atomic_file_publication.cpp"),
++    Path("tests/sync_atomic_file_publication_prepared_test.cpp"),
++    Path("tools/audit_raw_fork_boundaries.py"),
++    *tuple(Path(path) for path in MIGRATED_CAMPAIGNS),
++    *tuple(Path(path) for path in EXPECTED_TEST_CALLS),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def erase_non_code(text: str) -> str:
++    """Replace comments and literals with spaces while preserving newlines.
++
++    The scanner handles ordinary string/character literals and C++ raw string
++    literals. It is intentionally independent of a compiler so the inventory
++    remains cheap enough to run in every CTest gate.
++    """
++
++    out = list(text)
++    n = len(text)
++    i = 0
++
++    def blank(start: int, stop: int) -> None:
++        for index in range(start, min(stop, n)):
++            if out[index] != "\n":
++                out[index] = " "
++
++    while i < n:
++        if text.startswith("//", i):
++            stop = text.find("\n", i + 2)
++            stop = n if stop < 0 else stop
++            blank(i, stop)
++            i = stop
++            continue
++        if text.startswith("/*", i):
++            stop = text.find("*/", i + 2)
++            stop = n if stop < 0 else stop + 2
++            blank(i, stop)
++            i = stop
++            continue
++
++        # Raw strings may carry a prefix (u8R, uR, UR, LR, or R). The
++        # delimiter is at most 16 characters and ends at the next '('.
++        raw_match = RAW_LITERAL_START.match(text, i)
++        if raw_match:
++            delimiter = raw_match.group(1)
++            terminator = ")" + delimiter + '"'
++            body_start = raw_match.end()
++            end = text.find(terminator, body_start)
++            stop = n if end < 0 else end + len(terminator)
++            blank(i, stop)
++            i = stop
++            continue
++
++        prefix_match = QUOTED_LITERAL_START.match(text, i)
++        if prefix_match:
++            quote = prefix_match.group(1)
++            j = prefix_match.end()
++            escaped = False
++            while j < n:
++                char = text[j]
++                if char == "\n" and not escaped:
++                    break
++                if escaped:
++                    escaped = False
++                elif char == "\\":
++                    escaped = True
++                elif char == quote:
++                    j += 1
++                    break
++                j += 1
++            blank(i, j)
++            i = j
++            continue
++        i += 1
++    return "".join(out)
++
++
++def source_files(root: Path, directory: str) -> list[Path]:
++    base = root / directory
++    if not base.is_dir():
++        return []
++    return sorted(
++        path for path in base.rglob("*")
++        if path.is_file() and path.suffix.lower() in SOURCE_SUFFIXES
++    )
++
++
++def raw_fork_inventory(root: Path, directory: str) -> dict[str, int]:
++    inventory: dict[str, int] = {}
++    for path in source_files(root, directory):
++        text = path.read_text(encoding="utf-8", errors="replace")
++        if "fork" not in text:
++            continue
++        count = len(FORK_CALL.findall(erase_non_code(text)))
++        if count:
++            inventory[path.relative_to(root).as_posix()] = count
++    return inventory
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", type=Path, required=True)
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    missing = sorted(path.as_posix() for path in REQUIRED if not (root / path).is_file())
++    checks: list[Check] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    require(not missing, "required_files_exist", f"missing={missing}")
++    if missing:
++        report = {
++            "format": "anonsync-raw-fork-boundary-audit-v1",
++            "root": str(root),
++            "passed": False,
++            "passed_checks": 0,
++            "total_checks": len(checks),
++            "checks": [asdict(check) for check in checks],
++            "violations": [f"missing required file: {path}" for path in missing],
++        }
++        rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++        if args.json:
++            args.json.parent.mkdir(parents=True, exist_ok=True)
++            args.json.write_text(rendered, encoding="utf-8")
++        else:
++            sys.stdout.write(rendered)
++        return 2
++
++    production = {
++        **raw_fork_inventory(root, "src"),
++        **raw_fork_inventory(root, "include"),
++    }
++    tests = raw_fork_inventory(root, "tests")
++
++    require(
++        production == {},
++        "production_contains_no_raw_fork_calls",
++        f"production_raw_fork_calls={production}",
++    )
++    require(
++        tests == EXPECTED_TEST_CALLS,
++        "test_raw_fork_allowlist_and_counts_are_exact",
++        f"observed={tests}; expected={EXPECTED_TEST_CALLS}",
++    )
++
++    migrated_ok = True
++    migrated_detail: list[str] = []
++    for relative, helper_flag in MIGRATED_CAMPAIGNS.items():
++        text = (root / relative).read_text(encoding="utf-8")
++        code = erase_non_code(text)
++        call_count = len(FORK_CALL.findall(code))
++        no_waitpid = re.search(r"(?<![A-Za-z0-9_])(?:::)?waitpid\s*\(", code) is None
++        tokens_ok = all(
++            token in text
++            for token in (
++                '#include "self_exec_test_process.hpp"',
++                helper_flag,
++                "verify_self_exec_child_boundary_or_throw()",
++                "spawn_self_exec_test_process_or_throw(",
++                "wait_for_exact_exit(",
++            )
++        )
++        file_ok = call_count == 0 and no_waitpid and tokens_ok
++        migrated_ok = migrated_ok and file_ok
++        migrated_detail.append(
++            f"{relative}:fork={call_count},no_waitpid={no_waitpid},tokens={tokens_ok}"
++        )
++    require(
++        migrated_ok,
++        "four_crash_campaigns_use_fresh_self_exec_images",
++        "; ".join(migrated_detail),
++    )
++
++    prepared_path = root / "tests/sync_atomic_file_publication_prepared_test.cpp"
++    prepared = prepared_path.read_text(encoding="utf-8")
++    prepared_code = erase_non_code(prepared)
++    fork_match = FORK_CALL.search(prepared_code)
++    child_window = ""
++    if fork_match:
++        child_window = prepared[prepared_code.find("const pid_t child", max(0, fork_match.start() - 80)) :]
++        child_window = child_window[: child_window.find("const int child_status")]
++    inherited_ok = (
++        len(FORK_CALL.findall(prepared_code)) == 1
++        and "Raw fork is intentional here" in prepared
++        and "wait_for_inherited_capability_probe_or_throw" in prepared
++        and "std::chrono::steady_clock" in prepared
++        and "WNOHANG" in prepared
++        and "SIGKILL" in prepared
++        and "timed out and was killed and reaped" in prepared
++        and "fork_plan.publish_or_throw();" in child_window
++        and "_exit(kSyncProcessCapabilityViolationExitCode);" not in child_window
++        and "_exit(91);" in child_window
++        and "_exit(92);" in child_window
++        and "write_sync_" not in child_window
++        and "sqlite3_" not in child_window
++    )
++    require(
++        inherited_ok,
++        "intentional_inherited_capability_probe_is_minimal_and_bounded",
++        "one raw child invokes only the inherited capability; parent uses monotonic WNOHANG timeout, SIGKILL, and reap",
++    )
++
++    fork_exec_path = root / FORK_EXEC_BRIDGE
++    fork_exec = fork_exec_path.read_text(encoding="utf-8")
++    fork_exec_code = erase_non_code(fork_exec)
++    child_start = fork_exec_code.find("if (child == 0)")
++    child_stop = fork_exec_code.find("(void)::close(pipe_fds[1]);", child_start)
++    # Select the parent-side close, not the same spelling inside the child.
++    child_stop = fork_exec_code.find("(void)::close(pipe_fds[1]);", child_stop + 1)
++    fork_exec_child = (
++        fork_exec[child_start:child_stop]
++        if child_start >= 0 and child_stop > child_start
++        else ""
++    )
++    fork_exec_ok = (
++        len(FORK_CALL.findall(fork_exec_code)) == 1
++        and "Materialize every exec argument before fork" in fork_exec
++        and all(
++            token in fork_exec_child
++            for token in (
++                "(void)::close(pipe_fds[0]);",
++                "::dup2(pipe_fds[1], STDOUT_FILENO)",
++                "::dup2(pipe_fds[1], STDERR_FILENO)",
++                "(void)::close(pipe_fds[1]);",
++                "::execl(executable.c_str(),",
++                "std::_Exit(120);",
++                "std::_Exit(121);",
++            )
++        )
++        and not any(
++            token in fork_exec_child
++            for token in (
++                "sqlite3_",
++                "run_scenario(",
++                "std::cout",
++                "std::cerr",
++                "throw ",
++                "fail(",
++                " new ",
++                " delete ",
++            )
++        )
++    )
++    require(
++        fork_exec_ok,
++        "allocator_fault_fork_exec_bridge_has_no_application_or_sqlite_child_work",
++        "the sole non-inheritance raw child performs close/dup2/exec/_Exit only; capture-capable SelfExecTestProcess migration remains future work",
++    )
++
++    publication = (root / "src/sync_atomic_file_publication.cpp").read_text(
++        encoding="utf-8"
++    )
++    require(
++        "require_sync_process_incarnation_or_fail_stop(" in publication
++        and "implementation->owner_process_incarnation" in publication
++        and "prepared immutable JSON publication destination authority" in publication
++        and "implementation->label +" not in publication
++        and "belongs to a different process incarnation" not in publication,
++        "prepared_publication_process_mismatch_fail_stops",
++        "an inherited nonempty publication capability cannot unwind through application code before touching filesystem state",
++    )
++
++    cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
++    cmake_links = all(
++        token in cmake
++        for token in (
++            "ANONSYNC_SELF_EXEC_ATOMIC_TARGET",
++            "anonsync_sync_atomic_file_publication_test",
++            "anonsync_sync_atomic_file_publication_cutpoint_test",
++            "target_link_libraries(anonsync_sqlite_runtime_payload_store_test PRIVATE\n    anonsync_self_exec_test_process)",
++            "target_link_libraries(anonsync_peer_ingress_schema_attestation_test PRIVATE\n    anonsync_self_exec_test_process)",
++        )
++    )
++    require(
++        cmake_links,
++        "all_four_helpers_link_the_test_only_process_owner",
++        "CMake links the fresh-image owner into the two atomic, payload, and peer-schema executables only",
++    )
++    require(
++        "anonsync_raw_fork_boundary_source_audit" in cmake
++        and "tools/audit_raw_fork_boundaries.py" in cmake
++        and "PROPERTIES TIMEOUT 20" in cmake,
++        "raw_fork_inventory_is_in_the_ctest_gate",
++        "future fork additions or removals cannot silently bypass the exact inventory",
++    )
++
++    total_production = sum(production.values())
++    total_test = sum(tests.values())
++    metrics_ok = (
++        total_production == 0
++        and total_test == 16
++        and len(tests) == 9
++        and len(MIGRATED_CAMPAIGNS) == 4
++        and EXPECTED_TEST_CALLS.get(FORK_EXEC_BRIDGE) == 1
++    )
++    require(
++        metrics_ok,
++        "inventory_metrics_are_exact",
++        f"production_calls={total_production}, test_calls={total_test}, allowlisted_test_tus={len(tests)}, inherited_probe_calls={total_test - EXPECTED_TEST_CALLS[FORK_EXEC_BRIDGE]}, fork_exec_bridge_calls={EXPECTED_TEST_CALLS[FORK_EXEC_BRIDGE]}, migrated_campaigns={len(MIGRATED_CAMPAIGNS)}",
++    )
++
++    failures = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-raw-fork-boundary-audit-v1",
++        "root": str(root),
++        "passed": not failures,
++        "passed_checks": sum(check.passed for check in checks),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "metrics": {
++            "production_raw_fork_calls": total_production,
++            "allowlisted_test_raw_fork_calls": total_test,
++            "allowlisted_test_translation_units": len(tests),
++            "fresh_image_migrated_campaigns": len(MIGRATED_CAMPAIGNS),
++            "inherited_probe_raw_fork_calls": total_test - EXPECTED_TEST_CALLS[FORK_EXEC_BRIDGE],
++            "reviewed_fork_exec_bridge_calls": EXPECTED_TEST_CALLS[FORK_EXEC_BRIDGE],
++        },
++        "production_inventory": production,
++        "test_inventory": tests,
++        "violations": failures,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if args.json:
++        args.json.parent.mkdir(parents=True, exist_ok=True)
++        args.json.write_text(rendered, encoding="utf-8")
++    else:
++        sys.stdout.write(rendered)
++    return 0 if not failures else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/audit_self_exec_test_process.py b/tools/audit_self_exec_test_process.py
+index 2da3502..afa86e4 100644
+--- a/tools/audit_self_exec_test_process.py
++++ b/tools/audit_self_exec_test_process.py
+@@ -18,6 +18,11 @@ REQUIRED = (
+     Path("tests/self_exec_test_process_test.cpp"),
+     Path("tests/persistence/sqlite_replay_ledger_reset_tests.cpp"),
+     Path("tests/persistence/sqlite_replay_ledger_reset_crash_frontier_test.cpp"),
++    Path("tests/sync_atomic_file_publication_test.cpp"),
++    Path("tests/sync_atomic_file_publication_cutpoint_test.cpp"),
++    Path("tests/sqlite_runtime_payload_store_test.cpp"),
++    Path("tests/peer_ingress_schema_attestation_test.cpp"),
++    Path("tools/audit_raw_fork_boundaries.py"),
+     Path("tools/audit_self_exec_test_process.py"),
+     Path("tools/audit_sqlite_replay_ledger_reset.py"),
+     Path("tools/audit_sqlite_replay_ledger_reset_crash_frontier.py"),
+@@ -53,7 +58,7 @@ def block_between(text: str, begin: str, end: str) -> str:
+ 
+ def report_missing(root: Path, missing: list[str], output: Path | None) -> int:
+     report = {
+-        "format": "anonsync-self-exec-test-process-audit-v2",
++        "format": "anonsync-self-exec-test-process-audit-v3",
+         "root": str(root),
+         "passed": False,
+         "passed_checks": 0,
+@@ -95,6 +100,13 @@ def main() -> int:
+     frontier_test = text[
+         Path("tests/persistence/sqlite_replay_ledger_reset_crash_frontier_test.cpp")
+     ]
++    atomic_test = text[Path("tests/sync_atomic_file_publication_test.cpp")]
++    atomic_cutpoint_test = text[
++        Path("tests/sync_atomic_file_publication_cutpoint_test.cpp")
++    ]
++    payload_test = text[Path("tests/sqlite_runtime_payload_store_test.cpp")]
++    peer_schema_test = text[Path("tests/peer_ingress_schema_attestation_test.cpp")]
++    raw_fork_audit = text[Path("tools/audit_raw_fork_boundaries.py")]
+     reset_audit = text[Path("tools/audit_sqlite_replay_ledger_reset.py")]
+     frontier_audit = text[
+         Path("tools/audit_sqlite_replay_ledger_reset_crash_frontier.py")
+@@ -363,6 +375,56 @@ def main() -> int:
+         "runtime proof covers pinned-image identity, NUL aliases, environment and signal sanitation, timeout/destructor reap, and argument budgets",
+     )
+ 
++    additional_campaigns = (
++        (
++            atomic_test,
++            "--anonsync-atomic-publication-writer-helper-v1",
++            "atomic same-payload process campaign",
++        ),
++        (
++            atomic_cutpoint_test,
++            "--anonsync-atomic-publication-crash-helper-v1",
++            "atomic publication crash frontier",
++        ),
++        (
++            payload_test,
++            "--anonsync-payload-crash-helper-v1",
++            "SQLite payload commit/rollback crash campaign",
++        ),
++        (
++            peer_schema_test,
++            "--anonsync-peer-schema-owner-close-helper-v1",
++            "peer-schema owner-close fail-stop probe",
++        ),
++    )
++    require(
++        checks,
++        all(
++            '#include "self_exec_test_process.hpp"' in body
++            and helper_flag in body
++            and "verify_self_exec_child_boundary_or_throw();" in body
++            and "spawn_self_exec_test_process_or_throw(" in body
++            and "wait_for_exact_exit(" in body
++            and "::fork(" not in body
++            and "::waitpid(" not in body
++            for body, helper_flag, _ in additional_campaigns
++        ),
++        "four_additional_crash_campaigns_use_fresh_images",
++        "; ".join(label for _, _, label in additional_campaigns),
++    )
++    require(
++        checks,
++        "EXPECTED_TEST_CALLS" in raw_fork_audit
++        and "production_contains_no_raw_fork_calls" in raw_fork_audit
++        and "test_raw_fork_allowlist_and_counts_are_exact" in raw_fork_audit
++        and "intentional_inherited_capability_probe_is_minimal_and_bounded"
++        in raw_fork_audit
++        and "inventory_metrics_are_exact" in raw_fork_audit
++        and "allowlisted_test_raw_fork_calls" in raw_fork_audit,
++        "raw_fork_inventory_is_fail_closed_and_exact",
++        "a separately registered audit rejects any production fork or test call outside the 16-call inheritance-specific allowlist",
++    )
++
+     require(
+         checks,
+         '#include "self_exec_test_process.hpp"' in reset_test
+@@ -485,6 +547,7 @@ def main() -> int:
+                 "tests/self_exec_test_process.cpp",
+                 "tests/self_exec_test_process_test.cpp",
+                 "tools/audit_self_exec_test_process.py",
++                "tools/audit_raw_fork_boundaries.py",
+             )
+         ),
+         "release_verifier_requires_entire_selfexec_surface",
+@@ -510,6 +573,8 @@ def main() -> int:
+                 "focused_reset_helper_rebinds_parent_evidence_after_exec",
+                 "frontier_helper_rebinds_path_hashes_and_cutpoint_after_exec",
+                 "release_verifier_requires_entire_selfexec_surface",
++                "four_additional_crash_campaigns_use_fresh_images",
++                "raw_fork_inventory_is_fail_closed_and_exact",
+             )
+         ),
+         "audit_is_substantive_and_self_describing",
+@@ -517,15 +582,14 @@ def main() -> int:
+     )
+ 
+     raw_fork_files: list[str] = []
+-    for directory in (root / "src", root / "tests"):
+-        for path in directory.rglob("*.cpp"):
+-            body = path.read_text(encoding="utf-8", errors="replace")
+-            if re.search(r"(?<![A-Za-z0-9_])(?:::)?fork\s*\(", body):
+-                raw_fork_files.append(path.relative_to(root).as_posix())
++    for path in (root / "tests").rglob("*.cpp"):
++        body = path.read_text(encoding="utf-8", errors="replace")
++        if re.search(r"(?<![A-Za-z0-9_])(?:::)?fork\s*\(", body):
++            raw_fork_files.append(path.relative_to(root).as_posix())
+ 
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-self-exec-test-process-audit-v2",
++        "format": "anonsync-self-exec-test-process-audit-v3",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+diff --git a/tools/audit_sqlite_replay_ledger_reset_crash_frontier.py b/tools/audit_sqlite_replay_ledger_reset_crash_frontier.py
+index 2edd252..3dbf241 100644
+--- a/tools/audit_sqlite_replay_ledger_reset_crash_frontier.py
++++ b/tools/audit_sqlite_replay_ledger_reset_crash_frontier.py
+@@ -160,8 +160,12 @@ def main() -> int:
+             observed_owner,
+             "if (publication.implementation_ == nullptr)",
+             "std::move(publication.implementation_)",
+-            "sync_process_incarnation_is_current(",
++            "require_sync_process_incarnation_or_fail_stop(",
++            "implementation->owner_process_incarnation",
++            "prepared immutable JSON publication destination authority",
+         )
++        and "implementation->label +" not in observed_owner
++        and "belongs to a different process incarnation" not in observed_owner
+         and observed_owner.count("observer_context, implementation->progress") == 2,
+         "observed_path_consumes_once_and_forwards_every_platform",
+         "authority is consumed before validation and both Windows/POSIX owners receive the same observer and progress state",
+diff --git a/tools/audit_sqlite_replay_ledger_reset_receipt.py b/tools/audit_sqlite_replay_ledger_reset_receipt.py
+index 8eb76dd..375a0a1 100644
+--- a/tools/audit_sqlite_replay_ledger_reset_receipt.py
++++ b/tools/audit_sqlite_replay_ledger_reset_receipt.py
+@@ -394,8 +394,9 @@ def main() -> int:
+         and ordered(
+             publication,
+             "void SyncPreparedImmutableJsonPublication::publish_or_throw()",
+-            "sync_process_incarnation_is_current(",
++            "require_sync_process_incarnation_or_fail_stop(",
+             "implementation->owner_process_incarnation",
++            "prepared immutable JSON publication destination authority",
+             "publish_posix_from_retained_directory_or_throw("),
+         "prepared_publication_revalidates_retained_authority_before_effect",
+         "the post-commit method rejects stale process or parent-path evidence before reserving a temporary inode",
+diff --git a/tools/audit_sync_atomic_file_publication.py b/tools/audit_sync_atomic_file_publication.py
+index 915bbea..ee7b1fb 100644
+--- a/tools/audit_sync_atomic_file_publication.py
++++ b/tools/audit_sync_atomic_file_publication.py
+@@ -198,15 +198,17 @@ def main() -> int:
+             [
+                 "PreparedImmutableJsonPublicationObserverAccess::publish_or_throw(",
+                 "std::move(publication.implementation_)",
+-                "sync_process_incarnation_is_current(",
++                "require_sync_process_incarnation_or_fail_stop(",
+                 "implementation->owner_process_incarnation",
+-                "belongs to a different process incarnation",
++                "prepared immutable JSON publication destination authority",
+                 "publish_posix_from_retained_directory_or_throw(",
+             ],
+         )
+-        and "current_sync_process_incarnation_noexcept();" in source
++        and "kSyncProcessCapabilityViolationExitCode" in prepared_test
++        and "implementation->label +" not in source
++        and "belongs to a different process incarnation" not in source
+         and 'PRIVATE anonsync_process_incarnation' in cmake,
+-        "a fork-inherited descriptor cannot exercise a capability minted by another process incarnation, including fork-lineage generation rather than raw PID alone",
++        "a fork-inherited destination capability fail-stops before filesystem mutation instead of unwinding through application code",
+     )
+ 
+     prepared_tokens = [
+@@ -226,8 +228,12 @@ def main() -> int:
+         "focused_prepared_oracle_covers_rebind_move_reuse_and_fork",
+         all(token in prepared_test for token in prepared_tokens)
+         and "fs::rename(intended_parent, displaced_parent);" in prepared_test
+-        and "::fork()" in prepared_test,
+-        "the focused executable deterministically proves precommit parent pinning, ownership, single use, late creation, and fork denial",
++        and "::fork()" in prepared_test
++        and "Raw fork is intentional here" in prepared_test
++        and "wait_for_inherited_capability_probe_or_throw" in prepared_test
++        and "WNOHANG" in prepared_test
++        and "SIGKILL" in prepared_test,
++        "the focused executable proves authority ownership and keeps its one intentional inherited-capability fork minimal, bounded, killed, and reaped",
+     )
+ 
+     check(
+@@ -500,7 +506,7 @@ def main() -> int:
+         "kRounds = 10",
+         "same-process same-payload writers succeed",
+         "distinct-payload final bytes equal one complete writer",
+-        "same-payload child",
++        "same-payload self-exec writer",
+         "legacy predictable temp is not deleted or overwritten",
+         "existing final symlink is rejected",
+         "existing final directory is rejected",
+@@ -513,7 +519,7 @@ def main() -> int:
+     check(
+         "focused_runtime_test_covers_race_and_path_adversaries",
+         all(token in test for token in required_test_tokens),
+-        "threads, forked processes, complete-payload linearization, legacy-owner preservation, path types, mode, and residue are covered",
++        "threads and fresh-image processes prove complete-payload linearization, legacy-owner preservation, path types, mode, and residue",
+     )
+ 
+     state_test_tokens = [
+@@ -604,9 +610,11 @@ def main() -> int:
+     )
+ 
+     crash_tokens = [
+-        "::fork()",
++        "--anonsync-atomic-publication-crash-helper-v1",
++        "verify_self_exec_child_boundary_or_throw()",
++        "spawn_self_exec_test_process_or_throw(",
++        "wait_for_exact_exit(",
+         "::_exit(context.exit_code)",
+-        "::waitpid",
+         "crash preserves prior final generation",
+         "crash leaves exactly one private temp",
+         "crash residue has frontier-exact size",
+@@ -616,9 +624,11 @@ def main() -> int:
+     check(
+         "process_exit_oracle_covers_namespace_frontiers",
+         all(token in cutpoint_test for token in crash_tokens)
++        and "::fork()" not in cutpoint_test
++        and "::waitpid(" not in cutpoint_test
+         and "for (std::size_t index = 0; index < posix_cutpoints().size(); ++index)"
+         in cutpoint_test,
+-        "a fresh child terminates at every frontier and the parent classifies old-final/temp versus new-final/no-temp state",
++        "a fresh exec image terminates at every frontier and the parent classifies old-final/temp versus new-final/no-temp state",
+     )
+ 
+     focused_loop_match = re.search(
+@@ -688,7 +698,8 @@ def main() -> int:
+     check(
+         "runtime_and_source_audits_are_release_tests",
+         all(token in cmake for token in ctest_targets)
+-        and "TIMEOUT 90" in cmake
++        and "PROPERTIES TIMEOUT 60" in cmake
++        and "PROPERTIES TIMEOUT 120" in cmake
+         and "PROPERTIES TIMEOUT 30" in cmake
+         and "audit_sync_atomic_file_publication.py" in cmake,
+         "CTest registers the race/path corpus, prepared-authority proof, pure model, cutpoint oracle, unlink-authority proof, and structural audit",
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 3031cdb..77e5523 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -168,6 +168,7 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         "tests/persistence/sqlite_replay_ledger_reset_crash_frontier_test.cpp",
+         "tests/persistence/sqlite_replay_ledger_reset_documents_tests.cpp",
+         "tools/audit_self_exec_test_process.py",
++        "tools/audit_raw_fork_boundaries.py",
+         "tools/audit_runtime_selftest_separation.py",
+         "tools/audit_sqlite_replay_ledger_selftest_separation.py",
+         "tools/test_sqlite_replay_ledger_reset_cli.py",

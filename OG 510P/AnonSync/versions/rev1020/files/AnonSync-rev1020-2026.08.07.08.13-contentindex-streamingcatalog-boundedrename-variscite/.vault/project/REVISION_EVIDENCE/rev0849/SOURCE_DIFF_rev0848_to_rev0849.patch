@@ -1,0 +1,2664 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 14c3ac1..ef74dbf 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -216,6 +216,25 @@ target_compile_options(anonsync_sqlite_live_backup PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
+ 
++# SQLite retained-callback setters publish a raw address into one mutable slot.
++# This independent process-bound owner claims that slot through named client
++# data, rejects connection destruction or same-name replacement while live,
++# and authorizes only the exact synchronous detach path. sqlite3_close_v2 may
++# defer the destructor behind outstanding dependents; typed generation owners
++# therefore remain the reviewed synchronous close boundary.
++set(ANONSYNC_SQLITE_RETAINED_CALLBACK_CLAIM_SOURCE
++  src/persistence/sqlite_retained_callback_claim.cpp)
++add_library(anonsync_sqlite_retained_callback_claim STATIC
++  ${ANONSYNC_SQLITE_RETAINED_CALLBACK_CLAIM_SOURCE})
++target_include_directories(anonsync_sqlite_retained_callback_claim PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src
++  ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
++target_link_libraries(anonsync_sqlite_retained_callback_claim PUBLIC
++  anonsync_process_incarnation
++  ${ANONSYNC_SQLITE_TARGET})
++target_compile_options(anonsync_sqlite_retained_callback_claim PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ # A sealed byte/page extent does not bound SQLite execution or C++ projection.
+ # This independently linked lifetime owner installs the sole progress handler
+ # on a hostile-snapshot connection and enforces monotone work, row, decoded-byte,
+@@ -228,6 +247,8 @@ target_include_directories(anonsync_sqlite_verification_budget PUBLIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
+ target_link_libraries(anonsync_sqlite_verification_budget PUBLIC
++  anonsync_sqlite_retained_callback_claim
++  anonsync_sqlite_support
+   anonsync_thread_incarnation
+   ${ANONSYNC_SQLITE_TARGET})
+ target_compile_options(anonsync_sqlite_verification_budget PRIVATE
+@@ -251,6 +272,7 @@ target_link_libraries(anonsync_sqlite_snapshot_seal
+     anonsync_sqlite_exact_value
+     anonsync_sqlite_live_backup
+   PUBLIC
++    anonsync_sqlite_support
+     anonsync_sqlite_snapshot_geometry
+     anonsync_sqlite_path_security
+     OpenSSL::Crypto
+@@ -404,6 +426,7 @@ target_include_directories(anonsync_sqlite_busy_handler_owner PUBLIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
+ target_link_libraries(anonsync_sqlite_busy_handler_owner PUBLIC
++  anonsync_sqlite_retained_callback_claim
+   anonsync_sqlite_support)
+ target_compile_options(anonsync_sqlite_busy_handler_owner PRIVATE
+   -Wall -Wextra -Wpedantic)
+@@ -762,6 +785,7 @@ foreach(ANONSYNC_INVARIANT_OWNED_SOURCE
+     "${ANONSYNC_SQLITE_PATH_SECURITY_SOURCE}"
+     "${ANONSYNC_SQLITE_SNAPSHOT_GEOMETRY_SOURCE}"
+     "${ANONSYNC_SQLITE_LIVE_BACKUP_SOURCE}"
++    "${ANONSYNC_SQLITE_RETAINED_CALLBACK_CLAIM_SOURCE}"
+     "${ANONSYNC_SQLITE_VERIFICATION_BUDGET_SOURCE}"
+     "${ANONSYNC_SQLITE_BUSY_HANDLER_OWNER_SOURCE}"
+     "${ANONSYNC_SQLITE_SNAPSHOT_SEAL_SOURCE}"
+@@ -1745,6 +1769,7 @@ foreach(ANONSYNC_FOCUSED_BOUNDARY_TARGET
+     anonsync_sqlite_snapshot_geometry_test
+     anonsync_sqlite_live_backup
+     anonsync_sqlite_live_backup_test
++    anonsync_sqlite_retained_callback_claim
+     anonsync_sqlite_verification_budget
+     anonsync_sqlite_verification_budget_test
+     anonsync_sqlite_busy_handler_owner
+@@ -1872,6 +1897,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_thread_incarnation
+     anonsync_process_identity_observation
+     anonsync_peer_ingress_connection_profile
++    anonsync_sqlite_retained_callback_claim
+     anonsync_sqlite_busy_handler_owner
+     anonsync_sqlite_busy_handler_owner_test
+     anonsync_sqlite_exact_value
+diff --git a/src/persistence/sqlite_busy_handler_owner.cpp b/src/persistence/sqlite_busy_handler_owner.cpp
+index af75f2b..6aef3de 100644
+--- a/src/persistence/sqlite_busy_handler_owner.cpp
++++ b/src/persistence/sqlite_busy_handler_owner.cpp
+@@ -4,7 +4,6 @@
+ 
+ #include <algorithm>
+ #include <limits>
+-#include <memory>
+ #include <stdexcept>
+ #include <string>
+ #include <string_view>
+@@ -13,8 +12,6 @@
+ namespace anonsync::persistence {
+ namespace {
+ 
+-static_assert(SQLITE_VERSION_NUMBER >= 3044000,
+-              "SQLite connection client data requires SQLite 3.44.0+");
+ static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+               "busy-handler diagnostics must remain lock-free after fork");
+ static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
+@@ -25,41 +22,6 @@ static_assert(std::atomic<bool>::is_always_lock_free,
+ inline constexpr char kBusyHandlerClientDataName[] =
+     "anonsync.sqlite-busy-handler-owner.v1";
+ 
+-// sqlite3_set_clientdata() may synchronously call the supplied destructor on
+-// registration failure, replacement, or explicit clearing. A state value alone
+-// is not authority: an unrelated close/replacement racing from another thread
+-// must not borrow our transient pending/detaching state. This exact-thread
+-// witness exists only around the one set_clientdata call that is allowed to
+-// destroy the claim.
+-thread_local void* g_authorized_busy_claim_destruction = nullptr;
+-
+-class ScopedAuthorizedBusyClaimDestruction final {
+-public:
+-    explicit ScopedAuthorizedBusyClaimDestruction(void* claim) noexcept
+-        : claim_(claim) {
+-        if (claim_ == nullptr ||
+-            g_authorized_busy_claim_destruction != nullptr) {
+-            fail_stop_on_sync_process_capability_violation_noexcept();
+-        }
+-        g_authorized_busy_claim_destruction = claim_;
+-    }
+-
+-    ~ScopedAuthorizedBusyClaimDestruction() {
+-        if (g_authorized_busy_claim_destruction != claim_) {
+-            fail_stop_on_sync_process_capability_violation_noexcept();
+-        }
+-        g_authorized_busy_claim_destruction = nullptr;
+-    }
+-
+-    ScopedAuthorizedBusyClaimDestruction(
+-        const ScopedAuthorizedBusyClaimDestruction&) = delete;
+-    ScopedAuthorizedBusyClaimDestruction& operator=(
+-        const ScopedAuthorizedBusyClaimDestruction&) = delete;
+-
+-private:
+-    void* claim_;
+-};
+-
+ void saturating_atomic_add(std::atomic<std::uint64_t>& value,
+                            std::uint64_t amount) noexcept {
+     std::uint64_t observed = value.load(std::memory_order_relaxed);
+@@ -128,27 +90,6 @@ private:
+ 
+ }  // namespace
+ 
+-struct SqliteBusyHandlerOwner::ClientDataClaim final {
+-    enum class State : std::uint8_t {
+-        registration_pending = 0,
+-        live = 1,
+-        detaching = 2,
+-    };
+-
+-    static constexpr std::uint64_t kMagic = 0x414E4F4E42555359ULL;
+-
+-    explicit ClientDataClaim(SyncProcessIncarnation process_id_value) noexcept
+-        : process_id(process_id_value) {}
+-
+-    const std::uint64_t magic = kMagic;
+-    ClientDataClaim* const self = this;
+-    const SyncProcessIncarnation process_id;
+-    static_assert(std::atomic<State>::is_always_lock_free,
+-                  "busy-handler claim state must remain lock-free after fork");
+-
+-    std::atomic<State> state{State::registration_pending};
+-};
+-
+ SqliteBusyHandlerOwner::SqliteBusyHandlerOwner(
+     SyncSqliteSerializedDbBorrow database_borrow,
+     std::uint64_t maximum_wait_milliseconds,
+@@ -173,52 +114,17 @@ SqliteBusyHandlerOwner::SqliteBusyHandlerOwner(
+             std::to_string(kMaximumSqliteBusyHandlerWaitMilliseconds) +
+             " milliseconds");
+     }
+-    if (sqlite3_get_clientdata(database, kBusyHandlerClientDataName) != nullptr) {
+-        throw std::logic_error(
+-            label + " already has an AnonSync SQLite busy-handler owner");
+-    }
+-
+-    // SQLite invokes the supplied destructor itself if registration fails with
+-    // SQLITE_NOMEM. Release before the call so that path cannot double-delete.
+-    // No other thread may use or close the connection during construction.
+-    auto pending_claim = std::make_unique<ClientDataClaim>(process_id_);
+-    ClientDataClaim* const claim = pending_claim.release();
+-    int claim_result = SQLITE_ERROR;
+-    {
+-        ScopedAuthorizedBusyClaimDestruction authorized_destruction(claim);
+-        claim_result = sqlite3_set_clientdata(
+-            database,
+-            kBusyHandlerClientDataName,
+-            claim,
+-            &SqliteBusyHandlerOwner::destroy_client_data_claim);
+-    }
+-    if (claim_result != SQLITE_OK) {
+-        throw sqlite_busy_owner_error(database,
+-                                      claim_result,
+-                                      label,
+-                                      "could not claim callback context");
+-    }
+-    claim->state.store(ClientDataClaim::State::live,
+-                       std::memory_order_release);
+-    client_data_claim_ = claim;
++    callback_claim_.attach(database,
++                           kBusyHandlerClientDataName,
++                           label,
++                           "busy-handler owner");
+ 
+     const int handler_result =
+         sqlite3_busy_handler(database,
+                              &SqliteBusyHandlerOwner::busy_callback,
+                              this);
+     if (handler_result != SQLITE_OK) {
+-        claim->state.store(ClientDataClaim::State::detaching,
+-                           std::memory_order_release);
+-        int clear_result = SQLITE_ERROR;
+-        {
+-            ScopedAuthorizedBusyClaimDestruction authorized_destruction(claim);
+-            clear_result = sqlite3_set_clientdata(
+-                database, kBusyHandlerClientDataName, nullptr, nullptr);
+-        }
+-        if (clear_result != SQLITE_OK) {
+-            fail_stop_on_busy_context_lifetime_violation_noexcept();
+-        }
+-        client_data_claim_ = nullptr;
++        callback_claim_.detach(database);
+         throw sqlite_busy_owner_error(database,
+                                       handler_result,
+                                       label,
+@@ -253,24 +159,13 @@ void SqliteBusyHandlerOwner::detach() noexcept {
+     require_current_process_noexcept();
+     sqlite3* const database = database_borrow_.get();
+     if (database == nullptr) {
+-        if (client_data_claim_ != nullptr) {
++        if (callback_claim_.attached()) {
+             fail_stop_on_busy_context_lifetime_violation_noexcept();
+         }
+         return;
+     }
+-    if (client_data_claim_ == nullptr) {
+-        fail_stop_on_busy_context_lifetime_violation_noexcept();
+-    }
+ 
+-    ClientDataClaim* const claim = client_data_claim_;
+-    void* const registered =
+-        sqlite3_get_clientdata(database, kBusyHandlerClientDataName);
+-    if (registered != claim || claim->magic != ClientDataClaim::kMagic ||
+-        claim->self != claim ||
+-        claim->state.load(std::memory_order_acquire) !=
+-            ClientDataClaim::State::live) {
+-        fail_stop_on_busy_context_lifetime_violation_noexcept();
+-    }
++    callback_claim_.require_live(database);
+ 
+     // On a serialized connection this call cannot return until any operation
+     // currently invoking the old callback has left SQLite's connection mutex.
+@@ -281,53 +176,10 @@ void SqliteBusyHandlerOwner::detach() noexcept {
+         fail_stop_on_busy_context_lifetime_violation_noexcept();
+     }
+ 
+-    // Clearing the slot synchronously invokes destroy_client_data_claim(). Do
+-    // not dereference claim after this call.
+-    claim->state.store(ClientDataClaim::State::detaching,
+-                       std::memory_order_release);
+-    int clear_result = SQLITE_ERROR;
+-    {
+-        ScopedAuthorizedBusyClaimDestruction authorized_destruction(claim);
+-        clear_result = sqlite3_set_clientdata(database,
+-                                              kBusyHandlerClientDataName,
+-                                              nullptr,
+-                                              nullptr);
+-    }
+-    if (clear_result != SQLITE_OK) {
+-        fail_stop_on_busy_context_lifetime_violation_noexcept();
+-    }
+-    client_data_claim_ = nullptr;
++    callback_claim_.detach(database);
+     database_borrow_.reset();
+ }
+ 
+-void SqliteBusyHandlerOwner::destroy_client_data_claim(void* context) noexcept {
+-    auto* const claim = static_cast<ClientDataClaim*>(context);
+-    if (claim == nullptr || claim->magic != ClientDataClaim::kMagic ||
+-        claim->self != claim || !claim->process_id.valid() ||
+-        !sync_process_incarnation_is_current(claim->process_id)) {
+-        fail_stop_on_busy_context_lifetime_violation_noexcept();
+-    }
+-
+-    const ClientDataClaim::State state =
+-        claim->state.load(std::memory_order_acquire);
+-    if (state == ClientDataClaim::State::live) {
+-        // SQLite is closing the handle or replacing the named slot before the
+-        // C++ owner revoked its retained callback. Continuing would invalidate
+-        // the owner's exact-generation pin behind its back.
+-        fail_stop_on_busy_context_lifetime_violation_noexcept();
+-    }
+-    if ((state != ClientDataClaim::State::registration_pending &&
+-         state != ClientDataClaim::State::detaching) ||
+-        g_authorized_busy_claim_destruction != claim) {
+-        // Pending/detaching state is not authority for an unrelated close or
+-        // replacement call racing from another thread. The only permitted
+-        // destructor entry is synchronous with our exact set_clientdata call.
+-        fail_stop_on_busy_context_lifetime_violation_noexcept();
+-    }
+-
+-    delete claim;
+-}
+-
+ int SqliteBusyHandlerOwner::busy_callback(void* context,
+                                           int prior_invocations) noexcept {
+     if (context == nullptr) return 0;
+diff --git a/src/persistence/sqlite_busy_handler_owner.hpp b/src/persistence/sqlite_busy_handler_owner.hpp
+index d0e5017..9208b01 100644
+--- a/src/persistence/sqlite_busy_handler_owner.hpp
++++ b/src/persistence/sqlite_busy_handler_owner.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include "sqlite_retained_callback_claim.hpp"
+ #include "sync_process_incarnation.hpp"
+ #include "sync_sqlite_handle_slot.hpp"
+ 
+@@ -43,10 +44,14 @@ struct SqliteBusyHandlerSnapshot final {
+ // raw context address cannot change.
+ //
+ // The named client-data claim prevents two AnonSync owners from silently
+-// replacing one another and turns premature raw close/replacement into a
+-// fail-stop lifetime violation. Destruction must not race connection use; it
+-// first unregisters the busy callback, synchronously clears the claim, and only
+-// then releases the exact-generation borrow.
++// replacing one another and turns premature connection destruction or named
++// replacement into a fail-stop lifetime violation. A raw sqlite3_close_v2()
++// with outstanding SQLite dependents may defer actual destruction; the claim
++// detects that violation when destruction occurs, while the reviewed typed
++// close path rejects it immediately through the generation pin. Destruction
++// must not race connection use; it first unregisters the busy callback,
++// synchronously clears the claim, and only then releases the exact-generation
++// borrow.
+ class SqliteBusyHandlerOwner final {
+ public:
+     SqliteBusyHandlerOwner(
+@@ -70,16 +75,13 @@ public:
+     void detach() noexcept;
+ 
+ private:
+-    struct ClientDataClaim;
+-
+-    static void destroy_client_data_claim(void* context) noexcept;
+     static int busy_callback(void* context, int prior_invocations) noexcept;
+     int on_busy(int prior_invocations) noexcept;
+     void require_current_process_noexcept() const noexcept;
+ 
+     SyncProcessIncarnation process_id_;
+     SyncSqliteSerializedDbBorrow database_borrow_;
+-    ClientDataClaim* client_data_claim_ = nullptr;
++    SqliteRetainedCallbackClaim callback_claim_;
+     std::uint64_t maximum_wait_milliseconds_ = 0;
+     std::chrono::steady_clock::time_point installed_at_;
+     std::atomic<std::uint64_t> event_started_elapsed_milliseconds_{
+diff --git a/src/persistence/sqlite_replay_ledger_reset.cpp b/src/persistence/sqlite_replay_ledger_reset.cpp
+index 967df83..c6614d9 100644
+--- a/src/persistence/sqlite_replay_ledger_reset.cpp
++++ b/src/persistence/sqlite_replay_ledger_reset.cpp
+@@ -893,7 +893,10 @@ SqliteReplayLedgerResetState inspect_sqlite_replay_ledger_reset_state(
+     open_existing_ledger_or_throw(normalized_path, owner, path_guard, true,
+                                   label);
+     sqlite3* db = owner.get();
+-    SqliteVerificationBudget budget(db, label);
++    SqliteVerificationBudget budget(
++        borrow_sync_sqlite_serialized_db_or_throw(
++            owner, label + " verification generation"),
++        label);
+     SqliteReplayLedgerResetState state;
+     {
+         SyncSqliteTransaction transaction(
+@@ -973,7 +976,10 @@ SqliteReplayLedgerResetResult reset_sqlite_replay_ledger(
+                                   label);
+     sqlite3* db = owner.get();
+     const std::uint64_t owner_generation = owner.borrow().generation();
+-    SqliteVerificationBudget budget(db, label);
++    SqliteVerificationBudget budget(
++        borrow_sync_sqlite_serialized_db_or_throw(
++            owner, label + " verification generation"),
++        label);
+ 
+     SqliteReplayLedgerResetResult result;
+     result.prior = request.expected;
+@@ -1079,7 +1085,9 @@ SqliteReplayLedgerResetResult reset_sqlite_replay_ledger(
+             db, label + " post-commit identity gate");
+         if (committed_mutation) {
+             SqliteVerificationBudget postcommit_budget(
+-                db, label + " post-commit");
++                borrow_sync_sqlite_serialized_db_or_throw(
++                    owner, label + " post-commit verification generation"),
++                label + " post-commit");
+             verify_integrity_or_throw(
+                 owner, postcommit_budget, label + " post-commit");
+             if (!is_complete_empty_postcondition(
+diff --git a/src/persistence/sqlite_retained_callback_claim.cpp b/src/persistence/sqlite_retained_callback_claim.cpp
+new file mode 100644
+index 0000000..8a01ddb
+--- /dev/null
++++ b/src/persistence/sqlite_retained_callback_claim.cpp
+@@ -0,0 +1,246 @@
++#include "sqlite_retained_callback_claim.hpp"
++
++#include <sqlite3.h>
++
++#include <atomic>
++#include <cstdint>
++#include <memory>
++#include <stdexcept>
++#include <string>
++#include <utility>
++
++namespace anonsync::persistence {
++namespace {
++
++static_assert(SQLITE_VERSION_NUMBER >= 3044000,
++              "SQLite connection client data requires SQLite 3.44.0+");
++
++[[noreturn]] void fail_stop_on_retained_callback_lifetime_violation_noexcept()
++    noexcept {
++    fail_stop_on_sync_process_capability_violation_noexcept();
++}
++
++std::runtime_error client_data_error(sqlite3* database,
++                                     int result_code,
++                                     const std::string& label,
++                                     std::string_view owner_kind) {
++    const char* detail = database == nullptr ? nullptr : sqlite3_errmsg(database);
++    if (detail == nullptr || *detail == '\0') detail = sqlite3_errstr(result_code);
++    return std::runtime_error(
++        label + " could not claim SQLite " + std::string(owner_kind) +
++        " callback lifetime: " +
++        (detail == nullptr ? "SQLite error" : detail));
++}
++
++}  // namespace
++
++struct SqliteRetainedCallbackClaim::ClaimState final {
++    enum class State : std::uint8_t {
++        registration_pending = 0,
++        live = 1,
++        detaching = 2,
++    };
++
++    static constexpr std::uint64_t kMagic = UINT64_C(0x41534E535243434C);
++
++    explicit ClaimState(SyncProcessIncarnation process_id_value) noexcept
++        : process_id(process_id_value) {}
++
++    const std::uint64_t magic = kMagic;
++    ClaimState* const self = this;
++    const SyncProcessIncarnation process_id;
++    static_assert(std::atomic<State>::is_always_lock_free,
++                  "retained callback claim state must remain lock-free after fork");
++    std::atomic<State> state{State::registration_pending};
++};
++
++namespace {
++
++// sqlite3_set_clientdata() may invoke the destructor synchronously on
++// allocation failure, replacement, or explicit clearing.  A transient state
++// bit alone is not authority for a racing close/replacement on another thread.
++// Only the exact thread executing the reviewed set_clientdata call may destroy
++// this exact claim in registration_pending or detaching state.
++thread_local void* g_authorized_retained_claim_destruction = nullptr;
++
++class ScopedAuthorizedRetainedClaimDestruction final {
++public:
++    explicit ScopedAuthorizedRetainedClaimDestruction(
++        void* claim) noexcept
++        : claim_(claim) {
++        if (claim_ == nullptr ||
++            g_authorized_retained_claim_destruction != nullptr) {
++            fail_stop_on_retained_callback_lifetime_violation_noexcept();
++        }
++        g_authorized_retained_claim_destruction = claim_;
++    }
++
++    ~ScopedAuthorizedRetainedClaimDestruction() {
++        if (g_authorized_retained_claim_destruction != claim_) {
++            fail_stop_on_retained_callback_lifetime_violation_noexcept();
++        }
++        g_authorized_retained_claim_destruction = nullptr;
++    }
++
++    ScopedAuthorizedRetainedClaimDestruction(
++        const ScopedAuthorizedRetainedClaimDestruction&) = delete;
++    ScopedAuthorizedRetainedClaimDestruction& operator=(
++        const ScopedAuthorizedRetainedClaimDestruction&) = delete;
++
++private:
++    void* claim_ = nullptr;
++};
++
++}  // namespace
++
++SqliteRetainedCallbackClaim::SqliteRetainedCallbackClaim() noexcept
++    : process_id_(current_sync_process_incarnation_noexcept()) {}
++
++SqliteRetainedCallbackClaim::~SqliteRetainedCallbackClaim() {
++    require_current_process_noexcept();
++    if (claim_state_ != nullptr || !client_data_name_.empty()) {
++        // Auto-detach would touch an address that may already have been closed.
++        // The enclosing callback owner must run its ordered detach protocol.
++        fail_stop_on_retained_callback_lifetime_violation_noexcept();
++    }
++}
++
++void SqliteRetainedCallbackClaim::attach(
++    sqlite3* database,
++    std::string_view client_data_name,
++    const std::string& label,
++    std::string_view owner_kind) {
++    require_current_process_noexcept();
++    if (claim_state_ != nullptr || !client_data_name_.empty()) {
++        throw std::logic_error(
++            "SQLite retained callback claim is already attached");
++    }
++    if (database == nullptr) {
++        throw std::invalid_argument(
++            "SQLite retained callback claim requires an open database handle");
++    }
++    if (client_data_name.empty() ||
++        client_data_name.find('\0') != std::string_view::npos ||
++        owner_kind.empty()) {
++        throw std::invalid_argument(
++            "SQLite retained callback claim requires a nonempty NUL-free name and owner identity");
++    }
++
++    // Freeze every allocating C++ value before publishing any member state.
++    // In particular, a ClaimState allocation failure must leave this object
++    // ordinarily destructible rather than looking like a half-attached owner.
++    std::string frozen_client_data_name(client_data_name);
++    if (sqlite3_get_clientdata(
++            database, frozen_client_data_name.c_str()) != nullptr) {
++        throw std::logic_error(
++            label + " already has an AnonSync SQLite " +
++            std::string(owner_kind));
++    }
++
++    auto pending = std::make_unique<ClaimState>(process_id_);
++    client_data_name_.swap(frozen_client_data_name);
++    ClaimState* const claim = pending.release();
++    int result = SQLITE_ERROR;
++    {
++        ScopedAuthorizedRetainedClaimDestruction authorized(claim);
++        result = sqlite3_set_clientdata(
++            database,
++            client_data_name_.c_str(),
++            claim,
++            &SqliteRetainedCallbackClaim::destroy_claim_state);
++    }
++    if (result != SQLITE_OK) {
++        // SQLite destroys claim on registration allocation failure.
++        client_data_name_.clear();
++        throw client_data_error(database, result, label, owner_kind);
++    }
++
++    claim->state.store(ClaimState::State::live, std::memory_order_release);
++    claim_state_ = claim;
++}
++
++void SqliteRetainedCallbackClaim::require_live(sqlite3* database) const noexcept {
++    require_current_process_noexcept();
++    ClaimState* const claim = claim_state_;
++    if (database == nullptr || claim == nullptr || client_data_name_.empty() ||
++        claim->magic != ClaimState::kMagic || claim->self != claim ||
++        claim->process_id != process_id_ ||
++        claim->state.load(std::memory_order_acquire) !=
++            ClaimState::State::live ||
++        sqlite3_get_clientdata(database, client_data_name_.c_str()) != claim) {
++        fail_stop_on_retained_callback_lifetime_violation_noexcept();
++    }
++}
++
++void SqliteRetainedCallbackClaim::detach(sqlite3* database) noexcept {
++    require_current_process_noexcept();
++    if (claim_state_ == nullptr) {
++        if (!client_data_name_.empty()) {
++            fail_stop_on_retained_callback_lifetime_violation_noexcept();
++        }
++        return;
++    }
++
++    require_live(database);
++    ClaimState* const claim = claim_state_;
++    claim->state.store(ClaimState::State::detaching,
++                       std::memory_order_release);
++    int result = SQLITE_ERROR;
++    {
++        ScopedAuthorizedRetainedClaimDestruction authorized(claim);
++        result = sqlite3_set_clientdata(
++            database, client_data_name_.c_str(), nullptr, nullptr);
++    }
++    if (result != SQLITE_OK) {
++        fail_stop_on_retained_callback_lifetime_violation_noexcept();
++    }
++
++    // The synchronous client-data destructor deleted claim.
++    claim_state_ = nullptr;
++    client_data_name_.clear();
++}
++
++bool SqliteRetainedCallbackClaim::attached() const noexcept {
++    require_current_process_noexcept();
++    const bool has_state = claim_state_ != nullptr;
++    if (has_state != !client_data_name_.empty()) {
++        fail_stop_on_retained_callback_lifetime_violation_noexcept();
++    }
++    return has_state;
++}
++
++void SqliteRetainedCallbackClaim::destroy_claim_state(void* context) noexcept {
++    auto* const claim = static_cast<ClaimState*>(context);
++    if (claim == nullptr || claim->magic != ClaimState::kMagic ||
++        claim->self != claim || !claim->process_id.valid() ||
++        !sync_process_incarnation_is_current(claim->process_id)) {
++        fail_stop_on_retained_callback_lifetime_violation_noexcept();
++    }
++
++    const ClaimState::State state =
++        claim->state.load(std::memory_order_acquire);
++    if (state == ClaimState::State::live) {
++        // SQLite is actually destroying the handle or replacing this named
++        // slot before the enclosing C++ owner revoked the retained callback
++        // address. A close_v2 zombie does not reach this destructor until its
++        // final dependent SQLite object is released.
++        fail_stop_on_retained_callback_lifetime_violation_noexcept();
++    }
++    if ((state != ClaimState::State::registration_pending &&
++         state != ClaimState::State::detaching) ||
++        g_authorized_retained_claim_destruction != claim) {
++        fail_stop_on_retained_callback_lifetime_violation_noexcept();
++    }
++
++    delete claim;
++}
++
++void SqliteRetainedCallbackClaim::require_current_process_noexcept() const
++    noexcept {
++    if (!process_id_.valid() ||
++        !sync_process_incarnation_is_current(process_id_)) {
++        fail_stop_on_retained_callback_lifetime_violation_noexcept();
++    }
++}
++
++}  // namespace anonsync::persistence
+diff --git a/src/persistence/sqlite_retained_callback_claim.hpp b/src/persistence/sqlite_retained_callback_claim.hpp
+new file mode 100644
+index 0000000..69b4fcd
+--- /dev/null
++++ b/src/persistence/sqlite_retained_callback_claim.hpp
+@@ -0,0 +1,78 @@
++#pragma once
++
++#include "sync_process_incarnation.hpp"
++
++#include <string>
++#include <string_view>
++
++struct sqlite3;
++
++namespace anonsync::persistence {
++
++// Connection-scoped lifetime sentinel for a retained SQLite callback context.
++//
++// SQLite callback setter APIs generally retain a raw context address but offer
++// no destructor and, for several setters, no getter.  This owner attaches a
++// separately allocated sentinel through sqlite3_set_clientdata().  SQLite then
++// calls the sentinel destructor on actual database destruction or named-slot
++// replacement. Any such destruction while the callback owner is live fails
++// stopped before a later C++ destructor can call SQLite through a stale
++// connection address.
++//
++// sqlite3_close_v2() may return SQLITE_OK while outstanding statements, blobs,
++// or backups keep a zombie connection allocated.  In that case SQLite has not
++// destroyed the client-data slot yet, so no client-data sentinel can reject the
++// close_v2 call synchronously.  Exact-generation typed ownership prevents the
++// reviewed close path from entering that state; source/runtime audits must keep
++// unmediated close_v2 calls outside every live retained-callback scope.  If a
++// raw close_v2 violation nevertheless defers destruction, this claim fails
++// stopped when SQLite eventually destroys the connection.
++//
++// The sentinel has no authority to unregister a callback.  The enclosing owner
++// must first revoke its callback, then call detach() synchronously, and only
++// then release any exact-generation database borrow.  The class deliberately
++// does not auto-detach: doing so after premature close would itself dereference
++// invalid SQLite storage.
++class SqliteRetainedCallbackClaim final {
++public:
++    SqliteRetainedCallbackClaim() noexcept;
++    ~SqliteRetainedCallbackClaim();
++
++    SqliteRetainedCallbackClaim(const SqliteRetainedCallbackClaim&) = delete;
++    SqliteRetainedCallbackClaim& operator=(
++        const SqliteRetainedCallbackClaim&) = delete;
++    SqliteRetainedCallbackClaim(SqliteRetainedCallbackClaim&&) = delete;
++    SqliteRetainedCallbackClaim& operator=(
++        SqliteRetainedCallbackClaim&&) = delete;
++
++    // client_data_name is copied before SQLite sees it.  owner_kind is used
++    // only for value-free construction diagnostics (for example,
++    // "busy-handler owner").
++    void attach(sqlite3* database,
++                std::string_view client_data_name,
++                const std::string& label,
++                std::string_view owner_kind);
++
++    // Prove that the exact live sentinel is still registered on database.
++    // A mismatch is a retained-context lifetime violation, not a recoverable
++    // data error.
++    void require_live(sqlite3* database) const noexcept;
++
++    // Idempotent after a successful detach.  The caller must already have
++    // revoked the retained callback and quiesced connection use.
++    void detach(sqlite3* database) noexcept;
++
++    [[nodiscard]] bool attached() const noexcept;
++
++private:
++    struct ClaimState;
++
++    static void destroy_claim_state(void* context) noexcept;
++    void require_current_process_noexcept() const noexcept;
++
++    SyncProcessIncarnation process_id_;
++    std::string client_data_name_;
++    ClaimState* claim_state_ = nullptr;
++};
++
++}  // namespace anonsync::persistence
+diff --git a/src/persistence/sqlite_snapshot_seal.cpp b/src/persistence/sqlite_snapshot_seal.cpp
+index 9abef0b..e14beb6 100644
+--- a/src/persistence/sqlite_snapshot_seal.cpp
++++ b/src/persistence/sqlite_snapshot_seal.cpp
+@@ -766,6 +766,28 @@ void SealedSqliteSnapshot::verify_unchanged_or_throw(
+ 
+ sqlite3* SealedSqliteSnapshot::open_database_or_throw(
+     const std::string& label) {
++    sqlite3* database = nullptr;
++    open_database_into_or_throw(&database, label);
++    return database;
++}
++
++SyncSqliteDbHandleSlot SealedSqliteSnapshot::open_database_owner_or_throw(
++    const std::string& label) {
++    SyncSqliteDbHandleSlot owner;
++    {
++        auto output = owner.out();
++        open_database_into_or_throw(output.get(), label);
++    }
++    return owner;
++}
++
++void SealedSqliteSnapshot::open_database_into_or_throw(
++    sqlite3** output,
++    const std::string& label) {
++    if (output == nullptr || *output != nullptr) {
++        throw std::logic_error(
++            label + " SQLite snapshot output requires an empty handle slot");
++    }
+     require_current_process_or_throw(label);
+     verify_unchanged_or_throw(label);
+ 
+@@ -817,7 +839,7 @@ sqlite3* SealedSqliteSnapshot::open_database_or_throw(
+                 label + " deserialized SQLite handle unexpectedly names a file");
+         }
+         verify_unchanged_or_throw(label);
+-        return database;
++        *output = database;
+     } catch (...) {
+         (void)sqlite3_close_v2(database);
+         throw;
+diff --git a/src/persistence/sqlite_snapshot_seal.hpp b/src/persistence/sqlite_snapshot_seal.hpp
+index 9aa628d..d343733 100644
+--- a/src/persistence/sqlite_snapshot_seal.hpp
++++ b/src/persistence/sqlite_snapshot_seal.hpp
+@@ -3,6 +3,7 @@
+ #include "sqlite_snapshot_geometry.hpp"
+ #include "sync_atomic_file_publication_internal.hpp"
+ #include "sync_process_incarnation.hpp"
++#include "sync_sqlite_handle_slot.hpp"
+ 
+ #include <cstdint>
+ #include <filesystem>
+@@ -76,9 +77,13 @@ public:
+     void verify_unchanged_or_throw(const std::string& label);
+ 
+     // Create an independent private in-memory database and deserialize a fresh
+-    // SQLite-owned copy using SQLITE_DESERIALIZE_READONLY. The returned handle
+-    // is owned by the caller and remains valid after this seal is destroyed.
++    // SQLite-owned copy using SQLITE_DESERIALIZE_READONLY. Prefer the typed
++    // owner form: it binds every later borrow and close to one exact serialized
++    // connection generation. The raw compatibility form transfers ownership to
++    // the caller and remains valid after this seal is destroyed.
+     sqlite3* open_database_or_throw(const std::string& label);
++    SyncSqliteDbHandleSlot open_database_owner_or_throw(
++        const std::string& label);
+ 
+     // Publish the exact resident bytes through the capability-bound atomic
+     // file owner. This does not reopen the source pathname and does not create
+@@ -108,6 +113,8 @@ private:
+     void transfer_from_noexcept(SealedSqliteSnapshot& other) noexcept;
+     void clear_moved_from_noexcept() noexcept;
+     void verify_pinned_vfs_registration_or_throw(const std::string& label) const;
++    void open_database_into_or_throw(sqlite3** output,
++                                     const std::string& label);
+     void cleanup_noexcept() noexcept;
+ 
+     SyncProcessIncarnation process_id_;
+diff --git a/src/persistence/sqlite_verification_budget.cpp b/src/persistence/sqlite_verification_budget.cpp
+index c56204c..f151437 100644
+--- a/src/persistence/sqlite_verification_budget.cpp
++++ b/src/persistence/sqlite_verification_budget.cpp
+@@ -9,6 +9,9 @@
+ namespace anonsync::persistence {
+ namespace {
+ 
++inline constexpr char kVerificationBudgetClientDataName[] =
++    "anonsync.sqlite-verification-budget.v1";
++
+ std::uint64_t saturating_multiply(std::uint64_t left,
+                                   std::uint64_t right) noexcept {
+     if (left == 0U || right == 0U) return 0U;
+@@ -123,26 +126,31 @@ SqliteVerificationBudgetException::SqliteVerificationBudgetException(
+       limit_(limit) {}
+ 
+ SqliteVerificationBudget::SqliteVerificationBudget(
+-    sqlite3* database,
++    SyncSqliteSerializedDbBorrow database_borrow,
+     std::string label,
+     const SqliteVerificationBudgetPolicy& policy)
+     : process_id_(current_sync_process_incarnation_noexcept()),
+       thread_id_(current_sync_thread_incarnation_noexcept()),
+-      database_(database),
++      database_borrow_(std::move(database_borrow)),
+       label_(std::move(label)),
+       policy_(policy),
+       started_(std::chrono::steady_clock::now()) {
+-    if (database_ == nullptr) {
++    sqlite3* const database = database_borrow_.get();
++    if (database == nullptr) {
+         throw std::runtime_error(
+-            "SQLite verification budget requires an open database handle");
++            "SQLite verification budget requires an exact serialized database-generation borrow");
+     }
+     if (label_.empty()) {
+         throw std::runtime_error(
+             "SQLite verification budget requires a nonempty diagnostic label");
+     }
+     validate_policy_or_throw(policy_);
++    callback_claim_.attach(database,
++                           kVerificationBudgetClientDataName,
++                           label_,
++                           "verification-budget owner");
+     sqlite3_progress_handler(
+-        database_, static_cast<int>(policy_.progress_opcode_interval),
++        database, static_cast<int>(policy_.progress_opcode_interval),
+         &SqliteVerificationBudget::progress_callback, this);
+ }
+ 
+@@ -243,9 +251,18 @@ void SqliteVerificationBudget::throw_if_exhausted() const {
+ 
+ void SqliteVerificationBudget::detach() noexcept {
+     require_current_execution_noexcept();
+-    if (database_ == nullptr) return;
+-    sqlite3_progress_handler(database_, 0, nullptr, nullptr);
+-    database_ = nullptr;
++    sqlite3* const database = database_borrow_.get();
++    if (database == nullptr) {
++        if (callback_claim_.attached()) {
++            fail_stop_on_sync_process_capability_violation_noexcept();
++        }
++        return;
++    }
++
++    callback_claim_.require_live(database);
++    sqlite3_progress_handler(database, 0, nullptr, nullptr);
++    callback_claim_.detach(database);
++    database_borrow_.reset();
+ }
+ 
+ int SqliteVerificationBudget::progress_callback(void* context) noexcept {
+diff --git a/src/persistence/sqlite_verification_budget.hpp b/src/persistence/sqlite_verification_budget.hpp
+index 51dce05..7f31cfb 100644
+--- a/src/persistence/sqlite_verification_budget.hpp
++++ b/src/persistence/sqlite_verification_budget.hpp
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
++#include "sqlite_retained_callback_claim.hpp"
+ #include "sync_process_incarnation.hpp"
++#include "sync_sqlite_handle_slot.hpp"
+ #include "sync_thread_incarnation.hpp"
+ 
+ #include <chrono>
+@@ -91,19 +93,28 @@ private:
+ // Lifetime owner for the sole sqlite3_progress_handler permitted on one
+ // hostile-verification connection, plus deterministic first-party accounting.
+ // SQLite retains this object's address as callback context, so it is neither
+-// copyable nor movable. The database handle must outlive the attached guard and
+-// the guarded connection must not execute on any thread except the exact thread
+-// that attached this owner. SQLite may serialize cross-thread connection calls,
+-// but that does not transfer authority to this callback context or its ordinary
+-// C++ counters. Throwing entry points reject a foreign thread before reading
+-// diagnostic or mutable owner state; callbacks, noexcept accessors, detach, and
+-// destruction fail stopped. Process
++// copyable nor movable. Construction consumes one exact-generation serialized
++// connection borrow and claims one named SQLite client-data slot. The borrow
++// prevents typed close/replacement; the claim turns premature connection
++// destruction or named-slot replacement into a fail-stop lifetime violation
++// before a later detach can dereference stale SQLite storage. A raw
++// sqlite3_close_v2() may defer actual destruction behind outstanding SQLite
++// dependents; that unmediated call is outside the reviewed ownership protocol,
++// and the claim fails stopped when deferred destruction eventually occurs.
++//
++// The guarded connection must not execute on any thread except the exact thread
++// that attached this owner. FULLMUTEX serialization does not transfer authority
++// to this callback context or its ordinary C++ counters. Throwing entry points
++// reject a foreign thread before reading diagnostic or mutable owner state;
++// callbacks, noexcept accessors, detach, and destruction fail stopped. Process
+ // authority is checked first so inherited execution cannot be misclassified as
+-// an ordinary affinity error.
++// an ordinary affinity error. The source inventory remains responsible for
++// preventing unrelated sqlite3_progress_handler replacement: SQLite exposes no
++// progress-handler getter.
+ class SqliteVerificationBudget final {
+ public:
+     SqliteVerificationBudget(
+-        sqlite3* database,
++        SyncSqliteSerializedDbBorrow database_borrow,
+         std::string label,
+         const SqliteVerificationBudgetPolicy& policy = {});
+     ~SqliteVerificationBudget();
+@@ -154,7 +165,8 @@ private:
+ 
+     SyncProcessIncarnation process_id_;
+     SyncThreadIncarnation thread_id_;
+-    sqlite3* database_ = nullptr;
++    SyncSqliteSerializedDbBorrow database_borrow_;
++    SqliteRetainedCallbackClaim callback_claim_;
+     std::string label_;
+     SqliteVerificationBudgetPolicy policy_;
+     std::chrono::steady_clock::time_point started_;
+diff --git a/src/sqlite_replay_ledger.cpp b/src/sqlite_replay_ledger.cpp
+index 887ab6e..6318ca2 100644
+--- a/src/sqlite_replay_ledger.cpp
++++ b/src/sqlite_replay_ledger.cpp
+@@ -521,34 +521,29 @@ std::string sqlite_entry_hash_at_sequence(
+     persistence::SealedSqliteSnapshot& snapshot,
+     long long sequence) {
+     if (sequence <= 0) return "GENESIS";
+-    sqlite3* db = snapshot.open_database_or_throw(
++    SyncSqliteDbHandleSlot owner = snapshot.open_database_owner_or_throw(
+         "sqlite-wal replay ledger prefix continuity sealed open");
++    sqlite3* const db = owner.get();
+     sqlite3_busy_timeout(db, 1000);
+-    try {
+-        std::string out;
+-        bool missing = false;
+-        {
+-            Stmt stmt(db, "SELECT entry_hash FROM ledger_entries WHERE sequence=?;", "sqlite-wal replay ledger prefix continuity prepare failed");
+-            bind_int64_or_throw(db, stmt.stmt, 1, sequence, "sqlite-wal replay ledger prefix continuity sequence bind failed");
+-            int rc = sqlite3_step(stmt.stmt);
+-            if (rc == SQLITE_ROW) out = column_text(stmt.stmt, 0);
+-            else if (rc == SQLITE_DONE) missing = true;
+-            else sqlite_throw(db, "sqlite-wal replay ledger prefix continuity query failed");
+-        }  // Finalize the statement before closing the database handle.
+-        snapshot.verify_unchanged_or_throw(
+-            "sqlite-wal replay ledger prefix continuity post-query seal");
+-        sqlite_close_or_throw(db, "sqlite-wal replay ledger prefix continuity close failed");
+-        db = nullptr;
+-        snapshot.verify_unchanged_or_throw(
+-            "sqlite-wal replay ledger prefix continuity post-close seal");
+-        if (missing) {
+-            throw std::runtime_error("sqlite-wal replay ledger prefix continuity missing entry at destination sequence " + std::to_string(sequence));
+-        }
+-        return out;
+-    } catch (...) {
+-        if (db) (void)sqlite3_close_v2(db);
+-        throw;
++    std::string out;
++    bool missing = false;
++    {
++        Stmt stmt(db, "SELECT entry_hash FROM ledger_entries WHERE sequence=?;", "sqlite-wal replay ledger prefix continuity prepare failed");
++        bind_int64_or_throw(db, stmt.stmt, 1, sequence, "sqlite-wal replay ledger prefix continuity sequence bind failed");
++        int rc = sqlite3_step(stmt.stmt);
++        if (rc == SQLITE_ROW) out = column_text(stmt.stmt, 0);
++        else if (rc == SQLITE_DONE) missing = true;
++        else sqlite_throw(db, "sqlite-wal replay ledger prefix continuity query failed");
++    }  // Finalize the statement before closing the database handle.
++    snapshot.verify_unchanged_or_throw(
++        "sqlite-wal replay ledger prefix continuity post-query seal");
++    owner.reset();
++    snapshot.verify_unchanged_or_throw(
++        "sqlite-wal replay ledger prefix continuity post-close seal");
++    if (missing) {
++        throw std::runtime_error("sqlite-wal replay ledger prefix continuity missing entry at destination sequence " + std::to_string(sequence));
+     }
++    return out;
+ }
+ 
+ 
+@@ -2075,16 +2070,19 @@ ReplayLedgerStats verify_profiled_open_sqlite_ledger_snapshot_readonly(
+ }
+ 
+ ReplayLedgerStats verify_open_sqlite_ledger_snapshot_readonly(
+-    sqlite3* db,
++    SyncSqliteDbHandleSlot& owner,
+     const std::string& label,
+     const persistence::SqliteVerificationBudgetPolicy& policy = {}) {
++    sqlite3* const db = owner.get();
+     if (db == nullptr) {
+         throw std::runtime_error(
+             label + " requires an open read-only database handle");
+     }
+     sqlite3_busy_timeout(db, 1000);
+     persistence::SqliteVerificationBudget budget(
+-        db, label + " resource budget", policy);
++        borrow_sync_sqlite_serialized_db_or_throw(
++            owner, label + " verification generation"),
++        label + " resource budget", policy);
+     try {
+         // Install finite VM-work authority before any profile PRAGMA, prepare,
+         // schema scan, integrity traversal, or row projection touches hostile
+@@ -2105,22 +2103,17 @@ ReplayLedgerStats verify_open_sqlite_ledger_snapshot_readonly(
+ ReplayLedgerStats verify_sealed_sqlite_ledger_snapshot_readonly(
+     persistence::SealedSqliteSnapshot& snapshot,
+     const std::string& label) {
+-    sqlite3* db = snapshot.open_database_or_throw(label + " immutable open failed");
+-    try {
+-        const auto verification_policy =
+-            persistence::sqlite_verification_budget_for_snapshot(
+-                snapshot.byte_count(), snapshot.page_count());
+-        ReplayLedgerStats st = verify_open_sqlite_ledger_snapshot_readonly(
+-            db, label, verification_policy);
+-        snapshot.verify_unchanged_or_throw(label + " post-verification seal check");
+-        sqlite_close_or_throw(db, label + " close read-only failed");
+-        db = nullptr;
+-        snapshot.verify_unchanged_or_throw(label + " post-close seal check");
+-        return st;
+-    } catch (...) {
+-        sqlite_close_best_effort(db);
+-        throw;
+-    }
++    SyncSqliteDbHandleSlot owner =
++        snapshot.open_database_owner_or_throw(label + " immutable open failed");
++    const auto verification_policy =
++        persistence::sqlite_verification_budget_for_snapshot(
++            snapshot.byte_count(), snapshot.page_count());
++    ReplayLedgerStats st = verify_open_sqlite_ledger_snapshot_readonly(
++        owner, label, verification_policy);
++    snapshot.verify_unchanged_or_throw(label + " post-verification seal check");
++    owner.reset();
++    snapshot.verify_unchanged_or_throw(label + " post-close seal check");
++    return st;
+ }
+ 
+ ReplayLedgerStats verify_sqlite_ledger_snapshot_readonly(
+@@ -2164,17 +2157,24 @@ std::string sqlite_effect_pending_report_json_impl(
+             "sqlite-wal effect pending report requires a nonempty ledger path");
+     }
+     reject_sqlite_family_symlinks(ledger_path);
+-    sqlite3* db = nullptr;
++    SyncSqliteDbHandleSlot owner;
+     int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX;
+ #ifdef SQLITE_OPEN_NOFOLLOW
+     flags |= SQLITE_OPEN_NOFOLLOW;
+ #endif
+-    db = sqlite_open_or_throw(
+-        ledger_path, flags,
+-        "sqlite-wal effect pending report open read-only failed");
++    {
++        auto output = owner.out();
++        *output.get() = sqlite_open_or_throw(
++            ledger_path, flags,
++            "sqlite-wal effect pending report open read-only failed");
++    }
++    sqlite3* const db = owner.get();
+     try {
+         persistence::SqliteVerificationBudget budget(
+-            db, "sqlite-wal effect pending report resource budget");
++            borrow_sync_sqlite_serialized_db_or_throw(
++                owner,
++                "sqlite-wal effect pending report verification generation"),
++            "sqlite-wal effect pending report resource budget");
+         bool transaction_active = false;
+         try {
+             sqlite3_busy_timeout(db, 1000);
+@@ -2282,8 +2282,7 @@ std::string sqlite_effect_pending_report_json_impl(
+                 "sqlite-wal effect pending report read transaction commit failed");
+             transaction_active = false;
+             budget.detach();
+-            sqlite_close_or_throw(
+-                db, "sqlite-wal effect pending report close read-only failed");
++            owner.reset();
+ 
+             std::ostringstream out;
+             out.imbue(std::locale::classic());
+@@ -2355,11 +2354,11 @@ std::string sqlite_effect_pending_report_json_impl(
+                 (void)sqlite3_exec(
+                     db, "ROLLBACK;", nullptr, nullptr, nullptr);
+             }
+-            sqlite_close_best_effort(db);
++            owner.reset();
+             std::rethrow_exception(failure);
+         }
+     } catch (...) {
+-        sqlite_close_best_effort(db);
++        owner.reset();
+         throw;
+     }
+ }
+@@ -4006,24 +4005,18 @@ verify_sqlite_ledger_snapshot_readonly_with_row_limit_for_selftest(
+     persistence::SealedSqliteSnapshot snapshot =
+         persistence::SealedSqliteSnapshot::capture(
+             snapshot_path, label + " byte seal");
+-    sqlite3* db = snapshot.open_database_or_throw(
++    SyncSqliteDbHandleSlot owner = snapshot.open_database_owner_or_throw(
+         label + " immutable open failed");
+-    try {
+-        auto policy = persistence::sqlite_verification_budget_for_snapshot(
+-            snapshot.byte_count(), snapshot.page_count());
+-        policy.maximum_rows = maximum_rows;
+-        ReplayLedgerStats result = verify_open_sqlite_ledger_snapshot_readonly(
+-            db, label, policy);
+-        snapshot.verify_unchanged_or_throw(
+-            label + " post-verification seal check");
+-        sqlite_close_or_throw(db, label + " close read-only failed");
+-        db = nullptr;
+-        snapshot.verify_unchanged_or_throw(label + " post-close seal check");
+-        return result;
+-    } catch (...) {
+-        sqlite_close_best_effort(db);
+-        throw;
+-    }
++    auto policy = persistence::sqlite_verification_budget_for_snapshot(
++        snapshot.byte_count(), snapshot.page_count());
++    policy.maximum_rows = maximum_rows;
++    ReplayLedgerStats result = verify_open_sqlite_ledger_snapshot_readonly(
++        owner, label, policy);
++    snapshot.verify_unchanged_or_throw(
++        label + " post-verification seal check");
++    owner.reset();
++    snapshot.verify_unchanged_or_throw(label + " post-close seal check");
++    return result;
+ }
+ 
+ std::string sqlite_effect_pending_report_json_for_selftest(
+diff --git a/tests/persistence/sqlite_persistence_process_authority_fork_test.cpp b/tests/persistence/sqlite_persistence_process_authority_fork_test.cpp
+index 1908fea..4b8bdad 100644
+--- a/tests/persistence/sqlite_persistence_process_authority_fork_test.cpp
++++ b/tests/persistence/sqlite_persistence_process_authority_fork_test.cpp
+@@ -261,12 +261,17 @@ void test_child_local_persistence_authority(const fs::path& source,
+ 
+             SealedSqliteSnapshot seal = SealedSqliteSnapshot::capture(
+                 source, "child-local sealed snapshot");
+-            sqlite3* database = seal.open_database_or_throw(
+-                "child-local immutable open");
++            SyncSqliteDbHandleSlot database_owner =
++                seal.open_database_owner_or_throw(
++                    "child-local immutable open");
++            sqlite3* const database = database_owner.get();
+             SqliteVerificationBudgetPolicy policy;
+             policy.progress_opcode_interval = 1U;
+             SqliteVerificationBudget budget(
+-                database, "child-local verification budget", policy);
++                borrow_sync_sqlite_serialized_db_or_throw(
++                    database_owner,
++                    "child-local verification budget generation"),
++                "child-local verification budget", policy);
+             char* error = nullptr;
+             const int query_rc = sqlite3_exec(
+                 database,
+@@ -279,8 +284,7 @@ void test_child_local_persistence_authority(const fs::path& source,
+                                 (detail.empty() ? std::string() : ": " + detail));
+             budget.consume_row();
+             budget.detach();
+-            sqlite_or_throw(sqlite3_close(database), database,
+-                            "child-local immutable close");
++            database_owner.reset();
+             seal.verify_unchanged_or_throw(
+                 "child-local post-close seal verification");
+         },
+@@ -403,13 +407,10 @@ void test_busy_handler_process_authority(const fs::path& path,
+ }
+ 
+ void test_budget_process_authority(TestState& test) {
+-    sqlite3* database = nullptr;
+-    sqlite_or_throw(sqlite3_open_v2(
+-                        ":memory:", &database,
+-                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
+-                            SQLITE_OPEN_FULLMUTEX,
+-                        nullptr),
+-                    database, "budget fixture open");
++    SyncSqliteDbHandleSlot database_owner;
++    open_typed_database_or_throw(
++        database_owner, ":memory:", "budget fixture open");
++    sqlite3* const database = database_owner.get();
+     sqlite_or_throw(sqlite3_exec(
+                         database,
+                         "CREATE TABLE numbers(value INTEGER NOT NULL);"
+@@ -422,7 +423,10 @@ void test_budget_process_authority(TestState& test) {
+ 
+     SqliteVerificationBudgetPolicy policy;
+     policy.progress_opcode_interval = 1U;
+-    SqliteVerificationBudget budget(database, "process-bound budget", policy);
++    SqliteVerificationBudget budget(
++        borrow_sync_sqlite_serialized_db_or_throw(
++            database_owner, "process-bound budget generation"),
++        "process-bound budget", policy);
+ 
+     require_child_fail_stop(
+         test,
+@@ -442,31 +446,99 @@ void test_budget_process_authority(TestState& test) {
+             sqlite3_free(error);
+         },
+         "inherited SQLite execution reaches the process-bound callback");
++    require_child_fail_stop(
++        test,
++        [&] { (void)sqlite3_close(database); },
++        "child raw close cannot destroy an inherited verification claim");
+ 
+-    sqlite3* heap_database = nullptr;
+-    sqlite_or_throw(sqlite3_open_v2(
+-                        ":memory:", &heap_database,
+-                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
+-                            SQLITE_OPEN_FULLMUTEX,
+-                        nullptr),
+-                    heap_database, "heap budget fixture open");
++    auto* heap_database_owner = new SyncSqliteDbHandleSlot();
++    open_typed_database_or_throw(
++        *heap_database_owner, ":memory:", "heap budget fixture open");
+     auto* heap_budget = new SqliteVerificationBudget(
+-        heap_database, "heap process-bound budget", policy);
++        borrow_sync_sqlite_serialized_db_or_throw(
++            *heap_database_owner, "heap process-bound budget generation"),
++        "heap process-bound budget", policy);
+     require_child_fail_stop(
+         test,
+         [&] { delete heap_budget; },
+         "child destructor cannot detach an inherited verification budget");
+     delete heap_budget;
+-    sqlite_or_throw(sqlite3_close(heap_database), heap_database,
+-                    "heap budget fixture close");
++    heap_database_owner->reset();
++    delete heap_database_owner;
++
++    require_child_fail_stop(
++        test,
++        [&] {
++            SyncSqliteDbHandleSlot child_database;
++            open_typed_database_or_throw(
++                child_database, ":memory:",
++                "child-local verification premature close open");
++            auto* child_budget = new SqliteVerificationBudget(
++                borrow_sync_sqlite_serialized_db_or_throw(
++                    child_database,
++                    "child-local verification premature close generation"),
++                "child-local verification premature close", policy);
++            (void)child_budget;
++            (void)sqlite3_close(child_database.get());
++        },
++        "raw close cannot destroy a live child-local verification claim");
++    require_child_fail_stop(
++        test,
++        [&] {
++            SyncSqliteDbHandleSlot child_database;
++            open_typed_database_or_throw(
++                child_database, ":memory:",
++                "child-local verification deferred close_v2 open");
++            sqlite3_stmt* statement = nullptr;
++            sqlite_or_throw(sqlite3_prepare_v2(
++                                child_database.get(), "SELECT 1;", -1,
++                                &statement, nullptr),
++                            child_database.get(),
++                            "child-local verification deferred statement");
++            auto* child_budget = new SqliteVerificationBudget(
++                borrow_sync_sqlite_serialized_db_or_throw(
++                    child_database,
++                    "child-local verification deferred close_v2 generation"),
++                "child-local verification deferred close_v2", policy);
++            (void)child_budget;
++            sqlite_or_throw(sqlite3_close_v2(child_database.get()),
++                            child_database.get(),
++                            "child-local verification deferred close_v2");
++            (void)sqlite3_finalize(statement);
++        },
++        "deferred close_v2 destruction cannot outlive a live verification claim");
++    require_child_fail_stop(
++        test,
++        [&] {
++            SyncSqliteDbHandleSlot child_database;
++            open_typed_database_or_throw(
++                child_database, ":memory:",
++                "child-local verification replacement open");
++            auto* child_budget = new SqliteVerificationBudget(
++                borrow_sync_sqlite_serialized_db_or_throw(
++                    child_database,
++                    "child-local verification replacement generation"),
++                "child-local verification replacement", policy);
++            (void)child_budget;
++            (void)sqlite3_set_clientdata(
++                child_database.get(),
++                "anonsync.sqlite-verification-budget.v1",
++                nullptr,
++                nullptr);
++        },
++        "client-data replacement cannot destroy a live child-local verification claim");
+ 
+     // Prove the parent still owns both accounting and callback detachment.
++    test.require(database_owner.active_borrows() == 1U,
++                 "parent verification generation survives hostile children");
+     budget.consume_row();
+     budget.checkpoint();
+     test.require(budget.rows() == 1U,
+                  "parent budget remains usable after hostile children");
+     budget.detach();
+-    sqlite_or_throw(sqlite3_close(database), database, "budget fixture close");
++    test.require(database_owner.active_borrows() == 0U,
++                 "parent verification detach releases its exact generation");
++    database_owner.reset();
+ }
+ 
+ #else
+diff --git a/tests/persistence/sqlite_snapshot_seal_tests.cpp b/tests/persistence/sqlite_snapshot_seal_tests.cpp
+index 5ec4189..36d0087 100644
+--- a/tests/persistence/sqlite_snapshot_seal_tests.cpp
++++ b/tests/persistence/sqlite_snapshot_seal_tests.cpp
+@@ -25,6 +25,9 @@
+ namespace {
+ 
+ namespace fs = std::filesystem;
++using anonsync::SyncSqliteDbHandleSlot;
++using anonsync::SyncSqliteSerializedDbBorrow;
++using anonsync::borrow_sync_sqlite_serialized_db_or_throw;
+ using anonsync::persistence::SealedSqliteSnapshot;
+ using anonsync::persistence::SqliteSnapshotSealPolicy;
+ using anonsync::persistence::kMaximumUntrustedSqliteSnapshotBytes;
+@@ -43,6 +46,52 @@ void cleanup_sqlite_family(const fs::path& path) {
+     }
+ }
+ 
++std::int64_t query_integer_nonowning(sqlite3* database,
++                                        const std::string& sql) {
++    if (database == nullptr) {
++        throw std::runtime_error("non-owning integer query requires a database");
++    }
++    sqlite3_stmt* statement = nullptr;
++    if (sqlite3_prepare_v2(database, sql.c_str(), -1, &statement, nullptr) !=
++        SQLITE_OK) {
++        throw std::runtime_error(sqlite3_errmsg(database));
++    }
++    const int rc = sqlite3_step(statement);
++    if (rc != SQLITE_ROW || sqlite3_column_type(statement, 0) != SQLITE_INTEGER) {
++        (void)sqlite3_finalize(statement);
++        throw std::runtime_error("integer query returned no exact integer row");
++    }
++    const std::int64_t value = sqlite3_column_int64(statement, 0);
++    (void)sqlite3_finalize(statement);
++    return value;
++}
++
++std::string query_text_nonowning(sqlite3* database, const std::string& sql) {
++    if (database == nullptr) {
++        throw std::runtime_error("non-owning text query requires a database");
++    }
++    sqlite3_stmt* statement = nullptr;
++    if (sqlite3_prepare_v2(database, sql.c_str(), -1, &statement, nullptr) !=
++        SQLITE_OK) {
++        throw std::runtime_error(sqlite3_errmsg(database));
++    }
++    const int rc = sqlite3_step(statement);
++    if (rc != SQLITE_ROW || sqlite3_column_type(statement, 0) != SQLITE_TEXT) {
++        (void)sqlite3_finalize(statement);
++        throw std::runtime_error("text query returned no exact text row");
++    }
++    const unsigned char* bytes = sqlite3_column_text(statement, 0);
++    const int count = sqlite3_column_bytes(statement, 0);
++    if (bytes == nullptr || count < 0) {
++        (void)sqlite3_finalize(statement);
++        throw std::runtime_error("text query returned invalid bytes");
++    }
++    std::string value(reinterpret_cast<const char*>(bytes),
++                      static_cast<std::size_t>(count));
++    (void)sqlite3_finalize(statement);
++    return value;
++}
++
+ class Database final {
+ public:
+     Database(const fs::path& path, int flags) {
+@@ -80,42 +129,11 @@ public:
+     }
+ 
+     std::int64_t integer(const std::string& sql) const {
+-        sqlite3_stmt* statement = nullptr;
+-        if (sqlite3_prepare_v2(database_, sql.c_str(), -1, &statement, nullptr) !=
+-            SQLITE_OK) {
+-            throw std::runtime_error(sqlite3_errmsg(database_));
+-        }
+-        const int rc = sqlite3_step(statement);
+-        if (rc != SQLITE_ROW || sqlite3_column_type(statement, 0) != SQLITE_INTEGER) {
+-            (void)sqlite3_finalize(statement);
+-            throw std::runtime_error("integer query returned no exact integer row");
+-        }
+-        const std::int64_t value = sqlite3_column_int64(statement, 0);
+-        (void)sqlite3_finalize(statement);
+-        return value;
++        return query_integer_nonowning(database_, sql);
+     }
+ 
+     std::string text(const std::string& sql) const {
+-        sqlite3_stmt* statement = nullptr;
+-        if (sqlite3_prepare_v2(database_, sql.c_str(), -1, &statement, nullptr) !=
+-            SQLITE_OK) {
+-            throw std::runtime_error(sqlite3_errmsg(database_));
+-        }
+-        const int rc = sqlite3_step(statement);
+-        if (rc != SQLITE_ROW || sqlite3_column_type(statement, 0) != SQLITE_TEXT) {
+-            (void)sqlite3_finalize(statement);
+-            throw std::runtime_error("text query returned no exact text row");
+-        }
+-        const unsigned char* bytes = sqlite3_column_text(statement, 0);
+-        const int count = sqlite3_column_bytes(statement, 0);
+-        if (bytes == nullptr || count < 0) {
+-            (void)sqlite3_finalize(statement);
+-            throw std::runtime_error("text query returned invalid bytes");
+-        }
+-        std::string value(reinterpret_cast<const char*>(bytes),
+-                          static_cast<std::size_t>(count));
+-        (void)sqlite3_finalize(statement);
+-        return value;
++        return query_text_nonowning(database_, sql);
+     }
+ 
+ private:
+@@ -392,17 +410,48 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+                         sqlite3_vfs_find(nullptr) == replacement_default.pointer(),
+                     "replacement VFS did not become process default", checks);
+             {
+-                Database database(
+-                    seal.open_database_or_throw("focused pinned-VFS deserialize"));
+-                require(database.text("SELECT value FROM evidence") == "alpha",
++                SyncSqliteDbHandleSlot database_owner =
++                    seal.open_database_owner_or_throw(
++                        "focused pinned-VFS deserialize");
++                const std::uint64_t owner_generation =
++                    database_owner.generation();
++                require(owner_generation != 0U &&
++                            database_owner.active_borrows() == 0U,
++                        "typed deserialization did not mint one idle generation",
++                        checks);
++                SyncSqliteSerializedDbBorrow database_borrow =
++                    borrow_sync_sqlite_serialized_db_or_throw(
++                        database_owner,
++                        "focused pinned-VFS deserialize generation");
++                sqlite3* const database = database_borrow.get();
++                require(database_borrow.generation() == owner_generation &&
++                            database_owner.active_borrows() == 1U,
++                        "typed deserialization borrow lost exact generation",
++                        checks);
++                require(query_text_nonowning(
++                            database, "SELECT value FROM evidence") == "alpha",
+                         "deserialized SQLite view did not match captured bytes", checks);
+-                const char* const filename =
+-                    sqlite3_db_filename(database.get(), "main");
++                const char* const filename = sqlite3_db_filename(database, "main");
+                 require(filename != nullptr && filename[0] == '\0',
+                         "deserialized SQLite view unexpectedly names a file", checks);
+                 expect_rejection(
+-                    [&] { database.exec("INSERT INTO evidence VALUES('write');"); },
++                    [&] {
++                        char* error = nullptr;
++                        const int rc = sqlite3_exec(
++                            database, "INSERT INTO evidence VALUES('write');",
++                            nullptr, nullptr, &error);
++                        const std::string reason =
++                            error != nullptr ? error : sqlite3_errmsg(database);
++                        sqlite3_free(error);
++                        if (rc != SQLITE_OK) throw std::runtime_error(reason);
++                    },
+                     "readonly", checks);
++                database_borrow.reset();
++                require(database_owner.active_borrows() == 0U &&
++                            database_owner.generation() == owner_generation,
++                        "typed deserialization borrow did not release cleanly",
++                        checks);
++                database_owner.reset();
+             }
+             require(replacement_default.open_calls() == 0,
+                     "deserialized open inherited a replacement process-default VFS",
+@@ -423,7 +472,7 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+                     "could not unregister captured VFS for registry proof", checks);
+             expect_rejection(
+                 [&] {
+-                    (void)seal.open_database_or_throw(
++                    (void)seal.open_database_owner_or_throw(
+                         "focused missing pinned-VFS registration open");
+                 },
+                 "sealed SQLite VFS registration changed after capture", checks);
+@@ -435,9 +484,12 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+         create_database(replacement, "beta");
+         fs::rename(replacement, source);
+         {
+-            Database database(seal.open_database_or_throw(
+-                "focused post-replace deserialize"));
+-            require(database.text("SELECT value FROM evidence") == "alpha",
++            SyncSqliteDbHandleSlot database_owner =
++                seal.open_database_owner_or_throw(
++                    "focused post-replace deserialize");
++            require(query_text_nonowning(
++                        database_owner.get(), "SELECT value FROM evidence") ==
++                        "alpha",
+                     "sealed snapshot followed a replaced source pathname", checks);
+         }
+         require(Database(source, SQLITE_OPEN_READONLY)
+@@ -613,11 +665,14 @@ void test_live_database_capture(const fs::path& root,
+         require(source.integer("SELECT count(*) FROM evidence;") == 2,
+                 "source connection stopped accepting commits after live capture", checks);
+         {
+-            Database captured(seal.open_database_or_throw(
+-                "focused live-database independent deserialize"));
+-            require(captured.integer("SELECT count(*) FROM evidence;") == 1,
++            SyncSqliteDbHandleSlot captured =
++                seal.open_database_owner_or_throw(
++                    "focused live-database independent deserialize");
++            require(query_integer_nonowning(
++                        captured.get(), "SELECT count(*) FROM evidence;") == 1,
+                     "resident live capture followed later source mutations", checks);
+-            require(captured.text(
++            require(query_text_nonowning(
++                        captured.get(),
+                         "SELECT value FROM evidence WHERE id=1;") ==
+                         "before-capture",
+                     "resident live capture changed committed source content", checks);
+@@ -785,17 +840,29 @@ void test_budget_and_resident_deserialization(const fs::path& root,
+         require(snapshot_staging_entries() == namespace_before,
+                 "resident seal created a filesystem staging artifact", checks);
+ 
+-        Database first(seal.open_database_or_throw(
+-            "first independent deserialize proof"));
+-        Database second(seal.open_database_or_throw(
+-            "second independent deserialize proof"));
+-        require(first.text("SELECT value FROM evidence") == "value" &&
+-                    second.text("SELECT value FROM evidence") == "value",
++        SyncSqliteDbHandleSlot first = seal.open_database_owner_or_throw(
++            "first independent deserialize proof");
++        SyncSqliteDbHandleSlot second = seal.open_database_owner_or_throw(
++            "second independent deserialize proof");
++        require(query_text_nonowning(
++                    first.get(), "SELECT value FROM evidence") == "value" &&
++                    query_text_nonowning(
++                        second.get(), "SELECT value FROM evidence") == "value",
+                 "independent deserializations disagreed with captured bytes", checks);
+         expect_rejection(
+-            [&] { first.exec("CREATE TABLE forbidden(value TEXT);"); },
++            [&] {
++                char* error = nullptr;
++                const int rc = sqlite3_exec(
++                    first.get(), "CREATE TABLE forbidden(value TEXT);",
++                    nullptr, nullptr, &error);
++                const std::string reason =
++                    error != nullptr ? error : sqlite3_errmsg(first.get());
++                sqlite3_free(error);
++                if (rc != SQLITE_OK) throw std::runtime_error(reason);
++            },
+             "readonly", checks);
+-        require(second.text("SELECT value FROM evidence") == "value",
++        require(query_text_nonowning(
++                    second.get(), "SELECT value FROM evidence") == "value",
+                 "failed write contaminated another deserialized connection", checks);
+     }
+     require(snapshot_staging_entries() == namespace_before,
+diff --git a/tests/persistence/sqlite_verification_budget_tests.cpp b/tests/persistence/sqlite_verification_budget_tests.cpp
+index e462006..eabc1d4 100644
+--- a/tests/persistence/sqlite_verification_budget_tests.cpp
++++ b/tests/persistence/sqlite_verification_budget_tests.cpp
+@@ -1,5 +1,7 @@
+ #include "inherited_test_process.hpp"
++#include "sqlite_retained_callback_claim.hpp"
+ #include "sqlite_verification_budget.hpp"
++#include "sync_sqlite_handle_slot.hpp"
+ #include "sync_process_incarnation.hpp"
+ 
+ #include <sqlite3.h>
+@@ -15,6 +17,7 @@
+ 
+ namespace {
+ 
++using anonsync::persistence::SqliteRetainedCallbackClaim;
+ using anonsync::persistence::SqliteVerificationBudget;
+ using anonsync::persistence::SqliteVerificationBudgetException;
+ using anonsync::persistence::SqliteVerificationBudgetFailure;
+@@ -27,35 +30,52 @@ using anonsync::persistence::kMaximumSqliteVerificationRetainedTextBytes;
+ using anonsync::persistence::kMaximumSqliteVerificationRows;
+ using anonsync::persistence::sqlite_verification_budget_for_snapshot;
+ using anonsync::persistence::sqlite_verification_budget_failure_name;
++using anonsync::SyncSqliteDbHandleSlot;
++using anonsync::SyncSqliteSerializedDbBorrow;
++using anonsync::borrow_sync_sqlite_serialized_db_or_throw;
+ using anonsync::kSyncProcessCapabilityViolationExitCode;
+ using anonsync::test::spawn_inherited_test_process_or_throw;
+ 
+ class Database final {
+ public:
+-    Database() {
+-        if (sqlite3_open_v2(":memory:", &db_,
+-                            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
+-                                SQLITE_OPEN_FULLMUTEX,
+-                            nullptr) != SQLITE_OK) {
+-            const std::string message =
+-                db_ == nullptr ? "SQLite memory open failed" : sqlite3_errmsg(db_);
+-            if (db_ != nullptr) sqlite3_close_v2(db_);
+-            db_ = nullptr;
++    explicit Database(
++        int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
++                    SQLITE_OPEN_FULLMUTEX) {
++        int result = SQLITE_ERROR;
++        std::string message;
++        {
++            auto output = owner_.out();
++            result = sqlite3_open_v2(":memory:", output.get(), flags, nullptr);
++            if (result != SQLITE_OK) {
++                sqlite3* const database = *output.get();
++                message = database == nullptr ? "SQLite memory open failed"
++                                              : sqlite3_errmsg(database);
++            }
++        }
++        if (result != SQLITE_OK) {
++            owner_.reset();
+             throw std::runtime_error(message);
+         }
+     }
+ 
+-    ~Database() {
+-        if (db_ != nullptr) sqlite3_close_v2(db_);
+-    }
+-
+     Database(const Database&) = delete;
+     Database& operator=(const Database&) = delete;
+ 
+-    [[nodiscard]] sqlite3* get() const noexcept { return db_; }
++    [[nodiscard]] sqlite3* get() const noexcept { return owner_.get(); }
++    [[nodiscard]] SyncSqliteSerializedDbBorrow serialized_borrow(
++        const std::string& label = "verification budget test database") const {
++        return borrow_sync_sqlite_serialized_db_or_throw(owner_, label);
++    }
++    [[nodiscard]] std::size_t active_borrows() const noexcept {
++        return owner_.active_borrows();
++    }
++    [[nodiscard]] std::uint64_t generation() const noexcept {
++        return owner_.generation();
++    }
++    void reset() noexcept { owner_.reset(); }
+ 
+ private:
+-    sqlite3* db_ = nullptr;
++    SyncSqliteDbHandleSlot owner_;
+ };
+ 
+ void expect(bool condition, const std::string& label, int& checks) {
+@@ -77,6 +97,20 @@ void expect_runtime_error(Fn&& fn,
+     expect(caught, label, checks);
+ }
+ 
++template <typename Fn>
++void expect_exception(Fn&& fn,
++                      const std::string& fragment,
++                      const std::string& label,
++                      int& checks) {
++    bool caught = false;
++    try {
++        fn();
++    } catch (const std::exception& error) {
++        caught = std::string(error.what()).find(fragment) != std::string::npos;
++    }
++    expect(caught, label, checks);
++}
++
+ template <typename Fn>
+ void expect_budget_failure(Fn&& fn,
+                            SqliteVerificationBudgetFailure expected_failure,
+@@ -129,10 +163,11 @@ void test_type_and_failure_contract(int& checks) {
+ void test_constructor_and_monotone_policy(int& checks) {
+     Database database;
+     expect_runtime_error(
+-        [&] { SqliteVerificationBudget budget(nullptr, "null"); },
+-        "requires an open database handle", "null database rejected", checks);
++        [&] { SqliteVerificationBudget budget(SyncSqliteSerializedDbBorrow{}, "null"); },
++        "requires an exact serialized database-generation borrow",
++        "null database rejected", checks);
+     expect_runtime_error(
+-        [&] { SqliteVerificationBudget budget(database.get(), ""); },
++        [&] { SqliteVerificationBudget budget(database.serialized_borrow(), ""); },
+         "requires a nonempty diagnostic label", "empty label rejected", checks);
+ 
+     const auto zero_cases = {
+@@ -153,7 +188,7 @@ void test_constructor_and_monotone_policy(int& checks) {
+         SqliteVerificationBudgetPolicy policy;
+         mutate(policy);
+         expect_runtime_error(
+-            [&] { SqliteVerificationBudget budget(database.get(), "zero", policy); },
++            [&] { SqliteVerificationBudget budget(database.serialized_borrow(), "zero", policy); },
+             "zero ceiling", "zero policy dimension rejected", checks);
+     }
+ 
+@@ -186,7 +221,7 @@ void test_constructor_and_monotone_policy(int& checks) {
+         SqliteVerificationBudgetPolicy policy;
+         mutate(policy);
+         expect_runtime_error(
+-            [&] { SqliteVerificationBudget budget(database.get(), "widen", policy); },
++            [&] { SqliteVerificationBudget budget(database.serialized_borrow(), "widen", policy); },
+             "may tighten but not widen", "widened policy rejected", checks);
+     }
+ 
+@@ -198,11 +233,207 @@ void test_constructor_and_monotone_policy(int& checks) {
+     tight.maximum_retained_text_bytes = 10U;
+     tight.maximum_elapsed_milliseconds = 10U;
+     {
+-        SqliteVerificationBudget budget(database.get(), "tight policy", tight);
++        SqliteVerificationBudget budget(database.serialized_borrow(), "tight policy", tight);
+         expect(!budget.exhausted(), "tight policy accepted", checks);
+     }
+ }
+ 
++void test_shared_claim_input_and_reuse_contract(int& checks) {
++    static_assert(!std::is_copy_constructible_v<SqliteRetainedCallbackClaim>);
++    static_assert(!std::is_move_constructible_v<SqliteRetainedCallbackClaim>);
++    expect(true, "shared claim is one nontransferable lifetime authority", checks);
++
++    Database database;
++    SqliteRetainedCallbackClaim claim;
++    expect(!claim.attached(), "new shared claim is detached", checks);
++    expect_exception(
++        [&] { claim.attach(nullptr, "claim.null", "claim", "test owner"); },
++        "requires an open database handle", "shared claim rejects null database",
++        checks);
++    expect_exception(
++        [&] { claim.attach(database.get(), "", "claim", "test owner"); },
++        "nonempty NUL-free name", "shared claim rejects empty name", checks);
++    const std::string nul_name("claim\0alias", 11U);
++    expect_exception(
++        [&] { claim.attach(database.get(), nul_name, "claim", "test owner"); },
++        "nonempty NUL-free name", "shared claim rejects NUL alias", checks);
++    expect_exception(
++        [&] { claim.attach(database.get(), "claim.owner", "claim", ""); },
++        "nonempty NUL-free name", "shared claim rejects empty owner identity",
++        checks);
++    expect(!claim.attached(), "invalid input leaves no partial claim", checks);
++
++    std::string mutable_name = "anonsync.test.shared-claim.v1";
++    const std::string frozen_name = mutable_name;
++    claim.attach(database.get(), mutable_name, "shared claim", "test owner");
++    expect(claim.attached(), "shared claim publishes attached state", checks);
++    void* const published = sqlite3_get_clientdata(
++        database.get(), frozen_name.c_str());
++    expect(published != nullptr, "shared claim publishes exact named sentinel",
++           checks);
++    mutable_name.assign("redirected.after.attach");
++    expect(sqlite3_get_clientdata(database.get(), frozen_name.c_str()) ==
++               published,
++           "shared claim freezes caller-owned name", checks);
++    expect_exception(
++        [&] {
++            claim.attach(database.get(), "claim.duplicate", "shared claim",
++                         "test owner");
++        },
++        "already attached", "shared claim rejects duplicate attachment", checks);
++    claim.require_live(database.get());
++    expect(claim.attached(), "shared claim revalidates exact live sentinel", checks);
++    claim.detach(database.get());
++    expect(sqlite3_get_clientdata(database.get(), frozen_name.c_str()) == nullptr,
++           "shared claim synchronously clears named sentinel", checks);
++    expect(!claim.attached(), "shared claim clears local attachment", checks);
++    claim.detach(database.get());
++    expect(!claim.attached(), "shared claim detach is idempotent", checks);
++
++    claim.attach(database.get(), frozen_name, "shared claim reuse", "test owner");
++    expect(claim.attached(), "detached shared claim can be reused", checks);
++    claim.detach(database.get());
++    expect(!claim.attached(), "reused shared claim detaches cleanly", checks);
++
++    static int occupied_slot = 0;
++    expect(sqlite3_set_clientdata(database.get(), "anonsync.test.occupied.v1",
++                                  &occupied_slot, nullptr) == SQLITE_OK,
++           "test publishes independently occupied named slot", checks);
++    expect_exception(
++        [&] {
++            claim.attach(database.get(), "anonsync.test.occupied.v1",
++                         "occupied claim", "test owner");
++        },
++        "already has", "shared claim rejects occupied named slot", checks);
++    expect(sqlite3_get_clientdata(database.get(),
++                                  "anonsync.test.occupied.v1") == &occupied_slot,
++           "occupied rejection preserves prior slot owner", checks);
++    expect(sqlite3_set_clientdata(database.get(), "anonsync.test.occupied.v1",
++                                  nullptr, nullptr) == SQLITE_OK,
++           "test clears independently occupied named slot", checks);
++}
++
++void test_exact_generation_and_singleton_claim(int& checks) {
++    static constexpr const char* kClaimName =
++        "anonsync.sqlite-verification-budget.v1";
++    Database database;
++    const std::uint64_t generation = database.generation();
++    expect(generation != 0U, "typed database owner mints a generation", checks);
++    expect(database.active_borrows() == 0U,
++           "typed database starts without active borrows", checks);
++
++    SqliteVerificationBudget budget(
++        database.serialized_borrow("verification singleton generation"),
++        "verification singleton");
++    expect(database.active_borrows() == 1U,
++           "verification owner pins one exact generation", checks);
++    expect(sqlite3_get_clientdata(database.get(), kClaimName) != nullptr,
++           "verification owner publishes shared named claim", checks);
++    expect_exception(
++        [&] {
++            SqliteVerificationBudget duplicate(
++                database.serialized_borrow("duplicate verification generation"),
++                "duplicate verification");
++        },
++        "already has", "singleton progress owner rejects duplicate claim", checks);
++    expect(database.active_borrows() == 1U,
++           "rejected duplicate releases its temporary generation borrow", checks);
++    expect(!budget.safe_summary().empty(),
++           "live singleton retains value-free diagnostics", checks);
++    budget.detach();
++    expect(database.active_borrows() == 0U,
++           "ordered detach releases exact generation", checks);
++    expect(sqlite3_get_clientdata(database.get(), kClaimName) == nullptr,
++           "ordered detach clears shared named claim", checks);
++    expect(database.generation() == generation,
++           "detach does not mutate owner generation", checks);
++    budget.detach();
++    expect(database.active_borrows() == 0U,
++           "verification detach is idempotent", checks);
++
++    Database unserialized(SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
++                          SQLITE_OPEN_NOMUTEX);
++    expect_exception(
++        [&] {
++            SqliteVerificationBudget rejected(
++                unserialized.serialized_borrow("NOMUTEX verification"),
++                "NOMUTEX verification");
++        },
++        "serialized/FULLMUTEX", "verification owner rejects NOMUTEX generation",
++        checks);
++}
++
++enum class CallbackLifetimeViolationProbe : std::uint8_t {
++    immediate_close_v2_destruction,
++    deferred_close_v2_destruction,
++    named_claim_replacement,
++    typed_owner_reset,
++};
++
++void require_callback_lifetime_fail_stop(
++    CallbackLifetimeViolationProbe probe,
++    const std::string& label,
++    int& checks) {
++    auto process = spawn_inherited_test_process_or_throw(
++        [probe]() -> int {
++            auto* database = new Database();
++            auto* budget = new SqliteVerificationBudget(
++                database->serialized_borrow("lifetime probe generation"),
++                "lifetime probe");
++            (void)budget;
++            sqlite3* const raw = database->get();
++            switch (probe) {
++                case CallbackLifetimeViolationProbe::immediate_close_v2_destruction:
++                    (void)sqlite3_close_v2(raw);
++                    std::_Exit(131);
++                case CallbackLifetimeViolationProbe::deferred_close_v2_destruction: {
++                    sqlite3_stmt* statement = nullptr;
++                    if (sqlite3_prepare_v2(raw, "SELECT 1;", -1, &statement,
++                                           nullptr) != SQLITE_OK) {
++                        std::_Exit(132);
++                    }
++                    if (sqlite3_close_v2(raw) != SQLITE_OK) std::_Exit(133);
++                    // close_v2 has returned and the typed owner now names a
++                    // zombie connection. Finalizing its last dependent causes
++                    // actual SQLite destruction and must trip the live claim.
++                    (void)sqlite3_finalize(statement);
++                    std::_Exit(134);
++                }
++                case CallbackLifetimeViolationProbe::named_claim_replacement:
++                    (void)sqlite3_set_clientdata(
++                        raw, "anonsync.sqlite-verification-budget.v1",
++                        nullptr, nullptr);
++                    std::_Exit(135);
++                case CallbackLifetimeViolationProbe::typed_owner_reset:
++                    database->reset();
++                    std::_Exit(136);
++            }
++            std::_Exit(137);
++        },
++        label);
++    process.wait_for_exact_exit(kSyncProcessCapabilityViolationExitCode,
++                                std::chrono::seconds(10), label);
++    expect(true, label, checks);
++}
++
++void test_close_and_replacement_fail_stop(int& checks) {
++    require_callback_lifetime_fail_stop(
++        CallbackLifetimeViolationProbe::immediate_close_v2_destruction,
++        "live verification claim rejects immediate raw close_v2 destruction",
++        checks);
++    require_callback_lifetime_fail_stop(
++        CallbackLifetimeViolationProbe::deferred_close_v2_destruction,
++        "live verification claim rejects deferred close_v2 zombie destruction",
++        checks);
++    require_callback_lifetime_fail_stop(
++        CallbackLifetimeViolationProbe::named_claim_replacement,
++        "live verification claim rejects named-slot replacement", checks);
++    require_callback_lifetime_fail_stop(
++        CallbackLifetimeViolationProbe::typed_owner_reset,
++        "typed database owner rejects close while verification borrow is live",
++        checks);
++}
++
+ void test_geometry_derivation(int& checks) {
+     expect_runtime_error(
+         [] { (void)sqlite_verification_budget_for_snapshot(0U, 1U); },
+@@ -253,7 +484,7 @@ void test_manual_accounting(int& checks) {
+     policy.maximum_rows = 2U;
+     policy.maximum_decoded_text_bytes = 5U;
+     policy.maximum_retained_text_bytes = 4U;
+-    SqliteVerificationBudget budget(database.get(), "manual accounting", policy);
++    SqliteVerificationBudget budget(database.serialized_borrow(), "manual accounting", policy);
+ 
+     budget.consume_row();
+     budget.consume_row();
+@@ -274,7 +505,7 @@ void test_manual_accounting(int& checks) {
+ 
+     SqliteVerificationBudgetPolicy decoded_policy;
+     decoded_policy.maximum_decoded_text_bytes = 5U;
+-    SqliteVerificationBudget decoded(database.get(), "decoded", decoded_policy);
++    SqliteVerificationBudget decoded(database.serialized_borrow(), "decoded", decoded_policy);
+     decoded.consume_decoded_text_bytes(2U);
+     decoded.consume_decoded_text_bytes(3U);
+     expect(decoded.decoded_text_bytes() == 5U,
+@@ -288,7 +519,7 @@ void test_manual_accounting(int& checks) {
+     SqliteVerificationBudgetPolicy text_row_policy;
+     text_row_policy.maximum_rows = 2U;
+     text_row_policy.maximum_decoded_text_bytes = 5U;
+-    SqliteVerificationBudget text_row(database.get(), "text row", text_row_policy);
++    SqliteVerificationBudget text_row(database.serialized_borrow(), "text row", text_row_policy);
+     text_row.consume_text_row({"ab", "c"});
+     text_row.consume_text_row({"de"});
+     expect(text_row.rows() == 2U, "combined row accounting", checks);
+@@ -298,7 +529,7 @@ void test_manual_accounting(int& checks) {
+ 
+     SqliteVerificationBudgetPolicy retained_policy;
+     retained_policy.maximum_retained_text_bytes = 4U;
+-    SqliteVerificationBudget retained(database.get(), "retained", retained_policy);
++    SqliteVerificationBudget retained(database.serialized_borrow(), "retained", retained_policy);
+     retained.consume_retained_text({"a", "bcd"});
+     expect(retained.retained_text_bytes() == 4U,
+            "exact retained-byte edge accepted", checks);
+@@ -322,7 +553,7 @@ void test_progress_interrupt_and_detach(int& checks) {
+     SqliteVerificationBudgetPolicy policy;
+     policy.maximum_progress_callbacks = 1U;
+     policy.progress_opcode_interval = 1U;
+-    SqliteVerificationBudget budget(database.get(), "progress", policy);
++    SqliteVerificationBudget budget(database.serialized_borrow(), "progress", policy);
+     const int rc = sqlite3_step(statement);
+     expect(rc == SQLITE_INTERRUPT, "SQLite VM interrupted", checks);
+     expect(budget.progress_callbacks() == 2U,
+@@ -348,7 +579,7 @@ void test_progress_interrupt_and_detach(int& checks) {
+            "post-detach statement finalized", checks);
+ 
+     {
+-        SqliteVerificationBudget scoped(database.get(), "destructor detach");
++        SqliteVerificationBudget scoped(database.serialized_borrow(), "destructor detach");
+         expect(!scoped.exhausted(), "scoped owner attached", checks);
+     }
+     trivial = nullptr;
+@@ -360,7 +591,7 @@ void test_progress_interrupt_and_detach(int& checks) {
+     expect(sqlite3_finalize(trivial) == SQLITE_OK,
+            "post-destructor statement finalized", checks);
+ 
+-    SqliteVerificationBudget detached(database.get(), "manual after detach");
++    SqliteVerificationBudget detached(database.serialized_borrow(), "manual after detach");
+     detached.detach();
+     detached.consume_row();
+     expect(detached.rows() == 1U,
+@@ -385,14 +616,16 @@ void require_foreign_thread_fail_stop(ForeignThreadFailStopProbe probe,
+ 
+             if (probe == ForeignThreadFailStopProbe::destructor) {
+                 auto* budget = new SqliteVerificationBudget(
+-                    database.get(), "foreign-thread destructor", policy);
++                    database.serialized_borrow(),
++                    "foreign-thread destructor", policy);
+                 std::thread foreign([budget] { delete budget; });
+                 foreign.join();
+                 return 121;
+             }
+ 
+             SqliteVerificationBudget budget(
+-                database.get(), "foreign-thread callback owner", policy);
++                database.serialized_borrow(),
++                "foreign-thread callback owner", policy);
+             if (probe == ForeignThreadFailStopProbe::detach) {
+                 std::thread foreign([&budget] { budget.detach(); });
+                 foreign.join();
+@@ -420,7 +653,7 @@ void test_exact_thread_authority(int& checks) {
+     static constexpr std::string_view kPrivateDiagnosticLabel =
+         "exact-thread-owner-private-diagnostic";
+     SqliteVerificationBudget budget(
+-        database.get(), std::string(kPrivateDiagnosticLabel));
++        database.serialized_borrow(), std::string(kPrivateDiagnosticLabel));
+ 
+     bool caught = false;
+     std::string message;
+@@ -462,7 +695,7 @@ void test_elapsed_checkpoint(int& checks) {
+     Database database;
+     SqliteVerificationBudgetPolicy policy;
+     policy.maximum_elapsed_milliseconds = 1U;
+-    SqliteVerificationBudget budget(database.get(), "elapsed", policy);
++    SqliteVerificationBudget budget(database.serialized_borrow(), "elapsed", policy);
+     std::this_thread::sleep_for(std::chrono::milliseconds(4));
+     bool caught = false;
+     try {
+@@ -483,6 +716,9 @@ int main() {
+     try {
+         test_type_and_failure_contract(checks);
+         test_constructor_and_monotone_policy(checks);
++        test_shared_claim_input_and_reuse_contract(checks);
++        test_exact_generation_and_singleton_claim(checks);
++        test_close_and_replacement_fail_stop(checks);
+         test_geometry_derivation(checks);
+         test_manual_accounting(checks);
+         test_progress_interrupt_and_detach(checks);
+diff --git a/tools/audit_inherited_test_process.py b/tools/audit_inherited_test_process.py
+index 19da30d..a2b4feb 100644
+--- a/tools/audit_inherited_test_process.py
++++ b/tools/audit_inherited_test_process.py
+@@ -325,7 +325,7 @@ def main() -> int:
+     require(
+         raw_forks == 1
+         and len(INHERITED_CONSUMERS) == 12
+-        and total_spawns == 21,
++        and total_spawns == 22,
+         "inventory_metrics_are_exact",
+         f"raw_forks={raw_forks}, consumer_tus={len(INHERITED_CONSUMERS)}, spawn_sites={total_spawns}",
+     )
+diff --git a/tools/audit_raw_fork_boundaries.py b/tools/audit_raw_fork_boundaries.py
+index ee06006..f120bc2 100644
+--- a/tools/audit_raw_fork_boundaries.py
++++ b/tools/audit_raw_fork_boundaries.py
+@@ -30,7 +30,7 @@ INHERITED_CONSUMERS = {
+     "tests/local_jsonl_replay_backend_namespace_test.cpp": 1,
+     "tests/persistence/local_jsonl_replay_directory_authority_tests.cpp": 2,
+     "tests/persistence/sqlite_persistence_process_authority_fork_test.cpp": 2,
+-    "tests/persistence/sqlite_verification_budget_tests.cpp": 1,
++    "tests/persistence/sqlite_verification_budget_tests.cpp": 2,
+     "tests/persistence/local_jsonl_replay_namespace_tests.cpp": 2,
+     "tests/process_incarnation_tests.cpp": 4,
+     "tests/thread_incarnation_tests.cpp": 2,
+@@ -380,7 +380,7 @@ def main() -> int:
+             "test_raw_fork_calls": 1,
+             "raw_fork_translation_units": 1,
+             "inherited_consumer_translation_units": 12,
+-            "inherited_spawn_sites": 21,
++            "inherited_spawn_sites": 22,
+             "fresh_image_migrated_campaigns": 7,
+         },
+         "inventory_metrics_are_exact",
+diff --git a/tools/audit_self_exec_test_process.py b/tools/audit_self_exec_test_process.py
+index 8165d2a..ff8c62a 100644
+--- a/tools/audit_self_exec_test_process.py
++++ b/tools/audit_self_exec_test_process.py
+@@ -627,9 +627,9 @@ def main() -> int:
+         in raw_fork_audit
+         and "inventory_metrics_are_exact" in raw_fork_audit
+         and '"test_raw_fork_calls": 1' in raw_fork_audit
+-        and '"inherited_spawn_sites": 21' in raw_fork_audit,
++        and '"inherited_spawn_sites": 22' in raw_fork_audit,
+         "raw_fork_inventory_is_fail_closed_and_exact",
+-        "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 28 inherited or fresh-image process sites",
++        "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 29 inherited or fresh-image process sites",
+     )
+ 
+     require(
+diff --git a/tools/audit_sqlite_busy_handler_owner.py b/tools/audit_sqlite_busy_handler_owner.py
+index 82c670b..6a01ef0 100755
+--- a/tools/audit_sqlite_busy_handler_owner.py
++++ b/tools/audit_sqlite_busy_handler_owner.py
+@@ -54,6 +54,8 @@ def main() -> int:
+     required = [
+         Path("CMakeLists.txt"),
+         Path("include/anonsync_core.hpp"),
++        Path("src/persistence/sqlite_retained_callback_claim.hpp"),
++        Path("src/persistence/sqlite_retained_callback_claim.cpp"),
+         Path("src/persistence/sqlite_busy_handler_owner.hpp"),
+         Path("src/persistence/sqlite_busy_handler_owner.cpp"),
+         Path("src/sync_peer_ingress_lifecycle.cpp"),
+@@ -65,7 +67,7 @@ def main() -> int:
+     missing = [path.as_posix() for path in required if not (root / path).is_file()]
+     if missing:
+         payload = {
+-            "format": "anonsync-sqlite-busy-handler-owner-audit-v1",
++            "format": "anonsync-sqlite-busy-handler-owner-audit-v2",
+             "passed": False,
+             "missing": missing,
+         }
+@@ -78,13 +80,15 @@ def main() -> int:
+ 
+     cmake = (root / required[0]).read_text(encoding="utf-8")
+     public = (root / required[1]).read_text(encoding="utf-8")
+-    header = (root / required[2]).read_text(encoding="utf-8")
+-    owner = (root / required[3]).read_text(encoding="utf-8")
+-    lifecycle = (root / required[4]).read_text(encoding="utf-8")
+-    test = (root / required[5]).read_text(encoding="utf-8")
+-    process_test = (root / required[6]).read_text(encoding="utf-8")
+-    lifecycle_driver = (root / required[7]).read_text(encoding="utf-8")
+-    verifier = (root / required[8]).read_text(encoding="utf-8")
++    claim_header = (root / required[2]).read_text(encoding="utf-8")
++    claim_owner = (root / required[3]).read_text(encoding="utf-8")
++    header = (root / required[4]).read_text(encoding="utf-8")
++    owner = (root / required[5]).read_text(encoding="utf-8")
++    lifecycle = (root / required[6]).read_text(encoding="utf-8")
++    test = (root / required[7]).read_text(encoding="utf-8")
++    process_test = (root / required[8]).read_text(encoding="utf-8")
++    lifecycle_driver = (root / required[9]).read_text(encoding="utf-8")
++    verifier = (root / required[10]).read_text(encoding="utf-8")
+ 
+     sanitizer_block = cmake.split(
+         'if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")',
+@@ -153,13 +157,16 @@ def main() -> int:
+         all(token in verifier for token in (
+             '"src/persistence/sqlite_busy_handler_owner.hpp"',
+             '"src/persistence/sqlite_busy_handler_owner.cpp"',
++            '"src/persistence/sqlite_retained_callback_claim.hpp"',
++            '"src/persistence/sqlite_retained_callback_claim.cpp"',
+             '"src/sync_peer_ingress_lifecycle.cpp"',
+             '"tests/persistence/sqlite_busy_handler_owner_tests.cpp"',
+             '"tests/sync_peer_ingress_lifecycle_selftest_main.cpp"',
+             '"tools/audit_sqlite_busy_handler_owner.py"',
+-        )),
++        ))
++        and "revision_number >= 849" in verifier,
+         "release_verifier_requires_owner_and_proofs",
+-        "a sealed archive cannot omit the owner, consumer, focused proofs, or audit",
++        "a sealed rev0849+ archive cannot omit the shared claim, owner, consumer, focused proofs, or audit while older parents remain verifiable",
+     )
+     add(
+         checks,
+@@ -204,7 +211,8 @@ def main() -> int:
+         and "std::atomic<std::uint64_t>::is_always_lock_free" in owner
+         and "std::atomic<std::uint32_t>::is_always_lock_free" in owner
+         and "std::atomic<bool>::is_always_lock_free" in owner
+-        and "std::atomic<State>::is_always_lock_free" in owner,
++        and "std::atomic<State>::is_always_lock_free" in claim_owner
++        and "SqliteRetainedCallbackClaim callback_claim_" in header,
+         "callback_address_is_stable_and_state_is_lock_free",
+         "every mutable callback-reachable and fork-checked field is proven lock-free",
+     )
+@@ -225,22 +233,24 @@ def main() -> int:
+     )
+     add(
+         checks,
+-        all(token in owner for token in (
+-            "anonsync.sqlite-busy-handler-owner.v1",
+-            "registration_pending",
++        "anonsync.sqlite-busy-handler-owner.v1" in owner
++        and "callback_claim_.attach" in owner
++        and all(token in claim_owner for token in (
++            "registration_pending = 0",
+             "live = 1",
+             "detaching = 2",
+-            "g_authorized_busy_claim_destruction",
+             "sqlite3_get_clientdata",
+             "sqlite3_set_clientdata",
+-        )),
++        ))
++        and "class SqliteRetainedCallbackClaim final" in claim_header,
+         "named_client_data_claim_has_explicit_lifetime_states",
+         "premature close/replacement cannot silently destroy the sentinel",
+     )
+     add(
+         checks,
+-        "if (state == ClientDataClaim::State::live)" in owner
+-        and "g_authorized_busy_claim_destruction != claim" in owner,
++        "if (state == ClaimState::State::live)" in claim_owner
++        and "thread_local void* g_authorized_retained_claim_destruction" in claim_owner
++        and "g_authorized_retained_claim_destruction != claim" in claim_owner,
+         "client_data_destruction_requires_state_and_exact_thread_witness",
+         "transient pending/detaching state is not ambient destruction authority",
+     )
+@@ -251,9 +261,7 @@ def main() -> int:
+             "void SqliteBusyHandlerOwner::detach() noexcept",
+             "sqlite3_busy_handler(database, nullptr, nullptr)",
+             "callbacks_active_.load",
+-            "ClientDataClaim::State::detaching",
+-            "sqlite3_set_clientdata(database",
+-            "client_data_claim_ = nullptr",
++            "callback_claim_.detach(database)",
+             "database_borrow_.reset()",
+         ),
+         "detach_revokes_callback_before_claim_and_generation",
+@@ -402,7 +410,7 @@ def main() -> int:
+ 
+     passed = all(check.passed for check in checks)
+     payload = {
+-        "format": "anonsync-sqlite-busy-handler-owner-audit-v1",
++        "format": "anonsync-sqlite-busy-handler-owner-audit-v2",
+         "passed": passed,
+         "check_count": len(checks),
+         "passed_check_count": sum(check.passed for check in checks),
+diff --git a/tools/audit_sqlite_mutex_capability.py b/tools/audit_sqlite_mutex_capability.py
+index 098eb1f..383c80a 100644
+--- a/tools/audit_sqlite_mutex_capability.py
++++ b/tools/audit_sqlite_mutex_capability.py
+@@ -23,8 +23,12 @@ SENSITIVE_FILES = (
+     Path("src/sync_thread_incarnation.cpp"),
+     Path("src/sync_sqlite_mutex_capability.hpp"),
+     Path("src/sync_sqlite_mutex_capability.cpp"),
++    Path("src/persistence/sqlite_retained_callback_claim.hpp"),
++    Path("src/persistence/sqlite_retained_callback_claim.cpp"),
+     Path("src/persistence/sqlite_busy_handler_owner.hpp"),
+     Path("src/persistence/sqlite_busy_handler_owner.cpp"),
++    Path("src/persistence/sqlite_verification_budget.hpp"),
++    Path("src/persistence/sqlite_verification_budget.cpp"),
+     Path("src/sync_sqlite_connection_authority.hpp"),
+     Path("src/sync_sqlite_connection_authority_internal.hpp"),
+     Path("src/sync_sqlite_connection_authority.cpp"),
+@@ -146,7 +150,7 @@ def main() -> int:
+     missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
+     if missing:
+         report = {
+-            "format": "anonsync-sqlite-mutex-capability-audit-v2",
++            "format": "anonsync-sqlite-mutex-capability-audit-v3",
+             "passed": False,
+             "violations": [f"missing sensitive file: {path}" for path in missing],
+         }
+@@ -736,18 +740,30 @@ def main() -> int:
+         checks,
+         clientdata_owners
+         == {
+-            "src/persistence/sqlite_busy_handler_owner.cpp",
++            "src/persistence/sqlite_retained_callback_claim.cpp",
+             "src/sync_sqlite_connection_authority.cpp",
+             "src/sync_sqlite_mutex_capability.cpp",
+-        },
+-        "clientdata_calls_have_three_invariant_owners",
+-        "authorizer generation, retained-mutex lifetime, and busy-callback lifetime must be the only client-data namespaces",
++        }
++        and "anonsync.sqlite-busy-handler-owner.v1" in texts[
++            Path("src/persistence/sqlite_busy_handler_owner.cpp")
++        ]
++        and "anonsync.sqlite-verification-budget.v1" in texts[
++            Path("src/persistence/sqlite_verification_budget.cpp")
++        ]
++        and "SqliteRetainedCallbackClaim callback_claim_" in texts[
++            Path("src/persistence/sqlite_busy_handler_owner.hpp")
++        ]
++        and "SqliteRetainedCallbackClaim callback_claim_" in texts[
++            Path("src/persistence/sqlite_verification_budget.hpp")
++        ],
++        "clientdata_calls_have_three_primitive_owners_and_four_namespaces",
++        "authorizer generation, retained-mutex lifetime, busy-callback lifetime, and verification-callback lifetime must remain composition-owned",
+     )
+ 
+     checks_data = [asdict(check) for check in checks]
+     violations = [check.detail for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sqlite-mutex-capability-audit-v2",
++        "format": "anonsync-sqlite-mutex-capability-audit-v3",
+         "passed": not violations,
+         "check_count": len(checks),
+         "passed_check_count": sum(1 for check in checks if check.passed),
+diff --git a/tools/audit_sqlite_process_authority.py b/tools/audit_sqlite_process_authority.py
+index e5b9ca2..f333415 100644
+--- a/tools/audit_sqlite_process_authority.py
++++ b/tools/audit_sqlite_process_authority.py
+@@ -115,6 +115,8 @@ def main() -> int:
+         Path("src/persistence/sqlite_snapshot_seal.cpp"),
+         Path("src/persistence/sqlite_verification_budget.hpp"),
+         Path("src/persistence/sqlite_verification_budget.cpp"),
++        Path("src/persistence/sqlite_retained_callback_claim.hpp"),
++        Path("src/persistence/sqlite_retained_callback_claim.cpp"),
+         Path("src/persistence/sqlite_replay_ledger_write_gate.hpp"),
+         Path("src/persistence/sqlite_replay_ledger_write_gate.cpp"),
+         Path("src/persistence/sqlite_replay_ledger_restore_lock.hpp"),
+@@ -139,7 +141,7 @@ def main() -> int:
+     missing = [rel.as_posix() for rel in sensitive if not (root / rel).is_file()]
+     if missing:
+         report = {
+-            "format": "anonsync-sqlite-process-authority-audit-v5",
++            "format": "anonsync-sqlite-process-authority-audit-v6",
+             "passed": False,
+             "violations": [f"missing sensitive file: {path}" for path in missing],
+         }
+@@ -161,6 +163,12 @@ def main() -> int:
+     seal_cpp = texts[Path("src/persistence/sqlite_snapshot_seal.cpp")]
+     budget_hpp = texts[Path("src/persistence/sqlite_verification_budget.hpp")]
+     budget_cpp = texts[Path("src/persistence/sqlite_verification_budget.cpp")]
++    callback_claim_hpp = texts[
++        Path("src/persistence/sqlite_retained_callback_claim.hpp")
++    ]
++    callback_claim_cpp = texts[
++        Path("src/persistence/sqlite_retained_callback_claim.cpp")
++    ]
+     write_gate_hpp = texts[
+         Path("src/persistence/sqlite_replay_ledger_write_gate.hpp")
+     ]
+@@ -346,7 +354,14 @@ def main() -> int:
+     require(
+         "process_id_(current_sync_process_incarnation_noexcept())" in budget_cpp
+         and "require_current_execution_noexcept" in budget_destructor + budget_detach
+-        and "sqlite3_progress_handler(database_, 0, nullptr, nullptr)" in budget_detach,
++        and ordered(
++            budget_detach,
++            "database_borrow_.get()",
++            "callback_claim_.require_live(database)",
++            "sqlite3_progress_handler(database, 0, nullptr, nullptr)",
++            "callback_claim_.detach(database)",
++            "database_borrow_.reset()",
++        ),
+         "verification_budget_fences_callback_detachment",
+         "an inherited destructor must not detach the parent's SQLite callback",
+     )
+@@ -355,6 +370,26 @@ def main() -> int:
+         "progress_callback_checks_process_first",
+         "inherited SQLite execution must fail before reading copied callback state",
+     )
++    require(
++        "SyncProcessIncarnation process_id_;" in callback_claim_hpp
++        and "sync_process_incarnation_is_current(claim->process_id)" in callback_claim_cpp
++        and "fail_stop_on_retained_callback_lifetime_violation_noexcept" in callback_claim_cpp,
++        "shared_callback_claim_is_process_incarnation_bound",
++        "connection destruction and named-slot replacement cannot launder a retained callback into a fork descendant",
++    )
++    require(
++        all(
++            marker in persistence_fork_test
++            for marker in (
++                "deferred close_v2 destruction cannot outlive a live verification claim",
++                "client-data replacement cannot destroy a live child-local verification claim",
++                "parent verification generation survives hostile children",
++                "parent verification detach releases its exact generation",
++            )
++        ),
++        "verification_claim_close_replacement_and_parent_survival_are_executable",
++        "deferred destruction, replacement, parent usability, and exact-generation release remain one fork-adversarial contract",
++    )
+ 
+     require("class ProcessBoundHandleSlot final" in slot_hpp, "typed_owner_slot_exists", "connection and statement ownership share one invariant-owned abstraction")
+     require("class ProcessBoundHandleOutGuard final" in slot_hpp, "scoped_output_guard_exists", "SQLite output parameters must be adopted at full-expression completion")
+@@ -587,7 +622,7 @@ def main() -> int:
+ 
+     passed = all(check.passed for check in checks)
+     report = {
+-        "format": "anonsync-sqlite-process-authority-audit-v5",
++        "format": "anonsync-sqlite-process-authority-audit-v6",
+         "passed": passed,
+         "check_count": len(checks),
+         "passed_check_count": sum(check.passed for check in checks),
+diff --git a/tools/audit_sqlite_snapshot_seal.py b/tools/audit_sqlite_snapshot_seal.py
+index a6ab6e9..b0b86a5 100644
+--- a/tools/audit_sqlite_snapshot_seal.py
++++ b/tools/audit_sqlite_snapshot_seal.py
+@@ -467,7 +467,9 @@ def main() -> int:
+     require(
+         checks,
+         "persistence::SealedSqliteSnapshot& snapshot" in prefix_reader
+-        and "snapshot.open_database_or_throw" in prefix_reader,
++        and "snapshot.open_database_owner_or_throw" in prefix_reader
++        and "SyncSqliteDbHandleSlot owner" in prefix_reader
++        and "owner.reset()" in prefix_reader,
+         "prefix_continuity_consumes_existing_seal",
+         "the append-continuity proof must not acquire a fresh pathname view",
+     )
+diff --git a/tools/audit_sqlite_verification_budget.py b/tools/audit_sqlite_verification_budget.py
+index 9007808..2963743 100644
+--- a/tools/audit_sqlite_verification_budget.py
++++ b/tools/audit_sqlite_verification_budget.py
+@@ -166,6 +166,8 @@ def main() -> int:
+     root = args.root.resolve()
+     required = [
+         Path("CMakeLists.txt"),
++        Path("src/persistence/sqlite_retained_callback_claim.hpp"),
++        Path("src/persistence/sqlite_retained_callback_claim.cpp"),
+         Path("src/persistence/sqlite_verification_budget.hpp"),
+         Path("src/persistence/sqlite_verification_budget.cpp"),
+         Path("src/persistence/sqlite_snapshot_seal.cpp"),
+@@ -173,11 +175,12 @@ def main() -> int:
+         Path("tests/sqlite_replay_ledger_selftests.cpp"),
+         Path("tests/persistence/sqlite_verification_budget_tests.cpp"),
+         Path("tests/persistence/sqlite_snapshot_geometry_binding_test.cpp"),
++        Path("tools/verify_release_package.py"),
+     ]
+     missing = [str(path) for path in required if not (root / path).is_file()]
+     if missing:
+         payload = {
+-            "format": "anonsync-sqlite-verification-budget-audit-v2",
++            "format": "anonsync-sqlite-verification-budget-audit-v4",
+             "passed": False,
+             "missing": missing,
+         }
+@@ -193,6 +196,8 @@ def main() -> int:
+         for path in required
+     }
+     cmake = texts[Path("CMakeLists.txt")]
++    claim_header = texts[Path("src/persistence/sqlite_retained_callback_claim.hpp")]
++    claim_owner = texts[Path("src/persistence/sqlite_retained_callback_claim.cpp")]
+     header = texts[Path("src/persistence/sqlite_verification_budget.hpp")]
+     owner = texts[Path("src/persistence/sqlite_verification_budget.cpp")]
+     seal = texts[Path("src/persistence/sqlite_snapshot_seal.cpp")]
+@@ -202,6 +207,7 @@ def main() -> int:
+     geometry_test = texts[
+         Path("tests/persistence/sqlite_snapshot_geometry_binding_test.cpp")
+     ]
++    release_verifier = texts[Path("tools/verify_release_package.py")]
+     verifier = function_body(
+         ledger,
+         "ReplayLedgerStats verify_profiled_open_sqlite_ledger_snapshot_readonly(",
+@@ -291,6 +297,114 @@ def main() -> int:
+         "source_audit_is_registered",
+         "the architecture must be a CTest gate, not prose",
+     )
++    require(
++        checks,
++        "add_library(anonsync_sqlite_retained_callback_claim STATIC" in cmake
++        and "anonsync_sqlite_retained_callback_claim" in cmake.split(
++            "target_link_libraries(anonsync_sqlite_verification_budget PUBLIC", 1
++        )[1].split("target_compile_options", 1)[0],
++        "shared_callback_claim_is_independent_and_composed",
++        "verification lifetime proof must reuse the separately linked SQLite client-data sentinel",
++    )
++    require(
++        checks,
++        "revision_number >= 849" in release_verifier
++        and all(
++            marker in release_verifier
++            for marker in (
++                '"src/persistence/sqlite_retained_callback_claim.hpp"',
++                '"src/persistence/sqlite_retained_callback_claim.cpp"',
++                '"tests/persistence/sqlite_verification_budget_tests.cpp"',
++                '"tests/persistence/sqlite_snapshot_seal_tests.cpp"',
++                '"tests/persistence/sqlite_persistence_process_authority_fork_test.cpp"',
++                '"tools/audit_sqlite_snapshot_seal.py"',
++                '"tools/audit_sqlite_verification_budget.py"',
++                '"revision_scoped_required_files_present"',
++            )
++        ),
++        "release_verifier_requires_shared_claim_from_rev0849",
++        "a self-consistent package cannot omit the extracted callback lifetime boundary while older sealed parents remain verifiable",
++    )
++    require(
++        checks,
++        all(
++            marker in claim_header
++            for marker in (
++                "class SqliteRetainedCallbackClaim final",
++                "SqliteRetainedCallbackClaim(const SqliteRetainedCallbackClaim&) = delete",
++                "SqliteRetainedCallbackClaim(SqliteRetainedCallbackClaim&&) = delete",
++                "SyncProcessIncarnation process_id_;",
++            )
++        ),
++        "shared_callback_claim_has_stable_process_bound_identity",
++        "SQLite must retain a nontransferable sentinel whose authority dies across fork",
++    )
++    require(
++        checks,
++        ordered(
++            claim_owner,
++            "std::string frozen_client_data_name(client_data_name)",
++            "std::make_unique<ClaimState>(process_id_)",
++            "client_data_name_.swap(frozen_client_data_name)",
++            "sqlite3_set_clientdata(",
++        )
++        and "client_data_name.find('\\0')" in claim_owner,
++        "shared_claim_freezes_allocations_before_publication",
++        "allocation failure and NUL aliases cannot leave a half-attached or ambiguous named claim",
++    )
++    require(
++        checks,
++        all(
++            marker in claim_owner
++            for marker in (
++                "registration_pending = 0",
++                "live = 1",
++                "detaching = 2",
++                "std::atomic<State>::is_always_lock_free",
++                "ClaimState* const self = this",
++                "const SyncProcessIncarnation process_id",
++            )
++        ),
++        "shared_claim_state_is_explicit_lock_free_and_self_authenticating",
++        "fork-safe state, process generation, and exact allocation identity guard the retained sentinel",
++    )
++    require(
++        checks,
++        "thread_local void* g_authorized_retained_claim_destruction" in claim_owner
++        and "ScopedAuthorizedRetainedClaimDestruction authorized(claim)" in claim_owner
++        and "g_authorized_retained_claim_destruction != claim" in claim_owner,
++        "shared_claim_destruction_requires_exact_thread_witness",
++        "pending or detaching state alone is never ambient authority for close or replacement",
++    )
++    require(
++        checks,
++        ordered(
++            claim_owner,
++            "void SqliteRetainedCallbackClaim::detach(sqlite3* database)",
++            "require_live(database)",
++            "ClaimState::State::detaching",
++            "sqlite3_set_clientdata(",
++            "claim_state_ = nullptr",
++            "client_data_name_.clear()",
++        )
++        and "Auto-detach would touch an address" in claim_owner,
++        "shared_claim_has_explicit_ordered_detach_only",
++        "the enclosing callback owner must revoke its callback before synchronously clearing the sentinel",
++    )
++    require(
++        checks,
++        all(
++            marker in focused
++            for marker in (
++                "live verification claim rejects immediate raw close_v2 destruction",
++                "live verification claim rejects deferred close_v2 zombie destruction",
++                "live verification claim rejects named-slot replacement",
++                "typed database owner rejects close while verification borrow is live",
++            )
++        ),
++        "focused_proof_covers_close_replacement_and_zombie_frontier",
++        "immediate destruction, deferred close_v2 destruction, replacement, and typed-close denial are executable",
++    )
+     require(
+         checks,
+         cmake.count("anonsync_sqlite_verification_budget") >= 10,
+@@ -367,7 +481,8 @@ def main() -> int:
+             header,
+             "SyncProcessIncarnation process_id_;",
+             "SyncThreadIncarnation thread_id_;",
+-            "sqlite3* database_ = nullptr;",
++            "SyncSqliteSerializedDbBorrow database_borrow_;",
++            "SqliteRetainedCallbackClaim callback_claim_;",
+         ),
+         "callback_owner_binds_process_then_exact_thread",
+         "immutable execution authority must precede the SQLite handle and every mutable counter",
+@@ -378,7 +493,8 @@ def main() -> int:
+             budget_constructor,
+             "process_id_(current_sync_process_incarnation_noexcept())",
+             "thread_id_(current_sync_thread_incarnation_noexcept())",
+-            "database_(database)",
++            "database_borrow_(std::move(database_borrow))",
++            "callback_claim_.attach",
+             "sqlite3_progress_handler(",
+         ),
+         "callback_context_is_frozen_before_installation",
+@@ -414,7 +530,13 @@ def main() -> int:
+     require(
+         checks,
+         ordered(budget_progress, "require_current_execution_noexcept();", "exhausted()", "progress_callbacks_")
+-        and ordered(budget_detach, "require_current_execution_noexcept();", "database_", "sqlite3_progress_handler(")
++        and ordered(
++            budget_detach,
++            "require_current_execution_noexcept();",
++            "database_borrow_.get()",
++            "callback_claim_.require_live(database)",
++            "sqlite3_progress_handler(",
++        )
+         and "detach();" in budget_destructor,
+         "callback_detach_and_destruction_check_before_state",
+         "serialized SQLite use cannot authorize a foreign thread to read counters or replace the retained callback",
+@@ -434,7 +556,13 @@ def main() -> int:
+     )
+     require(
+         checks,
+-        "sqlite3_progress_handler(database_, 0, nullptr, nullptr);" in owner,
++        ordered(
++            budget_detach,
++            "callback_claim_.require_live(database)",
++            "sqlite3_progress_handler(database, 0, nullptr, nullptr);",
++            "callback_claim_.detach(database)",
++            "database_borrow_.reset()",
++        ),
+         "progress_handler_is_detached_before_close",
+         "the callback must not outlive its C++ owner",
+     )
+@@ -613,7 +741,7 @@ def main() -> int:
+                 "wait_for_exact_exit(kSyncProcessCapabilityViolationExitCode",
+             )
+         )
+-        and focused.count("spawn_inherited_test_process_or_throw(") == 1,
++        and focused.count("spawn_inherited_test_process_or_throw(") == 2,
+         "focused_proof_covers_exact_thread_authority",
+         "throwing rejection is non-consuming and every noexcept callback-lifetime surface takes the exact direct-exit path",
+     )
+@@ -626,12 +754,13 @@ def main() -> int:
+     )
+ 
+     payload = {
+-        "format": "anonsync-sqlite-verification-budget-audit-v2",
++        "format": "anonsync-sqlite-verification-budget-audit-v4",
+         "passed": all(check.passed for check in checks),
+         "checks": [asdict(check) for check in checks],
+         "metrics": {
+             "check_count": len(checks),
+-            "boundary_lines": len((header + owner).splitlines()),
++            "boundary_lines": len((claim_header + claim_owner + header + owner).splitlines()),
++            "shared_claim_lines": len((claim_header + claim_owner).splitlines()),
+             "focused_test_lines": len(focused.splitlines()),
+             "verifier_lines": len(verifier.splitlines()),
+             "report_lines": len(report.splitlines()),
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index d6ae158..6fa2be9 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -153,6 +153,7 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         "src/persistence/sqlite_verification_budget.hpp",
+         "src/persistence/sqlite_verification_budget.cpp",
+         "tests/persistence/sqlite_verification_budget_tests.cpp",
++        "tests/persistence/sqlite_snapshot_seal_tests.cpp",
+         "tests/persistence/sqlite_busy_handler_owner_tests.cpp",
+         "src/sync_sqlite_handle_slot.hpp",
+         "src/sync_sqlite_handle_slot.cpp",
+@@ -225,6 +226,7 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         "tools/audit_sqlite_restore_publication.py",
+         "tools/audit_sqlite_backup_publication.py",
+         "tools/audit_sqlite_live_backup.py",
++        "tools/audit_sqlite_snapshot_seal.py",
+         "tools/audit_sqlite_verification_budget.py",
+         "tools/audit_sqlite_busy_handler_owner.py",
+         "tools/audit_sync_atomic_file_publication.py",
+@@ -268,6 +270,31 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+     required_gate = release_gate.get("required") if isinstance(release_gate, dict) else None
+     require(isinstance(required_gate, dict) and bool(required_gate) and all(value is True for value in required_gate.values()), "every_required_gate_entry_is_true", "all named required release conditions must be true")
+ 
++    # Release verification must evolve without making the current verifier
++    # reject a sealed parent that legitimately predates a newly mandatory
++    # boundary.  Keep revision-scoped package members explicit rather than
++    # weakening the global required inventory or relying on CMake to expose a
++    # missing source file only during a later rebuild.
++    revision_number = (
++        int(revision.removeprefix("rev"))
++        if REVISION_RE.fullmatch(revision)
++        else None
++    )
++    revision_scoped_required: set[str] = set()
++    if revision_number is not None and revision_number >= 849:
++        revision_scoped_required.update({
++            "src/persistence/sqlite_retained_callback_claim.hpp",
++            "src/persistence/sqlite_retained_callback_claim.cpp",
++        })
++    missing_revision_scoped = sorted(revision_scoped_required - names)
++    require(
++        not missing_revision_scoped,
++        "revision_scoped_required_files_present",
++        "missing: " + ", ".join(missing_revision_scoped)
++        if missing_revision_scoped
++        else f"all files mandatory from {revision or 'the declared revision'} are present",
++    )
++
+     if REVISION_RE.fullmatch(revision):
+         revision_files = {
+             f"REVISION_NOTES_{revision}.md",

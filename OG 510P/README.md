@@ -78,4 +78,6 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [Conlang Rosetta Stone](Conlang%20Rosetta%20Stone/README.md): Ithkuil and Lojban translation drafts, together.
 
+- [AnonSync](AnonSync/README.md): eleven selected snapshots, with thirteen original upload files including a multipart delivery.
+
 Each project has its own reading guide and provenance. Existing license notices remain applicable; no new blanket license is granted here.

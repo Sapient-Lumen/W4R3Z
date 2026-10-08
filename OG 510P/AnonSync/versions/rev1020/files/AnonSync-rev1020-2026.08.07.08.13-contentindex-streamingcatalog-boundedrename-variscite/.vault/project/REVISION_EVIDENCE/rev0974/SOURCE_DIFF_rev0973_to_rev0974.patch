@@ -1,0 +1,3689 @@
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index 112581d..ec7642b 100755
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -1438,6 +1438,7 @@ peer_historical_version_action_or_throw(
+         case Local::Restore: return Peer::Restore;
+         case Local::Pin: return Peer::Pin;
+         case Local::Unpin: return Peer::Unpin;
++        case Local::RetentionPlan: return Peer::RetentionPlan;
+     }
+     throw std::invalid_argument(
+         "anonsync_sync observed an unknown historical-version action");
+@@ -1604,6 +1605,7 @@ int command_run(const Options& options) {
+                 request.request_generation,
+                 peer_historical_version_action_or_throw(request.operation),
+                 request.restore_request, request.query,
++                request.retention_plan_query,
+                 request.retention_operation_id);
+         }
+         return observed_local_actions;
+@@ -1800,6 +1802,7 @@ int command_run(const Options& options) {
+                 request.request_generation,
+                 peer_historical_version_action_or_throw(request.operation),
+                 request.restore_request, request.query,
++                request.retention_plan_query,
+                 request.retention_operation_id);
+         }
+     }
+@@ -1983,6 +1986,8 @@ int command_run(const Options& options) {
+         << counters.historical_version_completions
+         << ",\"historical_version_inspections\":"
+         << counters.historical_version_inspections
++        << ",\"historical_version_retention_plans\":"
++        << counters.historical_version_retention_plans
+         << ",\"historical_version_restores\":"
+         << counters.historical_version_restores
+         << ",\"historical_version_pins\":"
+@@ -3463,6 +3468,38 @@ int command_versions(const Options& options) {
+     return 0;
+ }
+ 
++int command_retention_plan(const Options& options) {
++    options.require_only(
++        {"socket", "after", "limit", "source-cutpoint",
++         "timeout-milliseconds"});
++    const fs::path socket_path = require_absolute_path(
++        options.one("socket"), "--socket");
++    anonsync::SyncReplicaRetentionPlanQuery query;
++    query.maximum_entries = option_uint64_or(
++        options, "limit",
++        anonsync::kSyncReplicaRetentionPlanDefaultMaximumEntries);
++    if (options.has("after")) {
++        query.start_after_content_sha256 = options.one("after");
++    }
++    if (options.has("source-cutpoint")) {
++        query.expected_source_cutpoint = anonsync::
++            decode_sync_replica_historical_version_source_cutpoint_or_throw(
++                options.one("source-cutpoint"),
++                "anonsync_sync retention-plan --source-cutpoint");
++    }
++    anonsync::validate_sync_replica_retention_plan_query_or_throw(
++        query, "anonsync_sync retention-plan");
++    const std::uint64_t timeout_milliseconds = option_uint64_or(
++        options, "timeout-milliseconds",
++        anonsync::kSyncLocalStatusSocketDefaultTimeoutMilliseconds);
++    std::cout
++        << anonsync::request_sync_local_status_retention_plan_or_throw(
++               socket_path, std::move(query), timeout_milliseconds,
++               "anonsync_sync retention-plan")
++        << '\n';
++    return 0;
++}
++
+ int command_restore(const Options& options) {
+     options.require_only(
+         {"socket", "operation", "expected-current",
+@@ -3635,6 +3672,11 @@ void print_usage(std::ostream& output) {
+            "v1:OPERATION_SET_SHA256:PAYLOAD_SHA256|"
+            "v2:metadata:OPERATION_SET_SHA256] "
+            "[--timeout-milliseconds N]\n"
++        << "  anonsync_sync retention-plan --socket ABSOLUTE_SOCKET "
++           "[--after LOWERCASE_SHA256] [--limit 1..1024] "
++           "[--source-cutpoint "
++           "v4:exact:OPERATION_SET_SHA256:EVIDENCE_SET_SHA256:PIN_SET_SHA256:PAYLOAD_SHA256] "
++           "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync restore --socket ABSOLUTE_SOCKET "
+            "--operation LOWERCASE_SHA256 "
+            "--expected-current LOWERCASE_SHA256 "
+@@ -3675,6 +3717,14 @@ void print_usage(std::ostream& output) {
+            "--source-cutpoint makes later pages fail closed if the authority "
+            "bound by that inspection mode changes; status reports the exact "
+            "query, source cutpoint, and next cursor. "
++           "retention-plan observes one exact, digest-ordered page of the "
++           "complete physical payload namespace and explains whether each "
++           "object is rooted by a current file, active superseded history, "
++           "inactive evidence, an explicit local pin, or no retained replica "
++           "reference. Its v4 exact source cutpoint binds operations, inactive "
++           "evidence, pins, and payload bytes across pages. The result is a "
++           "deletion-free diagnostic: it applies no quota, grace period, "
++           "in-flight-transfer root, quarantine, or unlink authority. "
+            "restore accepts one exact operation ID and the exact current head from "
+            "that inventory, rejects stale intent before catalog, rooted-path, or "
+            "payload-store work, then re-proves current catalog, replica, rooted-path, "
+@@ -3790,6 +3840,9 @@ int main(int argc, char** argv) {
+         if (command == "versions") {
+             return command_versions(options);
+         }
++        if (command == "retention-plan") {
++            return command_retention_plan(options);
++        }
+         if (command == "restore") {
+             return command_restore(options);
+         }
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index a469b25..219c065 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -48,6 +48,7 @@ constexpr std::string_view kQuarantineReleaseRequestPrefix =
+ constexpr std::string_view kHistoricalVersionsRequest = "versions\n";
+ constexpr std::string_view kHistoricalVersionsQueryRequestPrefix =
+     "versions-query ";
++constexpr std::string_view kRetentionPlanRequestPrefix = "retention-plan ";
+ constexpr std::string_view kHistoricalVersionRestoreRequestPrefix =
+     "restore ";
+ constexpr std::string_view kHistoricalVersionRestoreExactRequestPrefix =
+@@ -74,6 +75,8 @@ constexpr std::string_view kHistoricalVersionPinResponseSchema =
+     "anonsync.local-historical-version-pin.response.v1";
+ constexpr std::string_view kHistoricalVersionUnpinResponseSchema =
+     "anonsync.local-historical-version-unpin.response.v1";
++constexpr std::string_view kRetentionPlanResponseSchema =
++    "anonsync.local-retention-plan.response.v1";
+ constexpr std::string_view kUnsupportedResponse =
+     "{\"schema\":\"anonsync.local-status.response.v1\","
+     "\"ok\":false,\"error\":\"unsupported_request\"}";
+@@ -315,6 +318,56 @@ parse_historical_version_request(std::string_view request) {
+         }
+         return parsed;
+     }
++    if (request.starts_with(kRetentionPlanRequestPrefix)) {
++        if (request.back() != '\n') return std::nullopt;
++        request.remove_prefix(kRetentionPlanRequestPrefix.size());
++        request.remove_suffix(1U);
++        std::array<std::string_view, 3U> fields{};
++        for (std::size_t index = 0U; index < fields.size(); ++index) {
++            const std::size_t space = request.find(' ');
++            fields[index] = space == std::string_view::npos
++                ? request
++                : request.substr(0U, space);
++            if (fields[index].empty()) return std::nullopt;
++            if (index + 1U == fields.size()) {
++                if (space != std::string_view::npos) return std::nullopt;
++                request = {};
++            } else {
++                if (space == std::string_view::npos) return std::nullopt;
++                request.remove_prefix(space + 1U);
++            }
++        }
++        const std::optional<std::uint64_t> maximum =
++            parse_decimal_uint64(fields[0U]);
++        if (!maximum.has_value() ||
++            std::to_string(*maximum) != fields[0U]) {
++            return std::nullopt;
++        }
++        parsed.operation =
++            SyncLocalStatusSocketHistoricalVersionOperation::RetentionPlan;
++        parsed.retention_plan_query.maximum_entries = *maximum;
++        if (fields[1U] != "-") {
++            if (!is_lowercase_sha256_hex(fields[1U])) return std::nullopt;
++            parsed.retention_plan_query.start_after_content_sha256 =
++                std::string(fields[1U]);
++        }
++        if (fields[2U] != "-") {
++            try {
++                parsed.retention_plan_query.expected_source_cutpoint =
++                    decode_sync_replica_historical_version_source_cutpoint_or_throw(
++                        fields[2U], "local retention-plan source cutpoint");
++            } catch (const std::invalid_argument&) {
++                return std::nullopt;
++            }
++        }
++        try {
++            validate_sync_replica_retention_plan_query_or_throw(
++                parsed.retention_plan_query, "local retention-plan query");
++        } catch (const std::invalid_argument&) {
++            return std::nullopt;
++        }
++        return parsed;
++    }
+     constexpr std::size_t digest_characters = 64U;
+     const auto parse_retention_update =
+         [&](std::string_view prefix,
+@@ -1089,6 +1142,7 @@ void validate_historical_version_response_or_throw(
+     const LocalPeerCredentials& peer,
+     SyncLocalStatusSocketHistoricalVersionOperation operation,
+     const SyncReplicaHistoricalVersionQuery& query,
++    const SyncReplicaRetentionPlanQuery& retention_plan_query,
+     const SyncReplicaHistoricalVersionRestoreRequest& restore_request,
+     std::string_view retention_operation_id,
+     std::string_view label) {
+@@ -1102,6 +1156,9 @@ void validate_historical_version_response_or_throw(
+         operation == SyncLocalStatusSocketHistoricalVersionOperation::Pin;
+     const bool unpinning =
+         operation == SyncLocalStatusSocketHistoricalVersionOperation::Unpin;
++    const bool planning =
++        operation ==
++        SyncLocalStatusSocketHistoricalVersionOperation::RetentionPlan;
+     const bool retention_update = pinning || unpinning;
+     const bool exact_restore =
+         restoring &&
+@@ -1110,7 +1167,7 @@ void validate_historical_version_response_or_throw(
+         ? 6U + (rejected ? 1U : 0U)
+         : (restoring
+                ? (exact_restore ? 7U : 6U) + (rejected ? 1U : 0U)
+-               : 10U + (rejected ? 1U : 0U));
++               : (planning ? 8U : 10U) + (rejected ? 1U : 0U));
+     const std::string_view expected_schema = pinning
+         ? kHistoricalVersionPinResponseSchema
+         : (unpinning
+@@ -1119,11 +1176,15 @@ void validate_historical_version_response_or_throw(
+                       ? (exact_restore
+                              ? kHistoricalVersionRestoreExactResponseSchema
+                              : kHistoricalVersionRestoreResponseSchema)
+-                      : kHistoricalVersionsResponseSchema));
++                      : (planning ? kRetentionPlanResponseSchema
++                                  : kHistoricalVersionsResponseSchema)));
+     const std::string_view expected_command = pinning
+         ? "version-pin"
+-        : (unpinning ? "version-unpin"
+-                     : (restoring ? "restore" : "versions"));
++        : (unpinning
++               ? "version-unpin"
++               : (restoring
++                      ? "restore"
++                      : (planning ? "retention-plan" : "versions")));
+     if ((!accepted && !rejected) || parsed.o.size() != expected_fields ||
+         parsed.at("schema").str() != expected_schema ||
+         parsed.at("command").str() != expected_command) {
+@@ -1151,6 +1212,46 @@ void validate_historical_version_response_or_throw(
+                 std::string(label) +
+                 " changed the expected current operation ID");
+         }
++    } else if (planning) {
++        const std::uint64_t returned_limit = exact_nonnegative_uint64_or_throw(
++            parsed.at("maximum_entries"), label);
++        if (returned_limit != retention_plan_query.maximum_entries) {
++            throw std::runtime_error(
++                std::string(label) +
++                " changed the requested retention-plan entry limit");
++        }
++        const Json& returned_cursor =
++            parsed.at("start_after_content_sha256");
++        if (retention_plan_query.start_after_content_sha256.has_value()) {
++            if (returned_cursor.is_null() ||
++                returned_cursor.str() !=
++                    *retention_plan_query.start_after_content_sha256) {
++                throw std::runtime_error(
++                    std::string(label) +
++                    " changed the requested retention-plan cursor");
++            }
++        } else if (!returned_cursor.is_null()) {
++            throw std::runtime_error(
++                std::string(label) +
++                " invented a requested retention-plan cursor");
++        }
++        const Json& returned_source_cutpoint =
++            parsed.at("expected_source_cutpoint");
++        if (retention_plan_query.expected_source_cutpoint.has_value()) {
++            const std::string expected =
++                encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                    *retention_plan_query.expected_source_cutpoint, label);
++            if (returned_source_cutpoint.is_null() ||
++                returned_source_cutpoint.str() != expected) {
++                throw std::runtime_error(
++                    std::string(label) +
++                    " changed the requested retention-plan source cutpoint");
++            }
++        } else if (!returned_source_cutpoint.is_null()) {
++            throw std::runtime_error(
++                std::string(label) +
++                " invented a requested retention-plan source cutpoint");
++        }
+     } else {
+         if (parsed.at("inspection_mode").str() !=
+             sync_replica_historical_version_inspection_mode_name(
+@@ -1492,6 +1593,7 @@ struct SyncLocalStatusSocketServer::State final {
+     [[nodiscard]] std::string request_historical_version_response(
+         SyncLocalStatusSocketHistoricalVersionOperation operation,
+         SyncReplicaHistoricalVersionQuery query,
++        SyncReplicaRetentionPlanQuery retention_plan_query,
+         SyncReplicaHistoricalVersionRestoreRequest restore_request,
+         std::string retention_operation_id) {
+         const bool restoring =
+@@ -1500,9 +1602,13 @@ struct SyncLocalStatusSocketServer::State final {
+             operation == SyncLocalStatusSocketHistoricalVersionOperation::Pin;
+         const bool unpinning =
+             operation == SyncLocalStatusSocketHistoricalVersionOperation::Unpin;
++        const bool planning =
++            operation ==
++            SyncLocalStatusSocketHistoricalVersionOperation::RetentionPlan;
+         const bool retention_update = pinning || unpinning;
+         if (restoring) {
+             if (query != SyncReplicaHistoricalVersionQuery{} ||
++                retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
+                 !retention_operation_id.empty()) {
+                 throw std::invalid_argument(
+                     label + " restore admission carried an inspection query");
+@@ -1511,17 +1617,29 @@ struct SyncLocalStatusSocketServer::State final {
+                 restore_request, label + " restore admission");
+         } else if (retention_update) {
+             if (query != SyncReplicaHistoricalVersionQuery{} ||
++                retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
+                 restore_request != SyncReplicaHistoricalVersionRestoreRequest{} ||
+                 !is_lowercase_sha256_hex(retention_operation_id)) {
+                 throw std::invalid_argument(
+                     label + " retention admission is not canonical");
+             }
++        } else if (planning) {
++            if (query != SyncReplicaHistoricalVersionQuery{} ||
++                restore_request !=
++                    SyncReplicaHistoricalVersionRestoreRequest{} ||
++                !retention_operation_id.empty()) {
++                throw std::invalid_argument(
++                    label + " retention-plan admission is not canonical");
++            }
++            validate_sync_replica_retention_plan_query_or_throw(
++                retention_plan_query, label + " retention-plan query");
+         } else {
+-            if (restore_request !=
++            if (retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
++                restore_request !=
+                     SyncReplicaHistoricalVersionRestoreRequest{} ||
+                 !retention_operation_id.empty()) {
+                 throw std::invalid_argument(
+-                    label + " inspection admission carried a restore request");
++                    label + " inspection admission carried another request");
+             }
+             validate_sync_replica_historical_version_query_or_throw(
+                 query, label + " historical-version query");
+@@ -1531,7 +1649,13 @@ struct SyncLocalStatusSocketServer::State final {
+         std::string rejection_reason;
+         std::uint64_t generation = 0U;
+         SyncLocalStatusSocketHistoricalVersionRequest new_request{
+-            0U, operation, query, restore_request, retention_operation_id};
++            .request_generation = 0U,
++            .operation = operation,
++            .query = query,
++            .retention_plan_query = retention_plan_query,
++            .restore_request = restore_request,
++            .retention_operation_id = retention_operation_id,
++        };
+         {
+             std::lock_guard lock(mutex);
+             generation = historical_version_generation;
+@@ -1541,6 +1665,8 @@ struct SyncLocalStatusSocketServer::State final {
+                 historical_version_pending.has_value() &&
+                 (historical_version_pending->operation != operation ||
+                  historical_version_pending->query != query ||
++                 historical_version_pending->retention_plan_query !=
++                     retention_plan_query ||
+                  historical_version_pending->restore_request !=
+                      restore_request ||
+                  historical_version_pending->retention_operation_id !=
+@@ -1578,13 +1704,18 @@ struct SyncLocalStatusSocketServer::State final {
+                                              .has_value()
+                                          ? kHistoricalVersionRestoreExactResponseSchema
+                                          : kHistoricalVersionRestoreResponseSchema)
+-                                  : kHistoricalVersionsResponseSchema)))
++                                  : (planning
++                                         ? kRetentionPlanResponseSchema
++                                         : kHistoricalVersionsResponseSchema))))
+             << "\",\"command\":\""
+             << (pinning
+                     ? "version-pin"
+                     : (unpinning
+                            ? "version-unpin"
+-                           : (restoring ? "restore" : "versions")))
++                           : (restoring
++                                  ? "restore"
++                                  : (planning ? "retention-plan"
++                                              : "versions"))))
+             << "\",\"terminal_class\":\""
+             << (accepted ? "accepted" : "rejected") << "\"";
+         if (!accepted) {
+@@ -1602,6 +1733,25 @@ struct SyncLocalStatusSocketServer::State final {
+                          << *restore_request.expected_current_operation_id
+                          << "\"";
+             }
++        } else if (planning) {
++            response << ",\"maximum_entries\":"
++                     << retention_plan_query.maximum_entries
++                     << ",\"start_after_content_sha256\":";
++            if (retention_plan_query.start_after_content_sha256.has_value()) {
++                response << json_quote(
++                    *retention_plan_query.start_after_content_sha256);
++            } else {
++                response << "null";
++            }
++            response << ",\"expected_source_cutpoint\":";
++            if (retention_plan_query.expected_source_cutpoint.has_value()) {
++                response << json_quote(
++                    encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                        *retention_plan_query.expected_source_cutpoint,
++                        label + " retention-plan response source cutpoint"));
++            } else {
++                response << "null";
++            }
+         } else {
+             response << ",\"inspection_mode\":"
+                      << json_quote(
+@@ -1665,6 +1815,7 @@ struct SyncLocalStatusSocketServer::State final {
+                 } else if (historical.has_value()) {
+                     response = request_historical_version_response(
+                         historical->operation, historical->query,
++                        historical->retention_plan_query,
+                         historical->restore_request,
+                         historical->retention_operation_id);
+                 } else {
+@@ -1942,6 +2093,8 @@ bool SyncLocalStatusSocketServer::wait_for_action_request_or_timeout(
+             (state_->historical_version_pending->operation !=
+                  observed.operation ||
+              state_->historical_version_pending->query != observed.query ||
++             state_->historical_version_pending->retention_plan_query !=
++                 observed.retention_plan_query ||
+              state_->historical_version_pending->restore_request !=
+                  observed.restore_request ||
+              state_->historical_version_pending->retention_operation_id !=
+@@ -2081,6 +2234,7 @@ namespace {
+     const fs::path& absolute_socket_path,
+     SyncLocalStatusSocketHistoricalVersionOperation operation,
+     SyncReplicaHistoricalVersionQuery query,
++    SyncReplicaRetentionPlanQuery retention_plan_query,
+     SyncReplicaHistoricalVersionRestoreRequest restore_request,
+     std::string retention_operation_id,
+     bool use_legacy_default_inspection_request,
+@@ -2092,11 +2246,15 @@ namespace {
+         operation == SyncLocalStatusSocketHistoricalVersionOperation::Pin;
+     const bool unpinning =
+         operation == SyncLocalStatusSocketHistoricalVersionOperation::Unpin;
++    const bool planning =
++        operation ==
++        SyncLocalStatusSocketHistoricalVersionOperation::RetentionPlan;
+     const bool retention_update = pinning || unpinning;
+     if (restoring) {
+         validate_sync_replica_historical_version_restore_request_or_throw(
+             restore_request, label);
+         if (query != SyncReplicaHistoricalVersionQuery{} ||
++            retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
+             !retention_operation_id.empty() ||
+             use_legacy_default_inspection_request) {
+             throw std::invalid_argument(
+@@ -2104,6 +2262,7 @@ namespace {
+         }
+     } else if (retention_update) {
+         if (query != SyncReplicaHistoricalVersionQuery{} ||
++            retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
+             restore_request != SyncReplicaHistoricalVersionRestoreRequest{} ||
+             !is_lowercase_sha256_hex(retention_operation_id) ||
+             use_legacy_default_inspection_request) {
+@@ -2111,11 +2270,23 @@ namespace {
+                 std::string(label) +
+                 " retention update is not canonical");
+         }
++    } else if (planning) {
++        if (query != SyncReplicaHistoricalVersionQuery{} ||
++            restore_request != SyncReplicaHistoricalVersionRestoreRequest{} ||
++            !retention_operation_id.empty() ||
++            use_legacy_default_inspection_request) {
++            throw std::invalid_argument(
++                std::string(label) +
++                " retention-plan request is not canonical");
++        }
++        validate_sync_replica_retention_plan_query_or_throw(
++            retention_plan_query, label);
+     } else {
+-        if (restore_request != SyncReplicaHistoricalVersionRestoreRequest{}) {
++        if (retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
++            restore_request != SyncReplicaHistoricalVersionRestoreRequest{}) {
+             throw std::invalid_argument(
+                 std::string(label) +
+-                " inspection carried a restore request");
++                " inspection carried another request");
+         }
+         if (!retention_operation_id.empty()) {
+             throw std::invalid_argument(
+@@ -2157,6 +2328,28 @@ namespace {
+             request.append(restore_request.operation_id);
+             request.push_back('\n');
+         }
++    } else if (planning) {
++        const std::string cursor =
++            retention_plan_query.start_after_content_sha256.has_value()
++                ? *retention_plan_query.start_after_content_sha256
++                : "-";
++        const std::string source_cutpoint =
++            retention_plan_query.expected_source_cutpoint.has_value()
++                ? encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                      *retention_plan_query.expected_source_cutpoint,
++                      std::string(label) +
++                          " retention-plan request source cutpoint")
++                : "-";
++        request.reserve(
++            kRetentionPlanRequestPrefix.size() + 24U + 1U + cursor.size() +
++            1U + source_cutpoint.size() + 1U);
++        request.append(kRetentionPlanRequestPrefix);
++        request.append(std::to_string(retention_plan_query.maximum_entries));
++        request.push_back(' ');
++        request.append(cursor);
++        request.push_back(' ');
++        request.append(source_cutpoint);
++        request.push_back('\n');
+     } else if (use_legacy_default_inspection_request) {
+         request = std::string(kHistoricalVersionsRequest);
+     } else {
+@@ -2195,8 +2388,8 @@ namespace {
+     LocalSocketResponse response = request_local_socket_or_throw(
+         absolute_socket_path, request, timeout_milliseconds, label);
+     validate_historical_version_response_or_throw(
+-        response.json, response.peer, operation, query, restore_request,
+-        retention_operation_id, label);
++        response.json, response.peer, operation, query, retention_plan_query,
++        restore_request, retention_operation_id, label);
+     return std::move(response.json);
+ }
+ 
+@@ -2210,6 +2403,7 @@ std::string request_sync_local_status_historical_versions_or_throw(
+         absolute_socket_path,
+         SyncLocalStatusSocketHistoricalVersionOperation::Inspect,
+         SyncReplicaHistoricalVersionQuery{},
++        SyncReplicaRetentionPlanQuery{},
+         SyncReplicaHistoricalVersionRestoreRequest{}, {}, true,
+         timeout_milliseconds, label);
+ }
+@@ -2222,8 +2416,9 @@ std::string request_sync_local_status_historical_versions_query_or_throw(
+     return request_historical_version_operation_or_throw(
+         absolute_socket_path,
+         SyncLocalStatusSocketHistoricalVersionOperation::Inspect,
+-        std::move(query), SyncReplicaHistoricalVersionRestoreRequest{}, {},
+-        false, timeout_milliseconds, label);
++        std::move(query), SyncReplicaRetentionPlanQuery{},
++        SyncReplicaHistoricalVersionRestoreRequest{}, {}, false,
++        timeout_milliseconds, label);
+ }
+ 
+ std::string request_sync_local_status_historical_version_restore_or_throw(
+@@ -2235,6 +2430,7 @@ std::string request_sync_local_status_historical_version_restore_or_throw(
+         absolute_socket_path,
+         SyncLocalStatusSocketHistoricalVersionOperation::Restore,
+         SyncReplicaHistoricalVersionQuery{},
++        SyncReplicaRetentionPlanQuery{},
+         SyncReplicaHistoricalVersionRestoreRequest{
+             .operation_id = std::move(operation_id),
+             .expected_current_operation_id = std::nullopt,
+@@ -2253,6 +2449,7 @@ request_sync_local_status_historical_version_restore_exact_or_throw(
+         absolute_socket_path,
+         SyncLocalStatusSocketHistoricalVersionOperation::Restore,
+         SyncReplicaHistoricalVersionQuery{},
++        SyncReplicaRetentionPlanQuery{},
+         SyncReplicaHistoricalVersionRestoreRequest{
+             .operation_id = std::move(operation_id),
+             .expected_current_operation_id =
+@@ -2261,6 +2458,19 @@ request_sync_local_status_historical_version_restore_exact_or_throw(
+         {}, false, timeout_milliseconds, label);
+ }
+ 
++std::string request_sync_local_status_retention_plan_or_throw(
++    const fs::path& absolute_socket_path,
++    SyncReplicaRetentionPlanQuery query,
++    std::uint64_t timeout_milliseconds,
++    std::string_view label) {
++    return request_historical_version_operation_or_throw(
++        absolute_socket_path,
++        SyncLocalStatusSocketHistoricalVersionOperation::RetentionPlan,
++        SyncReplicaHistoricalVersionQuery{}, std::move(query),
++        SyncReplicaHistoricalVersionRestoreRequest{}, {}, false,
++        timeout_milliseconds, label);
++}
++
+ std::string request_sync_local_status_historical_version_pin_or_throw(
+     const fs::path& absolute_socket_path,
+     std::string operation_id,
+@@ -2270,6 +2480,7 @@ std::string request_sync_local_status_historical_version_pin_or_throw(
+         absolute_socket_path,
+         SyncLocalStatusSocketHistoricalVersionOperation::Pin,
+         SyncReplicaHistoricalVersionQuery{},
++        SyncReplicaRetentionPlanQuery{},
+         SyncReplicaHistoricalVersionRestoreRequest{},
+         std::move(operation_id), false, timeout_milliseconds, label);
+ }
+@@ -2283,6 +2494,7 @@ std::string request_sync_local_status_historical_version_unpin_or_throw(
+         absolute_socket_path,
+         SyncLocalStatusSocketHistoricalVersionOperation::Unpin,
+         SyncReplicaHistoricalVersionQuery{},
++        SyncReplicaRetentionPlanQuery{},
+         SyncReplicaHistoricalVersionRestoreRequest{},
+         std::move(operation_id), false, timeout_milliseconds, label);
+ }
+diff --git a/src/sync_local_status_socket.hpp b/src/sync_local_status_socket.hpp
+index 2e25db0..b544323 100644
+--- a/src/sync_local_status_socket.hpp
++++ b/src/sync_local_status_socket.hpp
+@@ -53,6 +53,7 @@ enum class SyncLocalStatusSocketHistoricalVersionOperation : std::uint8_t {
+     Restore = 2,
+     Pin = 3,
+     Unpin = 4,
++    RetentionPlan = 5,
+ };
+ 
+ struct SyncLocalStatusSocketHistoricalVersionRequest final {
+@@ -63,6 +64,10 @@ struct SyncLocalStatusSocketHistoricalVersionRequest final {
+     // cursor make the bounded result fully browsable without making status
+     // polling perform causal or filesystem work.
+     SyncReplicaHistoricalVersionQuery query;
++    // Used only for the deletion-free physical retention planner. It shares
++    // the history action lane but has its own exact digest cursor and query
++    // identity, so a pending history page cannot coalesce with a plan page.
++    SyncReplicaRetentionPlanQuery retention_plan_query;
+     // Empty for inspection. Restore retains one historical selection and,
+     // for the exact rev0969 frame, the sole visible operation reviewed with it.
+     SyncReplicaHistoricalVersionRestoreRequest restore_request;
+@@ -107,8 +112,9 @@ struct SyncLocalStatusSocketActionSnapshot final {
+ // "restore-exact OPERATION_ID EXPECTED_CURRENT_OPERATION_ID\n" binds the
+ // selected value to the sole current head reviewed by the operator. Quarantine
+ // operations share one lane and history operations—including "version-pin
+-// OPERATION_ID\n" and "version-unpin OPERATION_ID\n"—share another. This is
+-// not a generic command dispatcher.
++// OPERATION_ID\n", "version-unpin OPERATION_ID\n", and "retention-plan
++// LIMIT CURSOR_OR_DASH SOURCE_CUTPOINT_OR_DASH\n"—share another. This is not
++// a generic command dispatcher.
+ class SyncLocalStatusSocketServer final {
+ public:
+     SyncLocalStatusSocketServer(
+@@ -262,6 +268,18 @@ request_sync_local_status_historical_version_restore_exact_or_throw(
+ // Requests one durable local retention-root transition over exact immutable
+ // File evidence. Admission is not completion; peer-service status reports the
+ // typed SQLite-owner result and resulting canonical pin-set digest.
++// Requests one exact, deletion-free physical payload plan page. Admission is
++// not completion; peer-service status carries the bounded result and exact v4
++// source cutpoint. The operation has no quota, grace, quarantine, or unlink
++// authority.
++[[nodiscard]] std::string
++request_sync_local_status_retention_plan_or_throw(
++    const std::filesystem::path& absolute_socket_path,
++    SyncReplicaRetentionPlanQuery query = {},
++    std::uint64_t timeout_milliseconds =
++        kSyncLocalStatusSocketDefaultTimeoutMilliseconds,
++    std::string_view label = "sync local retention plan request");
++
+ [[nodiscard]] std::string
+ request_sync_local_status_historical_version_pin_or_throw(
+     const std::filesystem::path& absolute_socket_path,
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index aa78863..81a9bcd 100755
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -39,6 +39,55 @@ namespace {
+ 
+ namespace fs = std::filesystem;
+ 
++// One canonical physical-content key and root-mask vocabulary is shared by
++// historical reachability accounting and the deletion-free retention planner.
++// Keeping this definition here prevents two independently evolving judgments
++// about whether one exact (digest, size) object is current, historical, pinned,
++// or merely physically present.
++struct HistoricalPayloadReferenceKey final {
++    std::string_view content_sha256;
++    std::uint64_t size_bytes = 0U;
++};
++
++struct HistoricalPayloadReferenceKeyLess final {
++    [[nodiscard]] bool operator()(
++        const HistoricalPayloadReferenceKey& left,
++        const HistoricalPayloadReferenceKey& right) const noexcept {
++        if (left.content_sha256 != right.content_sha256) {
++            return left.content_sha256 < right.content_sha256;
++        }
++        return left.size_bytes < right.size_bytes;
++    }
++};
++
++constexpr std::uint8_t kHistoricalPayloadCurrentVisibleMask = 1U;
++constexpr std::uint8_t kHistoricalPayloadSupersededActiveMask = 2U;
++constexpr std::uint8_t kHistoricalPayloadInactiveEvidenceMask = 4U;
++constexpr std::uint8_t kHistoricalPayloadExplicitPinMask = 8U;
++
++[[nodiscard]] constexpr bool historical_payload_mask_has(
++    std::uint8_t mask,
++    std::uint8_t value) noexcept {
++    return (mask & value) != 0U;
++}
++
++[[nodiscard]] constexpr SyncReplicaRetentionPlanDisposition
++retention_plan_disposition_from_root_mask(std::uint8_t mask) noexcept {
++    if (historical_payload_mask_has(
++            mask, kHistoricalPayloadCurrentVisibleMask) ||
++        historical_payload_mask_has(
++            mask, kHistoricalPayloadExplicitPinMask)) {
++        return SyncReplicaRetentionPlanDisposition::CurrentOrExplicitPin;
++    }
++    if (historical_payload_mask_has(
++            mask, kHistoricalPayloadSupersededActiveMask) ||
++        historical_payload_mask_has(
++            mask, kHistoricalPayloadInactiveEvidenceMask)) {
++        return SyncReplicaRetentionPlanDisposition::RetainedHistoryOrEvidence;
++    }
++    return SyncReplicaRetentionPlanDisposition::UnreferencedByRetainedFileOperations;
++}
++
+ constexpr std::uint64_t kLegacySchemaVersion = 1U;
+ constexpr std::uint64_t kPreviousSchemaVersion = 2U;
+ constexpr std::uint64_t kFairScanSchemaVersion = 3U;
+@@ -4955,25 +5004,8 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+         ++value;
+     };
+ 
+-    struct PayloadReferenceKey final {
+-        std::string_view content_sha256;
+-        std::uint64_t size_bytes = 0U;
+-    };
+-    struct PayloadReferenceKeyLess final {
+-        [[nodiscard]] bool operator()(
+-            const PayloadReferenceKey& left,
+-            const PayloadReferenceKey& right) const noexcept {
+-            if (left.content_sha256 != right.content_sha256) {
+-                return left.content_sha256 < right.content_sha256;
+-            }
+-            return left.size_bytes < right.size_bytes;
+-        }
+-    };
+-    constexpr std::uint8_t kCurrentVisibleMask = 1U;
+-    constexpr std::uint8_t kSupersededActiveMask = 2U;
+-    constexpr std::uint8_t kInactiveEvidenceMask = 4U;
+-    constexpr std::uint8_t kExplicitPinMask = 8U;
+-    std::map<PayloadReferenceKey, std::uint8_t, PayloadReferenceKeyLess>
++    std::map<HistoricalPayloadReferenceKey, std::uint8_t,
++             HistoricalPayloadReferenceKeyLess>
+         payload_references;
+     const auto operation_is_pinned = [&](std::string_view operation_id) {
+         return std::binary_search(
+@@ -5016,7 +5048,7 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+                     file_operation_count,
+                 "retained-union file-operation");
+         }
+-        const PayloadReferenceKey key{
++        const HistoricalPayloadReferenceKey key{
+             .content_sha256 = operation.content_sha256,
+             .size_bytes = operation.size_bytes,
+         };
+@@ -5045,7 +5077,7 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+             observed_pinned_file_operations,
+             "observed pinned file-operation");
+         mark_payload_reference(
+-            operation, kExplicitPinMask,
++            operation, kHistoricalPayloadExplicitPinMask,
+             inventory.retained_payload_reachability->explicit_pins, false);
+     };
+ 
+@@ -5164,13 +5196,13 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+                 inventory.retained_payload_reachability.has_value()) {
+                 if (operation_is_visible) {
+                     mark_payload_reference(
+-                        *operation, kCurrentVisibleMask,
++                        *operation, kHistoricalPayloadCurrentVisibleMask,
+                         inventory.retained_payload_reachability->
+                             current_visible,
+                         true);
+                 } else {
+                     mark_payload_reference(
+-                        *operation, kSupersededActiveMask,
++                        *operation, kHistoricalPayloadSupersededActiveMask,
+                         inventory.retained_payload_reachability->
+                             superseded_active,
+                         true);
+@@ -5220,7 +5252,7 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+                     return;
+                 }
+                 mark_payload_reference(
+-                    operation, kInactiveEvidenceMask,
++                    operation, kHistoricalPayloadInactiveEvidenceMask,
+                     inventory.retained_payload_reachability->
+                         inactive_evidence,
+                     true);
+@@ -5253,7 +5285,7 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+                     state_->label +
+                     " historical-version payload inventory lost one digest");
+             }
+-            const auto found = payload_references.find(PayloadReferenceKey{
++            const auto found = payload_references.find(HistoricalPayloadReferenceKey{
+                 .content_sha256 = digest,
+                 .size_bytes = *payload_size,
+             });
+@@ -5267,22 +5299,22 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+                 continue;
+             }
+             const std::uint8_t mask = found->second;
+-            if ((mask & kCurrentVisibleMask) != 0U) {
++            if ((mask & kHistoricalPayloadCurrentVisibleMask) != 0U) {
+                 account_present(
+                     reachability.current_visible, *payload_size,
+                     "current-visible present content");
+             }
+-            if ((mask & kSupersededActiveMask) != 0U) {
++            if ((mask & kHistoricalPayloadSupersededActiveMask) != 0U) {
+                 account_present(
+                     reachability.superseded_active, *payload_size,
+                     "superseded-active present content");
+             }
+-            if ((mask & kInactiveEvidenceMask) != 0U) {
++            if ((mask & kHistoricalPayloadInactiveEvidenceMask) != 0U) {
+                 account_present(
+                     reachability.inactive_evidence, *payload_size,
+                     "inactive-evidence present content");
+             }
+-            if ((mask & kExplicitPinMask) != 0U) {
++            if ((mask & kHistoricalPayloadExplicitPinMask) != 0U) {
+                 account_present(
+                     reachability.explicit_pins, *payload_size,
+                     "explicit-pin present content");
+@@ -5295,22 +5327,22 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+ 
+         for (const auto& [reference, mask] : payload_references) {
+             (void)reference;
+-            if ((mask & kCurrentVisibleMask) != 0U) {
++            if ((mask & kHistoricalPayloadCurrentVisibleMask) != 0U) {
+                 increment_or_throw(
+                     reachability.current_visible.missing_content_count,
+                     "current-visible missing content");
+             }
+-            if ((mask & kSupersededActiveMask) != 0U) {
++            if ((mask & kHistoricalPayloadSupersededActiveMask) != 0U) {
+                 increment_or_throw(
+                     reachability.superseded_active.missing_content_count,
+                     "superseded-active missing content");
+             }
+-            if ((mask & kInactiveEvidenceMask) != 0U) {
++            if ((mask & kHistoricalPayloadInactiveEvidenceMask) != 0U) {
+                 increment_or_throw(
+                     reachability.inactive_evidence.missing_content_count,
+                     "inactive-evidence missing content");
+             }
+-            if ((mask & kExplicitPinMask) != 0U) {
++            if ((mask & kHistoricalPayloadExplicitPinMask) != 0U) {
+                 increment_or_throw(
+                     reachability.explicit_pins.missing_content_count,
+                     "explicit-pin missing content");
+@@ -5395,6 +5427,496 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+     return inventory;
+ }
+ 
++SyncReplicaRetentionPlan
++SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
++    SyncReplicaRetentionPlanQuery query) {
++    if (!state_) {
++        throw std::logic_error(
++            "sync replica folder scan owner is inactive");
++    }
++    validate_sync_replica_retention_plan_query_or_throw(
++        query, state_->label + " retention-plan inspection");
++
++    // The planner consumes exactly the same four owners as exact historical
++    // reachability. A stale bound page is rejected before the payload scan
++    // whenever possible; the complete payload observation is then bracketed by
++    // a second replica snapshot so no page combines roots from one cutpoint
++    // with physical objects from another.
++    const SyncReplicaSqliteSnapshot replica_snapshot =
++        state_->replica_owner->snapshot_or_throw();
++    if (query.expected_source_cutpoint.has_value() &&
++        query.expected_source_cutpoint->operation_set_digest !=
++            replica_snapshot.operation_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                OperationSetBeforePayloadObservation,
++            state_->label +
++                " retention-plan operation set changed before payload "
++                "observation; restart pagination");
++    }
++    if (query.expected_source_cutpoint.has_value() &&
++        *query.expected_source_cutpoint->evidence_set_digest !=
++            replica_snapshot.evidence_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                EvidenceSetBeforePayloadObservation,
++            state_->label +
++                " retention-plan retained evidence set changed before payload "
++                "observation; restart pagination");
++    }
++    if (query.expected_source_cutpoint.has_value() &&
++        *query.expected_source_cutpoint->historical_version_pin_set_digest !=
++            replica_snapshot.historical_version_pin_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                HistoricalVersionPinSetBeforePayloadObservation,
++            state_->label +
++                " retention-plan pin set changed before payload observation; "
++                "restart pagination");
++    }
++
++    const SyncReplicaModel model = SyncReplicaModel::restore_or_throw(
++        replica_snapshot.durable, replica_snapshot.limits.model);
++    SyncReplicaFilePayloadStoreSnapshot payload_snapshot =
++        state_->payload_store->snapshot_or_throw();
++    payload_snapshot.require_folder_or_throw(
++        state_->folder_id, state_->label + " retention-plan payload snapshot");
++    const SyncReplicaSqliteSnapshot replica_after_payload =
++        state_->replica_owner->snapshot_or_throw();
++    if (replica_snapshot.operation_set_digest !=
++        replica_after_payload.operation_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                OperationSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan operation set changed during payload "
++                "observation; restart pagination");
++    }
++    if (replica_snapshot.evidence_set_digest !=
++        replica_after_payload.evidence_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                EvidenceSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan retained evidence set changed during payload "
++                "observation; restart pagination");
++    }
++    if (replica_snapshot.historical_version_pin_set_digest !=
++        replica_after_payload.historical_version_pin_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                HistoricalVersionPinSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan pin set changed during payload observation; "
++                "restart pagination");
++    }
++    if (query.expected_source_cutpoint.has_value() &&
++        *query.expected_source_cutpoint->payload_snapshot_digest !=
++            payload_snapshot.snapshot_digest()) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot,
++            state_->label +
++                " retention-plan payload snapshot changed; restart pagination");
++    }
++
++    SyncReplicaRetentionPlan plan;
++    plan.query = query;
++    plan.source_replica_state_generation = replica_snapshot.state_generation;
++    plan.source_operation_set_digest = replica_snapshot.operation_set_digest;
++    plan.source_evidence_set_digest = replica_snapshot.evidence_set_digest;
++    plan.source_historical_version_pin_set_digest =
++        replica_snapshot.historical_version_pin_set_digest;
++    plan.historical_version_pin_count =
++        replica_snapshot.historical_version_pin_count;
++    plan.source_visible_state_digest = replica_snapshot.visible_state_digest;
++    plan.source_payload_snapshot_digest = payload_snapshot.snapshot_digest();
++    plan.payload_scan_hashed_entry_count =
++        payload_snapshot.scan_hashed_entry_count();
++    plan.payload_scan_hashed_bytes = payload_snapshot.scan_hashed_bytes();
++    plan.payload_scan_reused_entry_count =
++        payload_snapshot.scan_reused_entry_count();
++    plan.payload_scan_reused_bytes = payload_snapshot.scan_reused_bytes();
++    plan.retained_payload_reachability.payload_entry_count =
++        payload_snapshot.entry_count();
++    plan.retained_payload_reachability.payload_indexed_bytes =
++        payload_snapshot.indexed_bytes();
++    plan.entries.reserve(static_cast<std::size_t>(query.maximum_entries));
++
++    const auto increment_or_throw = [&](std::uint64_t& value,
++                                        std::string_view field) {
++        if (value == std::numeric_limits<std::uint64_t>::max()) {
++            throw std::overflow_error(
++                state_->label + " retention-plan " + std::string(field) +
++                " count overflows");
++        }
++        ++value;
++    };
++    const auto add_or_throw = [&](std::uint64_t& destination,
++                                  std::uint64_t amount,
++                                  std::string_view field) {
++        if (amount >
++            std::numeric_limits<std::uint64_t>::max() - destination) {
++            throw std::overflow_error(
++                state_->label + " retention-plan " + std::string(field) +
++                " overflows");
++        }
++        destination += amount;
++    };
++
++    std::map<HistoricalPayloadReferenceKey, std::uint8_t,
++             HistoricalPayloadReferenceKeyLess>
++        payload_references;
++    const auto operation_is_pinned = [&](std::string_view operation_id) {
++        return std::binary_search(
++            replica_snapshot.historical_version_pins.begin(),
++            replica_snapshot.historical_version_pins.end(), operation_id);
++    };
++    std::uint64_t observed_pinned_file_operations = 0U;
++    auto& reachability = plan.retained_payload_reachability;
++
++    const auto mark_payload_reference = [&]
++        (const SyncReplicaOperation& operation,
++         std::uint8_t class_mask,
++         SyncReplicaHistoricalVersionPayloadReachabilityClass& classification,
++         bool contributes_to_retained_union) {
++        increment_or_throw(
++            classification.file_operation_count,
++            "reachability file-operation");
++        if (contributes_to_retained_union) {
++            increment_or_throw(
++                reachability.retained_union.file_operation_count,
++                "retained-union file-operation");
++        }
++        const HistoricalPayloadReferenceKey key{
++            .content_sha256 = operation.content_sha256,
++            .size_bytes = operation.size_bytes,
++        };
++        const auto [position, inserted] =
++            payload_references.try_emplace(key, 0U);
++        if (!historical_payload_mask_has(position->second, class_mask)) {
++            increment_or_throw(
++                classification.distinct_content_count,
++                "reachability distinct-content");
++        }
++        if (contributes_to_retained_union && inserted) {
++            increment_or_throw(
++                reachability.retained_union.distinct_content_count,
++                "retained-union distinct-content");
++        }
++        position->second = static_cast<std::uint8_t>(
++            position->second | class_mask);
++    };
++
++    const auto mark_explicit_pin = [&](const SyncReplicaOperation& operation) {
++        if (!operation_is_pinned(operation.operation_id)) return;
++        increment_or_throw(
++            observed_pinned_file_operations,
++            "observed pinned file-operation");
++        mark_payload_reference(
++            operation, kHistoricalPayloadExplicitPinMask,
++            reachability.explicit_pins, false);
++    };
++
++    model.for_each_active_path(
++        [&](const SyncReplicaPathView& view,
++            std::span<const SyncReplicaOperation* const> operations) {
++            for (const SyncReplicaOperation* operation : operations) {
++                if (operation == nullptr) {
++                    throw std::logic_error(
++                        state_->label +
++                        " retention-plan path group contains a null operation");
++                }
++                if (operation->kind != SyncReplicaValueKind::File) continue;
++                const bool visible = std::binary_search(
++                    view.visible_operation_ids.begin(),
++                    view.visible_operation_ids.end(),
++                    operation->operation_id);
++                if (visible) {
++                    mark_payload_reference(
++                        *operation, kHistoricalPayloadCurrentVisibleMask,
++                        reachability.current_visible, true);
++                } else {
++                    mark_payload_reference(
++                        *operation, kHistoricalPayloadSupersededActiveMask,
++                        reachability.superseded_active, true);
++                }
++                mark_explicit_pin(*operation);
++            }
++        });
++    model.for_each_evidence_operation(
++        [&](const SyncReplicaOperation& operation,
++            SyncReplicaEvidenceState evidence_state) {
++            if (evidence_state == SyncReplicaEvidenceState::Active ||
++                operation.kind != SyncReplicaValueKind::File) {
++                return;
++            }
++            mark_payload_reference(
++                operation, kHistoricalPayloadInactiveEvidenceMask,
++                reachability.inactive_evidence, true);
++            mark_explicit_pin(operation);
++        });
++
++    const auto account_present = [&]
++        (SyncReplicaHistoricalVersionPayloadReachabilityClass& value,
++         std::uint64_t size_bytes,
++         std::string_view field) {
++        increment_or_throw(value.present_content_count, field);
++        add_or_throw(value.present_content_bytes, size_bytes, field);
++    };
++    const auto account_plan_class = [&]
++        (SyncReplicaRetentionPlanClass& value,
++         std::uint64_t size_bytes,
++         std::string_view field) {
++        increment_or_throw(value.payload_count, field);
++        add_or_throw(value.payload_bytes, size_bytes, field);
++    };
++
++    const SyncReplicaFileContentInventory content_inventory =
++        payload_snapshot.content_inventory();
++    const std::span<const std::string> payload_digests =
++        content_inventory.content_sha256s();
++    if (payload_digests.size() !=
++        static_cast<std::size_t>(reachability.payload_entry_count)) {
++        throw std::logic_error(
++            state_->label +
++            " retention-plan payload inventory cardinality drifted");
++    }
++
++    std::size_t first_page_index = 0U;
++    if (query.start_after_content_sha256.has_value()) {
++        const auto cursor = std::lower_bound(
++            payload_digests.begin(), payload_digests.end(),
++            *query.start_after_content_sha256);
++        if (cursor == payload_digests.end() ||
++            *cursor != *query.start_after_content_sha256) {
++            throw std::runtime_error(
++                state_->label +
++                " retention-plan cursor is not one current physical payload");
++        }
++        first_page_index = static_cast<std::size_t>(
++            std::distance(payload_digests.begin(), cursor)) + 1U;
++    }
++
++    for (std::size_t index = 0U; index < payload_digests.size(); ++index) {
++        const std::string& digest = payload_digests[index];
++        const std::optional<std::uint64_t> payload_size =
++            payload_snapshot.payload_size_or_none(digest);
++        if (!payload_size.has_value()) {
++            throw std::logic_error(
++                state_->label +
++                " retention-plan payload inventory lost one digest");
++        }
++
++        std::uint8_t root_mask = 0U;
++        const auto found = payload_references.find(
++            HistoricalPayloadReferenceKey{
++                .content_sha256 = digest,
++                .size_bytes = *payload_size,
++            });
++        if (found == payload_references.end()) {
++            increment_or_throw(
++                reachability.unreferenced_payload_count,
++                "unreferenced payload");
++            add_or_throw(
++                reachability.unreferenced_payload_bytes, *payload_size,
++                "unreferenced payload bytes");
++        } else {
++            root_mask = found->second;
++            if (historical_payload_mask_has(
++                    root_mask, kHistoricalPayloadCurrentVisibleMask)) {
++                account_present(
++                    reachability.current_visible, *payload_size,
++                    "current-visible present content");
++            }
++            if (historical_payload_mask_has(
++                    root_mask, kHistoricalPayloadSupersededActiveMask)) {
++                account_present(
++                    reachability.superseded_active, *payload_size,
++                    "superseded-active present content");
++            }
++            if (historical_payload_mask_has(
++                    root_mask, kHistoricalPayloadInactiveEvidenceMask)) {
++                account_present(
++                    reachability.inactive_evidence, *payload_size,
++                    "inactive-evidence present content");
++            }
++            if (historical_payload_mask_has(
++                    root_mask, kHistoricalPayloadExplicitPinMask)) {
++                account_present(
++                    reachability.explicit_pins, *payload_size,
++                    "explicit-pin present content");
++            }
++            account_present(
++                reachability.retained_union, *payload_size,
++                "retained-union present content");
++            payload_references.erase(found);
++        }
++
++        const SyncReplicaRetentionPlanDisposition disposition =
++            retention_plan_disposition_from_root_mask(root_mask);
++        switch (disposition) {
++            case SyncReplicaRetentionPlanDisposition::CurrentOrExplicitPin:
++                account_plan_class(
++                    plan.current_or_explicit_pin, *payload_size,
++                    "required-current-or-pin payload");
++                break;
++            case SyncReplicaRetentionPlanDisposition::RetainedHistoryOrEvidence:
++                account_plan_class(
++                    plan.retained_history_or_evidence, *payload_size,
++                    "recoverable-history-only payload");
++                break;
++            case SyncReplicaRetentionPlanDisposition::
++                    UnreferencedByRetainedFileOperations:
++                account_plan_class(
++                    plan.unreferenced_by_retained_file_operations, *payload_size,
++                    "unreferenced-physical payload");
++                break;
++        }
++
++        if (index < first_page_index) continue;
++        increment_or_throw(
++            plan.physical_payload_count_after_cursor,
++            "physical payload after cursor");
++        if (plan.entries.size() >=
++            static_cast<std::size_t>(query.maximum_entries)) {
++            continue;
++        }
++        plan.entries.push_back(SyncReplicaRetentionPlanEntry{
++            .content_sha256 = digest,
++            .size_bytes = *payload_size,
++            .current_visible = historical_payload_mask_has(
++                root_mask, kHistoricalPayloadCurrentVisibleMask),
++            .superseded_active = historical_payload_mask_has(
++                root_mask, kHistoricalPayloadSupersededActiveMask),
++            .inactive_evidence = historical_payload_mask_has(
++                root_mask, kHistoricalPayloadInactiveEvidenceMask),
++            .explicit_pin = historical_payload_mask_has(
++                root_mask, kHistoricalPayloadExplicitPinMask),
++            .disposition = disposition,
++        });
++    }
++
++    for (const auto& [reference, mask] : payload_references) {
++        (void)reference;
++        if (historical_payload_mask_has(
++                mask, kHistoricalPayloadCurrentVisibleMask)) {
++            increment_or_throw(
++                reachability.current_visible.missing_content_count,
++                "current-visible missing content");
++        }
++        if (historical_payload_mask_has(
++                mask, kHistoricalPayloadSupersededActiveMask)) {
++            increment_or_throw(
++                reachability.superseded_active.missing_content_count,
++                "superseded-active missing content");
++        }
++        if (historical_payload_mask_has(
++                mask, kHistoricalPayloadInactiveEvidenceMask)) {
++            increment_or_throw(
++                reachability.inactive_evidence.missing_content_count,
++                "inactive-evidence missing content");
++        }
++        if (historical_payload_mask_has(
++                mask, kHistoricalPayloadExplicitPinMask)) {
++            increment_or_throw(
++                reachability.explicit_pins.missing_content_count,
++                "explicit-pin missing content");
++        }
++        increment_or_throw(
++            reachability.retained_union.missing_content_count,
++            "retained-union missing content");
++    }
++
++    const auto validate_class = [&]
++        (const SyncReplicaHistoricalVersionPayloadReachabilityClass& value,
++         std::string_view label) {
++        if (value.present_content_count > value.distinct_content_count ||
++            value.missing_content_count !=
++                value.distinct_content_count - value.present_content_count) {
++            throw std::logic_error(
++                state_->label + " retention-plan " + std::string(label) +
++                " reachability partition is inconsistent");
++        }
++    };
++    validate_class(reachability.current_visible, "current-visible");
++    validate_class(reachability.superseded_active, "superseded-active");
++    validate_class(reachability.inactive_evidence, "inactive-evidence");
++    validate_class(reachability.explicit_pins, "explicit-pins");
++    validate_class(reachability.retained_union, "retained-union");
++
++    std::uint64_t physical_entry_partition =
++        reachability.retained_union.present_content_count;
++    add_or_throw(
++        physical_entry_partition, reachability.unreferenced_payload_count,
++        "physical payload entry partition");
++    std::uint64_t physical_byte_partition =
++        reachability.retained_union.present_content_bytes;
++    add_or_throw(
++        physical_byte_partition, reachability.unreferenced_payload_bytes,
++        "physical payload byte partition");
++    std::uint64_t operation_partition =
++        reachability.current_visible.file_operation_count;
++    add_or_throw(
++        operation_partition,
++        reachability.superseded_active.file_operation_count,
++        "retained file-operation partition");
++    add_or_throw(
++        operation_partition,
++        reachability.inactive_evidence.file_operation_count,
++        "retained file-operation partition");
++    std::uint64_t planned_payload_partition =
++        plan.current_or_explicit_pin.payload_count;
++    add_or_throw(
++        planned_payload_partition,
++        plan.retained_history_or_evidence.payload_count,
++        "planned payload partition");
++    add_or_throw(
++        planned_payload_partition,
++        plan.unreferenced_by_retained_file_operations.payload_count,
++        "planned payload partition");
++    std::uint64_t planned_byte_partition =
++        plan.current_or_explicit_pin.payload_bytes;
++    add_or_throw(
++        planned_byte_partition,
++        plan.retained_history_or_evidence.payload_bytes,
++        "planned byte partition");
++    add_or_throw(
++        planned_byte_partition,
++        plan.unreferenced_by_retained_file_operations.payload_bytes,
++        "planned byte partition");
++    if (physical_entry_partition != reachability.payload_entry_count ||
++        physical_byte_partition != reachability.payload_indexed_bytes ||
++        operation_partition != reachability.retained_union.file_operation_count ||
++        observed_pinned_file_operations !=
++            replica_snapshot.historical_version_pin_count ||
++        reachability.explicit_pins.file_operation_count !=
++            replica_snapshot.historical_version_pin_count ||
++        planned_payload_partition != reachability.payload_entry_count ||
++        planned_byte_partition != reachability.payload_indexed_bytes ||
++        plan.unreferenced_by_retained_file_operations.payload_count !=
++            reachability.unreferenced_payload_count ||
++        plan.unreferenced_by_retained_file_operations.payload_bytes !=
++            reachability.unreferenced_payload_bytes) {
++        throw std::logic_error(
++            state_->label + " retention-plan projection is inconsistent");
++    }
++
++    plan.entry_limit_frontier_reached =
++        plan.physical_payload_count_after_cursor >
++        static_cast<std::uint64_t>(plan.entries.size());
++    plan.truncated = plan.entry_limit_frontier_reached;
++    if (plan.truncated) {
++        if (plan.entries.empty()) {
++            throw std::logic_error(
++                state_->label +
++                " retention-plan truncated page retained no cursor");
++        }
++        plan.next_start_after_content_sha256 =
++            plan.entries.back().content_sha256;
++    }
++    return plan;
++}
++
+ SyncReplicaSqliteHistoricalVersionPinResult
+ SyncReplicaFolderScanOwner::pin_historical_version_or_throw(
+     std::string operation_id) {
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index 53bb98b..302a73d 100755
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -254,6 +254,100 @@ struct SyncReplicaHistoricalVersionInventory final {
+     }
+ };
+ 
++// Deletion-free physical payload classification at one exact causal/payload
++// cutpoint. CurrentOrExplicitPin identifies current materialization or explicit
++// owner policy. RetainedHistoryOrEvidence identifies only superseded-active or
++// inactive causal evidence. UnreferencedByRetainedFileOperations means exactly
++// that no retained File operation names the object at this cutpoint; it does
++// not grant quota, grace-period, quarantine, or unlink authority.
++enum class SyncReplicaRetentionPlanDisposition : std::uint8_t {
++    CurrentOrExplicitPin = 1U,
++    RetainedHistoryOrEvidence = 2U,
++    UnreferencedByRetainedFileOperations = 3U,
++};
++
++[[nodiscard]] constexpr std::string_view
++sync_replica_retention_plan_disposition_name(
++    SyncReplicaRetentionPlanDisposition disposition) noexcept {
++    switch (disposition) {
++        case SyncReplicaRetentionPlanDisposition::CurrentOrExplicitPin:
++            return "current_or_explicit_pin";
++        case SyncReplicaRetentionPlanDisposition::RetainedHistoryOrEvidence:
++            return "retained_history_or_evidence";
++        case SyncReplicaRetentionPlanDisposition::
++                UnreferencedByRetainedFileOperations:
++            return "unreferenced_by_retained_file_operations";
++    }
++    return "unknown";
++}
++
++struct SyncReplicaRetentionPlanClass final {
++    std::uint64_t payload_count = 0U;
++    std::uint64_t payload_bytes = 0U;
++
++    bool operator==(const SyncReplicaRetentionPlanClass&) const = default;
++};
++
++struct SyncReplicaRetentionPlanEntry final {
++    std::string content_sha256;
++    std::uint64_t size_bytes = 0U;
++    bool current_visible = false;
++    bool superseded_active = false;
++    bool inactive_evidence = false;
++    bool explicit_pin = false;
++    SyncReplicaRetentionPlanDisposition disposition =
++        SyncReplicaRetentionPlanDisposition::UnreferencedByRetainedFileOperations;
++
++    bool operator==(const SyncReplicaRetentionPlanEntry&) const = default;
++};
++
++// One bounded page over the complete physical payload namespace. The source
++// token is the existing exact v4 historical cutpoint, so pages cannot silently
++// mix operation, inactive-evidence, pin-policy, or payload snapshots. The
++// reachability aggregate includes missing referenced content, while entries
++// enumerate only physical objects in digest order. This object is explanatory
++// dry-run evidence and deliberately has no reclaimable-authority bit.
++struct SyncReplicaRetentionPlan final {
++    SyncReplicaRetentionPlanQuery query;
++    std::uint64_t source_replica_state_generation = 0U;
++    std::string source_operation_set_digest;
++    std::string source_evidence_set_digest;
++    std::string source_historical_version_pin_set_digest;
++    std::uint64_t historical_version_pin_count = 0U;
++    std::string source_visible_state_digest;
++    std::string source_payload_snapshot_digest;
++    std::uint64_t payload_scan_hashed_entry_count = 0U;
++    std::uint64_t payload_scan_hashed_bytes = 0U;
++    std::uint64_t payload_scan_reused_entry_count = 0U;
++    std::uint64_t payload_scan_reused_bytes = 0U;
++    SyncReplicaHistoricalVersionPayloadReachability retained_payload_reachability;
++    SyncReplicaRetentionPlanClass current_or_explicit_pin;
++    SyncReplicaRetentionPlanClass retained_history_or_evidence;
++    SyncReplicaRetentionPlanClass unreferenced_by_retained_file_operations;
++    std::uint64_t physical_payload_count_after_cursor = 0U;
++    bool entry_limit_frontier_reached = false;
++    std::optional<std::uint64_t> status_byte_limit;
++    bool status_byte_frontier_reached = false;
++    bool truncated = false;
++    std::optional<std::string> next_start_after_content_sha256;
++    std::vector<SyncReplicaRetentionPlanEntry> entries;
++
++    bool operator==(const SyncReplicaRetentionPlan&) const = default;
++
++    [[nodiscard]] SyncReplicaHistoricalVersionSourceCutpoint source_cutpoint()
++        const {
++        return {
++            .inspection_mode = SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability,
++            .operation_set_digest = source_operation_set_digest,
++            .evidence_set_digest = source_evidence_set_digest,
++            .historical_version_pin_set_digest =
++                source_historical_version_pin_set_digest,
++            .payload_snapshot_digest = source_payload_snapshot_digest,
++        };
++    }
++};
++
+ enum class SyncReplicaHistoricalVersionRestoreDisposition : std::uint8_t {
+     Published = 1U,
+     AdoptedVisibleOperation = 2U,
+@@ -692,6 +786,14 @@ public:
+     inspect_historical_versions_or_throw(
+         SyncReplicaHistoricalVersionQuery query);
+ 
++    // Exact, deletion-free physical payload planning. The page is ordered by
++    // digest and bound to the same operation/evidence/pin/payload cutpoint as
++    // exact historical inspection. It explains roots and missing references,
++    // but does not select a grace period, quota, quarantine, or unlink action.
++    [[nodiscard]] SyncReplicaRetentionPlan
++    plan_payload_retention_or_throw(
++        SyncReplicaRetentionPlanQuery query = {});
++
+     // Mutates only the replica owner's exact local retention-root set. No
+     // payload bytes, catalog rows, rooted paths, or causal evidence are changed.
+     [[nodiscard]] SyncReplicaSqliteHistoricalVersionPinResult
+diff --git a/src/sync_replica_historical_version_inventory_json.cpp b/src/sync_replica_historical_version_inventory_json.cpp
+index f7356ea..209a44b 100644
+--- a/src/sync_replica_historical_version_inventory_json.cpp
++++ b/src/sync_replica_historical_version_inventory_json.cpp
+@@ -75,40 +75,46 @@ void append_payload_reachability_class(
+         << '}';
+ }
+ 
+-void append_payload_reachability(
++void append_payload_reachability_value(
+     std::ostream& output,
+-    const std::optional<SyncReplicaHistoricalVersionPayloadReachability>&
+-        reachability) {
+-    if (!reachability.has_value()) {
+-        output << "null";
+-        return;
+-    }
++    const SyncReplicaHistoricalVersionPayloadReachability& reachability) {
+     output
+         << "{\"scope\":\"share_retained_file_operations\""
+         << ",\"reclaimable_authority\":false"
+         << ",\"class_totals_overlap\":true"
+         << ",\"payload_entry_count\":"
+-        << reachability->payload_entry_count
++        << reachability.payload_entry_count
+         << ",\"payload_indexed_bytes\":"
+-        << reachability->payload_indexed_bytes
++        << reachability.payload_indexed_bytes
+         << ",\"current_visible\":";
+-    append_payload_reachability_class(output, reachability->current_visible);
++    append_payload_reachability_class(output, reachability.current_visible);
+     output << ",\"superseded_active\":";
+-    append_payload_reachability_class(output, reachability->superseded_active);
++    append_payload_reachability_class(output, reachability.superseded_active);
+     output << ",\"inactive_evidence\":";
+-    append_payload_reachability_class(output, reachability->inactive_evidence);
++    append_payload_reachability_class(output, reachability.inactive_evidence);
+     output << ",\"explicit_pins\":";
+-    append_payload_reachability_class(output, reachability->explicit_pins);
++    append_payload_reachability_class(output, reachability.explicit_pins);
+     output << ",\"retained_union\":";
+-    append_payload_reachability_class(output, reachability->retained_union);
++    append_payload_reachability_class(output, reachability.retained_union);
+     output
+         << ",\"unreferenced_by_retained_file_operations_count\":"
+-        << reachability->unreferenced_payload_count
++        << reachability.unreferenced_payload_count
+         << ",\"unreferenced_by_retained_file_operations_bytes\":"
+-        << reachability->unreferenced_payload_bytes
++        << reachability.unreferenced_payload_bytes
+         << '}';
+ }
+ 
++void append_payload_reachability(
++    std::ostream& output,
++    const std::optional<SyncReplicaHistoricalVersionPayloadReachability>&
++        reachability) {
++    if (!reachability.has_value()) {
++        output << "null";
++        return;
++    }
++    append_payload_reachability_value(output, *reachability);
++}
++
+ void append_query(
+     std::ostream& output,
+     const SyncReplicaHistoricalVersionQuery& query) {
+@@ -143,6 +149,141 @@ void append_query(
+     output << '}';
+ }
+ 
++void append_retention_plan_query(
++    std::ostream& output,
++    const SyncReplicaRetentionPlanQuery& query) {
++    output << "{\"maximum_entries\":" << query.maximum_entries
++           << ",\"start_after_content_sha256\":";
++    if (query.start_after_content_sha256.has_value()) {
++        append_json_quoted(output, *query.start_after_content_sha256);
++    } else {
++        output << "null";
++    }
++    output << ",\"expected_source_cutpoint\":";
++    if (query.expected_source_cutpoint.has_value()) {
++        append_json_quoted(
++            output,
++            encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                *query.expected_source_cutpoint,
++                "retention-plan status query source cutpoint"));
++    } else {
++        output << "null";
++    }
++    output << '}';
++}
++
++void append_retention_plan_class(
++    std::ostream& output,
++    const SyncReplicaRetentionPlanClass& value) {
++    output << "{\"payload_count\":" << value.payload_count
++           << ",\"payload_bytes\":" << value.payload_bytes << '}';
++}
++
++struct RetentionPlanProjection final {
++    std::size_t entry_count = 0U;
++    bool truncated = false;
++    std::optional<std::string_view> next_start_after_content_sha256;
++    std::optional<std::uint64_t> status_byte_limit;
++    bool status_byte_frontier_reached = false;
++};
++
++void append_retention_plan(
++    std::ostream& output,
++    const SyncReplicaRetentionPlan& plan,
++    const RetentionPlanProjection& projection) {
++    if (projection.entry_count > plan.entries.size()) {
++        throw std::logic_error(
++            "retention-plan projection exceeds its entries");
++    }
++    output << "{\"query\":";
++    append_retention_plan_query(output, plan.query);
++    output
++        << ",\"scope\":\"complete_physical_payload_namespace\""
++        << ",\"reclaimable_authority\":false"
++        << ",\"quota_policy_applied\":false"
++        << ",\"grace_period_applied\":false"
++        << ",\"writer_fenced_collection\":false"
++        << ",\"source_replica_state_generation\":"
++        << plan.source_replica_state_generation
++        << ",\"source_operation_set_digest\":";
++    append_json_quoted(output, plan.source_operation_set_digest);
++    output << ",\"source_evidence_set_digest\":";
++    append_json_quoted(output, plan.source_evidence_set_digest);
++    output << ",\"source_historical_version_pin_set_digest\":";
++    append_json_quoted(
++        output, plan.source_historical_version_pin_set_digest);
++    output << ",\"historical_version_pin_count\":"
++           << plan.historical_version_pin_count
++           << ",\"source_visible_state_digest\":";
++    append_json_quoted(output, plan.source_visible_state_digest);
++    output << ",\"source_payload_snapshot_digest\":";
++    append_json_quoted(output, plan.source_payload_snapshot_digest);
++    output << ",\"source_cutpoint\":";
++    append_json_quoted(
++        output,
++        encode_sync_replica_historical_version_source_cutpoint_or_throw(
++            plan.source_cutpoint(), "retention-plan source cutpoint"));
++    output
++        << ",\"payload_scan_hashed_entries\":"
++        << plan.payload_scan_hashed_entry_count
++        << ",\"payload_scan_hashed_bytes\":"
++        << plan.payload_scan_hashed_bytes
++        << ",\"payload_scan_reused_entries\":"
++        << plan.payload_scan_reused_entry_count
++        << ",\"payload_scan_reused_bytes\":"
++        << plan.payload_scan_reused_bytes
++        << ",\"retained_payload_reachability\":";
++    append_payload_reachability_value(
++        output, plan.retained_payload_reachability);
++    output << ",\"disposition_totals\":{\"current_or_explicit_pin\":";
++    append_retention_plan_class(output, plan.current_or_explicit_pin);
++    output << ",\"retained_history_or_evidence\":";
++    append_retention_plan_class(output, plan.retained_history_or_evidence);
++    output << ",\"unreferenced_by_retained_file_operations\":";
++    append_retention_plan_class(output, plan.unreferenced_by_retained_file_operations);
++    output
++        << "}"
++        << ",\"physical_payload_count_after_cursor\":"
++        << plan.physical_payload_count_after_cursor
++        << ",\"truncated\":" << json_bool(projection.truncated)
++        << ",\"entry_limit_frontier_reached\":"
++        << json_bool(plan.entry_limit_frontier_reached)
++        << ",\"status_byte_limit\":";
++    append_optional_uint64(output, projection.status_byte_limit);
++    output << ",\"status_byte_frontier_reached\":"
++           << json_bool(projection.status_byte_frontier_reached)
++           << ",\"next_start_after_content_sha256\":";
++    if (projection.next_start_after_content_sha256.has_value()) {
++        append_json_quoted(
++            output, *projection.next_start_after_content_sha256);
++    } else {
++        output << "null";
++    }
++    output << ",\"entry_limit\":" << plan.query.maximum_entries
++           << ",\"entries\":[";
++    for (std::size_t index = 0U; index < projection.entry_count; ++index) {
++        if (index != 0U) output << ',';
++        const SyncReplicaRetentionPlanEntry& entry = plan.entries[index];
++        output << "{\"content_sha256\":";
++        append_json_quoted(output, entry.content_sha256);
++        output
++            << ",\"size_bytes\":" << entry.size_bytes
++            << ",\"current_visible\":" << json_bool(entry.current_visible)
++            << ",\"superseded_active\":"
++            << json_bool(entry.superseded_active)
++            << ",\"inactive_evidence\":"
++            << json_bool(entry.inactive_evidence)
++            << ",\"explicit_pin\":" << json_bool(entry.explicit_pin)
++            << ",\"disposition\":";
++        append_json_quoted(
++            output,
++            sync_replica_retention_plan_disposition_name(
++                entry.disposition));
++        output << '}';
++    }
++    output << "]}";
++}
++
+ struct InventoryProjection final {
+     std::size_t entry_count = 0U;
+     bool truncated = false;
+@@ -334,6 +475,35 @@ private:
+     return buffer.count();
+ }
+ 
++[[nodiscard]] RetentionPlanProjection projection_from_retention_plan(
++    const SyncReplicaRetentionPlan& plan) {
++    return {
++        .entry_count = plan.entries.size(),
++        .truncated = plan.truncated,
++        .next_start_after_content_sha256 =
++            plan.next_start_after_content_sha256.has_value()
++                ? std::optional<std::string_view>(
++                      *plan.next_start_after_content_sha256)
++                : std::nullopt,
++        .status_byte_limit = plan.status_byte_limit,
++        .status_byte_frontier_reached = plan.status_byte_frontier_reached,
++    };
++}
++
++[[nodiscard]] std::uint64_t retention_plan_size_or_throw(
++    const SyncReplicaRetentionPlan& plan,
++    const RetentionPlanProjection& projection) {
++    CountingStreamBuffer buffer;
++    std::ostream output(&buffer);
++    append_retention_plan(output, plan, projection);
++    output.flush();
++    if (!output.good()) {
++        throw std::runtime_error(
++            "retention-plan JSON byte counting failed");
++    }
++    return buffer.count();
++}
++
+ }  // namespace
+ 
+ void append_sync_replica_historical_version_query_json(
+@@ -366,6 +536,37 @@ std::string render_sync_replica_historical_version_inventory_json(
+     return output.str();
+ }
+ 
++void append_sync_replica_retention_plan_query_json(
++    std::ostream& output,
++    const SyncReplicaRetentionPlanQuery& query) {
++    append_retention_plan_query(output, query);
++}
++
++void append_sync_replica_retention_plan_json(
++    std::ostream& output,
++    const std::optional<SyncReplicaRetentionPlan>& plan) {
++    if (!plan.has_value()) {
++        output << "null";
++        return;
++    }
++    append_retention_plan(
++        output, *plan, projection_from_retention_plan(*plan));
++}
++
++std::string render_sync_replica_retention_plan_query_json(
++    const SyncReplicaRetentionPlanQuery& query) {
++    std::ostringstream output;
++    append_sync_replica_retention_plan_query_json(output, query);
++    return output.str();
++}
++
++std::string render_sync_replica_retention_plan_json(
++    const std::optional<SyncReplicaRetentionPlan>& plan) {
++    std::ostringstream output;
++    append_sync_replica_retention_plan_json(output, plan);
++    return output.str();
++}
++
+ void bound_sync_replica_historical_version_inventory_for_status_or_throw(
+     SyncReplicaHistoricalVersionInventory& inventory) {
+     inventory.status_byte_limit =
+@@ -432,6 +633,67 @@ void bound_sync_replica_historical_version_inventory_for_status_or_throw(
+     }
+ }
+ 
++void bound_sync_replica_retention_plan_for_status_or_throw(
++    SyncReplicaRetentionPlan& plan) {
++    plan.status_byte_limit = kSyncReplicaRetentionPlanMaximumStatusBytes;
++    plan.status_byte_frontier_reached = false;
++
++    RetentionPlanProjection full = projection_from_retention_plan(plan);
++    if (retention_plan_size_or_throw(plan, full) <=
++        kSyncReplicaRetentionPlanMaximumStatusBytes) {
++        return;
++    }
++    if (plan.entries.empty()) {
++        throw std::length_error(
++            "retention-plan status metadata exceeds its byte limit");
++    }
++
++    const auto projection_for_prefix =
++        [&](std::size_t entry_count) -> RetentionPlanProjection {
++        return {
++            .entry_count = entry_count,
++            .truncated = true,
++            .next_start_after_content_sha256 =
++                plan.entries[entry_count - 1U].content_sha256,
++            .status_byte_limit = kSyncReplicaRetentionPlanMaximumStatusBytes,
++            .status_byte_frontier_reached = true,
++        };
++    };
++
++    if (plan.entries.size() == 1U ||
++        retention_plan_size_or_throw(plan, projection_for_prefix(1U)) >
++            kSyncReplicaRetentionPlanMaximumStatusBytes) {
++        throw std::length_error(
++            "one retention-plan status entry exceeds its byte limit");
++    }
++
++    std::size_t accepted = 1U;
++    std::size_t rejected = plan.entries.size();
++    while (accepted + 1U < rejected) {
++        const std::size_t middle = accepted + (rejected - accepted) / 2U;
++        if (retention_plan_size_or_throw(
++                plan, projection_for_prefix(middle)) <=
++            kSyncReplicaRetentionPlanMaximumStatusBytes) {
++            accepted = middle;
++        } else {
++            rejected = middle;
++        }
++    }
++
++    plan.entries.resize(accepted);
++    plan.truncated = true;
++    plan.status_byte_frontier_reached = true;
++    plan.next_start_after_content_sha256 =
++        plan.entries.back().content_sha256;
++
++    if (retention_plan_size_or_throw(
++            plan, projection_from_retention_plan(plan)) >
++        kSyncReplicaRetentionPlanMaximumStatusBytes) {
++        throw std::logic_error(
++            "retention-plan status byte frontier did not converge");
++    }
++}
++
+ }  // namespace anonsync
+ 
+ #endif
+diff --git a/src/sync_replica_historical_version_inventory_json.hpp b/src/sync_replica_historical_version_inventory_json.hpp
+index 186d97c..0e11260 100644
+--- a/src/sync_replica_historical_version_inventory_json.hpp
++++ b/src/sync_replica_historical_version_inventory_json.hpp
+@@ -20,6 +20,13 @@ namespace anonsync {
+ inline constexpr std::uint64_t
+     kSyncReplicaHistoricalVersionMaximumStatusInventoryBytes =
+         256U * 1024U;
++// Retention-plan entries have fixed-width digest identities and a 1,024-entry
++// public page ceiling. Use a slightly tighter envelope than history so the
++// independent encoded-byte frontier is reachable by a valid maximum page,
++// remains covered by tests, and leaves extra room for the surrounding v19
++// service status. Exact digest pagination makes the omitted suffix reachable.
++inline constexpr std::uint64_t
++    kSyncReplicaRetentionPlanMaximumStatusBytes = 224U * 1024U;
+ 
+ // Canonical JSON projections used both by the peer-service status renderer and
+ // by the exact byte frontier below. Keeping the counting and emitted forms on
+@@ -36,6 +43,14 @@ void append_sync_replica_historical_version_inventory_json(
+     std::ostream& output,
+     const std::optional<SyncReplicaHistoricalVersionInventory>& inventory);
+ 
++void append_sync_replica_retention_plan_query_json(
++    std::ostream& output,
++    const SyncReplicaRetentionPlanQuery& query);
++
++void append_sync_replica_retention_plan_json(
++    std::ostream& output,
++    const std::optional<SyncReplicaRetentionPlan>& plan);
++
+ [[nodiscard]] std::string
+ render_sync_replica_historical_version_query_json(
+     const SyncReplicaHistoricalVersionQuery& query);
+@@ -44,6 +59,12 @@ render_sync_replica_historical_version_query_json(
+ render_sync_replica_historical_version_inventory_json(
+     const std::optional<SyncReplicaHistoricalVersionInventory>& inventory);
+ 
++[[nodiscard]] std::string render_sync_replica_retention_plan_query_json(
++    const SyncReplicaRetentionPlanQuery& query);
++
++[[nodiscard]] std::string render_sync_replica_retention_plan_json(
++    const std::optional<SyncReplicaRetentionPlan>& plan);
++
+ // Applies a deterministic prefix frontier to a completed owner inventory. The
+ // page always retains at least one entry when any entry existed, reports the
+ // byte stop separately from the owner's entry-count stop, and leaves all source
+@@ -52,6 +73,12 @@ render_sync_replica_historical_version_inventory_json(
+ void bound_sync_replica_historical_version_inventory_for_status_or_throw(
+     SyncReplicaHistoricalVersionInventory& inventory);
+ 
++// Applies the same deterministic encoded-byte frontier to one physical-payload
++// plan. The exact digest cursor and source cutpoint retain reachability of every
++// omitted physical object without turning presentation truncation into policy.
++void bound_sync_replica_retention_plan_for_status_or_throw(
++    SyncReplicaRetentionPlan& plan);
++
+ }  // namespace anonsync
+ 
+ #endif
+diff --git a/src/sync_replica_historical_version_query.hpp b/src/sync_replica_historical_version_query.hpp
+index e0e93e9..5c39d6a 100644
+--- a/src/sync_replica_historical_version_query.hpp
++++ b/src/sync_replica_historical_version_query.hpp
+@@ -392,6 +392,58 @@ struct SyncReplicaHistoricalVersionQuery final {
+     bool operator==(const SyncReplicaHistoricalVersionQuery&) const = default;
+ };
+ 
++// One deletion-free, exact physical-payload planning page. The planner is
++// intentionally separate from historical-operation pagination: its cursor is
++// one digest-named physical object, and every page requires the complete
++// replica/evidence/pin/payload cutpoint. It explains roots and unreferenced
++// objects but carries no quota, grace-window, or unlink authority.
++inline constexpr std::uint64_t
++    kSyncReplicaRetentionPlanDefaultMaximumEntries = 64U;
++inline constexpr std::uint64_t
++    kSyncReplicaRetentionPlanMaximumEntries = 1024U;
++
++struct SyncReplicaRetentionPlanQuery final {
++    std::uint64_t maximum_entries =
++        kSyncReplicaRetentionPlanDefaultMaximumEntries;
++    std::optional<std::string> start_after_content_sha256;
++    std::optional<SyncReplicaHistoricalVersionSourceCutpoint>
++        expected_source_cutpoint;
++
++    bool operator==(const SyncReplicaRetentionPlanQuery&) const = default;
++};
++
++inline void validate_sync_replica_retention_plan_query_or_throw(
++    const SyncReplicaRetentionPlanQuery& query,
++    std::string_view label = "sync replica retention plan query") {
++    if (query.maximum_entries == 0U ||
++        query.maximum_entries > kSyncReplicaRetentionPlanMaximumEntries) {
++        throw std::invalid_argument(
++            std::string(label) + " entry limit is invalid");
++    }
++    if (query.start_after_content_sha256.has_value() &&
++        !is_lowercase_sha256_hex(*query.start_after_content_sha256)) {
++        throw std::invalid_argument(
++            std::string(label) +
++            " cursor is not one lowercase SHA-256 payload digest");
++    }
++    if (query.expected_source_cutpoint.has_value()) {
++        validate_sync_replica_historical_version_source_cutpoint_or_throw(
++            *query.expected_source_cutpoint,
++            std::string(label) + " source cutpoint");
++        const auto& cutpoint = *query.expected_source_cutpoint;
++        if (cutpoint.inspection_mode !=
++                SyncReplicaHistoricalVersionInspectionMode::
++                    ExactPayloadAvailability ||
++            !cutpoint.evidence_set_digest.has_value() ||
++            !cutpoint.historical_version_pin_set_digest.has_value() ||
++            !cutpoint.payload_snapshot_digest.has_value()) {
++            throw std::invalid_argument(
++                std::string(label) +
++                " source cutpoint is not one current exact v4 cutpoint");
++        }
++    }
++}
++
+ // One restore selection and, for the shipping command, the exact sole visible
+ // operation the operator reviewed with it. The optional form exists only so the
+ // rev0966 local-socket frame can remain accepted; new product callers should
+diff --git a/src/sync_replica_peer_service.cpp b/src/sync_replica_peer_service.cpp
+index 93471a5..9843c8f 100644
+--- a/src/sync_replica_peer_service.cpp
++++ b/src/sync_replica_peer_service.cpp
+@@ -427,6 +427,8 @@ sync_replica_peer_service_historical_version_action_name(
+             return "pin";
+         case SyncReplicaPeerServiceHistoricalVersionAction::Unpin:
+             return "unpin";
++        case SyncReplicaPeerServiceHistoricalVersionAction::RetentionPlan:
++            return "retention_plan";
+     }
+     return "unknown";
+ }
+@@ -566,11 +568,14 @@ struct SyncReplicaPeerServiceOwner::State final {
+     std::optional<SyncReplicaPeerServiceHistoricalVersionAction>
+         historical_version_action;
+     SyncReplicaHistoricalVersionQuery historical_version_query;
++    SyncReplicaRetentionPlanQuery historical_version_retention_plan_query;
+     SyncReplicaHistoricalVersionRestoreRequest
+         historical_version_restore_request;
+     std::string historical_version_retention_operation_id;
+     std::optional<SyncReplicaHistoricalVersionInventory>
+         historical_version_last_inventory;
++    std::optional<SyncReplicaRetentionPlan>
++        historical_version_last_retention_plan;
+     std::optional<SyncReplicaHistoricalVersionRestoreResult>
+         historical_version_last_restore;
+     std::optional<SyncReplicaSqliteHistoricalVersionPinResult>
+@@ -1006,12 +1011,15 @@ struct SyncReplicaPeerServiceOwner::State final {
+         status.pending = historical_version_pending();
+         status.action = historical_version_action;
+         status.query = historical_version_query;
++        status.retention_plan_query =
++            historical_version_retention_plan_query;
+         status.restore_request = historical_version_restore_request;
+         status.retention_operation_id =
+             historical_version_retention_operation_id;
+         status.retry_delay_milliseconds = remaining_milliseconds(
+             Clock::now(), next_payload_store_lease_retry_at);
+         status.last_inventory = historical_version_last_inventory;
++        status.last_retention_plan = historical_version_last_retention_plan;
+         status.last_restore = historical_version_last_restore;
+         status.last_pin_update = historical_version_last_pin_update;
+         status.last_failure_class = historical_version_last_failure_class;
+@@ -1026,6 +1034,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+         SyncReplicaPeerServiceHistoricalVersionAction action,
+         SyncReplicaHistoricalVersionRestoreRequest restore_request,
+         SyncReplicaHistoricalVersionQuery query,
++        SyncReplicaRetentionPlanQuery retention_plan_query,
+         std::string retention_operation_id) {
+         const bool inspecting =
+             action == SyncReplicaPeerServiceHistoricalVersionAction::Inspect;
+@@ -1035,16 +1044,27 @@ struct SyncReplicaPeerServiceOwner::State final {
+             action == SyncReplicaPeerServiceHistoricalVersionAction::Pin;
+         const bool unpinning =
+             action == SyncReplicaPeerServiceHistoricalVersionAction::Unpin;
++        const bool planning =
++            action ==
++            SyncReplicaPeerServiceHistoricalVersionAction::RetentionPlan;
+         const bool retention_update = pinning || unpinning;
+-        if ((!inspecting && !restoring && !retention_update) ||
++        if ((!inspecting && !restoring && !retention_update && !planning) ||
+             generation == 0U ||
+-            (inspecting && restore_request !=
+-                SyncReplicaHistoricalVersionRestoreRequest{}) ||
+-            (inspecting && !retention_operation_id.empty()) ||
+-            (restoring && query != SyncReplicaHistoricalVersionQuery{}) ||
+-            (restoring && !retention_operation_id.empty()) ||
++            (inspecting &&
++             (restore_request != SyncReplicaHistoricalVersionRestoreRequest{} ||
++              retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
++              !retention_operation_id.empty())) ||
++            (planning &&
++             (query != SyncReplicaHistoricalVersionQuery{} ||
++              restore_request != SyncReplicaHistoricalVersionRestoreRequest{} ||
++              !retention_operation_id.empty())) ||
++            (restoring &&
++             (query != SyncReplicaHistoricalVersionQuery{} ||
++              retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
++              !retention_operation_id.empty())) ||
+             (retention_update &&
+              (query != SyncReplicaHistoricalVersionQuery{} ||
++              retention_plan_query != SyncReplicaRetentionPlanQuery{} ||
+               restore_request != SyncReplicaHistoricalVersionRestoreRequest{} ||
+               !is_lowercase_sha256_hex(retention_operation_id)))) {
+             throw std::invalid_argument(
+@@ -1053,6 +1073,9 @@ struct SyncReplicaPeerServiceOwner::State final {
+         if (inspecting) {
+             validate_sync_replica_historical_version_query_or_throw(
+                 query, label + " historical-version request");
++        } else if (planning) {
++            validate_sync_replica_retention_plan_query_or_throw(
++                retention_plan_query, label + " retention-plan request");
+         } else if (restoring) {
+             validate_sync_replica_historical_version_restore_request_or_throw(
+                 restore_request, label + " historical-version request");
+@@ -1068,6 +1091,8 @@ struct SyncReplicaPeerServiceOwner::State final {
+             if (!historical_version_action.has_value() ||
+                 *historical_version_action != action ||
+                 historical_version_query != query ||
++                historical_version_retention_plan_query !=
++                    retention_plan_query ||
+                 historical_version_restore_request != restore_request ||
+                 historical_version_retention_operation_id !=
+                     retention_operation_id) {
+@@ -1083,6 +1108,8 @@ struct SyncReplicaPeerServiceOwner::State final {
+             (!historical_version_action.has_value() ||
+              *historical_version_action != action ||
+              historical_version_query != query ||
++             historical_version_retention_plan_query !=
++                 retention_plan_query ||
+              historical_version_restore_request != restore_request ||
+              historical_version_retention_operation_id !=
+                  retention_operation_id)) {
+@@ -1099,6 +1126,8 @@ struct SyncReplicaPeerServiceOwner::State final {
+         historical_version_requested_generation = generation;
+         historical_version_action = action;
+         historical_version_query = std::move(query);
++        historical_version_retention_plan_query =
++            std::move(retention_plan_query);
+         historical_version_restore_request = std::move(restore_request);
+         historical_version_retention_operation_id =
+             std::move(retention_operation_id);
+@@ -1525,11 +1554,27 @@ struct SyncReplicaPeerServiceOwner::State final {
+                 bound_sync_replica_historical_version_inventory_for_status_or_throw(
+                     inventory);
+                 historical_version_last_inventory = inventory;
++                historical_version_last_retention_plan.reset();
+                 historical_version_last_restore.reset();
+                 historical_version_last_pin_update.reset();
+                 result.historical_version_inventory = std::move(inventory);
+                 increment_saturating(
+                     counters.historical_version_inspections);
++            } else if (
++                action == SyncReplicaPeerServiceHistoricalVersionAction::
++                    RetentionPlan) {
++                SyncReplicaRetentionPlan plan =
++                    folder_process.folder_owner_or_throw()
++                        .plan_payload_retention_or_throw(
++                            historical_version_retention_plan_query);
++                bound_sync_replica_retention_plan_for_status_or_throw(plan);
++                historical_version_last_inventory.reset();
++                historical_version_last_retention_plan = plan;
++                historical_version_last_restore.reset();
++                historical_version_last_pin_update.reset();
++                result.historical_version_retention_plan = std::move(plan);
++                increment_saturating(
++                    counters.historical_version_retention_plans);
+             } else if (
+                 action ==
+                 SyncReplicaPeerServiceHistoricalVersionAction::Restore) {
+@@ -1538,6 +1583,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+                         .restore_historical_version_or_throw(
+                             historical_version_restore_request);
+                 historical_version_last_inventory.reset();
++                historical_version_last_retention_plan.reset();
+                 historical_version_last_restore = restored;
+                 historical_version_last_pin_update.reset();
+                 result.historical_version_restore = std::move(restored);
+@@ -1552,6 +1598,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+                           .unpin_historical_version_or_throw(
+                               historical_version_retention_operation_id);
+                 historical_version_last_inventory.reset();
++                historical_version_last_retention_plan.reset();
+                 historical_version_last_restore.reset();
+                 historical_version_last_pin_update = updated;
+                 result.historical_version_pin_update = std::move(updated);
+@@ -1568,6 +1615,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+             throw;
+         } catch (const SyncReplicaHistoricalVersionSourceChangedError& error) {
+             historical_version_last_inventory.reset();
++            historical_version_last_retention_plan.reset();
+             historical_version_last_restore.reset();
+             historical_version_last_pin_update.reset();
+             historical_version_last_failure_class =
+@@ -1583,6 +1631,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+             increment_saturating(counters.historical_version_failures);
+         } catch (const std::runtime_error& error) {
+             historical_version_last_inventory.reset();
++            historical_version_last_retention_plan.reset();
+             historical_version_last_restore.reset();
+             historical_version_last_pin_update.reset();
+             historical_version_last_failure_class =
+@@ -2164,9 +2213,11 @@ observe_historical_version_request_or_throw(
+     SyncReplicaPeerServiceHistoricalVersionAction action,
+     SyncReplicaHistoricalVersionRestoreRequest restore_request,
+     SyncReplicaHistoricalVersionQuery query,
++    SyncReplicaRetentionPlanQuery retention_plan_query,
+     std::string retention_operation_id) {
+     state_->observe_historical_version_request_or_throw(
+         generation, action, std::move(restore_request), std::move(query),
++        std::move(retention_plan_query),
+         std::move(retention_operation_id));
+ }
+ 
+diff --git a/src/sync_replica_peer_service.hpp b/src/sync_replica_peer_service.hpp
+index ee70ff0..59888a1 100644
+--- a/src/sync_replica_peer_service.hpp
++++ b/src/sync_replica_peer_service.hpp
+@@ -263,6 +263,7 @@ enum class SyncReplicaPeerServiceHistoricalVersionAction : std::uint8_t {
+     Restore = 2U,
+     Pin = 3U,
+     Unpin = 4U,
++    RetentionPlan = 5U,
+ };
+ 
+ [[nodiscard]] std::string_view
+@@ -295,12 +296,14 @@ struct SyncReplicaPeerServiceHistoricalVersionStatus final {
+     // Meaningful only for inspection. It is retained while pending and after
+     // completion so an operator can bind the result/failure to the exact page.
+     SyncReplicaHistoricalVersionQuery query;
++    SyncReplicaRetentionPlanQuery retention_plan_query;
+     SyncReplicaHistoricalVersionRestoreRequest restore_request;
+     // Meaningful only for pin/unpin. A retention root names one exact
+     // immutable File operation; it never names a mutable path or payload file.
+     std::string retention_operation_id;
+     std::uint64_t retry_delay_milliseconds = 0U;
+     std::optional<SyncReplicaHistoricalVersionInventory> last_inventory;
++    std::optional<SyncReplicaRetentionPlan> last_retention_plan;
+     std::optional<SyncReplicaHistoricalVersionRestoreResult> last_restore;
+     std::optional<SyncReplicaSqliteHistoricalVersionPinResult>
+         last_pin_update;
+@@ -362,6 +365,7 @@ struct SyncReplicaPeerServiceStepResult final {
+     std::string historical_version_retention_operation_id;
+     std::optional<SyncReplicaHistoricalVersionInventory>
+         historical_version_inventory;
++    std::optional<SyncReplicaRetentionPlan> historical_version_retention_plan;
+     std::optional<SyncReplicaHistoricalVersionRestoreResult>
+         historical_version_restore;
+     std::optional<SyncReplicaSqliteHistoricalVersionPinResult>
+@@ -438,6 +442,7 @@ struct SyncReplicaPeerServiceCounters final {
+     std::uint64_t historical_version_attempts = 0U;
+     std::uint64_t historical_version_completions = 0U;
+     std::uint64_t historical_version_inspections = 0U;
++    std::uint64_t historical_version_retention_plans = 0U;
+     std::uint64_t historical_version_restores = 0U;
+     std::uint64_t historical_version_pins = 0U;
+     std::uint64_t historical_version_unpins = 0U;
+@@ -544,6 +549,7 @@ public:
+         SyncReplicaPeerServiceHistoricalVersionAction action,
+         SyncReplicaHistoricalVersionRestoreRequest restore_request = {},
+         SyncReplicaHistoricalVersionQuery query = {},
++        SyncReplicaRetentionPlanQuery retention_plan_query = {},
+         std::string retention_operation_id = {});
+ 
+     [[nodiscard]] SyncReplicaPeerServiceStepResult run_next_or_throw();
+diff --git a/src/sync_replica_peer_service_status.cpp b/src/sync_replica_peer_service_status.cpp
+index 386481f..f3c44ff 100644
+--- a/src/sync_replica_peer_service_status.cpp
++++ b/src/sync_replica_peer_service_status.cpp
+@@ -425,6 +425,12 @@ void append_historical_version_query(
+     append_sync_replica_historical_version_query_json(output, query);
+ }
+ 
++void append_retention_plan_query(
++    std::ostream& output,
++    const SyncReplicaRetentionPlanQuery& query) {
++    append_sync_replica_retention_plan_query_json(output, query);
++}
++
+ void append_historical_version_restore_request(
+     std::ostream& output,
+     const std::optional<SyncReplicaHistoricalVersionRestoreRequest>& request) {
+@@ -448,6 +454,12 @@ void append_historical_version_inventory(
+     append_sync_replica_historical_version_inventory_json(output, inventory);
+ }
+ 
++void append_retention_plan(
++    std::ostream& output,
++    const std::optional<SyncReplicaRetentionPlan>& plan) {
++    append_sync_replica_retention_plan_json(output, plan);
++}
++
+ void append_historical_version_restore(
+     std::ostream& output,
+     const std::optional<SyncReplicaHistoricalVersionRestoreResult>& restored) {
+@@ -520,6 +532,14 @@ void append_historical_version_status(
+     } else {
+         output << "null";
+     }
++    output << ",\"retention_plan_query\":";
++    if (status.action.has_value() &&
++        *status.action ==
++            SyncReplicaPeerServiceHistoricalVersionAction::RetentionPlan) {
++        append_retention_plan_query(output, status.retention_plan_query);
++    } else {
++        output << "null";
++    }
+     output << ",\"operation_id\":";
+     const std::string_view operation_id =
+         status.action.has_value() &&
+@@ -546,6 +566,8 @@ void append_historical_version_status(
+         << status.retry_delay_milliseconds
+         << ",\"last_inventory\":";
+     append_historical_version_inventory(output, status.last_inventory);
++    output << ",\"last_retention_plan\":";
++    append_retention_plan(output, status.last_retention_plan);
+     output << ",\"last_restore\":";
+     append_historical_version_restore(output, status.last_restore);
+     output << ",\"last_pin_update\":";
+@@ -748,6 +770,7 @@ void account_sync_replica_peer_service_step(
+     // into generic last_step status as well; generation/action/failure fields
+     // remain there as the event correlation surface.
+     summary.last_step->historical_version_inventory.reset();
++    summary.last_step->historical_version_retention_plan.reset();
+ }
+ 
+ std::string render_sync_replica_peer_service_status_json(
+@@ -958,6 +981,8 @@ std::string render_sync_replica_peer_service_status_json(
+         << counters.historical_version_completions
+         << ",\"historical_version_inspections\":"
+         << counters.historical_version_inspections
++        << ",\"historical_version_retention_plans\":"
++        << counters.historical_version_retention_plans
+         << ",\"historical_version_restores\":"
+         << counters.historical_version_restores
+         << ",\"historical_version_pins\":"
+@@ -1078,6 +1103,9 @@ std::string render_sync_replica_peer_service_status_json(
+         output << ",\"historical_version_inventory\":";
+         append_historical_version_inventory(
+             output, step.historical_version_inventory);
++        output << ",\"historical_version_retention_plan\":";
++        append_retention_plan(
++            output, step.historical_version_retention_plan);
+         output << ",\"historical_version_restore\":";
+         append_historical_version_restore(
+             output, step.historical_version_restore);
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index deff9a7..bdb7f28 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v18";
++    "anonsync.peer-service.status.v19";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index fe89906..879f8d8 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -347,6 +347,162 @@ void test_historical_inventory_status_byte_frontier() {
+             stable.size() < anonsync::
+                 kSyncLocalStatusSocketMaximumResponseBytes,
+         "stable historical status did not retain the single bounded result");
++
++    anonsync::SyncReplicaRetentionPlan plan;
++    plan.query.maximum_entries = 2U;
++    plan.source_replica_state_generation = 19U;
++    plan.source_operation_set_digest = std::string(64U, 'a');
++    plan.source_evidence_set_digest = std::string(64U, 'b');
++    plan.source_historical_version_pin_set_digest = std::string(64U, 'c');
++    plan.historical_version_pin_count = 1U;
++    plan.source_visible_state_digest = std::string(64U, 'd');
++    plan.source_payload_snapshot_digest = std::string(64U, 'e');
++    plan.retained_payload_reachability =
++        inventory.retained_payload_reachability.value();
++    plan.current_or_explicit_pin = {1U, 10U};
++    plan.unreferenced_by_retained_file_operations = {1U, 20U};
++    plan.physical_payload_count_after_cursor = 2U;
++    plan.entries = {
++        {
++            .content_sha256 = synthetic_operation_id(7001U),
++            .size_bytes = 10U,
++            .current_visible = true,
++            .inactive_evidence = true,
++            .disposition = anonsync::
++                SyncReplicaRetentionPlanDisposition::CurrentOrExplicitPin,
++        },
++        {
++            .content_sha256 = synthetic_operation_id(7002U),
++            .size_bytes = 20U,
++            .disposition = anonsync::SyncReplicaRetentionPlanDisposition::
++                UnreferencedByRetainedFileOperations,
++        },
++    };
++
++    anonsync::SyncReplicaPeerServiceStepResult plan_step;
++    plan_step.disposition = anonsync::SyncReplicaPeerServiceStepDisposition::
++        OperatorHistoricalVersionCompleted;
++    plan_step.historical_version_generation = 10U;
++    plan_step.historical_version_action = anonsync::
++        SyncReplicaPeerServiceHistoricalVersionAction::RetentionPlan;
++    plan_step.historical_version_retention_plan = plan;
++    anonsync::SyncReplicaPeerServiceLoopSummary plan_summary;
++    anonsync::account_sync_replica_peer_service_step(
++        plan_summary, plan_step);
++    require(
++        plan_summary.last_step.has_value() &&
++            plan_summary.last_step->historical_version_generation == 10U &&
++            !plan_summary.last_step->historical_version_retention_plan
++                 .has_value(),
++        "generic last_step retained a duplicate retention-plan page");
++
++    anonsync::SyncReplicaPeerServiceHistoricalVersionStatus plan_status;
++    plan_status.requested_generation = 10U;
++    plan_status.started_generation = 10U;
++    plan_status.completed_generation = 10U;
++    plan_status.action = anonsync::
++        SyncReplicaPeerServiceHistoricalVersionAction::RetentionPlan;
++    plan_status.retention_plan_query = plan.query;
++    plan_status.last_retention_plan = plan;
++    const std::string stable_plan = anonsync::
++        render_sync_replica_peer_service_historical_version_status_json(
++            plan_status);
++    require(
++        stable_plan.find("\"retention_plan_query\"") !=
++                std::string::npos &&
++            stable_plan.find("\"last_retention_plan\"") !=
++                std::string::npos &&
++            stable_plan.find(plan.entries.back().content_sha256) !=
++                std::string::npos &&
++            stable_plan.find("\"reclaimable_authority\":false") !=
++                std::string::npos,
++        "stable historical status did not retain the deletion-free plan");
++
++    anonsync::SyncReplicaRetentionPlan large_plan = plan;
++    large_plan.query.maximum_entries = anonsync::
++        kSyncReplicaRetentionPlanMaximumEntries;
++    large_plan.current_or_explicit_pin = {
++        anonsync::kSyncReplicaRetentionPlanMaximumEntries,
++        anonsync::kSyncReplicaRetentionPlanMaximumEntries * 4096U};
++    large_plan.retained_history_or_evidence = {};
++    large_plan.unreferenced_by_retained_file_operations = {};
++    large_plan.physical_payload_count_after_cursor = anonsync::
++        kSyncReplicaRetentionPlanMaximumEntries;
++    large_plan.entries.clear();
++    large_plan.entries.reserve(static_cast<std::size_t>(anonsync::
++        kSyncReplicaRetentionPlanMaximumEntries));
++    for (std::uint64_t index = 1U;
++         index <= anonsync::kSyncReplicaRetentionPlanMaximumEntries;
++         ++index) {
++        large_plan.entries.push_back({
++            .content_sha256 = synthetic_operation_id(10000U + index),
++            .size_bytes = 4096U,
++            .current_visible = true,
++            .superseded_active = true,
++            .inactive_evidence = true,
++            .explicit_pin = true,
++            .disposition = anonsync::
++                SyncReplicaRetentionPlanDisposition::CurrentOrExplicitPin,
++        });
++    }
++
++    const std::vector<anonsync::SyncReplicaRetentionPlanEntry>
++        original_plan_entries = large_plan.entries;
++    const std::string unbounded_plan = anonsync::
++        render_sync_replica_retention_plan_json(large_plan);
++    require(
++        unbounded_plan.size() > anonsync::
++            kSyncReplicaRetentionPlanMaximumStatusBytes,
++        "maximum retention-plan page did not exercise its status byte frontier");
++
++    anonsync::bound_sync_replica_retention_plan_for_status_or_throw(
++        large_plan);
++    require(
++        large_plan.status_byte_limit == std::optional<std::uint64_t>(
++            anonsync::kSyncReplicaRetentionPlanMaximumStatusBytes) &&
++            large_plan.status_byte_frontier_reached &&
++            !large_plan.entry_limit_frontier_reached &&
++            large_plan.truncated,
++        "retention-plan status boundary did not report its independent byte frontier");
++    require(
++        !large_plan.entries.empty() &&
++            large_plan.entries.size() < original_plan_entries.size() &&
++            large_plan.next_start_after_content_sha256 ==
++                std::optional<std::string>(
++                    large_plan.entries.back().content_sha256) &&
++            large_plan.entries ==
++                std::vector<anonsync::SyncReplicaRetentionPlanEntry>(
++                    original_plan_entries.begin(),
++                    original_plan_entries.begin() +
++                        static_cast<std::ptrdiff_t>(
++                            large_plan.entries.size())),
++        "retention-plan byte frontier changed digest order or lost its exact continuation cursor");
++
++    const std::string bounded_plan = anonsync::
++        render_sync_replica_retention_plan_json(large_plan);
++    require(
++        bounded_plan.size() <= anonsync::
++                kSyncReplicaRetentionPlanMaximumStatusBytes &&
++            bounded_plan.find("\"status_byte_frontier_reached\":true") !=
++                std::string::npos &&
++            bounded_plan.find("\"reclaimable_authority\":false") !=
++                std::string::npos &&
++            bounded_plan.find("\"writer_fenced_collection\":false") !=
++                std::string::npos,
++        "bounded retention-plan JSON exceeded or concealed its deletion-free status frontier");
++
++    plan_status.retention_plan_query = large_plan.query;
++    plan_status.last_retention_plan = large_plan;
++    const std::string bounded_plan_status = anonsync::
++        render_sync_replica_peer_service_historical_version_status_json(
++            plan_status);
++    require(
++        bounded_plan_status.size() < anonsync::
++                kSyncLocalStatusSocketMaximumResponseBytes &&
++            bounded_plan_status.find(
++                large_plan.entries.front().content_sha256) !=
++                std::string::npos,
++        "bounded retention plan did not leave independent local-status response headroom");
+ }
+ 
+ }  // namespace
+@@ -1336,6 +1492,95 @@ int main() {
+             !fs::exists(socket_path),
+             "metadata history socket destruction left a pathname");
+ 
++        {
++            anonsync::SyncLocalStatusSocketServer plan_server(
++                socket_path, initial, "retention plan status socket");
++            anonsync::SyncReplicaRetentionPlanQuery plan_query;
++            plan_query.maximum_entries = 2U;
++            plan_query.start_after_content_sha256 = historical_other;
++            plan_query.expected_source_cutpoint = historical_source;
++            const std::string accepted_plan = anonsync::
++                request_sync_local_status_retention_plan_or_throw(
++                    socket_path, plan_query);
++            require(
++                accepted_plan ==
++                    "{\"schema\":\"anonsync.local-retention-plan.response.v1\","
++                    "\"command\":\"retention-plan\","
++                    "\"terminal_class\":\"accepted\","
++                    "\"request_generation\":1,\"maximum_entries\":2,"
++                    "\"start_after_content_sha256\":\"" +
++                        historical_other +
++                        "\",\"expected_source_cutpoint\":\"" +
++                        historical_source_token +
++                        "\",\"server_pid\":" + process_id + "}",
++                "retention-plan request did not return exact acceptance");
++            const auto plan_action = plan_server.action_snapshot();
++            require(
++                plan_action.historical_version_request.has_value() &&
++                    plan_action.historical_version_request
++                            ->request_generation == 1U &&
++                    plan_action.historical_version_request->operation ==
++                        anonsync::
++                            SyncLocalStatusSocketHistoricalVersionOperation::
++                                RetentionPlan &&
++                    plan_action.historical_version_request
++                            ->retention_plan_query == plan_query &&
++                    plan_action.historical_version_request->query ==
++                        anonsync::SyncReplicaHistoricalVersionQuery{},
++                "retention-plan query was not retained as one action identity");
++
++            const std::string coalesced_plan = anonsync::
++                request_sync_local_status_retention_plan_or_throw(
++                    socket_path, plan_query);
++            require(
++                coalesced_plan.find("\"request_generation\":2") !=
++                        std::string::npos &&
++                    coalesced_plan.find(
++                        "\"terminal_class\":\"accepted\"") !=
++                        std::string::npos,
++                "same retention-plan query did not coalesce by generation");
++
++            anonsync::SyncReplicaRetentionPlanQuery different_plan =
++                plan_query;
++            different_plan.maximum_entries = 3U;
++            const std::string rejected_plan = anonsync::
++                request_sync_local_status_retention_plan_or_throw(
++                    socket_path, different_plan);
++            require(
++                rejected_plan.find(
++                    "\"reason\":\"different_historical_version_pending\"") !=
++                        std::string::npos &&
++                    rejected_plan.find("\"request_generation\":2") !=
++                        std::string::npos,
++                "different retention-plan query overwrote pending work");
++            plan_server.complete_historical_version_request_or_throw(2U);
++            require(
++                !plan_server.action_snapshot().historical_version_request
++                     .has_value(),
++                "retention-plan completion did not free the action lane");
++            require_throws(
++                [&] {
++                    anonsync::SyncReplicaRetentionPlanQuery malformed;
++                    malformed.maximum_entries = 0U;
++                    (void)anonsync::
++                        request_sync_local_status_retention_plan_or_throw(
++                            socket_path, malformed);
++                },
++                "retention-plan client accepted a zero entry limit");
++            require(
++                raw_local_request_or_throw(
++                    socket_path,
++                    "retention-plan 2 - v4:metadata:" +
++                        historical_operation + ":" +
++                        std::string(64U, '1') + "\n") ==
++                    "{\"schema\":\"anonsync.local-status.response.v1\","
++                    "\"ok\":false,\"error\":\"unsupported_request\"}\n",
++                "retention-plan accepted a metadata-only source cutpoint");
++        }
++        require(
++            !fs::exists(socket_path),
++            "retention plan socket destruction left a pathname");
++
+         {
+             anonsync::SyncLocalStatusSocketServer sealed(
+                 socket_path, initial, "owner-sealed status socket");
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index c03c5ef..e31133d 100755
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -5861,6 +5861,110 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                         "v4:exact:"),
+         "retained reachability did not emit an evidence-bound exact token");
+ 
++    // The dry-run planner must project the same exact roots over physical
++    // payloads rather than silently converting "unreferenced" into deletion
++    // authority. The missing pinned predecessor remains visible only in the
++    // reachability aggregate because no physical object exists to page.
++    const auto retention_plan = scan->plan_payload_retention_or_throw();
++    require(
++        retention_plan.source_cutpoint() == exact_cutpoint &&
++            retention_plan.historical_version_pin_count == 1U &&
++            retention_plan.retained_payload_reachability == reachability &&
++            retention_plan.current_or_explicit_pin.payload_count == 1U &&
++            retention_plan.current_or_explicit_pin.payload_bytes ==
++                current_bytes.size() &&
++            retention_plan.retained_history_or_evidence.payload_count == 0U &&
++            retention_plan.retained_history_or_evidence.payload_bytes == 0U &&
++            retention_plan.unreferenced_by_retained_file_operations.payload_count == 1U &&
++            retention_plan.unreferenced_by_retained_file_operations.payload_bytes ==
++                orphan_bytes.size() &&
++            retention_plan.physical_payload_count_after_cursor == 2U &&
++            !retention_plan.truncated &&
++            !retention_plan.next_start_after_content_sha256.has_value() &&
++            retention_plan.entries.size() == 2U,
++        "retention planner did not reuse the exact reachability cutpoint and physical partition");
++    require(
++        retention_plan.entries[0].content_sha256 <
++            retention_plan.entries[1].content_sha256,
++        "retention planner did not order physical payloads by digest");
++    const auto find_planned = [&](std::string_view digest)
++        -> const anonsync::SyncReplicaRetentionPlanEntry* {
++        const auto found = std::find_if(
++            retention_plan.entries.begin(), retention_plan.entries.end(),
++            [&](const anonsync::SyncReplicaRetentionPlanEntry& entry) {
++                return entry.content_sha256 == digest;
++            });
++        return found == retention_plan.entries.end() ? nullptr : &*found;
++    };
++    const auto* current_planned =
++        find_planned(anonsync::sha256_hex(current_bytes));
++    const auto* orphan_planned = find_planned(orphan.content_sha256);
++    require(
++        current_planned != nullptr && current_planned->current_visible &&
++            !current_planned->superseded_active &&
++            current_planned->inactive_evidence &&
++            !current_planned->explicit_pin &&
++            current_planned->disposition == anonsync::
++                SyncReplicaRetentionPlanDisposition::CurrentOrExplicitPin,
++        "retention planner lost overlapping current and inactive-evidence roots");
++    require(
++        orphan_planned != nullptr && !orphan_planned->current_visible &&
++            !orphan_planned->superseded_active &&
++            !orphan_planned->inactive_evidence &&
++            !orphan_planned->explicit_pin &&
++            orphan_planned->disposition == anonsync::
++                SyncReplicaRetentionPlanDisposition::
++                    UnreferencedByRetainedFileOperations,
++        "retention planner promoted an unreferenced physical object into a retained root");
++
++    anonsync::SyncReplicaRetentionPlanQuery first_plan_page;
++    first_plan_page.maximum_entries = 1U;
++    const auto first_page =
++        scan->plan_payload_retention_or_throw(first_plan_page);
++    require(
++        first_page.entries.size() == 1U && first_page.truncated &&
++            first_page.entry_limit_frontier_reached &&
++            first_page.next_start_after_content_sha256 ==
++                std::optional<std::string>(
++                    first_page.entries.front().content_sha256) &&
++            first_page.physical_payload_count_after_cursor == 2U,
++        "retention planner did not expose one exact bounded digest page");
++    anonsync::SyncReplicaRetentionPlanQuery second_plan_page;
++    second_plan_page.maximum_entries = 1U;
++    second_plan_page.start_after_content_sha256 =
++        first_page.next_start_after_content_sha256;
++    second_plan_page.expected_source_cutpoint = first_page.source_cutpoint();
++    const auto second_page =
++        scan->plan_payload_retention_or_throw(second_plan_page);
++    require(
++        second_page.source_cutpoint() == first_page.source_cutpoint() &&
++            second_page.entries.size() == 1U && !second_page.truncated &&
++            !second_page.next_start_after_content_sha256.has_value() &&
++            second_page.physical_payload_count_after_cursor == 1U &&
++            first_page.entries.front().content_sha256 <
++                second_page.entries.front().content_sha256,
++        "retention planner did not resume exactly after its physical digest cursor");
++
++    auto stale_plan_cutpoint = first_page.source_cutpoint();
++    stale_plan_cutpoint.operation_set_digest = std::string(64U, '0');
++    anonsync::SyncReplicaRetentionPlanQuery stale_plan_query;
++    stale_plan_query.expected_source_cutpoint = stale_plan_cutpoint;
++    bool caught_stale_plan = false;
++    try {
++        (void)scan->plan_payload_retention_or_throw(stale_plan_query);
++    } catch (const anonsync::SyncReplicaHistoricalVersionSourceChangedError&
++                 error) {
++        caught_stale_plan = true;
++        require(
++            error.stage() == anonsync::
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    OperationSetBeforePayloadObservation,
++            "stale retention-plan source token reported the wrong stage");
++    }
++    require(
++        caught_stale_plan,
++        "retention planner accepted a stale operation-set cutpoint");
++
+     auto pre_pin_exact_cutpoint = exact_cutpoint;
+     pre_pin_exact_cutpoint.historical_version_pin_set_digest.reset();
+     exact_query.expected_source_cutpoint = pre_pin_exact_cutpoint;
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 21cd8fe..c0fa8f5 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -149,6 +149,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0972.md"),
+     Path("HISTORICAL_VERSION_RETENTION_PIN_AUTHORITY_AUDIT_rev0973.md"),
+     Path("REVISION_NOTES_rev0973.md"),
++    Path("DELETION_FREE_EXACT_RETENTION_PLAN_AUDIT_rev0974.md"),
++    Path("REVISION_NOTES_rev0974.md"),
+ )
+ 
+ 
+@@ -471,6 +473,10 @@ def main() -> int:
+         "HISTORICAL_VERSION_RETENTION_PIN_AUTHORITY_AUDIT_rev0973.md"
+     ]
+     rev0973_notes = text["REVISION_NOTES_rev0973.md"]
++    retention_plan_design = text[
++        "DELETION_FREE_EXACT_RETENTION_PLAN_AUDIT_rev0974.md"
++    ]
++    rev0974_notes = text["REVISION_NOTES_rev0974.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -636,6 +642,17 @@ def main() -> int:
+         if rev0973_verifier_start >= 0 and rev0973_verifier_end >= 0
+         else ""
+     )
++    rev0974_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 974:"
++    )
++    rev0974_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0974_verifier_start
++    )
++    rev0974_verifier_block = (
++        verifier[rev0974_verifier_start:rev0974_verifier_end]
++        if rev0974_verifier_start >= 0 and rev0974_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -646,6 +663,10 @@ def main() -> int:
+         folder_scan,
+         "SyncReplicaFolderScanOwner::restore_historical_version_or_throw(",
+     )
++    retention_plan_owner = last_function_body(
++        folder_scan,
++        "SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(",
++    )
+     historical_version_service_step = function_body(
+         peer_service, "operator_historical_version_step_or_throw()"
+     )
+@@ -4526,7 +4547,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v18"' in peer_status_h
++        '"anonsync.peer-service.status.v19"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4940,12 +4961,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v18"' in peer_status_h
++        '"anonsync.peer-service.status.v19"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v18"'
++        and '"anonsync.peer-service.status.v19"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v18"'
++        and '"anonsync.peer-service.status.v19"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -6431,7 +6452,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v18"' in peer_status_h
++        '"anonsync.peer-service.status.v19"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6642,7 +6663,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"' in peer_status_h
++        and '"anonsync.peer-service.status.v19"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -6852,7 +6873,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v18"' in peer_status_h
++        '"anonsync.peer-service.status.v19"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -6868,8 +6889,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v18"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v18"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v19"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v19"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7562,7 +7583,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"' in peer_status_h
++        and '"anonsync.peer-service.status.v19"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7802,7 +7823,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v18"' in peer_status_h
++        '"anonsync.peer-service.status.v19"' in peer_status_h
+         and all(
+             token in peer_status + historical_inventory_json
+             for token in (
+@@ -7950,7 +7971,7 @@ def main() -> int:
+                 r'\"expected_source_cutpoint\"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"' in peer_status_h
++        and '"anonsync.peer-service.status.v19"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -8067,11 +8088,11 @@ def main() -> int:
+                 "historical_version_generation",
+                 "historical_version_failure_class",
+                 "historical_version_source_change_stage",
+-                '"schema": "anonsync.peer-service.status.v18"',
++                '"schema": "anonsync.peer-service.status.v19"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v19"' in service_i2p_ingress_runtime,
+         "rev0968_regressions_bind_token_codec_payload_drift_causal_drift_and_real_service_continuation",
+         "focused C++ tests and real process oracles cover canonical framing, both externally inducible drift classes, exact page-token reuse, stable retained failure evidence, transient matching-step coherence, current schemas, and route status compatibility",
+     )
+@@ -8233,7 +8254,7 @@ def main() -> int:
+                 "status.restore_request.operation_id",
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"' in peer_status_h,
++        and '"anonsync.peer-service.status.v19"' in peer_status_h,
+         "rev0969_full_restore_identity_controls_coalescing_execution_and_status",
+         "a different expected head cannot coalesce with pending work, and stable plus matching transient status retain the exact request and typed source-change stage",
+     )
+@@ -8266,12 +8287,12 @@ def main() -> int:
+                 "restore_current_operation",
+                 "stale exact-current historical restore",
+                 "stale exact-current restore terminated the service",
+-                '"schema": "anonsync.peer-service.status.v18"',
++                '"schema": "anonsync.peer-service.status.v19"',
+                 '"expected_current_operation_id"',
+                 '"historical_version_restore_request"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v19"' in service_i2p_ingress_runtime,
+         "rev0969_regressions_prove_no_payload_work_full_request_coalescing_and_same_pid_stale_failure",
+         "focused C++ and real-process oracles mechanically distinguish the early stale fence from lease access, cover strict framing, and prove the daemon survives a replayed stale operator intent",
+     )
+@@ -8495,7 +8516,7 @@ def main() -> int:
+                 "[--inspection-mode exact|metadata]",
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"' in peer_status_h,
++        and '"anonsync.peer-service.status.v19"' in peer_status_h,
+         "rev0970_cli_socket_and_status_share_one_mode_bearing_contract",
+         "the shipping default remains exact, new clients send one canonical five-field request, legacy three/four-field requests remain exact, and live plus terminal status advance together",
+     )
+@@ -8566,11 +8587,11 @@ def main() -> int:
+                 '"v4:metadata:"',
+                 "causal-metadata historical inspection fabricated",
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v18"',
++                '"schema": "anonsync.peer-service.status.v19"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"'
++        and '"anonsync.peer-service.status.v19"'
+         in service_i2p_ingress_runtime,
+         "rev0970_shipping_process_oracles_require_null_payload_evidence_and_schema_coherence",
+         "one real retained two-peer service executes the metadata CLI, publishes a v2 token and null payload facts, accounts the completed action, and keeps direct plus I2P status readers on v15",
+@@ -8690,7 +8711,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v18"' in peer_status_h
++        '"anonsync.peer-service.status.v19"' in peer_status_h
+         and "append_sync_replica_historical_version_inventory_json" in peer_status
+         and "summary.last_step->historical_version_inventory.reset();" in peer_status,
+         "rev0971_status_uses_the_canonical_encoder_and_retains_one_completed_inventory",
+@@ -8710,11 +8731,11 @@ def main() -> int:
+             token in service_configuration_runtime
+             for token in (
+                 "historical inventory omitted its status byte limit",
+-                "duplicated the stable history inventory",
+-                '"schema": "anonsync.peer-service.status.v18"',
++                "duplicated the stable history result",
++                '"schema": "anonsync.peer-service.status.v19"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v18"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v19"' in service_i2p_ingress_runtime,
+         "rev0971_regressions_prove_the_large_page_frontier_and_single_copy_shipping_status",
+         "the focused C++ oracle constructs the accepted 1,024-entry worst-shape page, while real configured-service and I2P readers require v16, coherent stop reasons, and no duplicate stable inventory in last_step",
+     )
+@@ -8838,9 +8859,9 @@ def main() -> int:
+         all(
+             token in historical_version_inspection
+             for token in (
+-                "kCurrentVisibleMask",
+-                "kSupersededActiveMask",
+-                "kInactiveEvidenceMask",
++                "kHistoricalPayloadCurrentVisibleMask",
++                "kHistoricalPayloadSupersededActiveMask",
++                "kHistoricalPayloadInactiveEvidenceMask",
+                 "for_each_active_path",
+                 "for_each_evidence_operation",
+                 "content_inventory()",
+@@ -8877,10 +8898,10 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v18"' in peer_status_h
++        '"anonsync.peer-service.status.v19"' in peer_status_h
+         and '"anonsync.local-historical-versions.response.v5"' in local_status
+-        and "anonsync.peer-service.status.v18" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v18" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v19" in service_configuration_runtime
++        and "anonsync.peer-service.status.v19" in service_i2p_ingress_runtime
+         and "anonsync.peer-service.status.v16" not in peer_status_h
+         and "anonsync.peer-service.status.v16" not in service_configuration_runtime
+         and "anonsync.peer-service.status.v16" not in service_i2p_ingress_runtime,
+@@ -9119,7 +9140,7 @@ def main() -> int:
+             token in historical_version_inspection
+             for token in (
+                 "mark_explicit_pin",
+-                "kExplicitPinMask",
++                "kHistoricalPayloadExplicitPinMask",
+                 "explicit-pin missing content",
+                 "validate_class(reachability.explicit_pins, \"explicit-pins\")",
+                 "observed_pinned_file_operations",
+@@ -9179,7 +9200,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v18"' in peer_status_h
++        '"anonsync.peer-service.status.v19"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9226,10 +9247,10 @@ def main() -> int:
+                 '"historical_version_pins": 1',
+                 '"historical_version_unpins": 1',
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v18"',
++                '"schema": "anonsync.peer-service.status.v19"',
+             )
+         )
+-        and "anonsync.peer-service.status.v18" in service_i2p_ingress_runtime,
++        and "anonsync.peer-service.status.v19" in service_i2p_ingress_runtime,
+         "rev0973_real_process_proves_pin_reinspect_unpin_reinspect_and_schema_coherence",
+         "one retained configured daemon accepts the exact owner commands, survives the corrected validator, exposes durable policy through metadata-only pages, removes it, continues operating, and keeps direct and I2P readers on v18",
+     )
+@@ -9289,6 +9310,300 @@ def main() -> int:
+         "the release verifier requires the SQLite owner, source tokens, history projection, local/peer actions, status, focused/process regressions, records, structural audit, and package policy from rev0973 onward",
+     )
+ 
++    require(
++        all(
++            token in historical_query_h
++            for token in (
++                "kSyncReplicaRetentionPlanDefaultMaximumEntries = 64U",
++                "kSyncReplicaRetentionPlanMaximumEntries = 1024U",
++                "struct SyncReplicaRetentionPlanQuery final",
++                "start_after_content_sha256",
++                "expected_source_cutpoint",
++                "source cutpoint is not one current exact v4 cutpoint",
++            )
++        )
++        and "SyncReplicaHistoricalVersionInspectionMode::ExactPayloadAvailability"
++        in historical_query_h,
++        "rev0974_plan_query_binds_digest_pages_to_one_current_exact_v4_cutpoint",
++        "the public planner accepts only bounded digest pages and refuses metadata or legacy cutpoints that omit evidence, pin, or payload identity",
++    )
++
++    require(
++        ordered(
++            retention_plan_owner,
++            "const SyncReplicaSqliteSnapshot replica_snapshot",
++            "OperationSetBeforePayloadObservation",
++            "EvidenceSetBeforePayloadObservation",
++            "HistoricalVersionPinSetBeforePayloadObservation",
++            "const SyncReplicaModel model",
++            "state_->payload_store->snapshot_or_throw()",
++            "const SyncReplicaSqliteSnapshot replica_after_payload",
++            "OperationSetDuringPayloadObservation",
++            "EvidenceSetDuringPayloadObservation",
++            "HistoricalVersionPinSetDuringPayloadObservation",
++            "SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot",
++            "SyncReplicaRetentionPlan plan;",
++        )
++        and "begin_mutation_batch_or_throw" not in retention_plan_owner
++        and "unlink" not in retention_plan_owner
++        and "rename" not in retention_plan_owner,
++        "rev0974_owner_brackets_one_complete_payload_observation_without_mutation_authority",
++        "known stale roots fail before payload work, a second SQLite snapshot brackets the complete physical observation, and the planner contains no mutation, rename, or unlink path",
++    )
++
++    require(
++        all(
++            token in folder_scan
++            for token in (
++                "struct HistoricalPayloadReferenceKey final",
++                "kHistoricalPayloadCurrentVisibleMask",
++                "kHistoricalPayloadSupersededActiveMask",
++                "kHistoricalPayloadInactiveEvidenceMask",
++                "kHistoricalPayloadExplicitPinMask",
++                "retention_plan_disposition_from_root_mask",
++            )
++        )
++        and folder_scan.count(
++            "std::map<HistoricalPayloadReferenceKey, std::uint8_t"
++        ) >= 2
++        and all(
++            token in folder_scan_h
++            for token in (
++                "CurrentOrExplicitPin",
++                "RetainedHistoryOrEvidence",
++                "UnreferencedByRetainedFileOperations",
++                "current_visible",
++                "superseded_active",
++                "inactive_evidence",
++                "explicit_pin",
++            )
++        ),
++        "rev0974_history_and_plan_share_one_physical_key_root_mask_and_disposition_vocabulary",
++        "historical reachability and per-object planning cannot independently redefine current, historical, inactive, pinned, or unreferenced payload identity",
++    )
++
++    require(
++        all(
++            token in retention_plan_owner
++            for token in (
++                "content_inventory.content_sha256s()",
++                "std::lower_bound(",
++                "cursor is not one current physical payload",
++                "physical_payload_count_after_cursor",
++                "current_or_explicit_pin",
++                "retained_history_or_evidence",
++                "unreferenced_by_retained_file_operations",
++                "physical payload entry partition",
++                "physical payload byte partition",
++                "retained file-operation partition",
++                "planned payload partition",
++                "planned byte partition",
++                "retention-plan projection is inconsistent",
++                "next_start_after_content_sha256",
++            )
++        ),
++        "rev0974_digest_order_cursor_and_complete_partition_equations_precede_page_publication",
++        "the cursor must name an exact physical object, every physical byte belongs to one disposition, missing references remain in reachability, and all equations are checked before the page returns",
++    )
++
++    require(
++        all(
++            token in historical_inventory_json_h + historical_inventory_json
++            for token in (
++                "kSyncReplicaRetentionPlanMaximumStatusBytes = 224U * 1024U",
++                "append_sync_replica_retention_plan_json",
++                "render_sync_replica_retention_plan_json",
++                "bound_sync_replica_retention_plan_for_status_or_throw",
++                r'\"reclaimable_authority\":false',
++                r'\"quota_policy_applied\":false',
++                r'\"grace_period_applied\":false',
++                r'\"writer_fenced_collection\":false',
++                "next_start_after_content_sha256",
++                "retention-plan status byte frontier did not converge",
++            )
++        )
++        and "append_payload_reachability_value" in historical_inventory_json,
++        "rev0974_canonical_plan_stream_has_a_real_byte_frontier_and_explicit_nonauthority",
++        "one counted/emitted serializer carries exact reachability, disposition reasons, deterministic digest continuation, and four deletion-policy nonclaims inside a reachable 224 KiB frontier",
++    )
++
++    require(
++        all(
++            token in local_status_h + local_status
++            for token in (
++                "RetentionPlan",
++                "retention-plan ",
++                "anonsync.local-retention-plan.response.v1",
++                "SyncReplicaRetentionPlanQuery retention_plan_query",
++                "different_historical_version_pending",
++                "request_sync_local_status_retention_plan_or_throw",
++            )
++        )
++        and "historical_version_pending->retention_plan_query !=" in local_status
++        and "retention_plan_query ||" in local_status
++        and all(
++            token in local_status_runtime
++            for token in (
++                "retention-plan request did not return exact acceptance",
++                "same retention-plan query did not coalesce by generation",
++                "different retention-plan query overwrote pending work",
++                "retention-plan accepted a metadata-only source cutpoint",
++            )
++        ),
++        "rev0974_owner_socket_linearizes_the_complete_plan_query_in_the_existing_history_lane",
++        "strict framing, PID-bound response validation, equality-based coalescing, conflicting-work rejection, and the drain seal remain one local action authority",
++    )
++
++    require(
++        '"anonsync.peer-service.status.v19"' in peer_status_h
++        and all(
++            token in peer_service
++            for token in (
++                "SyncReplicaPeerServiceHistoricalVersionAction::RetentionPlan",
++                "plan_payload_retention_or_throw(",
++                "bound_sync_replica_retention_plan_for_status_or_throw(plan)",
++                "historical_version_last_retention_plan = plan",
++                "counters.historical_version_retention_plans",
++            )
++        )
++        and peer_service.find(
++            "bound_sync_replica_retention_plan_for_status_or_throw(plan)"
++        ) < peer_service.find("historical_version_last_retention_plan = plan")
++        and all(
++            token in peer_status
++            for token in (
++                "retention_plan_query",
++                "last_retention_plan",
++                "historical_version_retention_plans",
++                "historical_version_retention_plan.reset();",
++            )
++        ),
++        "rev0974_service_status_retains_one_bounded_plan_and_strips_the_generic_duplicate",
++        "the peer owner performs and bounds work, v19 keeps one stable completed result, and generic last-step accounting cannot double the largest page",
++    )
++
++    require(
++        all(
++            token in sync_cli
++            for token in (
++                "command_retention_plan",
++                'command == "retention-plan"',
++                "anonsync_sync retention-plan --source-cutpoint",
++                "deletion-free diagnostic",
++                "applies no quota, grace period",
++                "quarantine, or unlink authority",
++            )
++        ),
++        "rev0974_shipping_cli_exposes_exact_reasons_without_claiming_collection",
++        "the ordinary product binary accepts bounded exact pages and describes the missing policy, transient roots, quarantine, and unlink stages rather than hiding them",
++    )
++
++    require(
++        all(
++            token in folder_scan_runtime
++            for token in (
++                "retention planner did not reuse the exact reachability cutpoint and physical partition",
++                "retention planner lost overlapping current and inactive-evidence roots",
++                "retention planner promoted an unreferenced physical object into a retained root",
++                "retention planner did not resume exactly after its physical digest cursor",
++                "retention planner accepted a stale operation-set cutpoint",
++            )
++        )
++        and all(
++            token in local_status_runtime
++            for token in (
++                "maximum retention-plan page did not exercise its status byte frontier",
++                "retention-plan byte frontier changed digest order or lost its exact continuation cursor",
++                "bounded retention-plan JSON exceeded or concealed its deletion-free status frontier",
++                "generic last_step retained a duplicate retention-plan page",
++            )
++        ),
++        "rev0974_focused_regressions_cover_roots_missing_history_pagination_staleness_and_transport_bounds",
++        "owner tests compose exact current, inactive, missing pinned, and orphan facts while status tests exercise the maximum public page and one-copy presentation path",
++    )
++
++    require(
++        all(
++            token in service_configuration_runtime
++            for token in (
++                "owner-only deletion-free retention plan",
++                "anonsync.local-retention-plan.response.v1",
++                "retention plan did not bind the exact pinned source",
++                "retention plan did not explain the exact pinned payload",
++                '"historical_version_retention_plans": 1',
++                '"schema": "anonsync.peer-service.status.v19"',
++            )
++        )
++        and "anonsync.peer-service.status.v19" in service_i2p_ingress_runtime
++        and all(
++            token in service_configuration_runtime
++            for token in (
++                "reclaimable_authority",
++                "quota_policy_applied",
++                "grace_period_applied",
++                "writer_fenced_collection",
++                "explicit_pin",
++                "current_or_explicit_pin",
++            )
++        ),
++        "rev0974_real_daemon_proves_pinned_physical_reason_status_v19_and_collection_nonclaims",
++        "the same retained two-peer service pins a predecessor, obtains its exact physical reason, remains alive, and keeps direct plus I2P readers on the one v19 contract",
++    )
++
++    require(
++        all(
++            token in normalized_prose(retention_plan_design)
++            for token in (
++                "One exact source cutpoint",
++                "Canonical physical order and page reachability",
++                "Root vocabulary and dispositions",
++                "Why unreferenced is not reclaimable",
++                "External design precedent",
++                "Next safe collection protocol",
++                "245,443 bytes",
++                "writer_fenced_collection",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0974_notes)
++            for token in (
++                "exact, deletion-free physical payload-retention planner",
++                "largest accepted 1,024-entry page encoded to 245,443 bytes",
++                "does not add garbage collection",
++            )
++        )
++        and "## Rev0974: exact deletion-free physical retention planning"
++        in readme,
++        "rev0974_records_the_authority_boundary_dead_frontier_correction_and_future_collector_protocol",
++        "the audit, notes, and README explain the exact observation, shared roots, corrected presentation limit, external precedent, and every authority still required before deletion",
++    )
++
++    require(
++        rev0974_verifier_block.count(
++            "if revision_number is not None and revision_number >= 974:"
++        ) == 1
++        and all(
++            token in rev0974_verifier_block
++            for token in (
++                "DELETION_FREE_EXACT_RETENTION_PLAN_AUDIT_rev0974.md",
++                "REVISION_NOTES_rev0974.md",
++                "src/anonsync_sync.cpp",
++                "src/sync_local_status_socket.cpp",
++                "src/sync_replica_historical_version_query.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_replica_historical_version_inventory_json.cpp",
++                "src/sync_replica_peer_service.cpp",
++                "src/sync_replica_peer_service_status.cpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/test_anonsync_service_i2p_ingress.py",
++            )
++        ),
++        "rev0974_package_policy_binds_every_planner_authority_operator_test_and_record_surface",
++        "release verification requires the source token, owner projection, canonical renderer, local and peer action lanes, real process oracle, design record, revision notes, structural audit, and package policy",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -9387,6 +9702,17 @@ def main() -> int:
+         "retention-pin authority and operator-surface changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final rev0973 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0974" not in rev0974_notes
++        and "VALIDATION_PENDING_REV0974" not in retention_plan_design
++        and "VALIDATION_PENDING_REV0974" not in readme
++        and "ARCHIVE_PENDING_REV0974" not in bootstrap
++        and "CODENAME_PENDING_REV0974" not in bootstrap
++        and "VALIDATION_PENDING_REV0974" not in bootstrap,
++        "rev0974_final_validation_and_visible_release_cutpoint_are_sealed",
++        "the exact retention planner cannot pass the structural audit until final validation and the visible bootstrap bind the sealed rev0974 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index b35d538..dced8aa 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -708,6 +708,142 @@ def require_historical_version_pin_update(update: Any, label: str) -> None:
+         fail(f"{label} historical pin update omitted durable result fields")
+ 
+ 
++def require_retention_plan_query(query: Any, label: str) -> None:
++    if not isinstance(query, dict) or set(query) != {
++        "maximum_entries", "start_after_content_sha256",
++        "expected_source_cutpoint",
++    }:
++        fail(f"{label} retention-plan query was not canonical")
++    if not isinstance(query["maximum_entries"], int) or not (
++        1 <= query["maximum_entries"] <= 1024
++    ):
++        fail(f"{label} retention-plan query omitted its bounded limit")
++    cursor = query["start_after_content_sha256"]
++    if cursor is not None and not is_canonical_sha256(cursor):
++        fail(f"{label} retention-plan query cursor was not canonical")
++    cutpoint = query["expected_source_cutpoint"]
++    if cutpoint is not None and not (
++        isinstance(cutpoint, str) and cutpoint.startswith("v4:exact:")
++    ):
++        fail(f"{label} retention-plan query accepted a non-exact cutpoint")
++
++
++def require_retention_plan(plan: Any, label: str) -> None:
++    if not isinstance(plan, dict):
++        fail(f"{label} retention plan was not an object")
++    require_retention_plan_query(plan.get("query"), label)
++    if plan.get("scope") != "complete_physical_payload_namespace":
++        fail(f"{label} retention plan omitted its physical namespace scope")
++    for forbidden_authority in (
++        "reclaimable_authority", "quota_policy_applied",
++        "grace_period_applied", "writer_fenced_collection",
++    ):
++        if plan.get(forbidden_authority) is not False:
++            fail(
++                f"{label} retention plan invented {forbidden_authority}"
++            )
++    for digest_field in (
++        "source_operation_set_digest", "source_evidence_set_digest",
++        "source_historical_version_pin_set_digest",
++        "source_visible_state_digest", "source_payload_snapshot_digest",
++    ):
++        if not is_canonical_sha256(plan.get(digest_field)):
++            fail(f"{label} retention plan omitted {digest_field}")
++    source_cutpoint = plan.get("source_cutpoint")
++    if not isinstance(source_cutpoint, str) or not source_cutpoint.startswith(
++        "v4:exact:"
++    ):
++        fail(f"{label} retention plan omitted its exact v4 cutpoint")
++    for integer_field in (
++        "source_replica_state_generation", "historical_version_pin_count",
++        "payload_scan_hashed_entries", "payload_scan_hashed_bytes",
++        "payload_scan_reused_entries", "payload_scan_reused_bytes",
++        "physical_payload_count_after_cursor", "entry_limit",
++    ):
++        field = plan.get(integer_field)
++        if not isinstance(field, int) or field < 0:
++            fail(f"{label} retention plan omitted bounded {integer_field}")
++    entries = plan.get("entries")
++    if not isinstance(entries, list):
++        fail(f"{label} retention plan omitted entries")
++    digests: list[str] = []
++    class_counts = {
++        "current_or_explicit_pin": [0, 0],
++        "retained_history_or_evidence": [0, 0],
++        "unreferenced_by_retained_file_operations": [0, 0],
++    }
++    for index, entry in enumerate(entries):
++        if not isinstance(entry, dict) or set(entry) != {
++            "content_sha256", "size_bytes", "current_visible",
++            "superseded_active", "inactive_evidence", "explicit_pin",
++            "disposition",
++        }:
++            fail(f"{label} retention entry {index} was not canonical")
++        digest = entry["content_sha256"]
++        if not is_canonical_sha256(digest):
++            fail(f"{label} retention entry {index} omitted its digest")
++        digests.append(digest)
++        size = entry["size_bytes"]
++        if not isinstance(size, int) or size < 0:
++            fail(f"{label} retention entry {index} omitted bounded bytes")
++        for root_field in (
++            "current_visible", "superseded_active", "inactive_evidence",
++            "explicit_pin",
++        ):
++            if not isinstance(entry[root_field], bool):
++                fail(f"{label} retention entry omitted {root_field}")
++        disposition = entry["disposition"]
++        if disposition not in class_counts:
++            fail(f"{label} retention entry omitted its disposition")
++        if disposition == "current_or_explicit_pin" and not (
++            entry["current_visible"] or entry["explicit_pin"]
++        ):
++            fail(f"{label} required payload had neither current nor pin root")
++        if disposition == "retained_history_or_evidence" and not (
++            entry["superseded_active"] or entry["inactive_evidence"]
++        ):
++            fail(f"{label} history payload had no historical evidence root")
++        if disposition == "unreferenced_by_retained_file_operations" and any(
++            entry[root_field]
++            for root_field in (
++                "current_visible", "superseded_active", "inactive_evidence",
++                "explicit_pin",
++            )
++        ):
++            fail(f"{label} unreferenced payload retained a replica root")
++        class_counts[disposition][0] += 1
++        class_counts[disposition][1] += size
++    if digests != sorted(digests) or len(set(digests)) != len(digests):
++        fail(f"{label} retention plan was not exact digest order")
++    totals = plan.get("disposition_totals")
++    if not isinstance(totals, dict) or set(totals) != set(class_counts):
++        fail(f"{label} retention plan omitted disposition totals")
++    # Totals cover the complete physical namespace, so a paginated page may be
++    # only a prefix. It can never exceed the complete aggregate.
++    for disposition, page in class_counts.items():
++        total = totals.get(disposition)
++        if not isinstance(total, dict) or set(total) != {
++            "payload_count", "payload_bytes",
++        }:
++            fail(f"{label} retention class {disposition} was not canonical")
++        if total["payload_count"] < page[0] or total["payload_bytes"] < page[1]:
++            fail(f"{label} retention class total was below its page prefix")
++    after_cursor = plan["physical_payload_count_after_cursor"]
++    if after_cursor < len(entries):
++        fail(f"{label} retention cursor count was below returned entries")
++    entry_frontier = after_cursor > plan["entry_limit"]
++    byte_frontier = len(entries) < min(after_cursor, plan["entry_limit"])
++    if plan.get("entry_limit_frontier_reached") != entry_frontier or plan.get(
++        "status_byte_frontier_reached"
++    ) != byte_frontier:
++        fail(f"{label} retention plan frontiers disagreed with the page")
++    if plan.get("truncated") != (entry_frontier or byte_frontier):
++        fail(f"{label} retention plan truncation was incoherent")
++    expected_next = entries[-1]["content_sha256"] if plan["truncated"] else None
++    if plan.get("next_start_after_content_sha256") != expected_next:
++        fail(f"{label} retention plan next cursor did not bind its tail")
++
++
+ def require_historical_version_status(
+     value: dict[str, Any], label: str
+ ) -> None:
+@@ -734,6 +870,7 @@ def require_historical_version_status(
+         fail(f"{label} historical-version pending state was incoherent")
+     action = history.get("action")
+     query = history.get("query")
++    retention_plan_query = history.get("retention_plan_query")
+     operation_id = history.get("operation_id")
+     expected_current_operation_id = history.get(
+         "expected_current_operation_id"
+@@ -742,19 +879,34 @@ def require_historical_version_status(
+         if (
+             action is not None
+             or query is not None
++            or retention_plan_query is not None
+             or operation_id is not None
+             or expected_current_operation_id is not None
+         ):
+             fail(f"{label} invented historical-version request state")
+     elif action == "inspect":
+         if (
++            retention_plan_query is not None
++            or
+             operation_id is not None
+             or expected_current_operation_id is not None
+         ):
+             fail(f"{label} inspection invented restore identity")
+         require_historical_version_query(query, label)
++    elif action == "retention_plan":
++        if (
++            query is not None
++            or operation_id is not None
++            or expected_current_operation_id is not None
++        ):
++            fail(f"{label} retention plan invented another action identity")
++        require_retention_plan_query(retention_plan_query, label)
+     elif action == "restore":
+-        if query is not None or not is_canonical_sha256(operation_id):
++        if (
++            query is not None
++            or retention_plan_query is not None
++            or not is_canonical_sha256(operation_id)
++        ):
+             fail(f"{label} restore omitted its exact operation ID")
+         if expected_current_operation_id is not None and (
+             not is_canonical_sha256(expected_current_operation_id)
+@@ -764,6 +916,7 @@ def require_historical_version_status(
+     elif action in {"pin", "unpin"}:
+         if (
+             query is not None
++            or retention_plan_query is not None
+             or not is_canonical_sha256(operation_id)
+             or expected_current_operation_id is not None
+         ):
+@@ -775,6 +928,13 @@ def require_historical_version_status(
+         require_historical_version_inventory(inventory, label)
+         if action == "inspect" and inventory.get("query") != query:
+             fail(f"{label} historical status changed the completed query")
++    retention_plan = history.get("last_retention_plan")
++    if retention_plan is not None:
++        require_retention_plan(retention_plan, label)
++        if action == "retention_plan" and retention_plan.get("query") != (
++            retention_plan_query
++        ):
++            fail(f"{label} retention status changed the completed query")
+     restored = history.get("last_restore")
+     if restored is not None:
+         require_historical_version_restore(restored, label)
+@@ -878,6 +1038,7 @@ def require_payload_operator_status(
+         "historical_version_attempts",
+         "historical_version_completions",
+         "historical_version_inspections",
++        "historical_version_retention_plans",
+         "historical_version_restores",
+         "historical_version_pins",
+         "historical_version_unpins",
+@@ -1340,9 +1501,13 @@ def wait_for_historical_version_completion(
+                 history.get("last_inventory")
+                 if expected_action == "inspect"
+                 else (
+-                    history.get("last_restore")
+-                    if expected_action == "restore"
+-                    else history.get("last_pin_update")
++                    history.get("last_retention_plan")
++                    if expected_action == "retention_plan"
++                    else (
++                        history.get("last_restore")
++                        if expected_action == "restore"
++                        else history.get("last_pin_update")
++                    )
+                 )
+             )
+             if (
+@@ -1357,11 +1522,22 @@ def wait_for_historical_version_completion(
+                     isinstance(last_step, dict)
+                     and last_step.get("historical_version_generation")
+                     == generation
+-                    and expected_action == "inspect"
+-                    and last_step.get("historical_version_inventory") is not None
++                    and (
++                        (
++                            expected_action == "inspect"
++                            and last_step.get("historical_version_inventory")
++                            is not None
++                        )
++                        or (
++                            expected_action == "retention_plan"
++                            and last_step.get(
++                                "historical_version_retention_plan"
++                            ) is not None
++                        )
++                    )
+                 ):
+                     fail(
+-                        f"{label} duplicated the stable history inventory "
++                        f"{label} duplicated the stable history result "
+                         "inside generic last_step status"
+                     )
+                 return value
+@@ -1587,7 +1763,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v18",
++                    "schema": "anonsync.peer-service.status.v19",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -3061,6 +3237,9 @@ def main() -> int:
+             # reporting, and a subsequent metadata-only inventory whose exact
+             # source cutpoint and entry projection both include the pin set.
+             pin_operation_id = metadata_inventory["entries"][0]["operation_id"]
++            pin_content_sha256 = metadata_inventory["entries"][0][
++                "content_sha256"
++            ]
+             pin_generation = metadata_generation + 1
+             pin_response = run_json(
+                 [
+@@ -3103,7 +3282,84 @@ def main() -> int:
+                     f"result: {json.dumps(pin_status['historical_versions'], sort_keys=True)}"
+                 )
+ 
+-            pinned_inspection_generation = pin_generation + 1
++            # Compose the complete exact reachability proof with the durable
++            # pin set, but stop strictly before any collection authority. The
++            # diagnostic planner must classify every physical payload in digest
++            # order and explain why the selected predecessor is required.
++            retention_plan_generation = pin_generation + 1
++            retention_plan_response = run_json(
++                [
++                    str(sync), "retention-plan", "--socket",
++                    str(source_status), "--limit", "1024",
++                    "--timeout-milliseconds", "1000",
++                ],
++                label="owner-only deletion-free retention plan",
++            )
++            expected_retention_plan_response = {
++                "schema": "anonsync.local-retention-plan.response.v1",
++                "command": "retention-plan",
++                "terminal_class": "accepted",
++                "request_generation": retention_plan_generation,
++                "maximum_entries": 1024,
++                "start_after_content_sha256": None,
++                "expected_source_cutpoint": None,
++                "server_pid": source.pid,
++            }
++            if retention_plan_response != expected_retention_plan_response:
++                fail(
++                    "retention-plan acceptance was not exact: "
++                    f"{json.dumps(retention_plan_response, sort_keys=True)}"
++                )
++            retention_plan_status = wait_for_historical_version_completion(
++                sync, source, source_status, retention_plan_generation,
++                "retention_plan", "deletion-free retention plan",
++            )
++            retention_plan = retention_plan_status["historical_versions"][
++                "last_retention_plan"
++            ]
++            require_retention_plan(
++                retention_plan, "deletion-free retention plan"
++            )
++            if (
++                retention_plan["query"]
++                != {
++                    "maximum_entries": 1024,
++                    "start_after_content_sha256": None,
++                    "expected_source_cutpoint": None,
++                }
++                or retention_plan["historical_version_pin_count"] != 1
++                or retention_plan[
++                    "source_historical_version_pin_set_digest"
++                ] != pin_update["pin_set_digest"]
++                or retention_plan["truncated"] is not False
++            ):
++                fail(
++                    "retention plan did not bind the exact pinned source: "
++                    f"{json.dumps(retention_plan, sort_keys=True)}"
++                )
++            pinned_payload_entries = [
++                entry for entry in retention_plan["entries"]
++                if entry["content_sha256"] == pin_content_sha256
++            ]
++            if len(pinned_payload_entries) != 1 or (
++                pinned_payload_entries[0]["explicit_pin"] is not True
++            ) or pinned_payload_entries[0]["disposition"] != (
++                "current_or_explicit_pin"
++            ):
++                fail(
++                    "retention plan did not explain the exact pinned payload: "
++                    f"{json.dumps(pinned_payload_entries, sort_keys=True)}"
++                )
++            if retention_plan_status["historical_versions"].get(
++                "last_inventory"
++            ) is not None or retention_plan_status["historical_versions"].get(
++                "last_restore"
++            ) is not None or retention_plan_status["historical_versions"].get(
++                "last_pin_update"
++            ) is not None:
++                fail("retention plan retained a result from another action")
++
++            pinned_inspection_generation = retention_plan_generation + 1
+             pinned_response = run_json(
+                 [
+                     str(sync), "versions", "--socket", str(source_status),
+@@ -3231,10 +3487,11 @@ def main() -> int:
+             if not isinstance(history_counters, dict):
+                 fail("historical-version restore status omitted counters")
+             expected_history_counters = {
+-                "historical_version_requests_observed": 11,
+-                "historical_version_attempts": 11,
+-                "historical_version_completions": 11,
++                "historical_version_requests_observed": 12,
++                "historical_version_attempts": 12,
++                "historical_version_completions": 12,
+                 "historical_version_inspections": 6,
++                "historical_version_retention_plans": 1,
+                 "historical_version_restores": 1,
+                 "historical_version_pins": 1,
+                 "historical_version_unpins": 1,
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index 395fd24..acc87f0 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v18"
++                    value.get("schema") == "anonsync.peer-service.status.v19"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index afb3213..3f24ce6 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1522,6 +1522,30 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 974:
++        revision_scoped_required.update({
++            "DELETION_FREE_EXACT_RETENTION_PLAN_AUDIT_rev0974.md",
++            "REVISION_NOTES_rev0974.md",
++            "README.md",
++            "src/anonsync_sync.cpp",
++            "src/sync_local_status_socket.hpp",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_historical_version_query.hpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_historical_version_inventory_json.hpp",
++            "src/sync_replica_historical_version_inventory_json.cpp",
++            "src/sync_replica_peer_service.hpp",
++            "src/sync_replica_peer_service.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_peer_service_status.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

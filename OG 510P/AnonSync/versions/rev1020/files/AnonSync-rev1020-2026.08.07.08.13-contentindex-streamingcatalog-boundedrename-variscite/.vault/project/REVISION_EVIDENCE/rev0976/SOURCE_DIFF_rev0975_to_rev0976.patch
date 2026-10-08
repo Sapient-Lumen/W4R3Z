@@ -1,0 +1,1741 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0056191442812c26b96d3abd176ab5366be2ffca..d8f7b3fc60425dfc8108c568c3b9ec3531255696 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1387,7 +1387,8 @@ target_link_libraries(anonsync_sync_replica_file_payload_store
+     anonsync_sync_replica_file_payload_scrub_state
+   PRIVATE
+     anonsync_sha256_digest
+-    anonsync_resumable_sha256)
++    anonsync_resumable_sha256
++    anonsync_sync_posix_regular_file_snapshot_codec)
+ target_compile_options(anonsync_sync_replica_file_payload_store PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index d2e52bc91b96dad5f2d7fc044bd53160715a8a02..947c3078e08671efe845846f117616614465e3c7 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -76,7 +76,7 @@ constexpr std::string_view kHistoricalVersionPinResponseSchema =
+ constexpr std::string_view kHistoricalVersionUnpinResponseSchema =
+     "anonsync.local-historical-version-unpin.response.v1";
+ constexpr std::string_view kRetentionPlanResponseSchema =
+-    "anonsync.local-retention-plan.response.v2";
++    "anonsync.local-retention-plan.response.v3";
+ constexpr std::string_view kUnsupportedResponse =
+     "{\"schema\":\"anonsync.local-status.response.v1\","
+     "\"ok\":false,\"error\":\"unsupported_request\"}";
+diff --git a/src/sync_replica_file_payload_store.cpp b/src/sync_replica_file_payload_store.cpp
+index e4da4c3202852bf2e6ae4d6834627caa139a53c8..d3d2322d80b603536aa52dbaddd5f556c1ed6df0 100755
+--- a/src/sync_replica_file_payload_store.cpp
++++ b/src/sync_replica_file_payload_store.cpp
+@@ -13,6 +13,7 @@
+ #include "sync_manifest_validation.hpp"
+ #include "sync_posix_descriptor_snapshot.hpp"
+ #include "sync_posix_directory_resolution.hpp"
++#include "sync_posix_regular_file_snapshot_codec.hpp"
+ 
+ #include <algorithm>
+ #include <array>
+@@ -48,7 +49,9 @@ namespace {
+ namespace fs = std::filesystem;
+ 
+ constexpr std::string_view kSnapshotDigestDomain =
+-    "anonsync:sync-replica-file-payload-store-snapshot:v3";
++    "anonsync:sync-replica-file-payload-store-snapshot:v4";
++constexpr std::string_view kTransientNamespaceDigestDomain =
++    "anonsync:sync-replica-file-payload-store-transient-namespace:v2";
+ // The identity payload generation and the minimum-reader basename generation
+ // are deliberately separate. rev0959 keeps the exact v2/v3 identity bytes but
+ // moves the flock anchor to a name that older readers do not recognize. That
+@@ -244,6 +247,42 @@ struct PublicationResidueEntry final {
+     struct stat status {};
+ };
+ 
++[[nodiscard]] bool staged_prefix_precedes(
++    const StagedPrefixEntry& left,
++    const StagedPrefixEntry& right) noexcept {
++    if (left.content_sha256 != right.content_sha256) {
++        return left.content_sha256 < right.content_sha256;
++    }
++    if (left.total_size_bytes != right.total_size_bytes) {
++        return left.total_size_bytes < right.total_size_bytes;
++    }
++    return left.committed_prefix_bytes < right.committed_prefix_bytes;
++}
++
++[[nodiscard]] bool staged_range_precedes(
++    const StagedRangeEntry& left,
++    const StagedRangeEntry& right) noexcept {
++    if (left.content_sha256 != right.content_sha256) {
++        return left.content_sha256 < right.content_sha256;
++    }
++    if (left.offset_bytes != right.offset_bytes) {
++        return left.offset_bytes < right.offset_bytes;
++    }
++    return left.chunk_sha256 < right.chunk_sha256;
++}
++
++[[nodiscard]] bool assembly_precedes(
++    const AssemblyEntry& left,
++    const AssemblyEntry& right) noexcept {
++    return left.basename < right.basename;
++}
++
++[[nodiscard]] bool publication_residue_precedes(
++    const PublicationResidueEntry& left,
++    const PublicationResidueEntry& right) noexcept {
++    return left.basename < right.basename;
++}
++
+ struct QuarantineEntry final {
+     std::string basename;
+     std::string expected_content_sha256;
+@@ -1365,6 +1404,155 @@ void append_string(Sha256DigestBuilder& digest, std::string_view value) {
+     digest.update(value);
+ }
+ 
++[[nodiscard]] std::string transient_namespace_digest_or_throw(
++    const ScannedPayloadIndex& scanned,
++    std::string_view label) {
++    const auto count_to_u64 = [&](std::size_t count,
++                                  std::string_view field) {
++        if (count > std::numeric_limits<std::uint64_t>::max()) {
++            throw std::overflow_error(
++                std::string(label) + " " + std::string(field) +
++                " count exceeds uint64 range");
++        }
++        return static_cast<std::uint64_t>(count);
++    };
++    const std::uint64_t staged_prefix_count = count_to_u64(
++        scanned.staged_prefixes.size(), "staged-prefix");
++    const std::uint64_t staged_range_count = count_to_u64(
++        scanned.staged_ranges.size(), "staged-range");
++    const std::uint64_t assembly_count = count_to_u64(
++        scanned.assemblies.size(), "assembly-residue");
++    const std::uint64_t publication_residue_count = count_to_u64(
++        scanned.publication_residues.size(), "publication-residue");
++
++    std::uint64_t observed_count = 0U;
++    std::uint64_t observed_bytes = 0U;
++    std::uint64_t observed_reserved_bytes = 0U;
++    const auto add_checked = [&](std::uint64_t& total,
++                                 std::uint64_t amount,
++                                 std::string_view field) {
++        if (amount > std::numeric_limits<std::uint64_t>::max() - total) {
++            throw std::overflow_error(
++                std::string(label) + " transient namespace " +
++                std::string(field) + " overflows");
++        }
++        total += amount;
++    };
++    const auto observe = [&](std::uint64_t bytes,
++                             std::uint64_t reserved_bytes) {
++        add_checked(observed_count, 1U, "count");
++        add_checked(observed_bytes, bytes, "physical bytes");
++        add_checked(
++            observed_reserved_bytes, reserved_bytes, "reserved bytes");
++    };
++    for (const StagedPrefixEntry& entry : scanned.staged_prefixes) {
++        observe(entry.actual_size_bytes, entry.total_size_bytes);
++    }
++    for (const StagedRangeEntry& entry : scanned.staged_ranges) {
++        observe(entry.size_bytes, entry.size_bytes);
++    }
++    for (const AssemblyEntry& entry : scanned.assemblies) {
++        observe(entry.size_bytes, entry.size_bytes);
++    }
++    for (const PublicationResidueEntry& entry :
++         scanned.publication_residues) {
++        observe(entry.size_bytes, entry.size_bytes);
++    }
++    if (observed_count != scanned.transient_entry_count ||
++        observed_bytes != scanned.transient_bytes ||
++        observed_reserved_bytes != scanned.transient_reserved_bytes) {
++        throw std::logic_error(
++            std::string(label) +
++            " transient namespace aggregate accounting is inconsistent");
++    }
++
++    if (!std::is_sorted(
++            scanned.staged_prefixes.begin(),
++            scanned.staged_prefixes.end(), staged_prefix_precedes) ||
++        !std::is_sorted(
++            scanned.staged_ranges.begin(), scanned.staged_ranges.end(),
++            staged_range_precedes) ||
++        !std::is_sorted(
++            scanned.assemblies.begin(), scanned.assemblies.end(),
++            assembly_precedes) ||
++        !std::is_sorted(
++            scanned.publication_residues.begin(),
++            scanned.publication_residues.end(),
++            publication_residue_precedes)) {
++        throw std::logic_error(
++            std::string(label) +
++            " transient namespace is not canonically ordered");
++    }
++
++    Sha256DigestBuilder digest;
++    append_string(digest, kTransientNamespaceDigestDomain);
++    std::string metadata_bytes;
++    metadata_bytes.reserve(
++        static_cast<std::size_t>(
++            kSyncPosixRegularFileSnapshotMetadataEncodedBytes));
++    const std::string metadata_label =
++        std::string(label) + " transient file observation";
++    const auto append_metadata = [&](const struct stat& status) {
++        const SyncPosixRegularFileSnapshotMetadata metadata =
++            sync_posix_regular_file_snapshot_metadata_from_status_or_throw(
++                status, SyncPosixDescriptorLinkPolicy::exactly_one,
++                metadata_label);
++        metadata_bytes.clear();
++        append_sync_posix_regular_file_snapshot_metadata_binary(
++            metadata_bytes, metadata);
++        if (metadata_bytes.size() !=
++            kSyncPosixRegularFileSnapshotMetadataEncodedBytes) {
++            throw std::logic_error(
++                std::string(label) +
++                " transient file metadata codec returned a noncanonical width");
++        }
++        append_string(digest, metadata_bytes);
++    };
++
++    append_string(digest, "staged_prefix");
++    append_u64(digest, staged_prefix_count);
++    for (const StagedPrefixEntry& entry : scanned.staged_prefixes) {
++        append_string(digest, entry.basename);
++        append_string(digest, entry.content_sha256);
++        append_u64(digest, entry.total_size_bytes);
++        append_u64(digest, entry.committed_prefix_bytes);
++        append_u64(digest, entry.actual_size_bytes);
++        append_metadata(entry.status);
++    }
++
++    append_string(digest, "staged_range");
++    append_u64(digest, staged_range_count);
++    for (const StagedRangeEntry& entry : scanned.staged_ranges) {
++        append_string(digest, entry.basename);
++        append_string(digest, entry.content_sha256);
++        append_u64(digest, entry.offset_bytes);
++        append_string(digest, entry.chunk_sha256);
++        append_u64(digest, entry.size_bytes);
++        append_metadata(entry.status);
++    }
++
++    append_string(digest, "assembly_residue");
++    append_u64(digest, assembly_count);
++    for (const AssemblyEntry& entry : scanned.assemblies) {
++        append_string(digest, entry.basename);
++        append_u64(digest, entry.size_bytes);
++        append_metadata(entry.status);
++    }
++
++    append_string(digest, "publication_residue");
++    append_u64(digest, publication_residue_count);
++    for (const PublicationResidueEntry& entry :
++         scanned.publication_residues) {
++        append_string(digest, entry.basename);
++        append_u64(digest, entry.size_bytes);
++        append_metadata(entry.status);
++    }
++
++    append_u64(digest, observed_count);
++    append_u64(digest, observed_bytes);
++    append_u64(digest, observed_reserved_bytes);
++    return digest.finish_hex();
++}
+ void append_framed_marker_field(
+     std::string& output,
+     std::string_view value) {
+@@ -2623,8 +2811,14 @@ void acquire_flock_nonblocking_or_throw(
+     const SyncReplicaFilePayloadStoreLimits& limits,
+     std::uint64_t transient_entry_count,
+     std::uint64_t transient_bytes,
++    std::uint64_t transient_reserved_bytes,
++    std::string_view transient_namespace_digest,
+     std::uint64_t indexed_bytes,
+     const std::vector<PayloadIndexEntry>& entries) {
++    if (!is_lowercase_sha256_hex(transient_namespace_digest)) {
++        throw std::invalid_argument(
++            "durable payload snapshot transient namespace digest is invalid");
++    }
+     Sha256DigestBuilder digest;
+     append_string(digest, kSnapshotDigestDomain);
+     append_string(digest, kStoreLeaseProtocol);
+@@ -2642,6 +2836,8 @@ void acquire_flock_nonblocking_or_throw(
+     append_u64(digest, indexed_bytes);
+     append_u64(digest, transient_entry_count);
+     append_u64(digest, transient_bytes);
++    append_u64(digest, transient_reserved_bytes);
++    append_string(digest, transient_namespace_digest);
+     for (const PayloadIndexEntry& entry : entries) {
+         append_string(digest, entry.content_sha256);
+         append_u64(digest, entry.size_bytes);
+@@ -3249,16 +3445,7 @@ void acquire_flock_nonblocking_or_throw(
+     }
+     std::sort(
+         out.staged_prefixes.begin(), out.staged_prefixes.end(),
+-        [](const StagedPrefixEntry& left, const StagedPrefixEntry& right) {
+-            if (left.content_sha256 != right.content_sha256) {
+-                return left.content_sha256 < right.content_sha256;
+-            }
+-            if (left.total_size_bytes != right.total_size_bytes) {
+-                return left.total_size_bytes < right.total_size_bytes;
+-            }
+-            return left.committed_prefix_bytes <
+-                   right.committed_prefix_bytes;
+-        });
++        staged_prefix_precedes);
+     for (std::size_t index = 1U; index < out.staged_prefixes.size(); ++index) {
+         if (out.staged_prefixes[index - 1U].content_sha256 ==
+             out.staged_prefixes[index].content_sha256) {
+@@ -3268,15 +3455,7 @@ void acquire_flock_nonblocking_or_throw(
+     }
+     std::sort(
+         out.staged_ranges.begin(), out.staged_ranges.end(),
+-        [](const StagedRangeEntry& left, const StagedRangeEntry& right) {
+-            if (left.content_sha256 != right.content_sha256) {
+-                return left.content_sha256 < right.content_sha256;
+-            }
+-            if (left.offset_bytes != right.offset_bytes) {
+-                return left.offset_bytes < right.offset_bytes;
+-            }
+-            return left.chunk_sha256 < right.chunk_sha256;
+-        });
++        staged_range_precedes);
+     for (std::size_t index = 1U; index < out.staged_ranges.size(); ++index) {
+         const StagedRangeEntry& previous = out.staged_ranges[index - 1U];
+         const StagedRangeEntry& current = out.staged_ranges[index];
+@@ -3286,6 +3465,11 @@ void acquire_flock_nonblocking_or_throw(
+                 label + " contains competing staged ranges at one content offset");
+         }
+     }
++    std::sort(
++        out.assemblies.begin(), out.assemblies.end(), assembly_precedes);
++    std::sort(
++        out.publication_residues.begin(), out.publication_residues.end(),
++        publication_residue_precedes);
+     if (verification_index.usable && verification_index.index.has_value()) {
+         out.verification_index_current =
+             verification_index_matches_scan(*verification_index.index, out);
+@@ -4729,6 +4913,7 @@ struct SyncReplicaFilePayloadStoreSnapshot::State final {
+     std::uint64_t transient_entry_count = 0U;
+     std::uint64_t transient_bytes = 0U;
+     std::uint64_t transient_reserved_bytes = 0U;
++    std::string transient_namespace_digest;
+     bool scrub_state_present = false;
+     bool scrub_state_usable = false;
+     bool scrub_active_reverified_good = false;
+@@ -6358,6 +6543,20 @@ std::uint64_t SyncReplicaFilePayloadStoreSnapshot::transient_bytes() const {
+         .transient_bytes;
+ }
+ 
++std::uint64_t
++SyncReplicaFilePayloadStoreSnapshot::transient_reserved_bytes() const {
++    return require_state_or_throw(
++               "sync replica durable payload snapshot transient reserved bytes")
++        .transient_reserved_bytes;
++}
++
++const std::string&
++SyncReplicaFilePayloadStoreSnapshot::transient_namespace_digest() const {
++    return require_state_or_throw(
++               "sync replica durable payload snapshot transient namespace digest")
++        .transient_namespace_digest;
++}
++
+ const std::string&
+ SyncReplicaFilePayloadStoreSnapshot::root_attestation_digest() const {
+     return require_state_or_throw(
+@@ -7485,6 +7684,9 @@ SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
+         snapshot->transient_bytes = scanned.transient_bytes;
+         snapshot->transient_reserved_bytes =
+             scanned.transient_reserved_bytes;
++        snapshot->transient_namespace_digest =
++            transient_namespace_digest_or_throw(
++                scanned, store.label + " snapshot transient namespace");
+         snapshot->scrub_state_present = scanned.scrub_state_present;
+         snapshot->scrub_state_usable = scanned.scrub_state_usable;
+         snapshot->scrub_failure_reverified_good =
+@@ -7509,6 +7711,8 @@ SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
+             snapshot->root_attestation_digest, store.identity_basename,
+             expected_identity, snapshot->limits,
+             snapshot->transient_entry_count, snapshot->transient_bytes,
++            snapshot->transient_reserved_bytes,
++            snapshot->transient_namespace_digest,
+             snapshot->indexed_bytes, snapshot->entries);
+         // Keep the shared observation lease live through every allocation and
+         // derived-index construction. The final proof prevents an identical-bytes
+diff --git a/src/sync_replica_file_payload_store.hpp b/src/sync_replica_file_payload_store.hpp
+index 10163f22aaf5f703caf9124cfb7fc2b9d95083c3..5487b97828b4607f634c8aa7084bf695c2f051f9 100755
+--- a/src/sync_replica_file_payload_store.hpp
++++ b/src/sync_replica_file_payload_store.hpp
+@@ -553,6 +553,20 @@ public:
+ 
+     [[nodiscard]] std::uint64_t transient_entry_count() const;
+     [[nodiscard]] std::uint64_t transient_bytes() const;
++    // Exact capacity reservation consumed by the complete transient namespace.
++    // Prefix receivers reserve their declared whole-payload extent even when
++    // the currently durable prefix is shorter; ranges and crash residues
++    // reserve their physical size. This value can therefore exceed
++    // transient_bytes(), but never the configured transient-byte frontier.
++    [[nodiscard]] std::uint64_t transient_reserved_bytes() const;
++    // Canonical identity of every admitted transient namespace obligation at
++    // this snapshot cutpoint. The digest binds staged-prefix and staged-range
++    // basenames plus their semantic extents, exact assembly/publication
++    // residue basenames plus sizes, and one canonical fixed-width POSIX
++    // observation for every transient inode. It is namespace/restart-
++    // obligation evidence, not a complete-byte proof for opaque crash
++    // residues.
++    [[nodiscard]] const std::string& transient_namespace_digest() const;
+     [[nodiscard]] const std::string& root_attestation_digest() const;
+     [[nodiscard]] const std::string& snapshot_digest() const;
+     [[nodiscard]] const SyncReplicaFilePayloadStoreLimits& limits() const;
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index d6c5db6497d11e0728b11cf51df812fe34b54c1f..ebcea64a32eb7c4efeac16f37f8c54a2411412ba 100755
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -86,7 +86,7 @@ constexpr std::string_view
+     kRetentionPlanUnreferencedCandidateSetDigestDomain =
+         "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1";
+ constexpr std::string_view kRetentionPlanDeletionFreeMarkDigestDomain =
+-    "anonsync:sync-replica-retention-plan-deletion-free-mark:v1";
++    "anonsync:sync-replica-retention-plan-deletion-free-mark:v2";
+ 
+ [[nodiscard]] constexpr bool historical_payload_mask_has(
+     std::uint8_t mask,
+@@ -5553,6 +5553,13 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         replica_snapshot.historical_version_pin_count;
+     plan.source_visible_state_digest = replica_snapshot.visible_state_digest;
+     plan.source_payload_snapshot_digest = payload_snapshot.snapshot_digest();
++    plan.source_payload_transient_namespace_digest =
++        payload_snapshot.transient_namespace_digest();
++    plan.payload_transient_entry_count =
++        payload_snapshot.transient_entry_count();
++    plan.payload_transient_bytes = payload_snapshot.transient_bytes();
++    plan.payload_transient_reserved_bytes =
++        payload_snapshot.transient_reserved_bytes();
+     plan.payload_scan_hashed_entry_count =
+         payload_snapshot.scan_hashed_entry_count();
+     plan.payload_scan_hashed_bytes = payload_snapshot.scan_hashed_bytes();
+@@ -5966,6 +5973,15 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         deletion_free_mark_digest, plan.source_visible_state_digest);
+     append_string(
+         deletion_free_mark_digest, plan.source_payload_snapshot_digest);
++    append_string(
++        deletion_free_mark_digest,
++        plan.source_payload_transient_namespace_digest);
++    append_u64(
++        deletion_free_mark_digest, plan.payload_transient_entry_count);
++    append_u64(
++        deletion_free_mark_digest, plan.payload_transient_bytes);
++    append_u64(
++        deletion_free_mark_digest, plan.payload_transient_reserved_bytes);
+     append_string(
+         deletion_free_mark_digest,
+         plan.unreferenced_candidate_set_digest);
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index 4fd02f354fc13ec1dd9b203e77419b0eb7b33830..bafc46de57c5fd936dfd331c69fe601d5f98bb30 100755
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -309,6 +309,11 @@ struct SyncReplicaRetentionPlanEntry final {
+ // page-invariant and binds every exact physical object that lacks a retained
+ // File-operation root. The deletion-free mark digest additionally binds that
+ // candidate set to the exact operation/evidence/pin/payload source cutpoint.
++// The payload cutpoint now includes an exact canonical witness for every
++// admitted payload-store transient namespace obligation plus its physical and
++// reserved capacity. This closes aggregate count/byte aliasing, but does not
++// claim that opened senders, active service passes, or future collector restart
++// obligations have all been modeled.
+ // Neither digest is durable collection authority: this object remains
+ // explanatory dry-run evidence and deliberately has no reclaimable-authority
+ // bit.
+@@ -321,6 +326,10 @@ struct SyncReplicaRetentionPlan final {
+     std::uint64_t historical_version_pin_count = 0U;
+     std::string source_visible_state_digest;
+     std::string source_payload_snapshot_digest;
++    std::string source_payload_transient_namespace_digest;
++    std::uint64_t payload_transient_entry_count = 0U;
++    std::uint64_t payload_transient_bytes = 0U;
++    std::uint64_t payload_transient_reserved_bytes = 0U;
+     std::uint64_t payload_scan_hashed_entry_count = 0U;
+     std::uint64_t payload_scan_hashed_bytes = 0U;
+     std::uint64_t payload_scan_reused_entry_count = 0U;
+diff --git a/src/sync_replica_historical_version_inventory_json.cpp b/src/sync_replica_historical_version_inventory_json.cpp
+index 0acba374d3db34251aca94341f29526b84ff27ca..ccba11bf2921f8887730eb1ff0afd649558219c9 100644
+--- a/src/sync_replica_historical_version_inventory_json.cpp
++++ b/src/sync_replica_historical_version_inventory_json.cpp
+@@ -219,6 +219,21 @@ void append_retention_plan(
+     append_json_quoted(output, plan.source_visible_state_digest);
+     output << ",\"source_payload_snapshot_digest\":";
+     append_json_quoted(output, plan.source_payload_snapshot_digest);
++    output << ",\"payload_store_transient_namespace_bound\":true"
++           << ",\"durable_receiver_restart_obligations_bound\":true"
++           << ",\"active_pass_transient_roots_bound\":false"
++           << ",\"opened_sender_transient_roots_bound\":false"
++           << ",\"mutation_batch_transient_roots_bound\":false"
++           << ",\"external_transient_root_model_complete\":false"
++           << ",\"source_payload_transient_namespace_digest\":";
++    append_json_quoted(
++        output, plan.source_payload_transient_namespace_digest);
++    output << ",\"payload_transient_entries\":"
++           << plan.payload_transient_entry_count
++           << ",\"payload_transient_bytes\":"
++           << plan.payload_transient_bytes
++           << ",\"payload_transient_reserved_bytes\":"
++           << plan.payload_transient_reserved_bytes;
+     output << ",\"unreferenced_candidate_set_digest\":";
+     append_json_quoted(
+         output, plan.unreferenced_candidate_set_digest);
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index 6f7eb909826fbe9f1b44e7d3954d3ba66625034c..fc0b9c3a34021850609aed78da4fdd1dab33bc12 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v20";
++    "anonsync.peer-service.status.v21";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index 29f0c42816487ba8db3412cda629c8b221687454..b9cf58064b3fe1b3688345ae3fc2d7b095ba6baf 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -357,6 +357,10 @@ void test_historical_inventory_status_byte_frontier() {
+     plan.historical_version_pin_count = 1U;
+     plan.source_visible_state_digest = std::string(64U, 'd');
+     plan.source_payload_snapshot_digest = std::string(64U, 'e');
++    plan.source_payload_transient_namespace_digest = std::string(64U, '1');
++    plan.payload_transient_entry_count = 2U;
++    plan.payload_transient_bytes = 14U;
++    plan.payload_transient_reserved_bytes = 29U;
+     plan.unreferenced_candidate_set_digest = std::string(64U, 'f');
+     plan.exact_deletion_free_mark_digest = std::string(64U, '0');
+     plan.retained_payload_reachability =
+@@ -420,6 +424,20 @@ void test_historical_inventory_status_byte_frontier() {
+                 std::string::npos &&
+             stable_plan.find("\"durable_mark_persisted\":false") !=
+                 std::string::npos &&
++            stable_plan.find("\"payload_store_transient_namespace_bound\":true") !=
++                std::string::npos &&
++            stable_plan.find("\"external_transient_root_model_complete\":false") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"source_payload_transient_namespace_digest\":\"" +
++                plan.source_payload_transient_namespace_digest + "\"") !=
++                std::string::npos &&
++            stable_plan.find("\"payload_transient_entries\":2") !=
++                std::string::npos &&
++            stable_plan.find("\"payload_transient_bytes\":14") !=
++                std::string::npos &&
++            stable_plan.find("\"payload_transient_reserved_bytes\":29") !=
++                std::string::npos &&
+             stable_plan.find(
+                 "\"unreferenced_candidate_set_digest\":\"" +
+                 plan.unreferenced_candidate_set_digest + "\"") !=
+@@ -503,6 +521,22 @@ void test_historical_inventory_status_byte_frontier() {
+                 std::string::npos &&
+             bounded_plan.find("\"durable_mark_persisted\":false") !=
+                 std::string::npos &&
++            bounded_plan.find("\"payload_store_transient_namespace_bound\":true") !=
++                std::string::npos &&
++            bounded_plan.find("\"durable_receiver_restart_obligations_bound\":true") !=
++                std::string::npos &&
++            bounded_plan.find("\"active_pass_transient_roots_bound\":false") !=
++                std::string::npos &&
++            bounded_plan.find("\"opened_sender_transient_roots_bound\":false") !=
++                std::string::npos &&
++            bounded_plan.find("\"mutation_batch_transient_roots_bound\":false") !=
++                std::string::npos &&
++            bounded_plan.find("\"external_transient_root_model_complete\":false") !=
++                std::string::npos &&
++            bounded_plan.find(
++                "\"source_payload_transient_namespace_digest\":\"" +
++                large_plan.source_payload_transient_namespace_digest + "\"") !=
++                std::string::npos &&
+             bounded_plan.find(
+                 "\"unreferenced_candidate_set_digest\":\"" +
+                 large_plan.unreferenced_candidate_set_digest + "\"") !=
+@@ -1526,7 +1560,7 @@ int main() {
+                     socket_path, plan_query);
+             require(
+                 accepted_plan ==
+-                    "{\"schema\":\"anonsync.local-retention-plan.response.v2\","
++                    "{\"schema\":\"anonsync.local-retention-plan.response.v3\","
+                     "\"command\":\"retention-plan\","
+                     "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":1,\"maximum_entries\":2,"
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index ebd90a45480497f71e590a867128678b95832109..6cd929cdefec9f099e27f79b389c3a49e65852b2 100755
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -5,6 +5,7 @@
+ #include "sync_replica_file_payload_store.hpp"
+ #include "sync_replica_file_payload_scrub_state.hpp"
+ #include "sync_replica_file_payload_verification_index.hpp"
++#include "sync_posix_regular_file_snapshot_codec.hpp"
+ 
+ #if !defined(_WIN32)
+ 
+@@ -563,6 +564,105 @@ private_file_metadata(const fs::path& path, const std::string& label) {
+             label);
+ }
+ 
++
++void append_transient_oracle_u64(
++    anonsync::Sha256DigestBuilder& digest,
++    std::uint64_t value) {
++    std::string bytes(8U, '\0');
++    for (std::size_t index = bytes.size(); index != 0U; --index) {
++        bytes[index - 1U] = static_cast<char>(value & 0xffU);
++        value >>= 8U;
++    }
++    digest.update(bytes);
++}
++
++void append_transient_oracle_string(
++    anonsync::Sha256DigestBuilder& digest,
++    std::string_view value) {
++    append_transient_oracle_u64(
++        digest, static_cast<std::uint64_t>(value.size()));
++    digest.update(value);
++}
++
++void append_transient_oracle_metadata(
++    anonsync::Sha256DigestBuilder& digest,
++    const anonsync::SyncPosixRegularFileSnapshotMetadata& metadata) {
++    std::string bytes;
++    bytes.reserve(static_cast<std::size_t>(
++        anonsync::kSyncPosixRegularFileSnapshotMetadataEncodedBytes));
++    anonsync::append_sync_posix_regular_file_snapshot_metadata_binary(
++        bytes, metadata);
++    require(
++        bytes.size() ==
++            anonsync::kSyncPosixRegularFileSnapshotMetadataEncodedBytes,
++        "transient namespace test oracle metadata width drifted");
++    append_transient_oracle_string(digest, bytes);
++}
++
++struct ExpectedTransientPrefix final {
++    std::string basename;
++    std::string content_sha256;
++    std::uint64_t total_size_bytes = 0U;
++    std::uint64_t committed_prefix_bytes = 0U;
++    std::uint64_t actual_size_bytes = 0U;
++    anonsync::SyncPosixRegularFileSnapshotMetadata metadata;
++};
++
++struct ExpectedTransientAssembly final {
++    std::string basename;
++    std::uint64_t size_bytes = 0U;
++    anonsync::SyncPosixRegularFileSnapshotMetadata metadata;
++};
++
++[[nodiscard]] std::string expected_transient_namespace_digest(
++    const ExpectedTransientPrefix* prefix,
++    const ExpectedTransientAssembly* assembly) {
++    anonsync::Sha256DigestBuilder digest;
++    append_transient_oracle_string(
++        digest,
++        "anonsync:sync-replica-file-payload-store-transient-namespace:v2");
++
++    append_transient_oracle_string(digest, "staged_prefix");
++    append_transient_oracle_u64(digest, prefix == nullptr ? 0U : 1U);
++    if (prefix != nullptr) {
++        append_transient_oracle_string(digest, prefix->basename);
++        append_transient_oracle_string(digest, prefix->content_sha256);
++        append_transient_oracle_u64(digest, prefix->total_size_bytes);
++        append_transient_oracle_u64(
++            digest, prefix->committed_prefix_bytes);
++        append_transient_oracle_u64(digest, prefix->actual_size_bytes);
++        append_transient_oracle_metadata(digest, prefix->metadata);
++    }
++
++    append_transient_oracle_string(digest, "staged_range");
++    append_transient_oracle_u64(digest, 0U);
++
++    append_transient_oracle_string(digest, "assembly_residue");
++    append_transient_oracle_u64(digest, assembly == nullptr ? 0U : 1U);
++    if (assembly != nullptr) {
++        append_transient_oracle_string(digest, assembly->basename);
++        append_transient_oracle_u64(digest, assembly->size_bytes);
++        append_transient_oracle_metadata(digest, assembly->metadata);
++    }
++
++    append_transient_oracle_string(digest, "publication_residue");
++    append_transient_oracle_u64(digest, 0U);
++
++    const std::uint64_t count =
++        (prefix == nullptr ? 0U : 1U) +
++        (assembly == nullptr ? 0U : 1U);
++    const std::uint64_t physical_bytes =
++        (prefix == nullptr ? 0U : prefix->actual_size_bytes) +
++        (assembly == nullptr ? 0U : assembly->size_bytes);
++    const std::uint64_t reserved_bytes =
++        (prefix == nullptr ? 0U : prefix->total_size_bytes) +
++        (assembly == nullptr ? 0U : assembly->size_bytes);
++    append_transient_oracle_u64(digest, count);
++    append_transient_oracle_u64(digest, physical_bytes);
++    append_transient_oracle_u64(digest, reserved_bytes);
++    return digest.finish_hex();
++}
++
+ void replace_private_file(const fs::path& path, std::string_view bytes) {
+     fs::path replacement = path;
+     replacement += ".replacement";
+@@ -4909,6 +5009,276 @@ void test_staged_prefix_hot_path_accepts_verification_index() {
+         "graceful prefix completion did not expose durable restart-reuse provenance");
+ }
+ 
++void test_transient_namespace_digest_binds_restart_obligation_identity() {
++    TemporaryDirectory temporary;
++    const std::string folder = "folder-transient-namespace-witness";
++    const fs::path root =
++        temporary.make_store_root("transient-namespace-witness");
++
++    anonsync::SyncReplicaFilePayloadStoreLimits limits;
++    limits.max_entries = 8U;
++    limits.max_payload_bytes = 64U;
++    limits.max_indexed_bytes = 256U;
++    limits.max_transient_entries = 8U;
++    limits.max_transient_bytes = 128U;
++
++    const std::string first_target = "abcdefgh";
++    const std::string first_digest = anonsync::sha256_hex(first_target);
++    const std::string prefix_bytes = first_target.substr(0U, 4U);
++    std::string first_namespace_digest;
++    std::string first_snapshot_digest;
++    fs::path first_prefix_path;
++    {
++        anonsync::SyncReplicaFilePayloadStore store(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::
++                CreateIfMissing,
++            limits, "transient namespace witness store");
++        const auto staged = store.stage_payload_prefix_or_throw(
++            first_digest, first_target.size(), 0U,
++            anonsync::sha256_hex(prefix_bytes), prefix_bytes);
++        require(
++            staged.disposition ==
++                    anonsync::SyncReplicaFilePayloadStoreStageDisposition::
++                        Progress &&
++                staged.next_offset_bytes == prefix_bytes.size(),
++            "transient namespace witness fixture did not retain one prefix");
++
++        const auto first = store.snapshot_or_throw();
++        first_namespace_digest = first.transient_namespace_digest();
++        first_snapshot_digest = first.snapshot_digest();
++        require(
++            first.transient_entry_count() == 1U &&
++                first.transient_bytes() == prefix_bytes.size() &&
++                first.transient_reserved_bytes() == first_target.size() &&
++                anonsync::is_lowercase_sha256_hex(first_namespace_digest),
++            "transient namespace witness omitted exact prefix capacity evidence");
++
++        for (const fs::directory_entry& entry : fs::directory_iterator(root)) {
++            const std::string basename = entry.path().filename().string();
++            if (basename.starts_with(".anonsync-payload-prefix-v1-")) {
++                require(first_prefix_path.empty(),
++                        "transient namespace witness fixture found competing prefixes");
++                first_prefix_path = entry.path();
++            }
++        }
++        require(!first_prefix_path.empty(),
++                "transient namespace witness fixture lost its canonical prefix");
++    }
++
++    const ExpectedTransientPrefix first_expected{
++        first_prefix_path.filename().string(), first_digest,
++        first_target.size(), prefix_bytes.size(), prefix_bytes.size(),
++        private_file_metadata(
++            first_prefix_path, "first transient prefix metadata")};
++    require(
++        first_namespace_digest ==
++            expected_transient_namespace_digest(&first_expected, nullptr),
++        "transient namespace digest did not match its independent canonical prefix framing");
++
++    // Replacing the exact basename with the same bytes preserves every logical
++    // field and aggregate. The witness must still change because the rooted
++    // restart obligation now names a different inode observation.
++    const auto first_identity = private_file_identity(first_prefix_path);
++    replace_private_file(first_prefix_path, prefix_bytes);
++    const auto replaced_identity = private_file_identity(first_prefix_path);
++    require(
++        replaced_identity != first_identity,
++        "same-name transient replacement fixture did not change inode identity");
++
++    std::string replaced_namespace_digest;
++    std::string replaced_snapshot_digest;
++    {
++        anonsync::SyncReplicaFilePayloadStore reopened(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            limits, "transient namespace replacement store");
++        const auto replaced = reopened.snapshot_or_throw();
++        replaced_namespace_digest = replaced.transient_namespace_digest();
++        replaced_snapshot_digest = replaced.snapshot_digest();
++        require(
++            replaced.transient_entry_count() == 1U &&
++                replaced.transient_bytes() == prefix_bytes.size() &&
++                replaced.transient_reserved_bytes() == first_target.size(),
++            "same-name transient replacement changed aggregate accounting");
++    }
++    const ExpectedTransientPrefix replaced_expected{
++        first_prefix_path.filename().string(), first_digest,
++        first_target.size(), prefix_bytes.size(), prefix_bytes.size(),
++        private_file_metadata(
++            first_prefix_path, "replaced transient prefix metadata")};
++    require(
++        replaced_namespace_digest ==
++                expected_transient_namespace_digest(
++                    &replaced_expected, nullptr) &&
++            replaced_namespace_digest != first_namespace_digest &&
++            replaced_snapshot_digest != first_snapshot_digest,
++        "same-name same-size transient inode replacement retained stale cutpoint identity");
++
++    // First keep count, physical bytes, committed extent, and whole-payload
++    // reservation unchanged while changing only the syntactically admitted
++    // target identity. Aggregate count/byte cutpoints cannot distinguish these
++    // restart obligations.
++    const std::string second_target = "ijklmnop";
++    const std::string second_digest = anonsync::sha256_hex(second_target);
++    const fs::path second_prefix_path =
++        root /
++        (".anonsync-payload-prefix-v1-" + second_digest + "-" +
++         std::to_string(second_target.size()) + "-" +
++         std::to_string(prefix_bytes.size()));
++    rename_private_file_and_sync_directory(
++        first_prefix_path, second_prefix_path,
++        "transient namespace revised target obligation");
++
++    std::string second_namespace_digest;
++    std::string second_snapshot_digest;
++    {
++        anonsync::SyncReplicaFilePayloadStore reopened(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            limits, "transient namespace target witness store");
++        const auto second = reopened.snapshot_or_throw();
++        second_namespace_digest = second.transient_namespace_digest();
++        second_snapshot_digest = second.snapshot_digest();
++        require(
++            second.transient_entry_count() == 1U &&
++                second.transient_bytes() == prefix_bytes.size() &&
++                second.transient_reserved_bytes() == first_target.size(),
++            "same-reservation transient target change altered aggregate accounting");
++    }
++    const ExpectedTransientPrefix second_expected{
++        second_prefix_path.filename().string(), second_digest,
++        second_target.size(), prefix_bytes.size(), prefix_bytes.size(),
++        private_file_metadata(
++            second_prefix_path, "second transient prefix metadata")};
++    require(
++        second_namespace_digest ==
++                expected_transient_namespace_digest(&second_expected, nullptr) &&
++            second_namespace_digest != replaced_namespace_digest &&
++            second_snapshot_digest != replaced_snapshot_digest,
++        "same-count same-byte same-reservation obligations still collide at the snapshot cutpoint");
++
++    // Then preserve target digest, physical bytes, and committed extent while
++    // changing only the declared completion reservation. A malformed or
++    // interrupted restart obligation is still namespace authority that a later
++    // collector must bind exactly rather than normalize away.
++    constexpr std::uint64_t expanded_reservation = 16U;
++    const fs::path expanded_prefix_path =
++        root /
++        (".anonsync-payload-prefix-v1-" + second_digest + "-" +
++         std::to_string(expanded_reservation) + "-" +
++         std::to_string(prefix_bytes.size()));
++    rename_private_file_and_sync_directory(
++        second_prefix_path, expanded_prefix_path,
++        "transient namespace revised reservation obligation");
++
++    std::string expanded_namespace_digest;
++    std::string expanded_snapshot_digest;
++    {
++        anonsync::SyncReplicaFilePayloadStore reopened(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            limits, "transient namespace reservation witness store");
++        const auto expanded = reopened.snapshot_or_throw();
++        expanded_namespace_digest = expanded.transient_namespace_digest();
++        expanded_snapshot_digest = expanded.snapshot_digest();
++        require(
++            expanded.transient_entry_count() == 1U &&
++                expanded.transient_bytes() == prefix_bytes.size() &&
++                expanded.transient_reserved_bytes() == expanded_reservation,
++            "reservation-only transient change was not reflected in exact capacity accounting");
++    }
++    const ExpectedTransientPrefix expanded_expected{
++        expanded_prefix_path.filename().string(), second_digest,
++        expanded_reservation, prefix_bytes.size(), prefix_bytes.size(),
++        private_file_metadata(
++            expanded_prefix_path, "expanded transient prefix metadata")};
++    require(
++        expanded_namespace_digest == expected_transient_namespace_digest(
++                                         &expanded_expected, nullptr) &&
++            expanded_namespace_digest != second_namespace_digest &&
++            expanded_snapshot_digest != second_snapshot_digest,
++        "reservation-only transient drift retained the stale snapshot cutpoint");
++
++    // Assembly residues use the same canonical one-frame metadata projection.
++    // This explicit oracle prevents an accidental duplicate basename or
++    // metadata frame from becoming a silently incompatible witness format.
++    const std::string assembly_bytes = "assembly";
++    const std::string assembly_basename =
++        ".anonsync-payload-assemble-v1-" +
++        anonsync::sha256_hex(assembly_bytes);
++    const fs::path assembly_path = root / assembly_basename;
++    write_private_file(assembly_path, assembly_bytes);
++    std::string assembly_namespace_digest;
++    std::string assembly_snapshot_digest;
++    {
++        anonsync::SyncReplicaFilePayloadStore reopened(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            limits, "transient assembly witness store");
++        const auto with_assembly = reopened.snapshot_or_throw();
++        assembly_namespace_digest = with_assembly.transient_namespace_digest();
++        assembly_snapshot_digest = with_assembly.snapshot_digest();
++        require(
++            with_assembly.transient_entry_count() == 2U &&
++                with_assembly.transient_bytes() ==
++                    prefix_bytes.size() + assembly_bytes.size() &&
++                with_assembly.transient_reserved_bytes() ==
++                    expanded_reservation + assembly_bytes.size(),
++            "assembly residue was not included in exact transient accounting");
++    }
++    ExpectedTransientAssembly assembly_expected{
++        assembly_basename, assembly_bytes.size(),
++        private_file_metadata(assembly_path, "transient assembly metadata")};
++    require(
++        assembly_namespace_digest == expected_transient_namespace_digest(
++                                         &expanded_expected,
++                                         &assembly_expected) &&
++            assembly_namespace_digest != expanded_namespace_digest &&
++            assembly_snapshot_digest != expanded_snapshot_digest,
++        "assembly residue did not use one canonical exact metadata frame");
++
++    const auto first_assembly_identity = private_file_identity(assembly_path);
++    replace_private_file(assembly_path, assembly_bytes);
++    const auto replaced_assembly_identity =
++        private_file_identity(assembly_path);
++    require(
++        replaced_assembly_identity != first_assembly_identity,
++        "assembly replacement fixture did not change inode identity");
++
++    std::string final_namespace_digest;
++    std::string final_snapshot_digest;
++    {
++        anonsync::SyncReplicaFilePayloadStore reopened(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            limits, "transient replaced assembly witness store");
++        const auto final = reopened.snapshot_or_throw();
++        final_namespace_digest = final.transient_namespace_digest();
++        final_snapshot_digest = final.snapshot_digest();
++    }
++    assembly_expected.metadata = private_file_metadata(
++        assembly_path, "replaced transient assembly metadata");
++    require(
++        final_namespace_digest == expected_transient_namespace_digest(
++                                      &expanded_expected,
++                                      &assembly_expected) &&
++            final_namespace_digest != assembly_namespace_digest &&
++            final_snapshot_digest != assembly_snapshot_digest,
++        "same-name same-size assembly replacement retained stale cutpoint identity");
++
++    anonsync::SyncReplicaFilePayloadStore restarted(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++        limits, "transient namespace witness restarted store");
++    const auto restart = restarted.snapshot_or_throw();
++    require(
++        restart.transient_namespace_digest() == final_namespace_digest &&
++            restart.snapshot_digest() == final_snapshot_digest &&
++            restart.transient_reserved_bytes() ==
++                expanded_reservation + assembly_bytes.size(),
++        "transient namespace witness was not canonical across owner restart");
++}
+ void test_bounded_range_copy_durable_resume_and_residue_repair() {
+     TemporaryDirectory temporary;
+     const std::string folder = "folder-durable-payload-range-resume";
+@@ -5727,6 +6097,7 @@ int main() {
+         test_root_rebind_and_post_index_mutation_fail_closed();
+         test_cross_process_store_lease_serializes_capacity();
+         test_staged_prefix_hot_path_accepts_verification_index();
++        test_transient_namespace_digest_binds_restart_obligation_identity();
+         test_bounded_range_copy_durable_resume_and_residue_repair();
+         test_single_prefix_owner_crash_tail_and_legacy_resume();
+         test_product_bound_identity_and_fresh_adoption_policy();
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index 28e57de073ebca242706ce3fe919862374c8375b..24a54ad24991306195ce7259cf12fbe86859eb01 100755
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -492,7 +492,7 @@ retention_unreferenced_candidate_set_digest_for_test(
+     anonsync::Sha256DigestBuilder digest;
+     append_test_string(
+         digest,
+-        "anonsync:sync-replica-retention-plan-deletion-free-mark:v1");
++        "anonsync:sync-replica-retention-plan-deletion-free-mark:v2");
+     append_test_string(digest, folder_id);
+     append_test_string(digest, plan.source_operation_set_digest);
+     append_test_string(digest, plan.source_evidence_set_digest);
+@@ -500,6 +500,11 @@ retention_unreferenced_candidate_set_digest_for_test(
+         digest, plan.source_historical_version_pin_set_digest);
+     append_test_string(digest, plan.source_visible_state_digest);
+     append_test_string(digest, plan.source_payload_snapshot_digest);
++    append_test_string(
++        digest, plan.source_payload_transient_namespace_digest);
++    append_test_u64(digest, plan.payload_transient_entry_count);
++    append_test_u64(digest, plan.payload_transient_bytes);
++    append_test_u64(digest, plan.payload_transient_reserved_bytes);
+     append_test_string(digest, candidate_set_digest);
+     append_test_u64(
+         digest,
+@@ -5829,6 +5834,17 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                 replica_before_pin.visible_state_digest,
+         "explicit historical pin did not publish one isolated policy root");
+ 
++    const fs::path transient_residue_a =
++        fixture.payload_root /
++        ".anonsync-publish-v1-0000000000000001-0000000000000002-0000000000000003.tmp";
++    const fs::path transient_residue_b =
++        fixture.payload_root /
++        ".anonsync-publish-v1-0000000000000004-0000000000000005-0000000000000006.tmp";
++    write_file(transient_residue_a, "temp");
++    if (::chmod(transient_residue_a.c_str(), 0600) != 0) {
++        fail("could not make retention transient residue private");
++    }
++
+     anonsync::SyncReplicaHistoricalVersionQuery exact_query;
+     exact_query.canonical_path = std::string(path);
+     const auto exact = scan->inspect_historical_versions_or_throw(exact_query);
+@@ -5926,6 +5942,11 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+     require(
+         retention_plan.source_cutpoint() == exact_cutpoint &&
+             retention_plan.historical_version_pin_count == 1U &&
++            retention_plan.payload_transient_entry_count == 1U &&
++            retention_plan.payload_transient_bytes == 4U &&
++            retention_plan.payload_transient_reserved_bytes == 4U &&
++            anonsync::is_lowercase_sha256_hex(
++                retention_plan.source_payload_transient_namespace_digest) &&
+             retention_plan.retained_payload_reachability == reachability &&
+             retention_plan.current_or_explicit_pin.payload_count == 1U &&
+             retention_plan.current_or_explicit_pin.payload_bytes ==
+@@ -6018,6 +6039,26 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                 second_page.entries.front().content_sha256,
+         "retention planner did not resume exactly with one page-invariant mark witness");
+ 
++    fs::rename(transient_residue_a, transient_residue_b);
++    anonsync::SyncReplicaRetentionPlanQuery transient_drift_query;
++    transient_drift_query.expected_source_cutpoint =
++        first_page.source_cutpoint();
++    bool caught_transient_identity_change = false;
++    try {
++        (void)scan->plan_payload_retention_or_throw(transient_drift_query);
++    } catch (const anonsync::SyncReplicaHistoricalVersionSourceChangedError&
++                 error) {
++        caught_transient_identity_change = true;
++        require(
++            error.stage() == anonsync::
++                SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot,
++            "same-size transient identity drift reported the wrong source-change stage");
++    }
++    require(
++        caught_transient_identity_change,
++        "same-count same-byte transient identity drift preserved a stale retention cutpoint");
++    fs::rename(transient_residue_b, transient_residue_a);
++
+     auto stale_plan_cutpoint = first_page.source_cutpoint();
+     stale_plan_cutpoint.operation_set_digest = std::string(64U, '0');
+     anonsync::SyncReplicaRetentionPlanQuery stale_plan_query;
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 5b5a34f1086b38295be4cbf1bb3eabd7fb682c15..465403d6a9d5cbdaca96eab4df36133d691ecde1 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -153,6 +153,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0974.md"),
+     Path("PAGE_INVARIANT_DELETION_FREE_MARK_WITNESS_AUDIT_rev0975.md"),
+     Path("REVISION_NOTES_rev0975.md"),
++    Path("EXACT_TRANSIENT_NAMESPACE_RETENTION_CUTPOINT_AUDIT_rev0976.md"),
++    Path("REVISION_NOTES_rev0976.md"),
+ )
+ 
+ 
+@@ -483,6 +485,10 @@ def main() -> int:
+         "PAGE_INVARIANT_DELETION_FREE_MARK_WITNESS_AUDIT_rev0975.md"
+     ]
+     rev0975_notes = text["REVISION_NOTES_rev0975.md"]
++    transient_cutpoint_design = text[
++        "EXACT_TRANSIENT_NAMESPACE_RETENTION_CUTPOINT_AUDIT_rev0976.md"
++    ]
++    rev0976_notes = text["REVISION_NOTES_rev0976.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -670,6 +676,17 @@ def main() -> int:
+         if rev0975_verifier_start >= 0 and rev0975_verifier_end >= 0
+         else ""
+     )
++    rev0976_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 976:"
++    )
++    rev0976_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0976_verifier_start
++    )
++    rev0976_verifier_block = (
++        verifier[rev0976_verifier_start:rev0976_verifier_end]
++        if rev0976_verifier_start >= 0 and rev0976_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -4564,7 +4581,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4978,12 +4995,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v20"'
++        and '"anonsync.peer-service.status.v21"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v20"'
++        and '"anonsync.peer-service.status.v21"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -6469,7 +6486,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6680,7 +6697,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"' in peer_status_h
++        and '"anonsync.peer-service.status.v21"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -6890,7 +6907,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -6906,8 +6923,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v20"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v20"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v21"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v21"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7600,7 +7617,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"' in peer_status_h
++        and '"anonsync.peer-service.status.v21"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7840,7 +7857,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and all(
+             token in peer_status + historical_inventory_json
+             for token in (
+@@ -7988,7 +8005,7 @@ def main() -> int:
+                 r'\"expected_source_cutpoint\"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"' in peer_status_h
++        and '"anonsync.peer-service.status.v21"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -8105,11 +8122,11 @@ def main() -> int:
+                 "historical_version_generation",
+                 "historical_version_failure_class",
+                 "historical_version_source_change_stage",
+-                '"schema": "anonsync.peer-service.status.v20"',
++                '"schema": "anonsync.peer-service.status.v21"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v21"' in service_i2p_ingress_runtime,
+         "rev0968_regressions_bind_token_codec_payload_drift_causal_drift_and_real_service_continuation",
+         "focused C++ tests and real process oracles cover canonical framing, both externally inducible drift classes, exact page-token reuse, stable retained failure evidence, transient matching-step coherence, current schemas, and route status compatibility",
+     )
+@@ -8271,7 +8288,7 @@ def main() -> int:
+                 "status.restore_request.operation_id",
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"' in peer_status_h,
++        and '"anonsync.peer-service.status.v21"' in peer_status_h,
+         "rev0969_full_restore_identity_controls_coalescing_execution_and_status",
+         "a different expected head cannot coalesce with pending work, and stable plus matching transient status retain the exact request and typed source-change stage",
+     )
+@@ -8304,12 +8321,12 @@ def main() -> int:
+                 "restore_current_operation",
+                 "stale exact-current historical restore",
+                 "stale exact-current restore terminated the service",
+-                '"schema": "anonsync.peer-service.status.v20"',
++                '"schema": "anonsync.peer-service.status.v21"',
+                 '"expected_current_operation_id"',
+                 '"historical_version_restore_request"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v21"' in service_i2p_ingress_runtime,
+         "rev0969_regressions_prove_no_payload_work_full_request_coalescing_and_same_pid_stale_failure",
+         "focused C++ and real-process oracles mechanically distinguish the early stale fence from lease access, cover strict framing, and prove the daemon survives a replayed stale operator intent",
+     )
+@@ -8533,7 +8550,7 @@ def main() -> int:
+                 "[--inspection-mode exact|metadata]",
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"' in peer_status_h,
++        and '"anonsync.peer-service.status.v21"' in peer_status_h,
+         "rev0970_cli_socket_and_status_share_one_mode_bearing_contract",
+         "the shipping default remains exact, new clients send one canonical five-field request, legacy three/four-field requests remain exact, and live plus terminal status advance together",
+     )
+@@ -8604,11 +8621,11 @@ def main() -> int:
+                 '"v4:metadata:"',
+                 "causal-metadata historical inspection fabricated",
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v20"',
++                '"schema": "anonsync.peer-service.status.v21"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"'
++        and '"anonsync.peer-service.status.v21"'
+         in service_i2p_ingress_runtime,
+         "rev0970_shipping_process_oracles_require_null_payload_evidence_and_schema_coherence",
+         "one real retained two-peer service executes the metadata CLI, publishes a v2 token and null payload facts, accounts the completed action, and keeps direct plus I2P status readers on v15",
+@@ -8728,7 +8745,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and "append_sync_replica_historical_version_inventory_json" in peer_status
+         and "summary.last_step->historical_version_inventory.reset();" in peer_status,
+         "rev0971_status_uses_the_canonical_encoder_and_retains_one_completed_inventory",
+@@ -8749,10 +8766,10 @@ def main() -> int:
+             for token in (
+                 "historical inventory omitted its status byte limit",
+                 "duplicated the stable history result",
+-                '"schema": "anonsync.peer-service.status.v20"',
++                '"schema": "anonsync.peer-service.status.v21"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v20"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v21"' in service_i2p_ingress_runtime,
+         "rev0971_regressions_prove_the_large_page_frontier_and_single_copy_shipping_status",
+         "the focused C++ oracle constructs the accepted 1,024-entry worst-shape page, while real configured-service and I2P readers require v16, coherent stop reasons, and no duplicate stable inventory in last_step",
+     )
+@@ -8915,10 +8932,10 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and '"anonsync.local-historical-versions.response.v5"' in local_status
+-        and "anonsync.peer-service.status.v20" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v20" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v21" in service_configuration_runtime
++        and "anonsync.peer-service.status.v21" in service_i2p_ingress_runtime
+         and "anonsync.peer-service.status.v16" not in peer_status_h
+         and "anonsync.peer-service.status.v16" not in service_configuration_runtime
+         and "anonsync.peer-service.status.v16" not in service_i2p_ingress_runtime,
+@@ -9217,7 +9234,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9264,10 +9281,10 @@ def main() -> int:
+                 '"historical_version_pins": 1',
+                 '"historical_version_unpins": 1',
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v20"',
++                '"schema": "anonsync.peer-service.status.v21"',
+             )
+         )
+-        and "anonsync.peer-service.status.v20" in service_i2p_ingress_runtime,
++        and "anonsync.peer-service.status.v21" in service_i2p_ingress_runtime,
+         "rev0973_real_process_proves_pin_reinspect_unpin_reinspect_and_schema_coherence",
+         "one retained configured daemon accepts the exact owner commands, survives the corrected validator, exposes durable policy through metadata-only pages, removes it, continues operating, and keeps direct and I2P readers on v18",
+     )
+@@ -9458,7 +9475,7 @@ def main() -> int:
+             for token in (
+                 "RetentionPlan",
+                 "retention-plan ",
+-                "anonsync.local-retention-plan.response.v2",
++                "anonsync.local-retention-plan.response.v3",
+                 "SyncReplicaRetentionPlanQuery retention_plan_query",
+                 "different_historical_version_pending",
+                 "request_sync_local_status_retention_plan_or_throw",
+@@ -9480,7 +9497,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
++        '"anonsync.peer-service.status.v21"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9552,14 +9569,14 @@ def main() -> int:
+             token in service_configuration_runtime
+             for token in (
+                 "owner-only deletion-free retention plan",
+-                "anonsync.local-retention-plan.response.v2",
++                "anonsync.local-retention-plan.response.v3",
+                 "retention plan did not bind the exact pinned source",
+                 "retention plan did not explain the exact pinned payload",
+                 '"historical_version_retention_plans": 1',
+-                '"schema": "anonsync.peer-service.status.v20"',
++                '"schema": "anonsync.peer-service.status.v21"',
+             )
+         )
+-        and "anonsync.peer-service.status.v20" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v21" in service_i2p_ingress_runtime
+         and all(
+             token in service_configuration_runtime
+             for token in (
+@@ -9571,8 +9588,8 @@ def main() -> int:
+                 "current_or_explicit_pin",
+             )
+         ),
+-        "rev0975_real_daemon_proves_pinned_physical_reason_status_v20_and_collection_nonclaims",
+-        "the same retained two-peer service pins a predecessor, obtains its exact physical reason, exposes canonical witnesses, remains alive, and keeps direct plus I2P readers on the one v20 contract",
++        "current_real_daemon_proves_pinned_physical_reason_status_v21_and_collection_nonclaims",
++        "the retained two-peer service pins a predecessor, obtains its exact physical reason, exposes canonical witnesses, remains alive, and keeps direct plus I2P readers on the current v21 contract",
+     )
+ 
+     require(
+@@ -9654,7 +9671,7 @@ def main() -> int:
+             token in folder_scan + folder_scan_h
+             for token in (
+                 "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1",
+-                "anonsync:sync-replica-retention-plan-deletion-free-mark:v1",
++                "anonsync:sync-replica-retention-plan-deletion-free-mark:v2",
+                 "unreferenced_candidate_set_digest",
+                 "exact_deletion_free_mark_digest",
+             )
+@@ -9718,13 +9735,13 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v20"' in peer_status_h
+-        and "anonsync.local-retention-plan.response.v2" in local_status
++        '"anonsync.peer-service.status.v21"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v3" in local_status
+         and "anonsync.peer-service.status.v19" not in peer_status_h
+         and "anonsync.local-retention-plan.response.v1" not in local_status
+-        and "anonsync.peer-service.status.v20" in service_i2p_ingress_runtime,
+-        "rev0975_local_and_peer_status_advance_together_to_v2_and_v20",
+-        "the new mark-witness fields cannot be emitted under the prior response or service schema, and direct plus I2P status oracles share the new contract",
++        and "anonsync.peer-service.status.v21" in service_i2p_ingress_runtime,
++        "rev0975_local_and_peer_status_contract_has_current_successor_schemas",
++        "the current response and service schemas supersede rev0975 while direct plus I2P status oracles remain coherent",
+     )
+ 
+     require(
+@@ -9776,6 +9793,203 @@ def main() -> int:
+         "release verification requires the projection owner, canonical renderer, response schemas, focused and process tests, design record, revision notes, structural audit, and package policy from rev0975 onward",
+     )
+ 
++    require(
++        all(
++            token in store + store_h + cmake
++            for token in (
++                "anonsync:sync-replica-file-payload-store-snapshot:v4",
++                "anonsync:sync-replica-file-payload-store-transient-namespace:v2",
++                "transient_namespace_digest_or_throw",
++                "transient_reserved_bytes() const",
++                "transient_namespace_digest() const",
++                "sync_posix_regular_file_snapshot_metadata_from_status_or_throw",
++                "append_sync_posix_regular_file_snapshot_metadata_binary",
++                "SyncPosixDescriptorLinkPolicy::exactly_one",
++                "anonsync_sync_posix_regular_file_snapshot_codec",
++            )
++        )
++        and ordered(
++            store,
++            "snapshot->transient_reserved_bytes =",
++            "snapshot->transient_namespace_digest =",
++            "snapshot->snapshot_digest = snapshot_digest_or_throw(",
++            "snapshot->transient_reserved_bytes,",
++            "snapshot->transient_namespace_digest,",
++        ),
++        "rev0976_snapshot_v4_binds_reserved_capacity_exact_inode_observations_and_transient_namespace",
++        "the complete payload snapshot binds one canonical POSIX observation per transient inode, exact reservation accounting, and the resulting namespace witness through an explicit build dependency",
++    )
++
++    require(
++        all(
++            store.count(name) >= 3
++            for name in (
++                "staged_prefix_precedes",
++                "staged_range_precedes",
++                "assembly_precedes",
++                "publication_residue_precedes",
++            )
++        )
++        and all(
++            token in store
++            for token in (
++                'append_string(digest, "staged_prefix")',
++                'append_string(digest, "staged_range")',
++                'append_string(digest, "assembly_residue")',
++                'append_string(digest, "publication_residue")',
++                "transient namespace aggregate accounting is inconsistent",
++                "transient namespace is not canonically ordered",
++            )
++        ),
++        "rev0976_scanner_and_witness_share_one_ordering_contract_for_all_transient_classes",
++        "named comparators drive both canonical scanner sorting and digest-order assertions while aggregate cross-checks cover prefix, range, assembly, and publication obligations",
++    )
++
++    require(
++        all(
++            token in folder_scan + folder_scan_h
++            for token in (
++                "anonsync:sync-replica-retention-plan-deletion-free-mark:v2",
++                "source_payload_transient_namespace_digest",
++                "payload_transient_entry_count",
++                "payload_transient_bytes",
++                "payload_transient_reserved_bytes",
++            )
++        )
++        and ordered(
++            retention_plan_owner,
++            "plan.source_payload_transient_namespace_digest",
++            "plan.payload_transient_entry_count",
++            "plan.payload_transient_bytes",
++            "plan.payload_transient_reserved_bytes",
++            "plan.exact_deletion_free_mark_digest",
++        )
++        and all(
++            token in historical_inventory_json
++            for token in (
++                r'\"payload_store_transient_namespace_bound\":true',
++                r'\"durable_receiver_restart_obligations_bound\":true',
++                r'\"active_pass_transient_roots_bound\":false',
++                r'\"opened_sender_transient_roots_bound\":false',
++                r'\"mutation_batch_transient_roots_bound\":false',
++                r'\"external_transient_root_model_complete\":false',
++                r'\"reclaimable_authority\":false',
++                r'\"writer_fenced_collection\":false',
++                r'\"durable_mark_persisted\":false',
++            )
++        ),
++        "rev0976_mark_v2_binds_store_restart_obligations_without_inventing_external_roots_or_deletion_authority",
++        "the page-invariant mark independently binds exact store transient evidence while the renderer denies active-pass, sender, mutation-batch, durable-mark, writer-fence, and reclaim authority",
++    )
++
++    require(
++        all(
++            token in runtime
++            for token in (
++                "expected_transient_namespace_digest",
++                "same-name same-size transient inode replacement retained stale cutpoint identity",
++                "same-count same-byte same-reservation obligations still collide at the snapshot cutpoint",
++                "reservation-only transient drift retained the stale snapshot cutpoint",
++                "same-name same-size assembly replacement retained stale cutpoint identity",
++                "transient namespace witness was not canonical across owner restart",
++            )
++        )
++        and all(
++            token in folder_scan_runtime
++            for token in (
++                "same-size transient identity drift reported the wrong source-change stage",
++                "same-count same-byte transient identity drift preserved a stale retention cutpoint",
++                "source_payload_transient_namespace_digest",
++                "payload_transient_reserved_bytes",
++            )
++        ),
++        "rev0976_independent_oracles_falsify_aggregate_inode_and_semantic_aliases",
++        "focused payload and retention tests independently frame v2, replace same-name inodes, separate same-reservation identity drift from reservation-only drift, prove restart stability, and reject stale payload cutpoints",
++    )
++
++    require(
++        '"anonsync.peer-service.status.v21"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v3" in local_status
++        and "anonsync.local-retention-plan.response.v3" in local_status_runtime
++        and "anonsync.local-retention-plan.response.v3" in service_configuration_runtime
++        and "anonsync.peer-service.status.v21" in service_configuration_runtime
++        and "anonsync.peer-service.status.v21" in service_i2p_ingress_runtime
++        and all(
++            token in service_configuration_runtime
++            for token in (
++                "payload_store_transient_namespace_bound",
++                "durable_receiver_restart_obligations_bound",
++                "active_pass_transient_roots_bound",
++                "opened_sender_transient_roots_bound",
++                "mutation_batch_transient_roots_bound",
++                "external_transient_root_model_complete",
++                "source_payload_transient_namespace_digest",
++                "payload_transient_reserved_bytes",
++            )
++        ),
++        "rev0976_owner_response_peer_status_and_real_process_oracles_share_v3_v21_transient_contract",
++        "local acceptance, live and terminal peer status, configured service, and I2P readers all require the same exact transient witness and explicit partial-root model",
++    )
++
++    require(
++        all(
++            token in normalized_prose(transient_cutpoint_design)
++            for token in (
++                "Canonical transient namespace witness",
++                "same-name, same-size inode replacement",
++                "eleven-field POSIX regular-file snapshot codec",
++                "Exact deletion-free mark v2",
++                "durable_receiver_restart_obligations_bound",
++                "external_transient_root_model_complete",
++                "Authority still missing",
++                "Next safe edge",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0976_notes)
++            for token in (
++                "Exact transient-namespace retention cutpoint",
++                "fixed-width canonical POSIX regular-file observation",
++                "active-pass",
++                "opened-sender",
++                "mutation-batch",
++                "does not add collection authority",
++            )
++        )
++        and "## Rev0976: exact transient-namespace retention cutpoint" in readme
++        and "anonsync.local-retention-plan.response.v3" in readme,
++        "rev0976_records_exact_inode_scope_partial_root_model_and_future_collection_boundary",
++        "the design audit, revision notes, and README state the old alias, exact metadata framing, bounded store authority, explicit external-root nonclaims, and safe next protocol",
++    )
++
++    require(
++        rev0976_verifier_block.count(
++            "if revision_number is not None and revision_number >= 976:"
++        ) == 1
++        and all(
++            token in rev0976_verifier_block
++            for token in (
++                "EXACT_TRANSIENT_NAMESPACE_RETENTION_CUTPOINT_AUDIT_rev0976.md",
++                "REVISION_NOTES_rev0976.md",
++                "CMakeLists.txt",
++                "src/sync_local_status_socket.cpp",
++                "src/sync_replica_file_payload_store.hpp",
++                "src/sync_replica_file_payload_store.cpp",
++                "src/sync_replica_folder_scan_owner.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_replica_historical_version_inventory_json.cpp",
++                "src/sync_replica_peer_service_status.hpp",
++                "tests/sync_replica_file_payload_store_test.cpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/test_anonsync_service_i2p_ingress.py",
++            )
++        ),
++        "rev0976_package_policy_binds_every_witness_codec_schema_test_and_record_surface",
++        "release verification requires the codec dependency, payload witness, retention owner, canonical renderer, local and peer schemas, focused and process tests, design record, notes, audit, and package policy",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -9896,6 +10110,17 @@ def main() -> int:
+         "the optimized retention projection and mark witness cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0975 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0976" not in rev0976_notes
++        and "VALIDATION_PENDING_REV0976" not in transient_cutpoint_design
++        and "VALIDATION_PENDING_REV0976" not in readme
++        and "ARCHIVE_PENDING_REV0976" not in bootstrap
++        and "CODENAME_PENDING_REV0976" not in bootstrap
++        and "VALIDATION_PENDING_REV0976" not in bootstrap,
++        "rev0976_final_validation_and_visible_release_cutpoint_are_sealed",
++        "the exact transient-root cutpoint cannot pass the structural audit until final validation and the visible bootstrap bind the sealed rev0976 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index 993caa3e3955ce956e03fb27f7f15e2c7b976ed6..ee64f84d4a92ec1ad61b14c5edf0799d831cb6af 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -747,11 +747,26 @@ def require_retention_plan(plan: Any, label: str) -> None:
+         "source_operation_set_digest", "source_evidence_set_digest",
+         "source_historical_version_pin_set_digest",
+         "source_visible_state_digest", "source_payload_snapshot_digest",
++        "source_payload_transient_namespace_digest",
+         "unreferenced_candidate_set_digest",
+         "exact_deletion_free_mark_digest",
+     ):
+         if not is_canonical_sha256(plan.get(digest_field)):
+             fail(f"{label} retention plan omitted {digest_field}")
++    expected_transient_authority = {
++        "payload_store_transient_namespace_bound": True,
++        "durable_receiver_restart_obligations_bound": True,
++        "active_pass_transient_roots_bound": False,
++        "opened_sender_transient_roots_bound": False,
++        "mutation_batch_transient_roots_bound": False,
++        "external_transient_root_model_complete": False,
++    }
++    for field, expected in expected_transient_authority.items():
++        if plan.get(field) is not expected:
++            fail(
++                f"{label} retention plan reported invalid {field}: "
++                f"{plan.get(field)!r}"
++            )
+     source_cutpoint = plan.get("source_cutpoint")
+     if not isinstance(source_cutpoint, str) or not source_cutpoint.startswith(
+         "v4:exact:"
+@@ -759,6 +774,8 @@ def require_retention_plan(plan: Any, label: str) -> None:
+         fail(f"{label} retention plan omitted its exact v4 cutpoint")
+     for integer_field in (
+         "source_replica_state_generation", "historical_version_pin_count",
++        "payload_transient_entries", "payload_transient_bytes",
++        "payload_transient_reserved_bytes",
+         "payload_scan_hashed_entries", "payload_scan_hashed_bytes",
+         "payload_scan_reused_entries", "payload_scan_reused_bytes",
+         "physical_payload_count_after_cursor", "entry_limit",
+@@ -766,6 +783,10 @@ def require_retention_plan(plan: Any, label: str) -> None:
+         field = plan.get(integer_field)
+         if not isinstance(field, int) or field < 0:
+             fail(f"{label} retention plan omitted bounded {integer_field}")
++    if plan["payload_transient_reserved_bytes"] < plan[
++        "payload_transient_bytes"
++    ]:
++        fail(f"{label} retention reservation fell below physical transient bytes")
+     entries = plan.get("entries")
+     if not isinstance(entries, list):
+         fail(f"{label} retention plan omitted entries")
+@@ -1766,7 +1787,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v20",
++                    "schema": "anonsync.peer-service.status.v21",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -3299,7 +3320,7 @@ def main() -> int:
+                 label="owner-only deletion-free retention plan",
+             )
+             expected_retention_plan_response = {
+-                "schema": "anonsync.local-retention-plan.response.v2",
++                "schema": "anonsync.local-retention-plan.response.v3",
+                 "command": "retention-plan",
+                 "terminal_class": "accepted",
+                 "request_generation": retention_plan_generation,
+@@ -3335,6 +3356,23 @@ def main() -> int:
+                     "source_historical_version_pin_set_digest"
+                 ] != pin_update["pin_set_digest"]
+                 or retention_plan["truncated"] is not False
++                or retention_plan["payload_store_transient_namespace_bound"]
++                is not True
++                or retention_plan["durable_receiver_restart_obligations_bound"]
++                is not True
++                or retention_plan["active_pass_transient_roots_bound"]
++                is not False
++                or retention_plan["opened_sender_transient_roots_bound"]
++                is not False
++                or retention_plan["mutation_batch_transient_roots_bound"]
++                is not False
++                or retention_plan["external_transient_root_model_complete"]
++                is not False
++                or not is_canonical_sha256(
++                    retention_plan["source_payload_transient_namespace_digest"]
++                )
++                or retention_plan["payload_transient_reserved_bytes"]
++                < retention_plan["payload_transient_bytes"]
+             ):
+                 fail(
+                     "retention plan did not bind the exact pinned source: "
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index a46c57b06c3b0e0bb4c251a4d141e363117c93eb..bcc1cd3d6db0cb8ad1b0cc05d145168039041794 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v20"
++                    value.get("schema") == "anonsync.peer-service.status.v21"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index c2ad7e32ab5479a2777fb58278077d6ead945450..2ceab80a9feebd649257739bc6d1998e94f9fe9e 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1563,6 +1563,27 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 976:
++        revision_scoped_required.update({
++            "EXACT_TRANSIENT_NAMESPACE_RETENTION_CUTPOINT_AUDIT_rev0976.md",
++            "REVISION_NOTES_rev0976.md",
++            "README.md",
++            "CMakeLists.txt",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_file_payload_store.hpp",
++            "src/sync_replica_file_payload_store.cpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_historical_version_inventory_json.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "tests/sync_replica_file_payload_store_test.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

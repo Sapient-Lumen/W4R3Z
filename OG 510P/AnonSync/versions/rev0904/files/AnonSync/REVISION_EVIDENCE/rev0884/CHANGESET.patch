@@ -1,0 +1,2617 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index aa8e465..ec9d5ce 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3273,6 +3273,12 @@ if(Python3_Interpreter_FOUND)
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   set_tests_properties(anonsync_sync_file_tls_dispatch_source_audit
+     PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_sync_tls_receive_continuation_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_tls_receive_continuation.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_sync_tls_receive_continuation_source_audit
++    PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_sync_file_effect_path_capability_source_audit
+     COMMAND ${Python3_EXECUTABLE} -B -S
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_file_effect_path_capability.py
+diff --git a/README.md b/README.md
+index 29a597b..717c06f 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# AnonSync rev0883
++# AnonSync rev0884
+ 
+ AnonSync is an **evidence-authorized, crash-consistent, bounded convergence
+ engine under construction**. Its mission is not ordinary file copying. It turns
+@@ -13,6 +13,58 @@ state.
+ > silently acquire more authority than the exact validated evidence and cutpoint
+ > that created it.
+ 
++## Rev0884: heap-stable incremental TLS receive and duplex ownership
++
++A nonblocking TLS read is not stateless merely because no application byte was
++returned. OpenSSL can report `SSL_ERROR_WANT_READ` or `SSL_ERROR_WANT_WRITE` and
++require the same read arguments on retry. The previous one-shot reader had no
++continuation owner for that frontier; a naïve movable reader with inline prefix
++storage could also relocate the buffer that OpenSSL expects to remain exact.
++
++Rev0884 adds a move-only `SyncReplicaTlsRecordReadContinuation` whose private
++state lives in one heap allocation. Prefix bytes, body bytes, offsets, limits,
++terminal state, reservation, and the authenticated channel owner therefore keep
++one stable identity while the public wrapper moves. Each advance performs at
++most one `SSL_read_ex`, immediately classifies failure with `SSL_get_error`, and
++returns typed progress for ordinary bytes, WANT_READ, WANT_WRITE, complete
++frame, or clean pre-frame peer close. WANT does not advance offsets; the next
++advance reconstructs the same pointer and length.
++
++The cleanup frontier is explicit. Destruction before any attempted read releases
++the reservation cleanly. Abandonment after any attempted read, including WANT,
++poisons the channel because the pending operation cannot truthfully be replaced.
++A close-notify before any frame byte yields `PeerClosed` and permanently closes
++the channel without fabricating a frame. Close after prefix/body progress is
++truncation and poisons. Empty and over-limit prefixes fail before body
++allocation. Strict mode proves direct socket BIOs and `O_NONBLOCK` at begin and
++every retry.
++
++The transport owner is also simplified. A write-only active boolean is replaced
++by one duplex `Idle/Read/Write` reservation. Reads, writes, generic record I/O,
++and the delivery-authority live verifier cannot re-enter the same `SSL*` while
++a continuation owns it. This intentionally gives up concurrent full-duplex use
++until AnonSync has a serialized two-direction owner capable of proving it safe.
++The legacy one-shot reader delegates to the same incremental state machine and
++fails rather than spinning on nonblocking readiness.
++
++The compiled TLS 1.3 matrix covers wrapper moves after prefix and body WANT,
++fragmented records, clean and ambiguous abandonment, duplex exclusion,
++readiness loss, clean close, truncation, bounds, non-socket descriptors,
++foreign-thread fail-stop, and legacy delegation. The exact final build, test,
++stress, sanitizer, source-audit, and package results are recorded under
++`REVISION_EVIDENCE/rev0884/`.
++
++This is not yet a production receiver. There is no poll/epoll service, bounded
++complete-frame queue, authenticated accept/connect owner, durable receive/effect
++composition in `anonsync_core`, peer receipt from transport completion, or
++exactly-once remote execution. The next valuable step is to place this reader
++and the exact first-prefix writer under one bounded event-loop owner and carry a
++canonical operation through receiver SQLite/effect authority to a terminal
++effect receipt.
++
++Primary OpenSSL research, state machine, failure matrix, audit/refactor, and
++deliberate nonclaims: `TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md`.
++
+ ## Rev0883: no-throw continuation affinity and destructor fail-stop
+ 
+ Rev0882 made an unfinished TLS record a move-only, state-owned capability, but
+diff --git a/REVISION_NOTES_rev0884.md b/REVISION_NOTES_rev0884.md
+new file mode 100644
+index 0000000..b45b053
+--- /dev/null
++++ b/REVISION_NOTES_rev0884.md
+@@ -0,0 +1,84 @@
++# AnonSync rev0884 revision notes
++
++## Mission-level correction
++
++AnonSync treats live transport progress as authority-bearing state rather than
++an incidental loop variable. Rev0883 fenced write-continuation cleanup but still
++had no owner for a nonblocking TLS read after OpenSSL returned WANT_READ or
++WANT_WRITE. A movable continuation with inline prefix/body buffers would also
++risk changing the exact pointer that OpenSSL requires on retry.
++
++Rev0884 makes one heap allocation the identity of an incremental record read.
++The public wrapper is move-only and `noexcept` movable; moving it transfers a
++`unique_ptr` without relocating the prefix or body storage supplied to
++`SSL_read_ex`.
++
++## C++ implementation
++
++`SyncReplicaTlsRecordReadContinuation` now owns one bounded framed read and
++returns typed progress: `Progress`, `WantRead`, `WantWrite`, `Complete`, or
++`PeerClosed`. Each advance performs at most one SSL read. It clears the OpenSSL
++error queue immediately before that call and classifies a failure immediately
++with `SSL_get_error`.
++
++The exact prefix pointer/length or body pointer/length is reconstructed from
++heap-stable storage and unchanged offsets. WANT results do not advance offsets.
++The first attempted read re-attests the authenticated TLS session; a pending
++retry avoids certificate/exporter re-entry while strict mode still re-proves
++direct socket BIOs and `O_NONBLOCK`.
++
++A clean close-notify before any frame byte is a distinct `PeerClosed` terminal
++state. Close after prefix/body progress, an unclean EOF, over-limit prefix,
++readiness contradiction after I/O, or abandonment after any attempted read
++poisons the stream. Destruction before the first attempted read releases the
++reservation cleanly. Every no-throw path remains process/thread owner-fenced.
++
++## Refactor
++
++The authenticated owner no longer represents active framing with a write-only
++boolean. One `SyncReplicaTlsRecordReservation { Idle, Read, Write }` controls
++both directions. A second read, write, generic operation, or delivery-authority
++verifier is rejected while a read or write continuation is active. This avoids
++invalid two-boolean combinations and prevents certificate/exporter operations
++from interposing on a pending WANT retry.
++
++The legacy one-shot reader delegates to the incremental state machine. It still
++does not spin on nonblocking readiness: encountering WANT fails and the active
++continuation poisons the stream.
++
++## Runtime and audit surface
++
++The real TLS 1.3 test matrix now covers moves after prefix and body WANT states,
++fragmented records, clean pre-I/O abandonment, pending-I/O poison, duplex
++exclusion, strict descriptor reproof, clean peer close, truncation, over-limit
++prefixes, non-socket BIO rejection, foreign-thread fail-stop, and legacy helper
++delegation.
++
++A new source audit inventories heap ownership, one-read-per-advance ordering,
++immediate error classification, unchanged WANT offsets, prefix-before-allocation
++bounds, close and cleanup frontiers, duplex reservation, runtime cases, CTest
++registration, package requirements, and explicit nonclaims. Existing TLS and
++delivery-channel audits were refactored to inspect the central duplex state
++rather than a retired write-only flag.
++
++Exact final gate counts and toolchain results are recorded in
++`REVISION_EVIDENCE/rev0884/validation/VALIDATION_SUMMARY.json`.
++
++## Research
++
++The design follows OpenSSL 3.5 guidance for `SSL_read_ex`, same-argument retry,
++`SSL_get_error` error-queue discipline, and the limits of `SSL_pending` as a
++readiness signal. The full source rationale and failure matrix travel in
++`TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md`.
++
++## Nonclaims and next step
++
++This revision does not claim a production event loop, durable partial-TLS-record
++resume, full-duplex concurrent SSL use, receiver effect integration in the
++shipped executable, peer receipt, exactly-once execution, ThreadSanitizer,
++anonymity, or formal proof.
++
++The next high-value slice is a bounded single-owner receiver service that drives
++this continuation from poll/epoll, validates a complete canonical request under
++the authenticated delivery authority, reaches the existing receiver effect
++state machine and atomic publication, and sends one terminal effect receipt.
+diff --git a/TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md b/TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md
+new file mode 100644
+index 0000000..993cee3
+--- /dev/null
++++ b/TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md
+@@ -0,0 +1,392 @@
++# TLS Incremental Receive Continuation Audit — rev0884
++
++## Executive finding
++
++AnonSync's newest evidence-authorized delivery path could create authenticated
++TLS records, bind them to exact durable outbox claims, and retain an exclusive
++write continuation after the encrypted length prefix crossed the first-byte
++frontier. The receive direction was still a blocking convenience function. On a
++nonblocking descriptor, `SSL_ERROR_WANT_READ` or `SSL_ERROR_WANT_WRITE` caused
++that function to fail and poison the stream. There was no application-owned
++object that could preserve the exact pending read operation across readiness
++notifications.
++
++A tempting implementation is a movable value containing an inline eight-byte
++prefix array and inline body string. That design is unsafe at the OpenSSL retry
++boundary: moving the value can relocate its prefix storage, and later string
++moves are not an API-level guarantee that a previously supplied application
++buffer address remains the same. OpenSSL SSL_read documentation requires a
++retryable read to be repeated with the same arguments. A continuation whose
++C++ move changes the supplied pointer can violate that contract without a
++compiler error and without necessarily failing deterministically.
++
++Rev0884 introduces a heap-stable, move-only read continuation. One private
++allocation owns the prefix, body, offsets, pending-operation state, exact
++channel owner, limits, policy, and cleanup behavior. Moving the public wrapper
++moves only a `std::unique_ptr`; it does not move the buffers supplied to
++`SSL_read_ex`. Each `advance_or_throw()` performs at most one OpenSSL read and
++returns a typed event-loop result: progress, WANT_READ, WANT_WRITE, complete
++frame, or clean pre-frame peer close.
++
++The work also refactors the authenticated channel's write-only active flag into
++one duplex reservation enum. A read continuation, write continuation, generic
++record operation, or delivery-authority live verifier cannot re-enter the same
++`SSL*` while another record operation owns it. This is conservative by design:
++OpenSSL permits full-duplex patterns under carefully separated execution, but
++AnonSync currently binds an SSL owner to one process/thread incarnation and has
++no lock or two-owner scheduler that could make concurrent calls authoritative.
++
++This revision closes one transport-state gap. It does not claim a production
++receiver service, durable partial-body resume, remote effect completion,
++exactly-once execution, or anonymity.
++
++## Mission fit
++
++The heart of AnonSync is exact authority accounting:
++
++> Exact authorized history owns identity, causality, projection, dispatch,
++> retry, receipt, and visible effect. A readiness bit, buffer address, TLS
++> session, C++ wrapper, or source audit is subordinate evidence and cannot mint
++> authority by convenience.
++
++A pending `SSL_read_ex` operation therefore has identity-bearing state:
++
++- the exact authenticated TLS owner;
++- the exact creating process and thread incarnation;
++- the record reservation held on that stream;
++- the exact output pointer and requested length supplied to OpenSSL;
++- whether any call has entered OpenSSL;
++- the accepted prefix bytes and decoded body ceiling;
++- the body bytes already returned to the application; and
++- whether the only truthful terminal result is complete, cleanly closed, or
++  poisoned/ambiguous.
++
++Treating that state as a loop-local collection of variables loses its owner at
++`WANT_READ` or `WANT_WRITE`. Treating it as an ordinary movable aggregate risks
++changing the pending operation's identity. Rev0884 makes the continuation the
++exclusive owner of this cutpoint and makes its buffer addresses stable for the
++allocation's lifetime.
++
++## Primary-source constraints
++
++The implementation was reviewed against the OpenSSL 3.5 documentation used by
++this cloudtainer (the observed library is OpenSSL 3.5.5):
++
++- OpenSSL SSL_read / SSL_read_ex:
++  <https://docs.openssl.org/3.5/man3/SSL_read/>
++- SSL_get_error:
++  <https://docs.openssl.org/3.5/man3/SSL_get_error/>
++- SSL_pending:
++  <https://docs.openssl.org/3.5/man3/SSL_pending/>
++- OpenSSL thread safety:
++  <https://docs.openssl.org/3.5/man7/openssl-threads/>
++
++The load-bearing observations are:
++
++1. A nonblocking SSL read can require either read or write readiness.
++2. After a retryable WANT result, the operation must be repeated with the same
++   arguments; the output pointer and requested byte count are therefore part of
++   the continuation identity.
++3. `SSL_get_error` must classify the exact preceding call on the same thread,
++   with no intervening OpenSSL call that changes the thread-local error queue.
++4. `SSL_pending` reports already processed application bytes buffered inside
++   the SSL object. It is not a complete socket-readiness oracle and may report
++   zero while an unprocessed TLS record is available. It cannot replace the
++   typed WANT result or the event loop.
++5. OpenSSL's general thread-safety guarantees do not authorize simultaneous use
++   of one mutable `SSL*` from arbitrary threads.
++
++The code consequently calls `ERR_clear_error()` immediately before one
++`SSL_read_ex`, then calls `SSL_get_error()` immediately after a failed result.
++It does not perform certificate, exporter, or other SSL operations between a
++WANT result and retry of that exact read. Strict mode may re-observe the direct
++socket descriptors and `O_NONBLOCK`; that is an operating-system capability
++check rather than an application-data SSL operation.
++
++These sources constrain the design. They do not prove this implementation or
++its scheduling correct. Compiled tests, sanitizer runs, repeated executions,
++and manual review remain necessary.
++
++## Heap-stable state
++
++`SyncReplicaTlsRecordReadContinuation` is a small public capability containing:
++
++```cpp
++std::unique_ptr<detail::SyncReplicaTlsRecordReadState> state_;
++```
++
++The private state allocation owns:
++
++- `std::array<unsigned char, 8>` prefix storage;
++- `prefix_offset`;
++- the decoded `frame_bytes`;
++- the exact-sized `std::string frame` body storage;
++- `body_offset`;
++- the maximum allowed frame size;
++- strict/caller-managed readiness policy;
++- the diagnostic label;
++- the shared authenticated TLS owner;
++- reservation-active and I/O-started facts; and
++- a terminal state of Reading, Complete, or PeerClosed.
++
++The public type is noncopyable and not default-constructible. Its move
++constructor and move assignment are `noexcept`. A wrapper move transfers one
++heap allocation rather than relocating the prefix or body. If move assignment
++replaces an already active target, destruction of the target's allocation first
++runs the same owner-fenced abandonment policy as ordinary destruction.
++
++The private destructor is explicitly `noexcept` and calls exactly one
++`abandon_noexcept()` path. Cleanup is not a side channel around authority: the
++authenticated owner verifies the exact process and thread before changing its
++reservation, poison, closed, or SSL lifetime state.
++
++## Incremental state machine
++
++### Begin
++
++`begin_sync_replica_tls_record_read_or_throw()` performs all local operations
++that can throw before reserving the stream:
++
++1. validate the nonzero bounded maximum frame size;
++2. validate the readiness policy;
++3. require a live, non-moved authenticated channel;
++4. allocate the heap state, retain shared ownership, and copy diagnostics;
++5. re-attest the idle live TLS session;
++6. in strict mode, prove direct socket BIOs and `O_NONBLOCK`; and
++7. atomically within the single-thread owner, change the reservation from Idle
++   to Read.
++
++After reservation, setting the local boolean and moving a `unique_ptr` into the
++return value are nonthrowing. This mirrors the write continuation's rule that a
++stream cutpoint must never be accepted and then lost to a local allocation or
++copy failure.
++
++### Advance
++
++One `advance_or_throw()` call:
++
++1. verifies that the continuation still owns a Reading reservation;
++2. reconstructs the exact pointer and remaining length from stable storage and
++   unchanged offsets;
++3. verifies process/thread ownership and channel usability;
++4. on the first attempted read, re-attests the exact authenticated session;
++5. in strict mode, re-proves direct nonblocking socket capability;
++6. marks I/O started before entering OpenSSL;
++7. clears the thread-local OpenSSL error queue;
++8. performs exactly one `SSL_read_ex` call;
++9. immediately classifies a failure with `SSL_get_error`; and
++10. either returns a typed progress result or transitions terminally.
++
++WANT_READ and WANT_WRITE do not change prefix or body offsets. The next advance
++therefore supplies the same arguments. A successful read is a completed OpenSSL
++operation; its returned bytes advance the appropriate offset. Prefix completion
++is decoded and validated before body allocation. Empty, over-limit, or
++unrepresentable lengths fail closed before a body byte is read.
++
++The first successful body completion releases the channel reservation and drops
++the private state's shared TLS reference before reporting Complete. The caller
++can then move the completed frame out through `take_frame_or_throw()`. A
++completed continuation no longer carries live SSL authority.
++
++### Why the full session is not re-attested after WANT
++
++The authenticated channel normally revalidates protocol, verification mode,
++peer key pin, and exporter binding at each new operation boundary. A WANT result
++means the existing `SSL_read_ex` operation is incomplete. Calling exporter or
++certificate APIs before retry would interpose unrelated SSL work between that
++call and its required same-argument retry. Rev0884 performs full live-session
++re-attestation at the first read frontier, then relies on the exclusive
++reservation and exact owner until that framed read terminates. Strict descriptor
++capability is still checked on every advance because a caller can change file
++status flags without changing the SSL session.
++
++This is a deliberately narrow trust interval: one bounded record read under one
++process/thread owner. A future service that allows channel mutation, TLS
++renegotiation-like control, or cross-thread scheduling must introduce a stronger
++serialized owner rather than weakening this interval by convention.
++
++## Duplex reservation refactor
++
++Rev0883 represented unfinished application data with a `record_write_active_`
++boolean. Adding reads as a second boolean would admit invalid states such as
++both true, and every verifier would need to remember both fields.
++
++Rev0884 replaces it with:
++
++```cpp
++enum class SyncReplicaTlsRecordReservation { Idle, Read, Write };
++```
++
++The authenticated state now owns one `record_reservation_`. All entry points
++use it:
++
++- begin read requires Idle, then records Read;
++- active read requires Read;
++- read completion/close/abandonment require Read;
++- begin write requires Idle, then records Write;
++- active write requires Write;
++- write completion/poison require Write or fail closed;
++- generic delivery-authority validation requires Idle before certificate or
++  exporter revalidation.
++
++The last rule prevents a database service call from using the channel verifier
++as an accidental OpenSSL re-entry path while a WANT operation is pending. The
++reservation is channel-wide rather than direction-only because the current
++owner is single-thread-affine and unguarded. This costs potential full-duplex
++throughput but eliminates a class of interleaving states that the present
++architecture cannot prove safe.
++
++## Failure matrix
++
++| Frontier | Exact outcome | Stream authority after outcome |
++|---|---|---|
++| invalid limit or readiness policy | throw before state allocation/reservation | unchanged and reusable |
++| heap allocation / label copy fails | throw before reservation | unchanged and reusable |
++| session or strict socket proof fails at begin | throw before reservation; session contradiction may poison | no unreported active read |
++| continuation destroyed before first `advance` | owner-fenced clean reservation release | reusable |
++| first or later read returns WANT_READ | preserve exact buffer/length and reservation | only same continuation may retry |
++| first or later read returns WANT_WRITE | preserve exact buffer/length and reservation | only same continuation may retry |
++| wrapper moved after WANT | transfer heap pointer only | pending operation unchanged |
++| WANT continuation abandoned or overwritten | owner-fenced poison | channel permanently unusable |
++| partial prefix/body then abandonment or error | owner-fenced poison | channel permanently unusable |
++| strict socket loses `O_NONBLOCK` before retry | throw and poison because I/O was already attempted | channel permanently unusable |
++| empty, over-limit, or unrepresentable prefix | reject before body allocation; poison | channel permanently unusable |
++| clean close-notify before any frame byte | PeerClosed terminal; mark channel closed | no fabricated frame; channel unusable |
++| clean close-notify after any framing progress | truncation error and poison | channel permanently unusable |
++| unclean EOF / syscall / protocol error | error and poison | channel permanently unusable |
++| complete body | release reservation, return Complete | channel reusable for the next record |
++| `take_frame_or_throw` before Complete | logic error, active operation unchanged | continuation still owns stream |
++| foreign process/thread advance | process fail-stop or throwing thread rejection | no foreign SSL operation |
++| foreign process/thread cleanup | immediate fail-stop before shared mutation | no silent foreign release/poison/free |
++| second read, write, or delivery verifier during active read | reject before OpenSSL re-entry | original continuation remains owner |
++
++The clean-destruction exception is intentionally limited to “no attempted
++read.” Once `SSL_read_ex` has been called, even if it returned WANT before any
++application byte, OpenSSL may retain operation-specific state. Releasing the
++reservation as though nothing happened would allow a different buffer or
++operation to inherit an ambiguous stream. Poisoning is conservative and
++truthful.
++
++## Runtime evidence
++
++The compiled TLS integration test uses real TLS 1.3 handshakes and socket BIOs.
++The rev0884 matrix adds cases for:
++
++- empty nonblocking read returning WANT, public-wrapper move, then exact frame
++  completion;
++- three-byte prefix progress, WANT, move, remaining prefix, partial body, WANT,
++  another move, and exact completion;
++- clean destruction before any attempted read followed by channel reuse;
++- abandonment after WANT followed by required poison;
++- a second read and a write rejected while one read owns the duplex stream;
++- loss of `O_NONBLOCK` after WANT, detected at the retry frontier;
++- clean close-notify before a frame yielding PeerClosed;
++- close-notify after a valid prefix yielding truncation and poison;
++- an over-limit prefix rejected before body progress;
++- strict rejection of a non-socket descriptor BIO;
++- foreign-thread pre-I/O destruction in an inherited child process, which must
++  fail stopped; and
++- the legacy one-shot reader delegating to the incremental state machine and
++  poisoning rather than spinning after WANT.
++
++The tests also retain the earlier exact channel binding, write continuation,
++first-prefix dispatch, SQLite claim, receipt, and convergence checks. The
++source audit independently inventories reviewed state-machine shape but
++explicitly disclaims semantic proof.
++
++## Audit and refactor findings
++
++### Corrected waste: duplicated active-operation states
++
++A separate read flag beside the write flag would have multiplied every state
++transition and audit check. The one enum reduces the representable state space
++and gives ordinary channel verification one place to reject re-entry.
++
++### Corrected risk: movable inline retry buffers
++
++The implementation does not rely on `std::array` wrapper address stability or
++on a particular `std::string` move implementation. The application buffers are
++owned by one allocation whose address is invariant across wrapper moves.
++
++### Corrected risk: hidden blocking loops
++
++The incremental API performs one SSL read per advance. It cannot internally
++spin through repeated WANT results or monopolize a database writer while
++waiting. The legacy blocking-shaped helper remains explicit: it delegates to
++the state machine and fails on WANT rather than pretending to provide event-loop
++liveness.
++
++### Corrected risk: verifier re-entry
++
++The delivery authority used by durable services performs live TLS validation.
++Without the new Idle requirement, a caller could invoke that verifier while a
++read was pending and interpose exporter/certificate operations. The duplex
++reservation now rejects that path before OpenSSL access.
++
++### Remaining architectural waste
++
++The newer causal SQLite owner, file-effect owner, authenticated delivery
++service, first-prefix dispatcher, and incremental receive continuation are
++still primarily exercised by tests. The shipped executable remains on an older
++path. Continuing to deepen isolated correctness without composing a small
++production-shaped service risks optimizing an oracle that users never execute.
++
++The next implementation should be a narrow single-owner receiver service:
++
++1. poll/epoll drives exactly one read continuation per connection;
++2. bounded queues cap complete frames awaiting validation;
++3. canonical request parsing and authenticated channel authority feed the
++   existing receiver SQLite/effect owner;
++4. immutable publication reaches a terminal effect receipt;
++5. a write continuation sends that exact receipt;
++6. crash injection covers every prefix byte, body offset, transaction,
++   publication, receipt byte, and sender settlement frontier.
++
++Partial TLS record offsets should initially remain ephemeral and poison on
++process loss. Durable byte-level TLS resume is not meaningful across a lost TLS
++session; durable authority belongs at canonical message, payload chunk, and
++effect cutpoints above the transport.
++
++## Deliberate nonclaims
++
++Rev0884 does not claim:
++
++- a production poll, epoll, io_uring, kqueue, IOCP, or coroutine integration;
++- fairness, connection admission, bounded complete-frame queues, or timeout
++  policy;
++- simultaneous full-duplex use of one `SSL*`;
++- support for custom, filtered, buffered, memory, QUIC, or non-socket BIOs under
++  the strict readiness policy;
++- durable resume of a partial TLS record after process or session loss;
++- an authenticated TCP accept/connect owner or peer discovery;
++- integration of received frames with the receiver SQLite/effect state machine
++  in a shipped executable;
++- terminal remote effect from a completed TLS read;
++- peer receipt from read or write completion;
++- exactly-once network delivery or non-idempotent remote execution;
++- complete retry, backoff, jitter, dead-letter, lease-heartbeat, membership,
++  revocation, compaction, rejoin, or key-recovery policy;
++- ThreadSanitizer, formal verification, full-project Clang, or full-project
++  sanitizer coverage;
++- confidentiality beyond the configured TLS channel, or anonymity,
++  unlinkability, endpoint hiding, traffic-shape protection, or resistance to a
++  global observer; or
++- that a lexical audit proves runtime behavior.
++
++The source audit checks reviewed vocabulary, ordering, tests, package surface,
++and nonclaims. It does not claim pointer stability, OpenSSL behavior, scheduler
++behavior, kernel readiness, or race freedom by substring presence.
++
++## Conclusion
++
++Rev0884 converts nonblocking receive from an unowned error case into an exact,
++move-only continuation with heap-stable OpenSSL retry arguments and one
++channel-wide reservation. It distinguishes no-I/O cleanup, retryable readiness,
++complete frame, clean pre-frame close, and ambiguous/truncated progress. It
++also removes a two-boolean state-space trap and prevents durable-service
++validation from re-entering a pending SSL operation.
++
++The next mission-critical step is composition, not another isolated transport
++primitive: place this reader and the existing exact write dispatcher under one
++bounded event-loop owner and carry one canonical operation all the way to a
++terminal receiver effect receipt.
+diff --git a/src/sync_replica_tls_transport.cpp b/src/sync_replica_tls_transport.cpp
+index 59b97c3..2ae1900 100644
+--- a/src/sync_replica_tls_transport.cpp
++++ b/src/sync_replica_tls_transport.cpp
+@@ -429,43 +429,19 @@ void ssl_write_all_or_throw(
+     }
+ }
+ 
+-void ssl_read_all_or_throw(
+-    SSL* ssl,
+-    unsigned char* data,
+-    std::size_t bytes,
+-    const std::string& label) {
+-    std::size_t offset = 0U;
+-    while (offset < bytes) {
+-        std::size_t read = 0U;
+-        ERR_clear_error();
+-        const int result = SSL_read_ex(
+-            ssl, data + offset, bytes - offset, &read);
+-        if (result != 1) {
+-            const int error = SSL_get_error(ssl, result);
+-            if (error == SSL_ERROR_WANT_READ ||
+-                error == SSL_ERROR_WANT_WRITE) {
+-                throw std::runtime_error(
+-                    label +
+-                    " reached nonblocking TLS readiness loss; this channel must be discarded");
+-            }
+-            if (error == SSL_ERROR_ZERO_RETURN) {
+-                throw std::runtime_error(
+-                    label + " peer closed TLS before the complete record");
+-            }
+-            throw std::runtime_error(
+-                label + " failed with SSL error " +
+-                std::to_string(error) + openssl_error_suffix());
+-        }
+-        if (read == 0U || read > bytes - offset) {
+-            throw std::runtime_error(
+-                label + " SSL_read_ex made invalid progress");
+-        }
+-        offset += read;
+-    }
+-}
+ 
+ }  // namespace
+ 
++namespace detail {
++
++enum class SyncReplicaTlsRecordReservation {
++    Idle,
++    Read,
++    Write,
++};
++
++}  // namespace detail
++
+ class detail::SyncReplicaTlsAuthenticatedState final
+     : public detail::SyncReplicaDeliveryChannelVerifier {
+ public:
+@@ -511,55 +487,65 @@ public:
+ 
+     void validate_or_throw(std::string_view label) const override {
+         require_current_or_throw(label);
+-        if (poisoned_) {
+-            throw std::runtime_error(
+-                std::string(label) +
+-                " authenticated TLS stream is poisoned and must be discarded");
+-        }
+-        try {
+-            validate_authenticated_session_or_throw(
+-                ssl_, peer_spki_sha256_, binding_, std::string(label));
+-        } catch (...) {
+-            poisoned_ = true;
+-            throw;
+-        }
++        require_usable_or_throw(label);
++        require_record_idle_or_throw(label);
++        validate_authenticated_session_and_poison_or_throw(label);
+     }
+ 
+-    [[nodiscard]] SSL* ssl_for_record_or_throw(
+-        std::string_view label) const {
++    [[nodiscard]] SSL* begin_record_write_or_throw(
++        std::string_view label,
++        bool require_nonblocking_socket) const {
+         validate_or_throw(label);
+-        if (record_write_active_) {
+-            throw std::logic_error(
+-                std::string(label) +
+-                " authenticated TLS stream already owns an unfinished record write");
++        if (require_nonblocking_socket) {
++            require_nonblocking_socket_or_throw(ssl_, std::string(label));
+         }
++        record_reservation_ = SyncReplicaTlsRecordReservation::Write;
+         return ssl_;
+     }
+ 
+-    [[nodiscard]] SSL* begin_record_write_or_throw(
++    [[nodiscard]] SSL* active_record_write_or_throw(
+         std::string_view label,
+         bool require_nonblocking_socket) const {
+-        validate_or_throw(label);
+-        if (record_write_active_) {
++        require_current_or_throw(label);
++        require_usable_or_throw(label);
++        if (record_reservation_ != SyncReplicaTlsRecordReservation::Write) {
+             throw std::logic_error(
+                 std::string(label) +
+-                " authenticated TLS stream already owns an unfinished record write");
++                " authenticated TLS stream lost its record-write reservation");
+         }
++        validate_authenticated_session_and_poison_or_throw(label);
+         if (require_nonblocking_socket) {
+             require_nonblocking_socket_or_throw(ssl_, std::string(label));
+         }
+-        record_write_active_ = true;
+         return ssl_;
+     }
+ 
+-    [[nodiscard]] SSL* active_record_write_or_throw(
++    void begin_record_read_or_throw(
+         std::string_view label,
+         bool require_nonblocking_socket) const {
+         validate_or_throw(label);
+-        if (!record_write_active_) {
++        if (require_nonblocking_socket) {
++            require_nonblocking_socket_or_throw(ssl_, std::string(label));
++        }
++        record_reservation_ = SyncReplicaTlsRecordReservation::Read;
++    }
++
++    [[nodiscard]] SSL* active_record_read_or_throw(
++        std::string_view label,
++        bool require_nonblocking_socket,
++        bool revalidate_authenticated_session) const {
++        require_current_or_throw(label);
++        require_usable_or_throw(label);
++        if (record_reservation_ != SyncReplicaTlsRecordReservation::Read) {
+             throw std::logic_error(
+                 std::string(label) +
+-                " authenticated TLS stream lost its record-write reservation");
++                " authenticated TLS stream lost its record-read reservation");
++        }
++        // A fresh operation is re-attested at its first-byte frontier. After a
++        // retryable WANT, the same SSL_read_ex operation must be resumed without
++        // interposing exporter/certificate operations on the SSL state.
++        if (revalidate_authenticated_session) {
++            validate_authenticated_session_and_poison_or_throw(label);
+         }
+         if (require_nonblocking_socket) {
+             require_nonblocking_socket_or_throw(ssl_, std::string(label));
+@@ -569,17 +555,50 @@ public:
+ 
+     void complete_record_write_noexcept() const noexcept {
+         require_owner_or_fail_stop_noexcept();
+-        if (!record_write_active_) {
++        if (record_reservation_ != SyncReplicaTlsRecordReservation::Write) {
++            poisoned_ = true;
++            record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
++            return;
++        }
++        record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
++    }
++
++    void complete_record_read_noexcept() const noexcept {
++        require_owner_or_fail_stop_noexcept();
++        if (record_reservation_ != SyncReplicaTlsRecordReservation::Read) {
++            poisoned_ = true;
++            record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
++            return;
++        }
++        record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
++    }
++
++    void abandon_record_read_noexcept(bool io_started) const noexcept {
++        require_owner_or_fail_stop_noexcept();
++        if (record_reservation_ != SyncReplicaTlsRecordReservation::Read) {
++            poisoned_ = true;
++            record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
++            return;
++        }
++        if (io_started) poisoned_ = true;
++        record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
++    }
++
++    void close_record_read_noexcept() const noexcept {
++        require_owner_or_fail_stop_noexcept();
++        if (record_reservation_ != SyncReplicaTlsRecordReservation::Read) {
+             poisoned_ = true;
++            record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
+             return;
+         }
+-        record_write_active_ = false;
++        record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
++        closed_ = true;
+     }
+ 
+     void poison_noexcept() const noexcept {
+         require_owner_or_fail_stop_noexcept();
+         poisoned_ = true;
+-        record_write_active_ = false;
++        record_reservation_ = SyncReplicaTlsRecordReservation::Idle;
+     }
+ 
+ private:
+@@ -593,6 +612,48 @@ private:
+         require_sync_thread_incarnation_or_throw(owner_thread_, label);
+     }
+ 
++    void require_usable_or_throw(std::string_view label) const {
++        if (poisoned_) {
++            throw std::runtime_error(
++                std::string(label) +
++                " authenticated TLS stream is poisoned and must be discarded");
++        }
++        if (closed_) {
++            throw std::runtime_error(
++                std::string(label) +
++                " authenticated TLS stream is closed by its peer and must be discarded");
++        }
++    }
++
++    void require_record_idle_or_throw(std::string_view label) const {
++        switch (record_reservation_) {
++            case SyncReplicaTlsRecordReservation::Idle:
++                return;
++            case SyncReplicaTlsRecordReservation::Read:
++                throw std::logic_error(
++                    std::string(label) +
++                    " authenticated TLS stream already owns an unfinished record read");
++            case SyncReplicaTlsRecordReservation::Write:
++                throw std::logic_error(
++                    std::string(label) +
++                    " authenticated TLS stream already owns an unfinished record write");
++        }
++        throw std::logic_error(
++            std::string(label) +
++            " authenticated TLS stream has an unknown record reservation");
++    }
++
++    void validate_authenticated_session_and_poison_or_throw(
++        std::string_view label) const {
++        try {
++            validate_authenticated_session_or_throw(
++                ssl_, peer_spki_sha256_, binding_, std::string(label));
++        } catch (...) {
++            poisoned_ = true;
++            throw;
++        }
++    }
++
+     void require_owner_or_fail_stop_noexcept() const noexcept {
+         if (!sync_process_incarnation_is_current(owner_process_)) {
+             fail_stop_on_sync_process_capability_violation_noexcept();
+@@ -614,7 +675,57 @@ private:
+     SyncProcessIncarnation owner_process_;
+     SyncThreadIncarnation owner_thread_;
+     mutable bool poisoned_ = false;
+-    mutable bool record_write_active_ = false;
++    mutable bool closed_ = false;
++    mutable SyncReplicaTlsRecordReservation record_reservation_ =
++        SyncReplicaTlsRecordReservation::Idle;
++};
++
++class detail::SyncReplicaTlsRecordReadState final {
++public:
++    enum class Terminal {
++        Reading,
++        Complete,
++        PeerClosed,
++    };
++
++    SyncReplicaTlsRecordReadState(
++        std::shared_ptr<SyncReplicaTlsAuthenticatedState> authenticated_state_value,
++        std::uint64_t max_frame_bytes_value,
++        bool require_nonblocking_socket_value,
++        std::string label_value)
++        : authenticated_state(std::move(authenticated_state_value)),
++          max_frame_bytes(max_frame_bytes_value),
++          require_nonblocking_socket(require_nonblocking_socket_value),
++          label(std::move(label_value)) {}
++
++    SyncReplicaTlsRecordReadState(const SyncReplicaTlsRecordReadState&) = delete;
++    SyncReplicaTlsRecordReadState& operator=(
++        const SyncReplicaTlsRecordReadState&) = delete;
++
++    ~SyncReplicaTlsRecordReadState() noexcept {
++        abandon_noexcept();
++    }
++
++    void abandon_noexcept() noexcept {
++        if (reservation_active && authenticated_state) {
++            authenticated_state->abandon_record_read_noexcept(io_started);
++        }
++        reservation_active = false;
++        authenticated_state.reset();
++    }
++
++    std::shared_ptr<SyncReplicaTlsAuthenticatedState> authenticated_state;
++    std::uint64_t max_frame_bytes = 0U;
++    bool require_nonblocking_socket = false;
++    std::string label;
++    std::array<unsigned char, kSyncReplicaTlsRecordPrefixBytes> prefix{};
++    std::size_t prefix_offset = 0U;
++    std::uint64_t frame_bytes = 0U;
++    std::string frame;
++    std::size_t body_offset = 0U;
++    bool reservation_active = false;
++    bool io_started = false;
++    Terminal terminal = Terminal::Reading;
+ };
+ 
+ SyncReplicaTlsAuthenticatedChannel::SyncReplicaTlsAuthenticatedChannel(
+@@ -735,6 +846,188 @@ void SyncReplicaTlsRecordWriteContinuation::finish_or_throw(
+     }
+ }
+ 
++SyncReplicaTlsRecordReadContinuation::
++    SyncReplicaTlsRecordReadContinuation(
++        std::unique_ptr<detail::SyncReplicaTlsRecordReadState> state) noexcept
++    : state_(std::move(state)) {}
++
++SyncReplicaTlsRecordReadContinuation::
++    SyncReplicaTlsRecordReadContinuation(
++        SyncReplicaTlsRecordReadContinuation&& other) noexcept = default;
++
++SyncReplicaTlsRecordReadContinuation&
++SyncReplicaTlsRecordReadContinuation::operator=(
++    SyncReplicaTlsRecordReadContinuation&& other) noexcept = default;
++
++SyncReplicaTlsRecordReadContinuation::~SyncReplicaTlsRecordReadContinuation()
++    noexcept = default;
++
++bool SyncReplicaTlsRecordReadContinuation::active() const noexcept {
++    return state_ != nullptr && state_->reservation_active;
++}
++
++bool SyncReplicaTlsRecordReadContinuation::frame_ready() const noexcept {
++    return state_ != nullptr &&
++           state_->terminal ==
++               detail::SyncReplicaTlsRecordReadState::Terminal::Complete;
++}
++
++bool SyncReplicaTlsRecordReadContinuation::peer_closed() const noexcept {
++    return state_ != nullptr &&
++           state_->terminal ==
++               detail::SyncReplicaTlsRecordReadState::Terminal::PeerClosed;
++}
++
++std::uint64_t
++SyncReplicaTlsRecordReadContinuation::prefix_bytes_received() const noexcept {
++    return state_ == nullptr
++        ? 0U
++        : static_cast<std::uint64_t>(state_->prefix_offset);
++}
++
++std::uint64_t
++SyncReplicaTlsRecordReadContinuation::frame_bytes() const noexcept {
++    return state_ == nullptr ? 0U : state_->frame_bytes;
++}
++
++std::uint64_t
++SyncReplicaTlsRecordReadContinuation::body_bytes_received() const noexcept {
++    return state_ == nullptr
++        ? 0U
++        : static_cast<std::uint64_t>(state_->body_offset);
++}
++
++SyncReplicaTlsRecordReadProgress
++SyncReplicaTlsRecordReadContinuation::advance_or_throw() {
++    if (!state_ || !state_->reservation_active ||
++        state_->terminal !=
++            detail::SyncReplicaTlsRecordReadState::Terminal::Reading) {
++        throw std::logic_error(
++            "sync replica TLS record read continuation is not active");
++    }
++
++    try {
++        const bool reading_prefix =
++            state_->prefix_offset < state_->prefix.size();
++        if (!reading_prefix &&
++            (state_->frame_bytes == 0U || state_->frame.empty() ||
++             state_->body_offset >= state_->frame.size())) {
++            throw std::logic_error(
++                state_->label + " TLS record read state is internally invalid");
++        }
++
++        unsigned char* const output = reading_prefix
++            ? state_->prefix.data() + state_->prefix_offset
++            : reinterpret_cast<unsigned char*>(state_->frame.data()) +
++                  state_->body_offset;
++        const std::size_t remaining = reading_prefix
++            ? state_->prefix.size() - state_->prefix_offset
++            : state_->frame.size() - state_->body_offset;
++
++        SSL* const ssl = state_->authenticated_state
++            ->active_record_read_or_throw(
++                state_->label,
++                state_->require_nonblocking_socket,
++                !state_->io_started);
++
++        // The flag is set before entering OpenSSL. Even a retryable WANT may
++        // leave one exact SSL_read_ex operation that must be resumed with the
++        // same buffer and length, so later abandonment cannot release cleanly.
++        state_->io_started = true;
++        std::size_t bytes_read = 0U;
++        ERR_clear_error();
++        const int result = SSL_read_ex(
++            ssl, output, remaining, &bytes_read);
++        const int ssl_error =
++            result == 1 ? SSL_ERROR_NONE : SSL_get_error(ssl, result);
++
++        if (result != 1) {
++            if (bytes_read != 0U) {
++                throw std::runtime_error(
++                    state_->label +
++                    " SSL_read_ex reported failure with application bytes");
++            }
++            if (ssl_error == SSL_ERROR_WANT_READ) {
++                return SyncReplicaTlsRecordReadProgress::WantRead;
++            }
++            if (ssl_error == SSL_ERROR_WANT_WRITE) {
++                return SyncReplicaTlsRecordReadProgress::WantWrite;
++            }
++            if (ssl_error == SSL_ERROR_ZERO_RETURN) {
++                if (state_->prefix_offset == 0U &&
++                    state_->frame_bytes == 0U &&
++                    state_->body_offset == 0U) {
++                    state_->authenticated_state->close_record_read_noexcept();
++                    state_->reservation_active = false;
++                    state_->authenticated_state.reset();
++                    state_->terminal = detail::SyncReplicaTlsRecordReadState::
++                        Terminal::PeerClosed;
++                    return SyncReplicaTlsRecordReadProgress::PeerClosed;
++                }
++                throw std::runtime_error(
++                    state_->label +
++                    " peer closed TLS before the complete record");
++            }
++            throw std::runtime_error(
++                state_->label + " failed with SSL error " +
++                std::to_string(ssl_error) + openssl_error_suffix());
++        }
++
++        if (bytes_read == 0U || bytes_read > remaining) {
++            throw std::runtime_error(
++                state_->label + " SSL_read_ex made invalid progress");
++        }
++
++        if (reading_prefix) {
++            state_->prefix_offset += bytes_read;
++            if (state_->prefix_offset == state_->prefix.size()) {
++                state_->frame_bytes = decode_u64_be(state_->prefix);
++                if (state_->frame_bytes == 0U) {
++                    throw std::invalid_argument(
++                        state_->label + " peer advertised an empty frame");
++                }
++                if (state_->frame_bytes > state_->max_frame_bytes) {
++                    throw std::length_error(
++                        state_->label +
++                        " peer advertised a frame above the configured limit");
++                }
++                const std::size_t allocation = checked_u64_to_size_or_throw(
++                    state_->frame_bytes,
++                    state_->label + " peer frame size");
++                state_->frame.assign(allocation, '\0');
++            }
++            return SyncReplicaTlsRecordReadProgress::Progress;
++        }
++
++        state_->body_offset += bytes_read;
++        if (state_->body_offset != state_->frame.size()) {
++            return SyncReplicaTlsRecordReadProgress::Progress;
++        }
++
++        state_->authenticated_state->complete_record_read_noexcept();
++        state_->reservation_active = false;
++        state_->authenticated_state.reset();
++        state_->terminal =
++            detail::SyncReplicaTlsRecordReadState::Terminal::Complete;
++        return SyncReplicaTlsRecordReadProgress::Complete;
++    } catch (...) {
++        state_->abandon_noexcept();
++        throw;
++    }
++}
++
++std::string SyncReplicaTlsRecordReadContinuation::take_frame_or_throw() {
++    if (!state_ ||
++        state_->terminal !=
++            detail::SyncReplicaTlsRecordReadState::Terminal::Complete) {
++        throw std::logic_error(
++            "sync replica TLS record read continuation has no complete frame");
++    }
++    std::string frame = std::move(state_->frame);
++    state_.reset();
++    return frame;
++}
++
+ void configure_sync_replica_tls13_client_context_or_throw(
+     SSL_CTX* context,
+     const std::string& label) {
+@@ -861,39 +1154,73 @@ void write_sync_replica_tls_record_or_throw(
+     continuation.finish_or_throw(frame);
+ }
+ 
+-std::string read_sync_replica_tls_record_or_throw(
++SyncReplicaTlsRecordReadContinuation
++begin_sync_replica_tls_record_read_or_throw(
+     const SyncReplicaTlsAuthenticatedChannel& channel,
+     std::uint64_t max_frame_bytes,
++    SyncReplicaTlsRecordReadReadinessPolicy readiness_policy,
+     const std::string& label) {
+     validate_record_limit_or_throw(max_frame_bytes, label);
+-    detail::SyncReplicaTlsAuthenticatedState& state =
+-        channel.state_or_throw(label);
+-    SSL* const ssl = state.ssl_for_record_or_throw(label);
+ 
+-    try {
+-        std::array<unsigned char, kSyncReplicaTlsRecordPrefixBytes> prefix{};
+-        ssl_read_all_or_throw(
+-            ssl, prefix.data(), prefix.size(), label + " length prefix");
+-        const std::uint64_t frame_bytes = decode_u64_be(prefix);
+-        if (frame_bytes == 0U) {
++    bool require_nonblocking_socket = false;
++    switch (readiness_policy) {
++        case SyncReplicaTlsRecordReadReadinessPolicy::CallerManaged:
++            break;
++        case SyncReplicaTlsRecordReadReadinessPolicy::RequireNonblockingSocket:
++            require_nonblocking_socket = true;
++            break;
++        default:
+             throw std::invalid_argument(
+-                label + " peer advertised an empty frame");
+-        }
+-        if (frame_bytes > max_frame_bytes) {
+-            throw std::length_error(
+-                label + " peer advertised a frame above the configured limit");
++                label + " record-read readiness policy is unknown");
++    }
++
++    detail::SyncReplicaTlsAuthenticatedState& authenticated_state =
++        channel.state_or_throw(label);
++    // Heap allocation, shared ownership, and diagnostic copying all precede the
++    // stream reservation. Once reserved, constructing and returning the public
++    // wrapper is a no-throw unique_ptr move.
++    auto read_state =
++        std::make_unique<detail::SyncReplicaTlsRecordReadState>(
++            channel.state_, max_frame_bytes, require_nonblocking_socket, label);
++    authenticated_state.begin_record_read_or_throw(
++        label, require_nonblocking_socket);
++    read_state->reservation_active = true;
++    return SyncReplicaTlsRecordReadContinuation(std::move(read_state));
++}
++
++SyncReplicaTlsRecordReadContinuation
++begin_sync_replica_tls_record_read_or_throw(
++    const SyncReplicaTlsAuthenticatedChannel& channel,
++    std::uint64_t max_frame_bytes,
++    const std::string& label) {
++    return begin_sync_replica_tls_record_read_or_throw(
++        channel, max_frame_bytes,
++        SyncReplicaTlsRecordReadReadinessPolicy::CallerManaged, label);
++}
++
++std::string read_sync_replica_tls_record_or_throw(
++    const SyncReplicaTlsAuthenticatedChannel& channel,
++    std::uint64_t max_frame_bytes,
++    const std::string& label) {
++    SyncReplicaTlsRecordReadContinuation continuation =
++        begin_sync_replica_tls_record_read_or_throw(
++            channel, max_frame_bytes,
++            SyncReplicaTlsRecordReadReadinessPolicy::CallerManaged, label);
++    for (;;) {
++        switch (continuation.advance_or_throw()) {
++            case SyncReplicaTlsRecordReadProgress::Progress:
++                break;
++            case SyncReplicaTlsRecordReadProgress::Complete:
++                return continuation.take_frame_or_throw();
++            case SyncReplicaTlsRecordReadProgress::PeerClosed:
++                throw std::runtime_error(
++                    label + " peer closed TLS before the complete record");
++            case SyncReplicaTlsRecordReadProgress::WantRead:
++            case SyncReplicaTlsRecordReadProgress::WantWrite:
++                throw std::runtime_error(
++                    label +
++                    " reached nonblocking TLS readiness loss; this channel must be discarded");
+         }
+-        const std::size_t allocation = checked_u64_to_size_or_throw(
+-            frame_bytes, label + " peer frame size");
+-        std::string frame(allocation, '\0');
+-        ssl_read_all_or_throw(
+-            ssl,
+-            reinterpret_cast<unsigned char*>(frame.data()),
+-            frame.size(), label + " frame body");
+-        return frame;
+-    } catch (...) {
+-        state.poison_noexcept();
+-        throw;
+     }
+ }
+ 
+diff --git a/src/sync_replica_tls_transport.hpp b/src/sync_replica_tls_transport.hpp
+index 67c3edf..612e37d 100644
+--- a/src/sync_replica_tls_transport.hpp
++++ b/src/sync_replica_tls_transport.hpp
+@@ -13,10 +13,25 @@ namespace anonsync {
+ 
+ namespace detail {
+ class SyncReplicaTlsAuthenticatedState;
++class SyncReplicaTlsRecordReadState;
+ }
+ 
++class SyncReplicaTlsRecordReadContinuation;
+ class SyncReplicaTlsRecordWriteContinuation;
+ 
++enum class SyncReplicaTlsRecordReadReadinessPolicy {
++    CallerManaged,
++    RequireNonblockingSocket,
++};
++
++enum class SyncReplicaTlsRecordReadProgress {
++    Progress,
++    WantRead,
++    WantWrite,
++    Complete,
++    PeerClosed,
++};
++
+ enum class SyncReplicaTlsRecordWriteReadinessPolicy {
+     CallerManaged,
+     RequireNonblockingSocket,
+@@ -110,9 +125,10 @@ private:
+         const SyncReplicaTlsAuthenticatedChannel&, std::uint64_t,
+         std::uint64_t, SyncReplicaTlsRecordWriteReadinessPolicy,
+         const std::string&);
+-    friend std::string read_sync_replica_tls_record_or_throw(
++    friend SyncReplicaTlsRecordReadContinuation
++    begin_sync_replica_tls_record_read_or_throw(
+         const SyncReplicaTlsAuthenticatedChannel&, std::uint64_t,
+-        const std::string&);
++        SyncReplicaTlsRecordReadReadinessPolicy, const std::string&);
+ 
+     SyncReplicaTlsAuthenticatedChannel(
+         SSL* ssl,
+@@ -183,6 +199,61 @@ private:
+     std::string label_;
+ };
+ 
++// Move-only ownership of one incremental SSL_read_ex() operation for a single
++// framed AnonSync record. The continuation reserves the channel's entire TLS
++// application-data stream until a complete frame, clean pre-frame peer close,
++// or terminal failure is observed. Reads and writes cannot overlap on the same
++// SSL object, including through the delivery-authority verifier.
++//
++// The prefix and body storage live in a heap-stable private state. Moving this
++// public wrapper therefore cannot change the exact buffer pointer or length
++// that OpenSSL requires when SSL_ERROR_WANT_READ or SSL_ERROR_WANT_WRITE makes
++// an SSL_read_ex() call retryable. Each advance performs at most one SSL read.
++// The caller integrates WantRead/WantWrite with its event loop and must retry on
++// the creating process and thread.
++//
++// Destruction before the first attempted SSL read releases the reservation
++// without poisoning because no stream progress is possible.
++// Abandonment after any attempted read permanently poisons the channel. That
++// includes a retryable WANT result because the pending OpenSSL operation cannot
++// be transferred or safely replaced. A clean TLS close before any frame byte is
++// a distinct PeerClosed terminal state; a close after partial framing is
++// truncation and poisons the channel. Foreign-process or foreign-thread cleanup fails stopped
++// before mutating the shared SSL owner.
++class SyncReplicaTlsRecordReadContinuation final {
++public:
++    SyncReplicaTlsRecordReadContinuation(
++        const SyncReplicaTlsRecordReadContinuation&) = delete;
++    SyncReplicaTlsRecordReadContinuation& operator=(
++        const SyncReplicaTlsRecordReadContinuation&) = delete;
++    SyncReplicaTlsRecordReadContinuation(
++        SyncReplicaTlsRecordReadContinuation&& other) noexcept;
++    SyncReplicaTlsRecordReadContinuation& operator=(
++        SyncReplicaTlsRecordReadContinuation&& other) noexcept;
++    ~SyncReplicaTlsRecordReadContinuation() noexcept;
++
++    [[nodiscard]] bool active() const noexcept;
++    [[nodiscard]] bool frame_ready() const noexcept;
++    [[nodiscard]] bool peer_closed() const noexcept;
++    [[nodiscard]] std::uint64_t prefix_bytes_received() const noexcept;
++    [[nodiscard]] std::uint64_t frame_bytes() const noexcept;
++    [[nodiscard]] std::uint64_t body_bytes_received() const noexcept;
++
++    [[nodiscard]] SyncReplicaTlsRecordReadProgress advance_or_throw();
++    [[nodiscard]] std::string take_frame_or_throw();
++
++private:
++    friend SyncReplicaTlsRecordReadContinuation
++    begin_sync_replica_tls_record_read_or_throw(
++        const SyncReplicaTlsAuthenticatedChannel&, std::uint64_t,
++        SyncReplicaTlsRecordReadReadinessPolicy, const std::string&);
++
++    explicit SyncReplicaTlsRecordReadContinuation(
++        std::unique_ptr<detail::SyncReplicaTlsRecordReadState> state) noexcept;
++
++    std::unique_ptr<detail::SyncReplicaTlsRecordReadState> state_;
++};
++
+ // Requires a completed, successfully verified TLS 1.3 handshake with the
+ // exact AnonSync delivery ALPN, checks the peer SPKI pin against caller-supplied
+ // membership authority, and derives an RFC 9266 tls-exporter binding. The
+@@ -236,6 +307,24 @@ void write_sync_replica_tls_record_or_throw(
+     std::uint64_t max_frame_bytes,
+     const std::string& label = "sync replica TLS write");
+ 
++// Reserves one authenticated TLS stream and returns an incremental record
++// reader. Requiring a nonblocking socket proves direct socket BIOs and
++// O_NONBLOCK before the reservation, before the first byte, and before every
++// retry. The caller-managed overload is retained for blocking adapters and
++// tests whose descriptor deadlines are established outside this library.
++[[nodiscard]] SyncReplicaTlsRecordReadContinuation
++begin_sync_replica_tls_record_read_or_throw(
++    const SyncReplicaTlsAuthenticatedChannel& channel,
++    std::uint64_t max_frame_bytes,
++    SyncReplicaTlsRecordReadReadinessPolicy readiness_policy,
++    const std::string& label);
++
++[[nodiscard]] SyncReplicaTlsRecordReadContinuation
++begin_sync_replica_tls_record_read_or_throw(
++    const SyncReplicaTlsAuthenticatedChannel& channel,
++    std::uint64_t max_frame_bytes,
++    const std::string& label = "sync replica TLS record read");
++
+ [[nodiscard]] std::string read_sync_replica_tls_record_or_throw(
+     const SyncReplicaTlsAuthenticatedChannel& channel,
+     std::uint64_t max_frame_bytes,
+diff --git a/tests/sync_replica_tls_transport_test.cpp b/tests/sync_replica_tls_transport_test.cpp
+index a87ad15..7292a15 100644
+--- a/tests/sync_replica_tls_transport_test.cpp
++++ b/tests/sync_replica_tls_transport_test.cpp
+@@ -131,6 +131,16 @@ static_assert(std::is_nothrow_move_constructible_v<
+               anonsync::SyncReplicaTlsRecordWriteContinuation>);
+ static_assert(std::is_nothrow_move_assignable_v<
+               anonsync::SyncReplicaTlsRecordWriteContinuation>);
++static_assert(!std::is_default_constructible_v<
++              anonsync::SyncReplicaTlsRecordReadContinuation>);
++static_assert(!std::is_copy_constructible_v<
++              anonsync::SyncReplicaTlsRecordReadContinuation>);
++static_assert(!std::is_copy_assignable_v<
++              anonsync::SyncReplicaTlsRecordReadContinuation>);
++static_assert(std::is_nothrow_move_constructible_v<
++              anonsync::SyncReplicaTlsRecordReadContinuation>);
++static_assert(std::is_nothrow_move_assignable_v<
++              anonsync::SyncReplicaTlsRecordReadContinuation>);
+ 
+ [[nodiscard]] PkeyPtr make_ed25519_key() {
+     PkeyContextPtr context(
+@@ -442,6 +452,14 @@ void make_socket_nonblocking(int descriptor) {
+     }
+ }
+ 
++void make_socket_blocking(int descriptor) {
++    const int flags = ::fcntl(descriptor, F_GETFL, 0);
++    if (flags < 0 ||
++        ::fcntl(descriptor, F_SETFL, flags & ~O_NONBLOCK) != 0) {
++        fail("TLS transport test could not make socket blocking");
++    }
++}
++
+ void make_socket_nonblocking_with_small_send_buffer(int descriptor) {
+     make_socket_nonblocking(descriptor);
+     const int bytes = 1024;
+@@ -451,6 +469,87 @@ void make_socket_nonblocking_with_small_send_buffer(int descriptor) {
+     }
+ }
+ 
++[[nodiscard]] std::array<unsigned char, 8U> encode_u64_be_fixture(
++    std::uint64_t value) noexcept {
++    std::array<unsigned char, 8U> output{};
++    for (std::size_t index = 0U; index < output.size(); ++index) {
++        const std::size_t shift = (output.size() - 1U - index) * 8U;
++        output[index] = static_cast<unsigned char>(value >> shift);
++    }
++    return output;
++}
++
++void write_tls_fixture_bytes(
++    SSL* ssl,
++    const unsigned char* data,
++    std::size_t bytes,
++    const std::string& label) {
++    std::size_t offset = 0U;
++    while (offset < bytes) {
++        std::size_t written = 0U;
++        ERR_clear_error();
++        const int result = SSL_write_ex(
++            ssl, data + offset, bytes - offset, &written);
++        const int ssl_error =
++            result == 1 ? SSL_ERROR_NONE : SSL_get_error(ssl, result);
++        if (result != 1) {
++            fail_openssl(
++                label + " SSL_write_ex failed with SSL error " +
++                std::to_string(ssl_error));
++        }
++        if (written == 0U || written > bytes - offset) {
++            fail(label + " SSL_write_ex made invalid progress");
++        }
++        offset += written;
++    }
++}
++
++void write_tls_fixture_bytes(
++    SSL* ssl,
++    std::string_view bytes,
++    const std::string& label) {
++    write_tls_fixture_bytes(
++        ssl,
++        reinterpret_cast<const unsigned char*>(bytes.data()),
++        bytes.size(), label);
++}
++
++void send_tls_close_notify(SSL* ssl, const std::string& label) {
++    ERR_clear_error();
++    const int result = SSL_shutdown(ssl);
++    const int ssl_error =
++        result >= 0 ? SSL_ERROR_NONE : SSL_get_error(ssl, result);
++    if (result < 0) {
++        fail_openssl(
++            label + " SSL_shutdown failed with SSL error " +
++            std::to_string(ssl_error));
++    }
++}
++
++[[nodiscard]] bool is_tls_read_want(
++    anonsync::SyncReplicaTlsRecordReadProgress progress) noexcept {
++    return progress == anonsync::SyncReplicaTlsRecordReadProgress::WantRead ||
++           progress == anonsync::SyncReplicaTlsRecordReadProgress::WantWrite;
++}
++
++[[nodiscard]] std::string finish_tls_record_read(
++    anonsync::SyncReplicaTlsRecordReadContinuation& continuation,
++    const std::string& label) {
++    for (std::size_t iteration = 0U; iteration < 4096U; ++iteration) {
++        const auto progress = continuation.advance_or_throw();
++        if (progress ==
++            anonsync::SyncReplicaTlsRecordReadProgress::Complete) {
++            return continuation.take_frame_or_throw();
++        }
++        if (progress ==
++            anonsync::SyncReplicaTlsRecordReadProgress::PeerClosed) {
++            fail(label + " observed peer close instead of a complete frame");
++        }
++        if (is_tls_read_want(progress)) std::this_thread::yield();
++    }
++    fail(label + " did not reach a terminal frame state");
++}
++
+ void replace_tls_stream_and_rehandshake(TlsConnectionPair& pair) {
+     if (SSL_clear(pair.client.get()) != 1 ||
+         SSL_clear(pair.server.get()) != 1 ||
+@@ -806,6 +905,507 @@ void test_tls_record_write_continuation(
+ #endif
+ }
+ 
++void test_tls_record_read_continuation(
++    SSL_CTX* client_context,
++    SSL_CTX* server_context,
++    const anonsync::SyncReplicaActor& sender_actor,
++    const anonsync::SyncReplicaActor& receiver_actor,
++    const std::string& sender_pin,
++    const std::string& receiver_pin) {
++#ifdef __unix__
++    // A retryable empty read survives wrapper movement because its exact prefix
++    // buffer lives in heap-stable private state.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS incremental read move after WANT");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        auto continuation =
++            anonsync::begin_sync_replica_tls_record_read_or_throw(
++                pair.receiver_channel, 1024U,
++                anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                    RequireNonblockingSocket,
++                "TLS incremental read move after WANT");
++        require(
++            continuation.active() && !continuation.frame_ready() &&
++                !continuation.peer_closed() &&
++                continuation.prefix_bytes_received() == 0U &&
++                continuation.frame_bytes() == 0U &&
++                continuation.body_bytes_received() == 0U,
++            "fresh TLS reader did not expose one empty active cutpoint");
++        const auto initial = continuation.advance_or_throw();
++        require(
++            is_tls_read_want(initial),
++            "empty nonblocking TLS reader did not expose retryable readiness");
++        auto moved = std::move(continuation);
++        require(
++            !continuation.active() && moved.active(),
++            "moving TLS reader duplicated or lost the pending read operation");
++        const std::string frame = "heap-stable-read-after-want";
++        anonsync::write_sync_replica_tls_record_or_throw(
++            pair.sender_channel, frame, 1024U,
++            "TLS incremental read move fixture write");
++        require(
++            finish_tls_record_read(moved, "TLS incremental moved reader") ==
++                frame,
++            "moved TLS reader changed application bytes after WANT");
++        require(
++            !moved.active() && !moved.frame_ready() &&
++                moved.prefix_bytes_received() == 0U,
++            "taken TLS frame retained continuation state");
++    }
++
++    // Prefix and body progress are separately resumable. Moving after WANT in
++    // either phase must preserve the exact OpenSSL retry arguments.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS incremental fragmented record");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        const std::string frame = "fragmented-record-body";
++        const auto prefix = encode_u64_be_fixture(frame.size());
++        auto continuation =
++            anonsync::begin_sync_replica_tls_record_read_or_throw(
++                pair.receiver_channel, 1024U,
++                anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                    RequireNonblockingSocket,
++                "TLS incremental fragmented record");
++
++        write_tls_fixture_bytes(
++            pair.connection.client.get(), prefix.data(), 3U,
++            "TLS fragmented prefix first record");
++        require(
++            continuation.advance_or_throw() ==
++                    anonsync::SyncReplicaTlsRecordReadProgress::Progress &&
++                continuation.prefix_bytes_received() == 3U &&
++                continuation.frame_bytes() == 0U,
++            "TLS reader did not preserve a partial three-byte prefix");
++        require(
++            is_tls_read_want(continuation.advance_or_throw()),
++            "partial TLS prefix did not become retryable without more bytes");
++        auto prefix_retry = std::move(continuation);
++        write_tls_fixture_bytes(
++            pair.connection.client.get(), prefix.data() + 3U,
++            prefix.size() - 3U,
++            "TLS fragmented prefix second record");
++        for (std::size_t iteration = 0U;
++             prefix_retry.prefix_bytes_received() != prefix.size() &&
++             iteration < 128U;
++             ++iteration) {
++            const auto progress = prefix_retry.advance_or_throw();
++            require(
++                progress ==
++                        anonsync::SyncReplicaTlsRecordReadProgress::Progress ||
++                    is_tls_read_want(progress),
++                "TLS prefix retry reached an unexpected terminal state");
++        }
++        require(
++            prefix_retry.prefix_bytes_received() == prefix.size() &&
++                prefix_retry.frame_bytes() == frame.size() &&
++                prefix_retry.body_bytes_received() == 0U,
++            "TLS reader did not validate the complete prefix before body allocation");
++
++        write_tls_fixture_bytes(
++            pair.connection.client.get(),
++            std::string_view(frame.data(), 2U),
++            "TLS fragmented body first record");
++        require(
++            prefix_retry.advance_or_throw() ==
++                    anonsync::SyncReplicaTlsRecordReadProgress::Progress &&
++                prefix_retry.body_bytes_received() == 2U,
++            "TLS reader did not retain partial body progress");
++        require(
++            is_tls_read_want(prefix_retry.advance_or_throw()),
++            "partial TLS body did not become retryable without more bytes");
++        auto body_retry = std::move(prefix_retry);
++        write_tls_fixture_bytes(
++            pair.connection.client.get(),
++            std::string_view(frame.data() + 2U, frame.size() - 2U),
++            "TLS fragmented body second record");
++        require(
++            finish_tls_record_read(body_retry, "TLS fragmented body retry") ==
++                frame,
++            "TLS body retry changed bytes after moving a pending read");
++    }
++
++    // Reserving and abandoning before the first SSL_read_ex call performs no
++    // stream work and therefore releases cleanly.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS clean read abandonment");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        {
++            auto abandoned =
++                anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 1024U,
++                    anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                        RequireNonblockingSocket,
++                    "TLS clean read abandonment");
++            require(
++                abandoned.active(),
++                "fresh TLS read reservation was not active before abandonment");
++        }
++        const std::string frame = "channel-survives-pre-io-abandonment";
++        anonsync::write_sync_replica_tls_record_or_throw(
++            pair.sender_channel, frame, 1024U,
++            "TLS post-abandonment fixture write");
++        auto replacement =
++            anonsync::begin_sync_replica_tls_record_read_or_throw(
++                pair.receiver_channel, 1024U,
++                anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                    RequireNonblockingSocket,
++                "TLS replacement after clean abandonment");
++        require(
++            finish_tls_record_read(
++                replacement, "TLS replacement after clean abandonment") ==
++                frame,
++            "pre-I/O abandonment poisoned an untouched TLS stream");
++    }
++
++    // Any attempted read, even one that consumes no application byte and only
++    // returns WANT, owns pending OpenSSL state. Abandonment is fail-closed.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS pending read abandonment");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        {
++            auto abandoned =
++                anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 1024U,
++                    anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                        RequireNonblockingSocket,
++                    "TLS pending read abandonment");
++            require(
++                is_tls_read_want(abandoned.advance_or_throw()),
++                "pending read abandonment fixture did not enter WANT");
++        }
++        require_error(
++            [&] {
++                (void)anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 1024U,
++                    "TLS reuse after pending read abandonment");
++            },
++            "poisoned",
++            "abandoned WANT operation left the TLS stream reusable");
++    }
++
++    // One reservation serializes both directions and blocks a verifier from
++    // re-entering the SSL object while a read operation is pending.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS duplex read reservation");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        auto reader = anonsync::begin_sync_replica_tls_record_read_or_throw(
++            pair.receiver_channel, 1024U,
++            anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                RequireNonblockingSocket,
++            "TLS duplex read reservation");
++        require_error(
++            [&] {
++                (void)anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 1024U,
++                    "TLS overlapping read reservation");
++            },
++            "unfinished record read",
++            "TLS state admitted two overlapping readers");
++        require_error(
++            [&] {
++                anonsync::write_sync_replica_tls_record_or_throw(
++                    pair.receiver_channel, "overlap", 1024U,
++                    "TLS write during read reservation");
++            },
++            "unfinished record read",
++            "TLS writer bypassed the active read reservation");
++        const std::string frame = "original-reader-remains-authoritative";
++        anonsync::write_sync_replica_tls_record_or_throw(
++            pair.sender_channel, frame, 1024U,
++            "TLS duplex reservation fixture write");
++        require(
++            finish_tls_record_read(reader, "TLS authoritative reader") == frame,
++            "rejected overlap poisoned or replaced the original reader");
++    }
++
++    // The strict policy is re-proved at every retry. Losing O_NONBLOCK after a
++    // WANT is an ambiguous operation and therefore poisons the stream.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS read readiness reproof");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        auto reader = anonsync::begin_sync_replica_tls_record_read_or_throw(
++            pair.receiver_channel, 1024U,
++            anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                RequireNonblockingSocket,
++            "TLS read readiness reproof");
++        require(
++            is_tls_read_want(reader.advance_or_throw()),
++            "read readiness reproof fixture did not enter WANT");
++        make_socket_blocking(pair.connection.server_fd.get());
++        require_error(
++            [&] { (void)reader.advance_or_throw(); },
++            "requires a nonblocking TLS read descriptor",
++            "TLS read retry ignored lost O_NONBLOCK authority");
++        require(
++            !reader.active(),
++            "failed TLS readiness reproof retained read authority");
++        require_error(
++            [&] {
++                (void)anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 1024U,
++                    "TLS reuse after readiness loss");
++            },
++            "poisoned",
++            "readiness loss after WANT left the stream reusable");
++    }
++
++    // A close_notify before any application byte is a terminal connection
++    // event, not an invalid frame. It closes the channel without inventing
++    // poisoning or a zero-length record.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS clean peer close before frame");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        auto reader = anonsync::begin_sync_replica_tls_record_read_or_throw(
++            pair.receiver_channel, 1024U,
++            anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                RequireNonblockingSocket,
++            "TLS clean peer close before frame");
++        send_tls_close_notify(
++            pair.connection.client.get(),
++            "TLS clean peer close before frame");
++        anonsync::SyncReplicaTlsRecordReadProgress terminal =
++            anonsync::SyncReplicaTlsRecordReadProgress::Progress;
++        for (std::size_t iteration = 0U; iteration < 128U; ++iteration) {
++            terminal = reader.advance_or_throw();
++            if (terminal ==
++                anonsync::SyncReplicaTlsRecordReadProgress::PeerClosed) {
++                break;
++            }
++            require(
++                is_tls_read_want(terminal),
++                "pre-frame close reported application progress");
++        }
++        require(
++            terminal ==
++                    anonsync::SyncReplicaTlsRecordReadProgress::PeerClosed &&
++                !reader.active() && reader.peer_closed() &&
++                !reader.frame_ready() &&
++                reader.prefix_bytes_received() == 0U,
++            "clean pre-frame TLS close was not a distinct terminal state");
++        require_error(
++            [&] { (void)reader.take_frame_or_throw(); },
++            "no complete frame",
++            "clean peer close fabricated a readable frame");
++        require_error(
++            [&] {
++                (void)anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 1024U,
++                    "TLS read after clean peer close");
++            },
++            "closed by its peer",
++            "clean peer close left the authenticated channel open");
++    }
++
++    // A close after an accepted prefix is truncation. The record cannot be
++    // resynchronized and the channel is poisoned.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS truncated body close");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        auto reader = anonsync::begin_sync_replica_tls_record_read_or_throw(
++            pair.receiver_channel, 1024U,
++            anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                RequireNonblockingSocket,
++            "TLS truncated body close");
++        const auto prefix = encode_u64_be_fixture(5U);
++        write_tls_fixture_bytes(
++            pair.connection.client.get(), prefix.data(), prefix.size(),
++            "TLS truncated body prefix");
++        for (std::size_t iteration = 0U;
++             reader.prefix_bytes_received() != prefix.size() &&
++             iteration < 128U;
++             ++iteration) {
++            const auto progress = reader.advance_or_throw();
++            require(
++                progress ==
++                        anonsync::SyncReplicaTlsRecordReadProgress::Progress ||
++                    is_tls_read_want(progress),
++                "truncated-body prefix reached an unexpected terminal state");
++        }
++        require(
++            reader.prefix_bytes_received() == prefix.size() &&
++                reader.frame_bytes() == 5U,
++            "truncated-body fixture did not establish a valid prefix");
++        send_tls_close_notify(
++            pair.connection.client.get(), "TLS truncated body close");
++        require_error(
++            [&] {
++                for (std::size_t iteration = 0U; iteration < 128U;
++                     ++iteration) {
++                    const auto progress = reader.advance_or_throw();
++                    if (!is_tls_read_want(progress)) {
++                        fail("truncated TLS body did not reject peer close");
++                    }
++                }
++                fail("truncated TLS body did not observe peer close");
++            },
++            "before the complete record",
++            "TLS reader accepted a close after framing progress");
++        require_error(
++            [&] {
++                anonsync::write_sync_replica_tls_record_or_throw(
++                    pair.receiver_channel, "reuse", 1024U,
++                    "TLS truncated-body channel reuse");
++            },
++            "poisoned",
++            "truncated TLS record left the stream reusable");
++    }
++
++    // The advertised length is validated before any body allocation or read.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS incremental over-limit prefix");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        auto reader = anonsync::begin_sync_replica_tls_record_read_or_throw(
++            pair.receiver_channel, 16U,
++            anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                RequireNonblockingSocket,
++            "TLS incremental over-limit prefix");
++        const auto prefix = encode_u64_be_fixture(4096U);
++        write_tls_fixture_bytes(
++            pair.connection.client.get(), prefix.data(), prefix.size(),
++            "TLS incremental over-limit prefix");
++        require_error(
++            [&] {
++                for (std::size_t iteration = 0U; iteration < 128U;
++                     ++iteration) {
++                    const auto progress = reader.advance_or_throw();
++                    if (is_tls_read_want(progress)) continue;
++                    if (progress ==
++                        anonsync::SyncReplicaTlsRecordReadProgress::Progress) {
++                        continue;
++                    }
++                    fail("over-limit TLS prefix reached an unexpected terminal state");
++                }
++                fail("over-limit TLS prefix was not rejected");
++            },
++            "above the configured limit",
++            "TLS reader accepted an over-limit advertised body");
++        require(
++            !reader.active() && reader.body_bytes_received() == 0U,
++            "over-limit prefix allocated or retained body progress");
++        require_error(
++            [&] {
++                (void)anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 16U,
++                    "TLS over-limit channel reuse");
++            },
++            "poisoned",
++            "over-limit peer frame left the TLS stream reusable");
++    }
++
++    // Direct socket provenance is required by the strict event-loop policy.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS read non-socket descriptor policy");
++        FileDescriptor device_descriptor(
++            ::open("/dev/null", O_RDWR | O_CLOEXEC | O_NONBLOCK));
++        if (device_descriptor.get() < 0) {
++            fail("TLS read test could not open a non-socket descriptor");
++        }
++        if (SSL_set_fd(
++                pair.connection.server.get(), device_descriptor.get()) != 1) {
++            fail_openssl(
++                "TLS read test could not install a non-socket descriptor BIO");
++        }
++        require_error(
++            [&] {
++                (void)anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 1024U,
++                    anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                        RequireNonblockingSocket,
++                    "TLS read non-socket descriptor policy");
++            },
++            "requires a socket-backed TLS read descriptor",
++            "non-socket descriptor bypassed strict receive readiness");
++    }
++
++    // No-throw cleanup remains process/thread-affine even when no byte has yet
++    // been attempted and same-thread cleanup would otherwise be clean.
++    {
++        TlsConnectionPair connection = make_tls_connection_pair(
++            client_context, server_context);
++        auto foreign_thread_abandonment =
++            anonsync::test::spawn_inherited_test_process_or_throw(
++                [&]() -> int {
++                    auto receiver_channel =
++                        anonsync::authenticate_sync_replica_tls13_channel_or_throw(
++                            connection.server.get(),
++                            {sender_actor, sender_pin},
++                            "TLS foreign-thread read abandonment");
++                    make_socket_nonblocking(connection.server_fd.get());
++                    auto continuation =
++                        anonsync::begin_sync_replica_tls_record_read_or_throw(
++                            receiver_channel, 1024U,
++                            anonsync::SyncReplicaTlsRecordReadReadinessPolicy::
++                                RequireNonblockingSocket,
++                            "TLS foreign-thread read abandonment");
++                    std::thread foreign_thread(
++                        [owned = std::move(continuation)]() mutable {});
++                    foreign_thread.join();
++                    return 97;
++                },
++                "TLS foreign-thread read abandonment");
++        foreign_thread_abandonment.wait_for_exact_exit(
++            anonsync::kSyncProcessCapabilityViolationExitCode,
++            std::chrono::seconds(5),
++            "TLS foreign-thread read abandonment");
++        require(
++            !foreign_thread_abandonment.active(),
++            "foreign-thread TLS reader cleanup retained process authority");
++    }
++
++    // The blocking compatibility wrapper delegates to the same state machine.
++    // On a nonblocking WANT it throws and its active continuation poisons.
++    {
++        auto pair = make_authenticated_tls_pair(
++            client_context, server_context, sender_actor, receiver_actor,
++            sender_pin, receiver_pin, "TLS legacy read WANT delegation");
++        make_socket_nonblocking(pair.connection.server_fd.get());
++        require_error(
++            [&] {
++                (void)anonsync::read_sync_replica_tls_record_or_throw(
++                    pair.receiver_channel, 1024U,
++                    "TLS legacy read WANT delegation");
++            },
++            "nonblocking TLS readiness loss",
++            "legacy TLS reader did not delegate WANT handling");
++        require_error(
++            [&] {
++                (void)anonsync::begin_sync_replica_tls_record_read_or_throw(
++                    pair.receiver_channel, 1024U,
++                    "TLS legacy read WANT channel reuse");
++            },
++            "poisoned",
++            "legacy WANT failure left a pending SSL read reusable");
++    }
++#else
++    (void)client_context;
++    (void)server_context;
++    (void)sender_actor;
++    (void)receiver_actor;
++    (void)sender_pin;
++    (void)receiver_pin;
++#endif
++}
++
+ void test_file_tls_dispatch_frontier(
+     SSL_CTX* client_context,
+     SSL_CTX* server_context,
+@@ -1289,6 +1889,9 @@ void test_mutual_tls13_delivery() {
+     test_tls_record_write_continuation(
+         client_context.get(), server_context.get(), sender_actor,
+         receiver_actor, sender_pin, receiver_pin);
++    test_tls_record_read_continuation(
++        client_context.get(), server_context.get(), sender_actor,
++        receiver_actor, sender_pin, receiver_pin);
+     test_file_tls_dispatch_frontier(
+         client_context.get(), server_context.get(), sender_actor,
+         receiver_actor, sender_pin, receiver_pin);
+diff --git a/tools/audit_inherited_test_process.py b/tools/audit_inherited_test_process.py
+index 8ff3ba6..ed92c33 100644
+--- a/tools/audit_inherited_test_process.py
++++ b/tools/audit_inherited_test_process.py
+@@ -325,7 +325,7 @@ def main() -> int:
+     require(
+         raw_forks == 1
+         and len(INHERITED_CONSUMERS) == 15
+-        and total_spawns == 27,
++        and total_spawns == 28,
+         "inventory_metrics_are_exact",
+         f"raw_forks={raw_forks}, consumer_tus={len(INHERITED_CONSUMERS)}, spawn_sites={total_spawns}",
+     )
+diff --git a/tools/audit_raw_fork_boundaries.py b/tools/audit_raw_fork_boundaries.py
+index 00ac7be..a6084a8 100644
+--- a/tools/audit_raw_fork_boundaries.py
++++ b/tools/audit_raw_fork_boundaries.py
+@@ -39,7 +39,7 @@ INHERITED_CONSUMERS = {
+     "tests/sqlite_process_authority_fork_test.cpp": 1,
+     "tests/sqlite_replay_ledger_selftests.cpp": 3,
+     "tests/sqlite_source_first_move_test.cpp": 1,
+-    "tests/sync_replica_tls_transport_test.cpp": 2,
++    "tests/sync_replica_tls_transport_test.cpp": 3,
+     "tests/sync_atomic_file_publication_prepared_test.cpp": 1,
+     "tests/sync_posix_directory_resolution_test.cpp": 1,
+ }
+@@ -392,7 +392,7 @@ def main() -> int:
+             "test_raw_fork_calls": 1,
+             "raw_fork_translation_units": 1,
+             "inherited_consumer_translation_units": 15,
+-            "inherited_spawn_sites": 27,
++            "inherited_spawn_sites": 28,
+             "fresh_image_migrated_campaigns": 8,
+         },
+         "inventory_metrics_are_exact",
+diff --git a/tools/audit_self_exec_test_process.py b/tools/audit_self_exec_test_process.py
+index 9eea254..52903b6 100644
+--- a/tools/audit_self_exec_test_process.py
++++ b/tools/audit_self_exec_test_process.py
+@@ -635,9 +635,9 @@ def main() -> int:
+         in raw_fork_audit
+         and "inventory_metrics_are_exact" in raw_fork_audit
+         and '"test_raw_fork_calls": 1' in raw_fork_audit
+-        and '"inherited_spawn_sites": 27' in raw_fork_audit,
++        and '"inherited_spawn_sites": 28' in raw_fork_audit,
+         "raw_fork_inventory_is_fail_closed_and_exact",
+-        "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 35 inherited or fresh-image process sites",
++        "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 36 inherited or fresh-image process sites",
+     )
+ 
+     require(
+diff --git a/tools/audit_sync_file_tls_dispatch.py b/tools/audit_sync_file_tls_dispatch.py
+index a581a53..5a1139a 100755
+--- a/tools/audit_sync_file_tls_dispatch.py
++++ b/tools/audit_sync_file_tls_dispatch.py
+@@ -89,7 +89,7 @@ def target_block(cmake: str, target: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-file-tls-dispatch-audit-v2",
++        "format": "anonsync-sync-file-tls-dispatch-audit-v3",
+         "scope": "lexical-hygiene-not-semantic-proof",
+         "root": str(root),
+         "passed": not violations,
+@@ -226,16 +226,23 @@ def main() -> int:
+         all(
+             token in state
+             for token in (
+-                "mutable bool record_write_active_ = false",
++                "SyncReplicaTlsRecordReservation::Idle",
++                "SyncReplicaTlsRecordReservation::Read",
++                "SyncReplicaTlsRecordReservation::Write",
++                "record_reservation_",
+                 "begin_record_write_or_throw",
+                 "active_record_write_or_throw",
+                 "complete_record_write_noexcept",
+-                "record_write_active_ = true",
+-                "record_write_active_ = false",
++                "begin_record_read_or_throw",
++                "active_record_read_or_throw",
++                "complete_record_read_noexcept",
++                "record_reservation_ = SyncReplicaTlsRecordReservation::Write",
++                "record_reservation_ = SyncReplicaTlsRecordReservation::Read",
++                "record_reservation_ = SyncReplicaTlsRecordReservation::Idle",
+             )
+         ),
+-        "tls_state_owns_an_exclusive_record_write_reservation",
+-        "a continuation is enforced by the live SSL owner rather than caller convention",
++        "tls_state_owns_one_exclusive_duplex_record_reservation",
++        "read and write continuations are serialized by the live SSL owner rather than caller convention",
+     )
+     owner_fence = function_body(
+         tls_cpp, "void require_owner_or_fail_stop_noexcept() const noexcept"
+@@ -259,7 +266,10 @@ def main() -> int:
+                 mutation,
+             )
+             for signature, mutation in (
+-                ("void complete_record_write_noexcept() const noexcept", "record_write_active_"),
++                (
++                    "void complete_record_write_noexcept() const noexcept",
++                    "record_reservation_",
++                ),
+                 ("void poison_noexcept() const noexcept", "poisoned_ = true"),
+                 ("void release_ssl_noexcept() noexcept", "SSL_free"),
+             )
+@@ -282,16 +292,20 @@ def main() -> int:
+     )
+     require(
+         ordered(
+-            function_body(tls_cpp, "SSL* ssl_for_record_or_throw("),
+-            "validate_or_throw(label)",
+-            "if (record_write_active_)",
+-            "throw std::logic_error",
++            function_body(tls_cpp, "void validate_or_throw("),
++            "require_current_or_throw(label)",
++            "require_usable_or_throw(label)",
++            "require_record_idle_or_throw(label)",
++            "validate_authenticated_session_and_poison_or_throw(label)",
+         )
+-        and "ssl_for_record_or_throw" in function_body(
+-            tls_cpp, "read_sync_replica_tls_record_or_throw("
++        and "validate_or_throw(label)" in function_body(
++            tls_cpp, "SSL* begin_record_write_or_throw("
++        )
++        and "validate_or_throw(label)" in function_body(
++            tls_cpp, "void begin_record_read_or_throw("
+         ),
+-        "ordinary_record_io_rejects_an_unfinished_continuation",
+-        "no same-thread read or second generic write can interleave a framed body",
++        "ordinary_authority_and_record_begin_reject_active_duplex_io",
++        "service validation, a second read, or a write cannot enter OpenSSL through an unfinished record operation",
+     )
+     begin = function_body(
+         tls_cpp, "begin_sync_replica_tls_record_write_or_throw("
+diff --git a/tools/audit_sync_replica_delivery_channel.py b/tools/audit_sync_replica_delivery_channel.py
+index 3b97b85..9737d85 100755
+--- a/tools/audit_sync_replica_delivery_channel.py
++++ b/tools/audit_sync_replica_delivery_channel.py
+@@ -79,7 +79,7 @@ def target_block(cmake: str, target: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-delivery-channel-audit-v1",
++        "format": "anonsync-sync-replica-delivery-channel-audit-v2",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -232,11 +232,19 @@ def main() -> int:
+         "the authenticated capability no longer borrows an externally fragile SSL lifetime",
+     )
+     validate_tls = function_body(tls_cpp, "void validate_or_throw(")
++    validate_live_tls = function_body(
++        tls_cpp, "void validate_authenticated_session_and_poison_or_throw("
++    )
+     require(
+         ordered(
+             validate_tls,
+             "require_current_or_throw(label)",
+-            "if (poisoned_)",
++            "require_usable_or_throw(label)",
++            "require_record_idle_or_throw(label)",
++            "validate_authenticated_session_and_poison_or_throw(label)",
++        )
++        and ordered(
++            validate_live_tls,
+             "validate_authenticated_session_or_throw",
+             "poisoned_ = true",
+         ),
+@@ -286,20 +294,42 @@ def main() -> int:
+         "write_validates_local_shape_before_io_and_poisons_uncertain_cutpoint",
+         "shape checks precede prefix I/O; a move-only exclusive continuation owns every uncertain body cutpoint",
+     )
++    begin_read = function_body(
++        tls_cpp, "begin_sync_replica_tls_record_read_or_throw(")
++    advance_read = function_body(
++        tls_cpp, "SyncReplicaTlsRecordReadContinuation::advance_or_throw(")
+     read_record = function_body(
+         tls_cpp, "std::string read_sync_replica_tls_record_or_throw(")
+     require(
+         ordered(
+-            read_record,
+-            "ssl_for_record_or_throw",
+-            "length prefix",
++            begin_read,
++            "validate_record_limit_or_throw",
++            "std::make_unique<detail::SyncReplicaTlsRecordReadState>",
++            "begin_record_read_or_throw",
++            "reservation_active = true",
++        )
++        and ordered(
++            advance_read,
++            "active_record_read_or_throw",
++            "ERR_clear_error()",
++            "SSL_read_ex",
++            "SSL_get_error",
++            "SSL_ERROR_WANT_READ",
++            "SSL_ERROR_WANT_WRITE",
+             "peer advertised an empty frame",
+             "above the configured limit",
+-            "frame body",
+-            "state.poison_noexcept()",
++            "complete_record_read_noexcept",
++            "catch (...)",
++            "abandon_noexcept",
++        )
++        and ordered(
++            read_record,
++            "begin_sync_replica_tls_record_read_or_throw",
++            "continuation.advance_or_throw",
++            "continuation.take_frame_or_throw",
+         ),
+-        "read_poisons_after_any_uncertain_or_invalid_peer_frame",
+-        "the adapter never pretends a TLS byte stream can be resynchronized after framing loss",
++        "read_uses_one_resumable_fail_closed_state_machine",
++        "incremental and blocking adapters share exact framing, WANT, bounds, completion, and abandonment semantics",
+     )
+     require(
+         "SyncReplicaDeliveryTestChannelFactory" in test_factory_h
+diff --git a/tools/audit_sync_tls_receive_continuation.py b/tools/audit_sync_tls_receive_continuation.py
+new file mode 100755
+index 0000000..8b191c1
+--- /dev/null
++++ b/tools/audit_sync_tls_receive_continuation.py
+@@ -0,0 +1,430 @@
++#!/usr/bin/env python3
++"""Lexical hygiene audit for the incremental TLS receive continuation.
++
++This audit is intentionally an inventory of reviewed source shape. It does not
++prove OpenSSL behavior, kernel readiness, scheduler behavior, heap stability at
++runtime, transport security, peer identity, or crash recovery. Compiled tests,
++sanitisers, stress runs, and manual review remain authoritative.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++REQUIRED = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_replica_tls_transport.hpp"),
++    Path("src/sync_replica_tls_transport.cpp"),
++    Path("tests/sync_replica_tls_transport_test.cpp"),
++    Path("tools/audit_sync_tls_receive_continuation.py"),
++    Path("tools/verify_release_package.py"),
++    Path("TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def ordered(text: str, *tokens: str) -> bool:
++    cursor = -1
++    for token in tokens:
++        cursor = text.find(token, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
++def delimited_body(text: str, signature: str, opening: str, closing: str) -> str:
++    start = text.find(signature)
++    if start < 0:
++        return ""
++    boundary = text.find(opening, start + len(signature))
++    if boundary < 0:
++        return ""
++    depth = 0
++    for index in range(boundary, len(text)):
++        if text[index] == opening:
++            depth += 1
++        elif text[index] == closing:
++            depth -= 1
++            if depth == 0:
++                return text[start : index + 1]
++    return ""
++
++
++def function_body(text: str, signature: str) -> str:
++    return delimited_body(text, signature, "{", "}")
++
++
++def class_body(text: str, signature: str) -> str:
++    return delimited_body(text, signature, "{", "}")
++
++
++def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
++    violations = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-sync-tls-receive-continuation-audit-v1",
++        "scope": "lexical-hygiene-not-semantic-proof",
++        "scope_nonclaim": (
++            "source vocabulary and order do not prove OpenSSL retry semantics, "
++            "pointer stability, socket readiness, peer behavior, or concurrency"
++        ),
++        "root": str(root),
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if output is None:
++        sys.stdout.write(rendered)
++    else:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++    return 0 if not violations else 1
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root", type=Path, default=Path(__file__).resolve().parents[1]
++    )
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++    checks: list[Check] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    missing = [path.as_posix() for path in REQUIRED if not (root / path).is_file()]
++    require(not missing, "required_files_exist", f"missing={missing}")
++    if missing:
++        return emit(root, args.json, checks)
++
++    text = {
++        path.as_posix(): (root / path).read_text(encoding="utf-8")
++        for path in REQUIRED
++    }
++    cmake = text["CMakeLists.txt"]
++    header = text["src/sync_replica_tls_transport.hpp"]
++    source = text["src/sync_replica_tls_transport.cpp"]
++    runtime = text["tests/sync_replica_tls_transport_test.cpp"]
++    verifier = text["tools/verify_release_package.py"]
++    design = text["TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md"]
++    self_text = text["tools/audit_sync_tls_receive_continuation.py"]
++
++    continuation = class_body(
++        header, "class SyncReplicaTlsRecordReadContinuation final"
++    )
++    require(
++        continuation.count("= delete") >= 2
++        and "&& other) noexcept" in continuation
++        and "operator=(" in continuation
++        and "~SyncReplicaTlsRecordReadContinuation() noexcept" in continuation
++        and "std::unique_ptr<detail::SyncReplicaTlsRecordReadState> state_"
++        in continuation,
++        "public_reader_is_move_only_noexcept_and_pimpl_owned",
++        "moving the public value transfers one heap identity instead of relocating retry buffers",
++    )
++    normalized_header = " ".join(header.split())
++    require(
++        all(
++            phrase in normalized_header
++            for phrase in (
++                "heap-stable private state",
++                "exact buffer pointer or length",
++                "Each advance performs at most one SSL read",
++                "Abandonment after any attempted read",
++                "PeerClosed terminal state",
++                "Foreign-process or foreign-thread cleanup fails stopped",
++            )
++        ),
++        "public_contract_names_retry_cleanup_and_close_frontiers",
++        "the event-loop obligations and fail-closed boundaries are explicit API contract",
++    )
++
++    read_state = class_body(
++        source, "class detail::SyncReplicaTlsRecordReadState final"
++    )
++    require(
++        all(
++            token in read_state
++            for token in (
++                "std::array<unsigned char, kSyncReplicaTlsRecordPrefixBytes> prefix",
++                "std::string frame",
++                "std::size_t prefix_offset",
++                "std::size_t body_offset",
++                "bool reservation_active",
++                "bool io_started",
++                "Terminal terminal",
++                "~SyncReplicaTlsRecordReadState()",
++                "abandon_noexcept()",
++            )
++        ),
++        "heap_state_owns_buffers_offsets_and_cleanup",
++        "every retry argument and cleanup decision remains attached to one allocation",
++    )
++
++    authenticated = class_body(
++        source, "class detail::SyncReplicaTlsAuthenticatedState final"
++    )
++    require(
++        all(
++            token in source
++            for token in (
++                "enum class SyncReplicaTlsRecordReservation",
++                "Idle",
++                "Read",
++                "Write",
++            )
++        )
++        and all(
++            token in authenticated
++            for token in (
++                "record_reservation_",
++                "begin_record_read_or_throw",
++                "active_record_read_or_throw",
++                "complete_record_read_noexcept",
++                "abandon_record_read_noexcept",
++                "close_record_read_noexcept",
++                "begin_record_write_or_throw",
++                "active_record_write_or_throw",
++                "require_record_idle_or_throw",
++            )
++        ),
++        "authenticated_state_owns_one_duplex_record_reservation",
++        "read, write, and delivery verifier entry cannot concurrently operate one SSL object",
++    )
++    validate = function_body(source, "void validate_or_throw(")
++    require(
++        ordered(
++            validate,
++            "require_current_or_throw(label)",
++            "require_usable_or_throw(label)",
++            "require_record_idle_or_throw(label)",
++            "validate_authenticated_session_and_poison_or_throw(label)",
++        ),
++        "delivery_verifier_rejects_active_record_before_openssl_reentry",
++        "durable service validation cannot interpose certificate/exporter calls during pending I/O",
++    )
++
++    begin = function_body(
++        source, "begin_sync_replica_tls_record_read_or_throw("
++    )
++    require(
++        ordered(
++            begin,
++            "validate_record_limit_or_throw",
++            "SyncReplicaTlsRecordReadReadinessPolicy::RequireNonblockingSocket",
++            "std::make_unique<detail::SyncReplicaTlsRecordReadState>",
++            "begin_record_read_or_throw",
++            "reservation_active = true",
++            "SyncReplicaTlsRecordReadContinuation(std::move(read_state))",
++        ),
++        "throwing_construction_precedes_read_reservation",
++        "allocation and diagnostics cannot fail after the channel has been reserved",
++    )
++
++    active = function_body(source, "SSL* active_record_read_or_throw(")
++    require(
++        ordered(
++            active,
++            "require_current_or_throw(label)",
++            "require_usable_or_throw(label)",
++            "SyncReplicaTlsRecordReservation::Read",
++            "if (revalidate_authenticated_session)",
++            "validate_authenticated_session_and_poison_or_throw(label)",
++            "if (require_nonblocking_socket)",
++            "require_nonblocking_socket_or_throw",
++        ),
++        "first_byte_revalidation_and_each_retry_readiness_are_separate",
++        "the first operation is fully re-attested while a pending WANT avoids unrelated session operations",
++    )
++
++    advance = function_body(
++        source, "SyncReplicaTlsRecordReadContinuation::advance_or_throw()"
++    )
++    require(
++        advance.count("SSL_read_ex(") == 1
++        and ordered(
++            advance,
++            "active_record_read_or_throw",
++            "state_->io_started = true",
++            "ERR_clear_error()",
++            "SSL_read_ex(",
++            "SSL_get_error(ssl, result)",
++        ),
++        "advance_issues_one_read_and_immediate_error_classification",
++        "one event-loop step cannot hide a blocking read loop and SSL_get_error observes the exact call",
++    )
++    require(
++        ordered(
++            advance,
++            "SSL_ERROR_WANT_READ",
++            "SyncReplicaTlsRecordReadProgress::WantRead",
++            "SSL_ERROR_WANT_WRITE",
++            "SyncReplicaTlsRecordReadProgress::WantWrite",
++            "if (reading_prefix)",
++            "state_->prefix_offset += bytes_read",
++            "state_->body_offset += bytes_read",
++        )
++        and "!state_->io_started" in advance,
++        "want_returns_without_mutating_offsets_and_retry_skips_full_reproof",
++        "retry reconstructs the same pointer and length from unchanged heap offsets",
++    )
++    require(
++        ordered(
++            advance,
++            "state_->prefix_offset += bytes_read",
++            "decode_u64_be(state_->prefix)",
++            "peer advertised an empty frame",
++            "above the configured limit",
++            "checked_u64_to_size_or_throw",
++            "state_->frame.assign",
++            "state_->body_offset += bytes_read",
++            "complete_record_read_noexcept",
++        ),
++        "prefix_is_validated_before_exact_body_allocation",
++        "empty, over-limit, and unrepresentable lengths cannot reach a body read",
++    )
++    require(
++        ordered(
++            advance,
++            "SSL_ERROR_ZERO_RETURN",
++            "state_->prefix_offset == 0U",
++            "state_->frame_bytes == 0U",
++            "state_->body_offset == 0U",
++            "close_record_read_noexcept",
++            "Terminal::PeerClosed",
++            "peer closed TLS before the complete record",
++        ),
++        "clean_preframe_close_is_distinct_from_truncation",
++        "close_notify before bytes closes authority; any framed progress is fail-closed truncation",
++    )
++    require(
++        ordered(
++            advance,
++            "catch (...)",
++            "state_->abandon_noexcept()",
++            "throw",
++        )
++        and ordered(
++            function_body(source, "void abandon_record_read_noexcept("),
++            "require_owner_or_fail_stop_noexcept()",
++            "if (io_started) poisoned_ = true",
++            "record_reservation_ = SyncReplicaTlsRecordReservation::Idle",
++        ),
++        "read_failure_and_abandonment_are_owner_fenced_and_progress_sensitive",
++        "pre-I/O cleanup releases cleanly while any attempted operation poisons",
++    )
++
++    wrapper = function_body(
++        source, "std::string read_sync_replica_tls_record_or_throw("
++    )
++    require(
++        ordered(
++            wrapper,
++            "begin_sync_replica_tls_record_read_or_throw",
++            "continuation.advance_or_throw",
++            "SyncReplicaTlsRecordReadProgress::Complete",
++            "continuation.take_frame_or_throw",
++            "SyncReplicaTlsRecordReadProgress::WantRead",
++            "SyncReplicaTlsRecordReadProgress::WantWrite",
++            "nonblocking TLS readiness loss",
++        ),
++        "legacy_reader_delegates_to_incremental_state_machine",
++        "blocking compatibility cannot drift from incremental framing and poisoning semantics",
++    )
++
++    require(
++        all(
++            token in runtime
++            for token in (
++                "TLS incremental read move after WANT",
++                "TLS incremental fragmented record",
++                "TLS clean read abandonment",
++                "TLS pending read abandonment",
++                "TLS duplex read reservation",
++                "TLS read readiness reproof",
++                "TLS clean peer close before frame",
++                "TLS truncated body close",
++                "TLS incremental over-limit prefix",
++                "TLS read non-socket descriptor policy",
++                "TLS foreign-thread read abandonment",
++                "TLS legacy read WANT delegation",
++            )
++        )
++        and runtime.count(
++            "SyncReplicaTlsRecordReadContinuation>"
++        ) >= 5,
++        "runtime_matrix_covers_retry_move_duplex_close_bounds_and_affinity",
++        "compiled tests exercise the high-risk negative and terminal frontiers",
++    )
++    require(
++        "make_socket_nonblocking" in runtime
++        and "make_socket_blocking" in runtime
++        and "write_tls_fixture_bytes" in runtime
++        and "send_tls_close_notify" in runtime
++        and "spawn_inherited_test_process_or_throw" in runtime,
++        "runtime_fixtures_force_readiness_fragmentation_close_and_failstop",
++        "the matrix observes actual socket/OpenSSL progress rather than only source vocabulary",
++    )
++
++    require(
++        cmake.count("anonsync_sync_tls_receive_continuation_source_audit") >= 2
++        and "tools/audit_sync_tls_receive_continuation.py" in cmake,
++        "audit_is_registered_in_ctest",
++        "ordinary release test selection includes this source inventory",
++    )
++    require(
++        all(
++            token in verifier
++            for token in (
++                "revision_number >= 884",
++                "tools/audit_sync_tls_receive_continuation.py",
++                "TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md",
++            )
++        ),
++        "release_verifier_requires_rev0884_receive_surface",
++        "a sealed revision cannot silently omit the implementation audit or design record",
++    )
++    require(
++        all(
++            token in design
++            for token in (
++                "OpenSSL SSL_read",
++                "same arguments",
++                "SSL_get_error",
++                "SSL_pending",
++                "Failure matrix",
++                "Heap-stable state",
++                "PeerClosed",
++                "does not claim",
++            )
++        ),
++        "design_record_covers_sources_invariants_failures_and_nonclaims",
++        "review rationale and remaining production gaps travel with the code",
++    )
++    require(
++        "Lexical hygiene audit" in self_text
++        and "does not\nprove" in self_text,
++        "audit_disclaims_semantic_authority",
++        "the audit cannot represent substring presence as runtime proof",
++    )
++
++    return emit(root, args.json, checks)
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index b86fd5b..45468a4 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -561,6 +561,11 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         revision_scoped_required.update({
+             "TLS_CONTINUATION_AFFINITY_AUDIT_rev0883.md",
+         })
++    if revision_number is not None and revision_number >= 884:
++        revision_scoped_required.update({
++            "tools/audit_sync_tls_receive_continuation.py",
++            "TLS_INCREMENTAL_RECEIVE_AUDIT_rev0884.md",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

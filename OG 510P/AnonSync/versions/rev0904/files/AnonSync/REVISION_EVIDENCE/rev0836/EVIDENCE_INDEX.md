@@ -1,0 +1,64 @@
+# Evidence index — AnonSync rev0836
+
+Indexed evidence files: **58**.
+
+| Path | Bytes | SHA-256 |
+|---|---:|---|
+| `ACTIVE_IMPLEMENTATION_PROJECTION.json` | 38123 | `be2c3d89021611a5ed3af5f8b4eae14e543f1a7ed450a2818731299e0c1de8b2` |
+| `AUDIT.md` | 3663 | `3a671f453bf71c1a159c2642fb36bda9f566bf40fc0ccf0344c32d7189bfccdc` |
+| `CHANGESET.json` | 1242 | `3130523a07cbc2360d08e732f0d203c3984472fc5ba03bac469fe239f9066c4e` |
+| `COMMANDS.tsv` | 2186 | `e35dcc959aabc54b03f88bcabd8c68a018e2a4df89abdad556c964e16f0d8323` |
+| `LINEAGE.json` | 696 | `17d22d0de101268d60605cdfd553596a28dee19dcdebd25874af55bb5838621d` |
+| `LINEAGE.md` | 828 | `73dc49dc9348e44ba90640fb97076e92140ed0cfab3ac21e6e0e180a052de5bf` |
+| `NEXT_WORK.md` | 2627 | `d811ccf6cadaf910168438d497bf132cfca9ed66ab1b5b07958bb5e065a7a640` |
+| `RESEARCH.md` | 3107 | `d6e8beb66863eb090467fabb1cba85dbd0644711cc11e9e64e1a3ae1274094a9` |
+| `SOURCE_DIFF_rev0835_to_rev0836.patch` | 133415 | `67756b5a839c7cda6e26b3ee49d7018ba8299726d752c60e7f35fdb39a0ed61b` |
+| `SOURCE_NAME_STATUS.txt` | 631 | `53e76cab8c8a5410a951d592f8e56099e9fffbdd7811486f08bf71bea1160abe` |
+| `SOURCE_NUMSTAT.txt` | 688 | `98bf2ce1e2f39623a5ce8e235d492a642cc6a1f20bdca68866a4ed390bed220c` |
+| `SOURCE_SHORTSTAT.txt` | 56 | `a4baedf99ce7991402f9a05b25c2421149b747a8b3d86db7dfe6048592b4ef3a` |
+| `SOURCE_STAT.txt` | 1103 | `8907f0f34d349999fd326a16a7124b581511fba48d399a9dcbea10904e9e2300` |
+| `TOOLCHAIN.txt` | 598 | `dc146538c7c02d480745017c4e1c5556293c530f09c12b4dfb392b2f339be1ca` |
+| `audits/audit_inherited_test_process.json` | 4189 | `603055a04dbf1051f53c5254bdbdcdf1c0d64da89116e354530e980e8c5fc909` |
+| `audits/audit_inherited_test_process.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_self_exec_test_process.json` | 9759 | `04096b57ae9c09cf0cc36c44e5e4689c40e91ce13d39b882804248921813c95e` |
+| `audits/audit_self_exec_test_process.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_sqlite_replay_ledger_selftest_separation.json` | 5315 | `b41c885e7c2b905d9d23e815024c7e9a2ac6af25f861176f9386f8a369532d3e` |
+| `audits/audit_sqlite_replay_ledger_selftest_separation.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_sqlite_transaction_allocator_fault.json` | 22538 | `8c633a905957cd65adaea58a4f7867fd032f08ad82a4a9f950783de643469e70` |
+| `audits/audit_sqlite_transaction_allocator_fault.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_test_process_topology_owner.json` | 5042 | `5bc13f2059a76cbf21703b065742ed3701fd098cbea57e15f9ec2602ef58c682` |
+| `audits/audit_test_process_topology_owner.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `defect/duplicated-lifecycle-choreography.md` | 885 | `c29837bbe9f63ac4c1cc805314858a90a79f00978a86b4a883507d2d57830e19` |
+| `defect/hostile-fixture-lifetime.md` | 764 | `6eb9c178dbf898b1bee56f83be8f80a741755b4d80923a8ef00961f74e388b57` |
+| `defect/parent-post-reap-numeric-authority-witness.json` | 3309 | `d33f93992d3f0a9af060030c8613565db0ead30a8575fee80ee1339f1f032de1` |
+| `defect/post-reap-process-group-retry.md` | 2459 | `16240eab96e97172502f24444dd0e8bdc6515251ca0fd322910639a4ab3d4126` |
+| `defect/syscall-branch-oracle-gap.md` | 856 | `835699a9753c6f9e6fdd10c669ebacee41dfdbc197f3b2e1c177e2bb6f3a23b1` |
+| `inventory/PROCESS_TOPOLOGY_SYSCALL_INVENTORY.json` | 2151 | `0f345b7e3539fb1e6b9ae3c8083a265b4c3ddd2e64e922ebb710cdb233c81071` |
+| `inventory/PROCESS_TOPOLOGY_SYSCALL_INVENTORY.md` | 1019 | `8e3caa4fc6e1f4c8acb559856ec995456e7d7ab69a77166db363508e0a00a84e` |
+| `inventory/PROCESS_TOPOLOGY_TARGET_GRAPH.dot` | 701 | `ec0acc3a03479d1e2c49efc1eefd5591a82f054a0a7c2d740e52ad038d2a30cf` |
+| `inventory/PROCESS_TOPOLOGY_TARGET_GRAPH.json` | 2117 | `5689fef34f547f2209a318f297286a381ad370faff9479a533d6d2a04a845039` |
+| `lineage/parent-archive.sha256` | 176 | `711cf05e8510204be21cf5490486ace3ecd75557c179bd389ecbc1defff37ca8` |
+| `lineage/parent-directory-verification.json` | 3676 | `f07c7b08b0b19f7b7353bde83b97e4477fd0196281364a4773224abbc0cbde24` |
+| `lineage/parent-zip-verification.json` | 4184 | `4e6c4339ce173535f090fe06487a286aff588355f6a511e5d8e00af622a49c83` |
+| `repository_metrics.json` | 2154 | `21f2136611cb48a50775acb8a8032877e556df5b78447cf0c8b595e4bcf0b25e` |
+| `validation/VALIDATION_SUMMARY.json` | 3947 | `bab2fb5e4f51fa643068110fcc666b74f920fb2eac49a542dd532132faca01fe` |
+| `validation/captured-at.txt` | 26 | `5f650260b1cfcf101ff71c046109009ae25f5b712bc254e2ec7cdb3d143f2a60` |
+| `validation/clang17-configure.log` | 938 | `30bb99a5399c146956e9b3154ac16c1aca484ae0d5ad8f7f417809118db4d27b` |
+| `validation/clang17-focused-build.log` | 1579 | `326de21813b2b534db83cc4080fc44192dd8f96ad48767f74bf5ccfbb5b85314` |
+| `validation/clang17-focused-runtime-85-of-85.log` | 320 | `4705d0becb2517bfdb941e03b00d7b9351f0eebec54a2b26ad1332c9e19d6922` |
+| `validation/ctest-final-124-of-124.log` | 22039 | `d081fa389994be4d4bda1ded809cf84cc7867c6f2f20f9f75dabd928cc0c1f31` |
+| `validation/ctest-inventory-124.json` | 6851 | `89eb61b66fa96cec26c13b79e657de54aa616e213365328c33eb95f88e79c942` |
+| `validation/ctest-inventory-124.txt` | 7590 | `61dcc48208f278e6a7302cb6ab5327c017c8722a98fb1b3a5b4d74ff268d8fc8` |
+| `validation/final-dependency-closure-zero-compile-link.log` | 5257 | `7ffbfe930fce299b758ed66f7a059c6495496e4f2ff435557e23e7b4974ca9e8` |
+| `validation/final-source-hygiene.log` | 441 | `b122e7881b95934c9c68bff0657a1347397fb35b28297956a213134dafe0707e` |
+| `validation/focused-process-owner-runtime-85-of-85.log` | 168 | `b2ba52a79d9d192eee653a458abb36aa112b4427d957f2b765d42e5e7dd4c56d` |
+| `validation/gcc14-asan-ubsan-configure.log` | 894 | `e25929cb5155a2213bd0057740274a2c3438a9b204628763d1dde23250f19747` |
+| `validation/gcc14-asan-ubsan-focused-build.log` | 1579 | `326de21813b2b534db83cc4080fc44192dd8f96ad48767f74bf5ccfbb5b85314` |
+| `validation/gcc14-asan-ubsan-focused-runtime-85-of-85.log` | 320 | `4705d0becb2517bfdb941e03b00d7b9351f0eebec54a2b26ad1332c9e19d6922` |
+| `validation/gcc14-lowdebug-all-target-build.log` | 14529 | `481c4922ef0a410dc2ecd97d41a49956109ab896b12274fc0cedb68185455fee` |
+| `validation/gcc14-lowdebug-configure.log` | 177 | `0e9fb361b76cd14baa0053a528a2136e3244f11001d1c979c3ed629ad9e93f7b` |
+| `validation/parent-baseline-inherited-runtime-false-negative.log` | 58 | `c697cd64f989b42b0684f3f2aae3daf0832fb681816c12bb3cb6e258904d22a2` |
+| `validation/parent-baseline-selfexec-runtime-false-negative.log` | 47 | `89a800a4c3b252c4baadc8b345929929688974d3b77370a5772a401350a8f87a` |
+| `validation/process-owner-stress-60-of-60.log` | 8220 | `ebf7b0b694cbeaef294ff4f47a74d163cfd021a54c2bb14b888a349ede255bac` |
+| `validation/source-audits-36-of-36.log` | 6450 | `a0dba128b889ba9c42b1a97331c96b02c18d91031b31096cfe75270cc1b5d67f` |
+| `validation/source-patch-compare.json` | 153 | `2e5478cf59bc36651ef87440e2a61c7c2677b964ca4993e08c5e5a8a11dc22bf` |

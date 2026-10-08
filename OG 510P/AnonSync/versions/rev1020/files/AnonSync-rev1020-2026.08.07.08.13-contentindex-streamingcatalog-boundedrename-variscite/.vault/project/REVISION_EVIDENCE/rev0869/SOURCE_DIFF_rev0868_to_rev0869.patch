@@ -1,0 +1,3704 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -649,6 +649,22 @@
+   anonsync_sync_manifest_validation
+   anonsync_sync_conflict_resolution)
+ target_compile_options(anonsync_sync_replica_model PRIVATE
++  -Wall -Wextra -Wpedantic)
++
++# The first durable replica-operation cutpoint binds exact canonical evidence,
++# local dot authority, deterministic projection attestations, persisted policy,
++# and lightweight sender outbox intents in one typed SQLite transaction. One
++# canonical operation row serves every destination rather than cloning payloads.
++set(ANONSYNC_SYNC_REPLICA_SQLITE_OWNER_SOURCE
++  src/sync_replica_sqlite_owner.cpp)
++add_library(anonsync_sync_replica_sqlite_owner STATIC
++  ${ANONSYNC_SYNC_REPLICA_SQLITE_OWNER_SOURCE})
++target_include_directories(anonsync_sync_replica_sqlite_owner PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_sqlite_owner PUBLIC
++  anonsync_sync_replica_model
++  anonsync_sqlite_support)
++target_compile_options(anonsync_sync_replica_sqlite_owner PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
+ # Fault injection belongs beside the pure model, not hidden in integration
+@@ -1517,6 +1533,16 @@
+ target_compile_options(anonsync_sync_replica_capacity_backpressure_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++add_executable(anonsync_sync_replica_sqlite_owner_test
++  tests/sync_replica_sqlite_owner_test.cpp)
++target_include_directories(anonsync_sync_replica_sqlite_owner_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_sqlite_owner_test PRIVATE
++  anonsync_sync_replica_sqlite_owner
++  anonsync_sha256_digest)
++target_compile_options(anonsync_sync_replica_sqlite_owner_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ add_executable(anonsync_sync_bounded_regular_file_test
+   tests/sync_bounded_regular_file_test.cpp)
+ target_link_libraries(anonsync_sync_bounded_regular_file_test PRIVATE
+@@ -1629,6 +1655,10 @@
+     target_link_libraries(${ANONSYNC_SELF_EXEC_ATOMIC_TARGET} PRIVATE
+       anonsync_self_exec_test_process)
+   endforeach()
++  target_include_directories(anonsync_sync_replica_sqlite_owner_test PRIVATE
++    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
++  target_link_libraries(anonsync_sync_replica_sqlite_owner_test PRIVATE
++    anonsync_self_exec_test_process)
+ 
+   add_executable(anonsync_self_exec_test_process_test
+     tests/self_exec_test_process_test.cpp)
+@@ -2366,12 +2396,14 @@
+     anonsync_sync_conflict_resolution_test
+     anonsync_sync_manifest_conflict_convergence_test
+     anonsync_sync_replica_model
++    anonsync_sync_replica_sqlite_owner
+     anonsync_sync_replica_network_simulator
+     anonsync_sync_replica_network_model_test
+     anonsync_sync_replica_hash_graph_projection_test
+     anonsync_sync_replica_allocation_atomicity_test
+     anonsync_sync_replica_aggregate_budget_test
+     anonsync_sync_replica_capacity_backpressure_test
++    anonsync_sync_replica_sqlite_owner_test
+     anonsync_fuzz_json_codec
+     anonsync_fuzz_jwt_codec
+     anonsync_fuzz_route_event_ledger
+@@ -2446,6 +2478,7 @@
+       anonsync_sync_replica_allocation_atomicity_test
+       anonsync_sync_replica_aggregate_budget_test
+       anonsync_sync_replica_capacity_backpressure_test
++      anonsync_sync_replica_sqlite_owner_test
+       anonsync_fuzz_json_codec
+       anonsync_fuzz_jwt_codec
+       anonsync_fuzz_route_event_ledger
+@@ -2579,6 +2612,12 @@
+   COMMAND anonsync_sync_replica_aggregate_budget_test)
+ add_test(NAME anonsync_sync_replica_capacity_backpressure_test
+   COMMAND anonsync_sync_replica_capacity_backpressure_test)
++set_tests_properties(anonsync_sync_replica_capacity_backpressure_test
++  PROPERTIES TIMEOUT 30)
++add_test(NAME anonsync_sync_replica_sqlite_owner_test
++  COMMAND anonsync_sync_replica_sqlite_owner_test)
++set_tests_properties(anonsync_sync_replica_sqlite_owner_test
++  PROPERTIES TIMEOUT 60)
+ set_tests_properties(
+   anonsync_sync_peer_transport_digest_bound_frame_test
+   anonsync_sync_conflict_resolution_test
+@@ -2750,6 +2789,12 @@
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   set_tests_properties(
+     anonsync_sync_replica_capacity_backpressure_source_audit
++    PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_sync_replica_sqlite_owner_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_replica_sqlite_owner.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_sync_replica_sqlite_owner_source_audit
+     PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_sync_daemon_heartbeat_document_source_audit
+     COMMAND ${Python3_EXECUTABLE} -B -S
+--- a/src/sync_replica_model.hpp
++++ b/src/sync_replica_model.hpp
+@@ -81,6 +81,8 @@
+         256ULL * 1024ULL * 1024ULL;
+     std::uint64_t max_retained_context_entries = 1000000ULL;
+     std::uint64_t max_retained_predecessor_ids = 1000000ULL;
++
++    bool operator==(const SyncReplicaModelLimits&) const = default;
+ };
+ 
+ // Evidence admission and active applicability are deliberately separate. An
+@@ -267,6 +269,14 @@
+         return last_local_counter_;
+     }
+ 
++    // Exact operation IDs minted by this actor epoch, indexed by counter-1.
++    // Exposing a const view lets durable owners attest this non-derivable
++    // authority mapping without cloning the entire retained evidence set.
++    [[nodiscard]] const std::vector<std::string>& local_operation_ids()
++        const noexcept {
++        return local_operation_ids_;
++    }
++
+     [[nodiscard]] bool local_actor_compromised() const noexcept {
+         return local_actor_compromised_;
+     }
+--- /dev/null
++++ b/src/sync_replica_sqlite_owner.cpp
+@@ -0,0 +1,1955 @@
++#include "sync_replica_sqlite_owner.hpp"
++
++#include "sha256_digest.hpp"
++#include "sync_manifest_validation.hpp"
++
++#include <algorithm>
++#include <array>
++#include <compare>
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++#include <map>
++#include <set>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <tuple>
++#include <utility>
++#include <vector>
++
++#include <sqlite3.h>
++
++namespace anonsync {
++namespace {
++
++constexpr std::uint64_t kSchemaVersion = 1U;
++constexpr std::uint64_t kMaxSchemaSqlBytes = 1024U * 1024U;
++
++struct SchemaDefinition final {
++    std::string_view type;
++    std::string_view name;
++    std::string_view table_name;
++    std::string_view stored_sql;
++};
++
++// sqlite_schema.sql is protocol evidence. These are the exact strings SQLite
++// stores after the main-qualified CREATE statements emitted below.
++constexpr std::array<SchemaDefinition, 8> kSchema{{
++    {"table", "sync_replica_meta", "sync_replica_meta",
++     "CREATE TABLE sync_replica_meta("
++     "id INTEGER PRIMARY KEY CHECK(id=1),"
++     "schema_version INTEGER NOT NULL CHECK(schema_version=1),"
++     "folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),"
++     "local_device_id TEXT NOT NULL CHECK(length(local_device_id) BETWEEN 1 AND 128),"
++     "local_epoch_be BLOB NOT NULL CHECK(length(local_epoch_be)=8),"
++     "last_local_counter_be BLOB NOT NULL CHECK(length(last_local_counter_be)=8),"
++     "state_generation_be BLOB NOT NULL CHECK(length(state_generation_be)=8),"
++     "policy_generation_be BLOB NOT NULL CHECK(length(policy_generation_be)=8),"
++     "max_operations_be BLOB NOT NULL CHECK(length(max_operations_be)=8),"
++     "max_context_entries_be BLOB NOT NULL CHECK(length(max_context_entries_be)=8),"
++     "max_predecessor_ids_be BLOB NOT NULL CHECK(length(max_predecessor_ids_be)=8),"
++     "max_canonical_operation_bytes_be BLOB NOT NULL CHECK(length(max_canonical_operation_bytes_be)=8),"
++     "max_retained_canonical_bytes_be BLOB NOT NULL CHECK(length(max_retained_canonical_bytes_be)=8),"
++     "max_retained_context_entries_be BLOB NOT NULL CHECK(length(max_retained_context_entries_be)=8),"
++     "max_retained_predecessor_ids_be BLOB NOT NULL CHECK(length(max_retained_predecessor_ids_be)=8),"
++     "max_outbox_intents_be BLOB NOT NULL CHECK(length(max_outbox_intents_be)=8),"
++     "max_outbox_destination_bytes_be BLOB NOT NULL CHECK(length(max_outbox_destination_bytes_be)=8),"
++     "evidence_count_be BLOB NOT NULL CHECK(length(evidence_count_be)=8),"
++     "active_count_be BLOB NOT NULL CHECK(length(active_count_be)=8),"
++     "retained_canonical_bytes_be BLOB NOT NULL CHECK(length(retained_canonical_bytes_be)=8),"
++     "retained_context_entries_be BLOB NOT NULL CHECK(length(retained_context_entries_be)=8),"
++     "retained_predecessor_ids_be BLOB NOT NULL CHECK(length(retained_predecessor_ids_be)=8),"
++     "outbox_intent_count_be BLOB NOT NULL CHECK(length(outbox_intent_count_be)=8),"
++     "outbox_destination_bytes_be BLOB NOT NULL CHECK(length(outbox_destination_bytes_be)=8),"
++     "local_actor_compromised INTEGER NOT NULL CHECK(local_actor_compromised IN (0,1)),"
++     "local_operation_digest TEXT NOT NULL CHECK(length(local_operation_digest)=64),"
++     "operation_set_digest TEXT NOT NULL CHECK(length(operation_set_digest)=64),"
++     "evidence_set_digest TEXT NOT NULL CHECK(length(evidence_set_digest)=64),"
++     "visible_state_digest TEXT NOT NULL CHECK(length(visible_state_digest)=64),"
++     "outbox_digest TEXT NOT NULL CHECK(length(outbox_digest)=64),"
++     "cutpoint_digest TEXT NOT NULL CHECK(length(cutpoint_digest)=64)) STRICT"},
++    {"table", "sync_replica_operations", "sync_replica_operations",
++     "CREATE TABLE sync_replica_operations("
++     "operation_id TEXT PRIMARY KEY CHECK(length(operation_id)=64),"
++     "canonical_bytes BLOB NOT NULL,"
++     "canonical_size_be BLOB NOT NULL CHECK(length(canonical_size_be)=8),"
++     "context_count_be BLOB NOT NULL CHECK(length(context_count_be)=8),"
++     "predecessor_count_be BLOB NOT NULL CHECK(length(predecessor_count_be)=8),"
++     "evidence_state TEXT NOT NULL CHECK(evidence_state IN ('active','pending_missing_dependency','quarantined_dot_fork','quarantined_dependency','quarantined_causal_envelope','quarantined_dependency_cycle'))) STRICT"},
++    {"table", "sync_replica_parent_edges", "sync_replica_parent_edges",
++     "CREATE TABLE sync_replica_parent_edges("
++     "child_operation_id TEXT NOT NULL,"
++     "parent_ordinal INTEGER NOT NULL CHECK(parent_ordinal>=0),"
++     "parent_operation_id TEXT NOT NULL CHECK(length(parent_operation_id)=64),"
++     "PRIMARY KEY(child_operation_id,parent_ordinal),"
++     "UNIQUE(child_operation_id,parent_operation_id),"
++     "FOREIGN KEY(child_operation_id) REFERENCES sync_replica_operations(operation_id) ON DELETE CASCADE) STRICT"},
++    {"table", "sync_replica_local_operations", "sync_replica_local_operations",
++     "CREATE TABLE sync_replica_local_operations("
++     "counter_be BLOB PRIMARY KEY CHECK(length(counter_be)=8),"
++     "operation_id TEXT NOT NULL UNIQUE,"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_heads", "sync_replica_heads",
++     "CREATE TABLE sync_replica_heads("
++     "operation_id TEXT PRIMARY KEY,"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_visible", "sync_replica_visible",
++     "CREATE TABLE sync_replica_visible("
++     "canonical_path TEXT NOT NULL CHECK(length(canonical_path) BETWEEN 1 AND 4096),"
++     "visible_ordinal INTEGER NOT NULL CHECK(visible_ordinal>=0),"
++     "operation_id TEXT NOT NULL,"
++     "is_primary INTEGER NOT NULL CHECK(is_primary IN (0,1)),"
++     "preserve_file INTEGER NOT NULL CHECK(preserve_file IN (0,1)),"
++     "PRIMARY KEY(canonical_path,visible_ordinal),"
++     "UNIQUE(canonical_path,operation_id),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_outbox", "sync_replica_outbox",
++     "CREATE TABLE sync_replica_outbox("
++     "destination_device_id TEXT NOT NULL CHECK(length(destination_device_id) BETWEEN 1 AND 128),"
++     "operation_id TEXT NOT NULL,"
++     "enqueued_generation_be BLOB NOT NULL CHECK(length(enqueued_generation_be)=8),"
++     "PRIMARY KEY(destination_device_id,operation_id),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"index", "sync_replica_outbox_operation", "sync_replica_outbox",
++     "CREATE INDEX sync_replica_outbox_operation ON sync_replica_outbox(operation_id,destination_device_id)"},
++}};
++
++struct DurableMeta final {
++    std::string folder_id;
++    SyncReplicaActor local_actor;
++    std::uint64_t last_local_counter = 0;
++    std::uint64_t state_generation = 0;
++    std::uint64_t policy_generation = 0;
++    SyncReplicaSqliteOwnerLimits limits;
++    std::uint64_t evidence_count = 0;
++    std::uint64_t active_count = 0;
++    std::uint64_t retained_canonical_bytes = 0;
++    std::uint64_t retained_context_entries = 0;
++    std::uint64_t retained_predecessor_ids = 0;
++    std::uint64_t outbox_intent_count = 0;
++    std::uint64_t outbox_destination_bytes = 0;
++    bool local_actor_compromised = false;
++    std::string local_operation_digest;
++    std::string operation_set_digest;
++    std::string evidence_set_digest;
++    std::string visible_state_digest;
++    std::string outbox_digest;
++    std::string cutpoint_digest;
++
++    bool operator==(const DurableMeta&) const = default;
++};
++
++struct LoadedState final {
++    DurableMeta meta;
++    SyncReplicaModel model;
++    std::map<std::string, SyncReplicaEvidenceState> persisted_states;
++    std::vector<SyncReplicaSqliteOutboxIntent> outbox;
++};
++
++[[nodiscard]] std::uint64_t size_to_u64_or_throw(
++    std::size_t value,
++    const std::string& label) {
++    if (std::cmp_greater(value, std::numeric_limits<std::uint64_t>::max())) {
++        throw std::overflow_error(label + " does not fit uint64_t");
++    }
++    return static_cast<std::uint64_t>(value);
++}
++
++[[nodiscard]] std::size_t u64_to_size_or_throw(
++    std::uint64_t value,
++    const std::string& label) {
++    if (std::cmp_greater(value, std::numeric_limits<std::size_t>::max())) {
++        throw std::overflow_error(label + " does not fit size_t");
++    }
++    return static_cast<std::size_t>(value);
++}
++
++[[nodiscard]] std::string u64_be(std::uint64_t value) {
++    std::string out(8, '\0');
++    for (std::size_t index = 0; index < 8; ++index) {
++        out[7U - index] = static_cast<char>(value & 0xffU);
++        value >>= 8U;
++    }
++    return out;
++}
++
++[[nodiscard]] std::uint64_t parse_u64_be_or_throw(
++    std::string_view bytes,
++    const std::string& label) {
++    if (bytes.size() != 8U) {
++        throw std::runtime_error(label + " is not an exact 8-byte uint64");
++    }
++    std::uint64_t value = 0;
++    for (const unsigned char byte : bytes) {
++        value = (value << 8U) | static_cast<std::uint64_t>(byte);
++    }
++    return value;
++}
++
++void bind_u64_be_or_throw(
++    sqlite3_stmt* statement,
++    int index,
++    std::uint64_t value,
++    const std::string& label) {
++    sqlite_bind_blob_or_throw(statement, index, u64_be(value), label);
++}
++
++[[nodiscard]] std::uint64_t column_u64_be_or_throw(
++    sqlite3_stmt* statement,
++    int column,
++    const std::string& label) {
++    return parse_u64_be_or_throw(
++        sqlite_column_blob_or_throw(statement, column, 8U, label), label);
++}
++
++void require_row_or_throw(sqlite3_stmt* statement, const std::string& label) {
++    const int result = sqlite3_step(statement);
++    if (result != SQLITE_ROW) {
++        if (result == SQLITE_DONE) {
++            throw std::runtime_error(label + " row is missing");
++        }
++        throw_sqlite_exception(sqlite3_db_handle(statement), result, label);
++    }
++}
++
++void require_done_or_throw(sqlite3_stmt* statement, const std::string& label) {
++    const int result = sqlite3_step(statement);
++    if (result != SQLITE_DONE) {
++        if (result == SQLITE_ROW) {
++            throw std::runtime_error(label + " has more than one row");
++        }
++        throw_sqlite_exception(sqlite3_db_handle(statement), result, label);
++    }
++}
++
++void reset_statement_or_throw(
++    sqlite3_stmt* statement,
++    const std::string& label) {
++    const int reset_result = sqlite3_reset(statement);
++    if (reset_result != SQLITE_OK) {
++        throw_sqlite_exception(
++            sqlite3_db_handle(statement), reset_result, label + " reset");
++    }
++    const int clear_result = sqlite3_clear_bindings(statement);
++    if (clear_result != SQLITE_OK) {
++        throw_sqlite_exception(
++            sqlite3_db_handle(statement), clear_result,
++            label + " clear bindings");
++    }
++}
++
++[[nodiscard]] std::uint64_t increment_or_throw(
++    std::uint64_t value,
++    const std::string& label) {
++    if (value == std::numeric_limits<std::uint64_t>::max()) {
++        throw std::overflow_error(label + " is exhausted");
++    }
++    return value + 1U;
++}
++
++[[nodiscard]] std::uint64_t checked_add_or_throw(
++    std::uint64_t left,
++    std::uint64_t right,
++    const std::string& label) {
++    if (right > std::numeric_limits<std::uint64_t>::max() - left) {
++        throw std::overflow_error(label + " overflows uint64_t");
++    }
++    return left + right;
++}
++
++void append_framed(
++    Sha256DigestBuilder& digest,
++    std::string_view bytes) {
++    digest.update(u64_be(static_cast<std::uint64_t>(bytes.size())));
++    digest.update(bytes);
++}
++
++[[nodiscard]] std::string outbox_digest_or_throw(
++    const std::string& folder_id,
++    const std::vector<SyncReplicaSqliteOutboxIntent>& outbox) {
++    Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-outbox-v1");
++    append_framed(digest, folder_id);
++    digest.update(u64_be(size_to_u64_or_throw(
++        outbox.size(), "sync replica SQLite outbox count")));
++    for (const SyncReplicaSqliteOutboxIntent& intent : outbox) {
++        append_framed(digest, intent.destination_device_id);
++        append_framed(digest, intent.operation_id);
++        digest.update(u64_be(intent.enqueued_generation));
++    }
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::string local_operation_digest_or_throw(
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    const std::vector<std::string>& local_operation_ids) {
++    Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-local-authority-v1");
++    append_framed(digest, folder_id);
++    append_framed(digest, local_actor.device_id);
++    digest.update(u64_be(local_actor.epoch));
++    digest.update(u64_be(size_to_u64_or_throw(
++        local_operation_ids.size(),
++        "sync replica SQLite local operation count")));
++    for (const std::string& operation_id : local_operation_ids) {
++        append_framed(digest, operation_id);
++    }
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::string cutpoint_digest_or_throw(
++    const DurableMeta& meta) {
++    Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-cutpoint-v1");
++    append_framed(digest, meta.folder_id);
++    append_framed(digest, meta.local_actor.device_id);
++    digest.update(u64_be(meta.local_actor.epoch));
++    digest.update(u64_be(meta.last_local_counter));
++    digest.update(u64_be(meta.state_generation));
++    digest.update(u64_be(meta.policy_generation));
++    digest.update(u64_be(meta.limits.model.max_operations));
++    digest.update(u64_be(meta.limits.model.max_context_entries));
++    digest.update(u64_be(meta.limits.model.max_predecessor_ids));
++    digest.update(u64_be(meta.limits.model.max_canonical_operation_bytes));
++    digest.update(u64_be(meta.limits.model.max_retained_canonical_bytes));
++    digest.update(u64_be(meta.limits.model.max_retained_context_entries));
++    digest.update(u64_be(meta.limits.model.max_retained_predecessor_ids));
++    digest.update(u64_be(meta.limits.max_outbox_intents));
++    digest.update(u64_be(meta.limits.max_outbox_destination_bytes));
++    digest.update(u64_be(meta.evidence_count));
++    digest.update(u64_be(meta.active_count));
++    digest.update(u64_be(meta.retained_canonical_bytes));
++    digest.update(u64_be(meta.retained_context_entries));
++    digest.update(u64_be(meta.retained_predecessor_ids));
++    digest.update(u64_be(meta.outbox_intent_count));
++    digest.update(u64_be(meta.outbox_destination_bytes));
++    digest.update(meta.local_actor_compromised ? std::string_view("1")
++                                               : std::string_view("0"));
++    append_framed(digest, meta.local_operation_digest);
++    append_framed(digest, meta.operation_set_digest);
++    append_framed(digest, meta.evidence_set_digest);
++    append_framed(digest, meta.visible_state_digest);
++    append_framed(digest, meta.outbox_digest);
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::uint64_t outbox_destination_bytes_or_throw(
++    const std::vector<SyncReplicaSqliteOutboxIntent>& outbox) {
++    std::uint64_t total = 0;
++    for (const SyncReplicaSqliteOutboxIntent& intent : outbox) {
++        total = checked_add_or_throw(
++            total,
++            size_to_u64_or_throw(
++                intent.destination_device_id.size(),
++                "sync replica SQLite outbox destination bytes"),
++            "sync replica SQLite outbox destination bytes");
++    }
++    return total;
++}
++
++[[nodiscard]] std::string_view evidence_state_text(
++    SyncReplicaEvidenceState state) noexcept {
++    switch (state) {
++        case SyncReplicaEvidenceState::Active:
++            return "active";
++        case SyncReplicaEvidenceState::PendingMissingDependency:
++            return "pending_missing_dependency";
++        case SyncReplicaEvidenceState::QuarantinedDotFork:
++            return "quarantined_dot_fork";
++        case SyncReplicaEvidenceState::QuarantinedDependency:
++            return "quarantined_dependency";
++        case SyncReplicaEvidenceState::QuarantinedCausalEnvelope:
++            return "quarantined_causal_envelope";
++        case SyncReplicaEvidenceState::QuarantinedDependencyCycle:
++            return "quarantined_dependency_cycle";
++    }
++    return "unknown";
++}
++
++[[nodiscard]] SyncReplicaEvidenceState parse_evidence_state_or_throw(
++    std::string_view text,
++    const std::string& label) {
++    if (text == "active") return SyncReplicaEvidenceState::Active;
++    if (text == "pending_missing_dependency") {
++        return SyncReplicaEvidenceState::PendingMissingDependency;
++    }
++    if (text == "quarantined_dot_fork") {
++        return SyncReplicaEvidenceState::QuarantinedDotFork;
++    }
++    if (text == "quarantined_dependency") {
++        return SyncReplicaEvidenceState::QuarantinedDependency;
++    }
++    if (text == "quarantined_causal_envelope") {
++        return SyncReplicaEvidenceState::QuarantinedCausalEnvelope;
++    }
++    if (text == "quarantined_dependency_cycle") {
++        return SyncReplicaEvidenceState::QuarantinedDependencyCycle;
++    }
++    throw std::runtime_error(label + " has an unknown evidence state");
++}
++
++void validate_owner_limits_or_throw(
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    const SyncReplicaSqliteOwnerLimits& limits,
++    const std::string& label) {
++    (void)SyncReplicaModel(folder_id, local_actor, limits.model);
++    if (limits.max_outbox_intents == 0U ||
++        limits.max_outbox_destination_bytes == 0U) {
++        throw std::invalid_argument(
++            label + " outbox limits must be positive");
++    }
++}
++
++[[nodiscard]] std::string create_statement(
++    const SchemaDefinition& definition) {
++    constexpr std::string_view table_prefix = "CREATE TABLE ";
++    constexpr std::string_view index_prefix = "CREATE INDEX ";
++    std::string statement;
++    if (definition.stored_sql.starts_with(table_prefix)) {
++        statement = "CREATE TABLE main.";
++        statement.append(definition.stored_sql.substr(table_prefix.size()));
++    } else if (definition.stored_sql.starts_with(index_prefix)) {
++        statement = "CREATE INDEX main.";
++        statement.append(definition.stored_sql.substr(index_prefix.size()));
++    } else {
++        throw std::logic_error(
++            "sync replica SQLite schema definition has an unknown CREATE form");
++    }
++    statement.push_back(';');
++    return statement;
++}
++
++[[nodiscard]] std::vector<std::tuple<std::string, std::string,
++                                     std::string, std::string>>
++read_schema_objects_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT type,name,tbl_name,sql FROM main.sqlite_schema "
++        "WHERE (name GLOB 'sync_replica_*' OR "
++        "tbl_name GLOB 'sync_replica_*') AND sql IS NOT NULL "
++        "ORDER BY name;",
++        label + " schema query prepare");
++    std::vector<std::tuple<std::string, std::string, std::string, std::string>>
++        observed;
++    for (;;) {
++        const int result = sqlite3_step(statement.stmt);
++        if (result == SQLITE_DONE) break;
++        if (result != SQLITE_ROW) {
++            throw_sqlite_exception(
++                sqlite3_db_handle(statement.stmt), result,
++                label + " schema query");
++        }
++        if (observed.size() >= kSchema.size() + 1U) {
++            throw std::runtime_error(
++                label + " schema object count exceeds its exact contract");
++        }
++        observed.emplace_back(
++            sqlite_column_text_or_throw(
++                statement.stmt, 0, 32U, label + " schema type"),
++            sqlite_column_text_or_throw(
++                statement.stmt, 1, 256U, label + " schema name"),
++            sqlite_column_text_or_throw(
++                statement.stmt, 2, 256U, label + " schema table name"),
++            sqlite_column_text_or_throw(
++                statement.stmt, 3, kMaxSchemaSqlBytes,
++                label + " schema SQL"));
++    }
++    return observed;
++}
++
++void verify_schema_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& label) {
++    const auto observed = read_schema_objects_or_throw(db, label);
++    std::map<std::string, const SchemaDefinition*> expected;
++    for (const SchemaDefinition& definition : kSchema) {
++        expected.emplace(std::string(definition.name), &definition);
++    }
++    for (const auto& [type, name, table_name, sql] : observed) {
++        const auto found = expected.find(name);
++        if (found == expected.end()) {
++            throw std::runtime_error(
++                label + " schema contains an unexpected sync_replica object");
++        }
++        const SchemaDefinition& definition = *found->second;
++        if (type != definition.type || table_name != definition.table_name ||
++            sql != definition.stored_sql) {
++            throw std::runtime_error(
++                label + " exact sqlite_schema contract mismatch for " + name);
++        }
++        expected.erase(found);
++    }
++    if (!expected.empty()) {
++        throw std::runtime_error(
++            label + " schema is missing required object " +
++            expected.begin()->first);
++    }
++}
++
++void require_foreign_keys_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db, "PRAGMA foreign_keys;", label + " foreign_keys query prepare");
++    require_row_or_throw(statement.stmt, label + " foreign_keys query");
++    const std::uint64_t enabled = sqlite_column_u64_or_throw(
++        statement.stmt, 0, label + " foreign_keys value");
++    require_done_or_throw(statement.stmt, label + " foreign_keys query");
++    if (enabled != 1U) {
++        throw std::runtime_error(
++            label + " requires SQLite foreign key enforcement");
++    }
++}
++
++void require_no_foreign_key_violations_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db, "PRAGMA main.foreign_key_check;",
++        label + " foreign_key_check prepare");
++    const int result = sqlite3_step(statement.stmt);
++    if (result == SQLITE_ROW) {
++        throw std::runtime_error(
++            label + " found a durable foreign-key violation");
++    }
++    if (result != SQLITE_DONE) {
++        throw_sqlite_exception(
++            sqlite3_db_handle(statement.stmt), result,
++            label + " foreign_key_check");
++    }
++}
++
++[[nodiscard]] DurableMeta read_meta_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT schema_version,folder_id,local_device_id,local_epoch_be,"
++        "last_local_counter_be,state_generation_be,policy_generation_be,"
++        "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
++        "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
++        "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
++        "max_outbox_intents_be,max_outbox_destination_bytes_be,"
++        "evidence_count_be,active_count_be,retained_canonical_bytes_be,"
++        "retained_context_entries_be,retained_predecessor_ids_be,"
++        "outbox_intent_count_be,outbox_destination_bytes_be,"
++        "local_actor_compromised,local_operation_digest,operation_set_digest,"
++        "evidence_set_digest,visible_state_digest,outbox_digest,cutpoint_digest "
++        "FROM main.sync_replica_meta WHERE id=1 LIMIT 2;",
++        label + " meta query prepare");
++    require_row_or_throw(statement.stmt, label + " meta query");
++    if (sqlite_column_u64_or_throw(
++            statement.stmt, 0, label + " schema version") !=
++        kSchemaVersion) {
++        throw std::runtime_error(label + " schema version is unsupported");
++    }
++
++    DurableMeta meta;
++    meta.folder_id = sqlite_column_text_or_throw(
++        statement.stmt, 1, kSyncManifestIdMaxBytes, label + " folder id");
++    meta.local_actor.device_id = sqlite_column_text_or_throw(
++        statement.stmt, 2, kSyncManifestIdMaxBytes,
++        label + " local device id");
++    meta.local_actor.epoch = column_u64_be_or_throw(
++        statement.stmt, 3, label + " local epoch");
++    meta.last_local_counter = column_u64_be_or_throw(
++        statement.stmt, 4, label + " last local counter");
++    meta.state_generation = column_u64_be_or_throw(
++        statement.stmt, 5, label + " state generation");
++    meta.policy_generation = column_u64_be_or_throw(
++        statement.stmt, 6, label + " policy generation");
++    meta.limits.model.max_operations = column_u64_be_or_throw(
++        statement.stmt, 7, label + " max operations");
++    meta.limits.model.max_context_entries = column_u64_be_or_throw(
++        statement.stmt, 8, label + " max context entries");
++    meta.limits.model.max_predecessor_ids = column_u64_be_or_throw(
++        statement.stmt, 9, label + " max predecessor ids");
++    meta.limits.model.max_canonical_operation_bytes = column_u64_be_or_throw(
++        statement.stmt, 10, label + " max canonical operation bytes");
++    meta.limits.model.max_retained_canonical_bytes = column_u64_be_or_throw(
++        statement.stmt, 11, label + " max retained canonical bytes");
++    meta.limits.model.max_retained_context_entries = column_u64_be_or_throw(
++        statement.stmt, 12, label + " max retained context entries");
++    meta.limits.model.max_retained_predecessor_ids = column_u64_be_or_throw(
++        statement.stmt, 13, label + " max retained predecessor ids");
++    meta.limits.max_outbox_intents = column_u64_be_or_throw(
++        statement.stmt, 14, label + " max outbox intents");
++    meta.limits.max_outbox_destination_bytes = column_u64_be_or_throw(
++        statement.stmt, 15, label + " max outbox destination bytes");
++    meta.evidence_count = column_u64_be_or_throw(
++        statement.stmt, 16, label + " evidence count");
++    meta.active_count = column_u64_be_or_throw(
++        statement.stmt, 17, label + " active count");
++    meta.retained_canonical_bytes = column_u64_be_or_throw(
++        statement.stmt, 18, label + " retained canonical bytes");
++    meta.retained_context_entries = column_u64_be_or_throw(
++        statement.stmt, 19, label + " retained context entries");
++    meta.retained_predecessor_ids = column_u64_be_or_throw(
++        statement.stmt, 20, label + " retained predecessor ids");
++    meta.outbox_intent_count = column_u64_be_or_throw(
++        statement.stmt, 21, label + " outbox intent count");
++    meta.outbox_destination_bytes = column_u64_be_or_throw(
++        statement.stmt, 22, label + " outbox destination bytes");
++    meta.local_actor_compromised = sqlite_column_bool_or_throw(
++        statement.stmt, 23, label + " local actor compromised");
++    meta.local_operation_digest = sqlite_column_text_or_throw(
++        statement.stmt, 24, 64U, label + " local operation digest");
++    meta.operation_set_digest = sqlite_column_text_or_throw(
++        statement.stmt, 25, 64U, label + " operation digest");
++    meta.evidence_set_digest = sqlite_column_text_or_throw(
++        statement.stmt, 26, 64U, label + " evidence digest");
++    meta.visible_state_digest = sqlite_column_text_or_throw(
++        statement.stmt, 27, 64U, label + " visible digest");
++    meta.outbox_digest = sqlite_column_text_or_throw(
++        statement.stmt, 28, 64U, label + " outbox digest");
++    meta.cutpoint_digest = sqlite_column_text_or_throw(
++        statement.stmt, 29, 64U, label + " cutpoint digest");
++    require_done_or_throw(statement.stmt, label + " meta query");
++
++    if (meta.state_generation == 0U || meta.policy_generation == 0U) {
++        throw std::runtime_error(label + " durable generation is zero");
++    }
++    if (!is_lowercase_sha256_hex(meta.local_operation_digest) ||
++        !is_lowercase_sha256_hex(meta.operation_set_digest) ||
++        !is_lowercase_sha256_hex(meta.evidence_set_digest) ||
++        !is_lowercase_sha256_hex(meta.visible_state_digest) ||
++        !is_lowercase_sha256_hex(meta.outbox_digest) ||
++        !is_lowercase_sha256_hex(meta.cutpoint_digest)) {
++        throw std::runtime_error(label + " durable digest is noncanonical");
++    }
++    validate_owner_limits_or_throw(
++        meta.folder_id, meta.local_actor, meta.limits, label + " policy");
++    if (cutpoint_digest_or_throw(meta) != meta.cutpoint_digest) {
++        throw std::runtime_error(label + " durable cutpoint digest mismatch");
++    }
++    return meta;
++}
++
++void bind_meta_common_or_throw(
++    sqlite3_stmt* statement,
++    int first_index,
++    const DurableMeta& meta,
++    const std::string& label) {
++    int index = first_index;
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.folder_id, label + " bind folder");
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.local_actor.device_id,
++        label + " bind local device");
++    bind_u64_be_or_throw(
++        statement, index++, meta.local_actor.epoch,
++        label + " bind local epoch");
++    bind_u64_be_or_throw(
++        statement, index++, meta.last_local_counter,
++        label + " bind local counter");
++    bind_u64_be_or_throw(
++        statement, index++, meta.state_generation,
++        label + " bind state generation");
++    bind_u64_be_or_throw(
++        statement, index++, meta.policy_generation,
++        label + " bind policy generation");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.model.max_operations,
++        label + " bind max operations");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.model.max_context_entries,
++        label + " bind max context entries");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.model.max_predecessor_ids,
++        label + " bind max predecessor ids");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.model.max_canonical_operation_bytes,
++        label + " bind max canonical bytes");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.model.max_retained_canonical_bytes,
++        label + " bind max retained canonical bytes");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.model.max_retained_context_entries,
++        label + " bind max retained context entries");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.model.max_retained_predecessor_ids,
++        label + " bind max retained predecessor ids");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.max_outbox_intents,
++        label + " bind max outbox intents");
++    bind_u64_be_or_throw(
++        statement, index++, meta.limits.max_outbox_destination_bytes,
++        label + " bind max outbox destination bytes");
++    bind_u64_be_or_throw(
++        statement, index++, meta.evidence_count,
++        label + " bind evidence count");
++    bind_u64_be_or_throw(
++        statement, index++, meta.active_count,
++        label + " bind active count");
++    bind_u64_be_or_throw(
++        statement, index++, meta.retained_canonical_bytes,
++        label + " bind retained canonical bytes");
++    bind_u64_be_or_throw(
++        statement, index++, meta.retained_context_entries,
++        label + " bind retained context entries");
++    bind_u64_be_or_throw(
++        statement, index++, meta.retained_predecessor_ids,
++        label + " bind retained predecessor ids");
++    bind_u64_be_or_throw(
++        statement, index++, meta.outbox_intent_count,
++        label + " bind outbox count");
++    bind_u64_be_or_throw(
++        statement, index++, meta.outbox_destination_bytes,
++        label + " bind outbox destination bytes");
++    sqlite_bind_bool_or_throw(
++        statement, index++, meta.local_actor_compromised,
++        label + " bind actor compromised");
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.local_operation_digest,
++        label + " bind local operation digest");
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.operation_set_digest,
++        label + " bind operation digest");
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.evidence_set_digest,
++        label + " bind evidence digest");
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.visible_state_digest,
++        label + " bind visible digest");
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.outbox_digest,
++        label + " bind outbox digest");
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.cutpoint_digest,
++        label + " bind cutpoint digest");
++}
++
++[[nodiscard]] DurableMeta insert_initial_meta_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    const SyncReplicaSqliteOwnerLimits& limits,
++    const std::string& label) {
++    SyncReplicaModel empty(folder_id, local_actor, limits.model);
++    DurableMeta meta;
++    meta.folder_id = folder_id;
++    meta.local_actor = local_actor;
++    meta.state_generation = 1U;
++    meta.policy_generation = 1U;
++    meta.limits = limits;
++    meta.local_operation_digest = local_operation_digest_or_throw(
++        folder_id, local_actor, empty.local_operation_ids());
++    meta.operation_set_digest = empty.operation_set_digest();
++    meta.evidence_set_digest = empty.evidence_set_digest();
++    meta.visible_state_digest = empty.visible_state_digest();
++    meta.outbox_digest = outbox_digest_or_throw(folder_id, {});
++    meta.cutpoint_digest = cutpoint_digest_or_throw(meta);
++
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_meta("
++        "id,schema_version,folder_id,local_device_id,local_epoch_be,"
++        "last_local_counter_be,state_generation_be,policy_generation_be,"
++        "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
++        "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
++        "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
++        "max_outbox_intents_be,max_outbox_destination_bytes_be,"
++        "evidence_count_be,active_count_be,retained_canonical_bytes_be,"
++        "retained_context_entries_be,retained_predecessor_ids_be,"
++        "outbox_intent_count_be,outbox_destination_bytes_be,"
++        "local_actor_compromised,local_operation_digest,operation_set_digest,"
++        "evidence_set_digest,visible_state_digest,outbox_digest,cutpoint_digest)"
++        "VALUES(1,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
++        label + " initial meta insert prepare");
++    bind_meta_common_or_throw(
++        statement.stmt, 1, meta, label + " initial meta");
++    sqlite_step_done_or_throw(
++        statement.stmt, label + " initial meta insert");
++    return meta;
++}
++
++[[nodiscard]] std::uint64_t count_rows_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& sql,
++    const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db, sql, label + " prepare");
++    require_row_or_throw(statement.stmt, label);
++    const std::uint64_t count = sqlite_column_u64_or_throw(
++        statement.stmt, 0, label + " count");
++    require_done_or_throw(statement.stmt, label);
++    return count;
++}
++
++[[nodiscard]] std::vector<std::string> read_local_operation_ids_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const DurableMeta& meta,
++    const std::string& label) {
++    const std::uint64_t row_count = count_rows_or_throw(
++        db, "SELECT count(*) FROM main.sync_replica_local_operations;",
++        label + " local operation count");
++    if (row_count != meta.last_local_counter ||
++        row_count > meta.limits.model.max_operations) {
++        throw std::runtime_error(
++            label + " local operation count disagrees with authority");
++    }
++    std::vector<std::string> ids;
++    ids.reserve(u64_to_size_or_throw(row_count, label + " local operation count"));
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT counter_be,operation_id "
++        "FROM main.sync_replica_local_operations ORDER BY counter_be;",
++        label + " local operation query prepare");
++    std::uint64_t expected_counter = 1U;
++    for (;;) {
++        const int result = sqlite3_step(statement.stmt);
++        if (result == SQLITE_DONE) break;
++        if (result != SQLITE_ROW) {
++            throw_sqlite_exception(
++                sqlite3_db_handle(statement.stmt), result,
++                label + " local operation query");
++        }
++        const std::uint64_t counter = column_u64_be_or_throw(
++            statement.stmt, 0, label + " local operation counter");
++        if (counter != expected_counter) {
++            throw std::runtime_error(
++                label + " local operation sequence has a gap or reordering");
++        }
++        ids.push_back(sqlite_column_text_or_throw(
++            statement.stmt, 1, 64U, label + " local operation id"));
++        ++expected_counter;
++    }
++    return ids;
++}
++
++[[nodiscard]] std::pair<
++    std::vector<SyncReplicaOperation>,
++    std::map<std::string, SyncReplicaEvidenceState>>
++read_operations_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const DurableMeta& meta,
++    const std::string& label) {
++    const std::uint64_t row_count = count_rows_or_throw(
++        db, "SELECT count(*) FROM main.sync_replica_operations;",
++        label + " operation count");
++    if (row_count != meta.evidence_count ||
++        row_count > meta.limits.model.max_operations) {
++        throw std::runtime_error(
++            label + " operation row count disagrees with durable metadata");
++    }
++
++    std::vector<SyncReplicaOperation> operations;
++    operations.reserve(u64_to_size_or_throw(row_count, label + " operation count"));
++    std::map<std::string, SyncReplicaEvidenceState> states;
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT operation_id,canonical_bytes,canonical_size_be,"
++        "context_count_be,predecessor_count_be,evidence_state "
++        "FROM main.sync_replica_operations ORDER BY operation_id;",
++        label + " operation query prepare");
++    for (;;) {
++        const int result = sqlite3_step(statement.stmt);
++        if (result == SQLITE_DONE) break;
++        if (result != SQLITE_ROW) {
++            throw_sqlite_exception(
++                sqlite3_db_handle(statement.stmt), result,
++                label + " operation query");
++        }
++        const std::string operation_id = sqlite_column_text_or_throw(
++            statement.stmt, 0, 64U, label + " operation id");
++        const std::string canonical = sqlite_column_blob_or_throw(
++            statement.stmt, 1,
++            meta.limits.model.max_canonical_operation_bytes,
++            label + " canonical operation");
++        const std::uint64_t canonical_size = column_u64_be_or_throw(
++            statement.stmt, 2, label + " canonical operation size");
++        const std::uint64_t context_count = column_u64_be_or_throw(
++            statement.stmt, 3, label + " context count");
++        const std::uint64_t predecessor_count = column_u64_be_or_throw(
++            statement.stmt, 4, label + " predecessor count");
++        const SyncReplicaEvidenceState state = parse_evidence_state_or_throw(
++            sqlite_column_text_or_throw(
++                statement.stmt, 5, 64U, label + " evidence state"),
++            label);
++        SyncReplicaOperation operation =
++            decode_sync_replica_operation_canonical_or_throw(
++                canonical, meta.limits.model);
++        if (operation.operation_id != operation_id ||
++            canonical_size != size_to_u64_or_throw(
++                canonical.size(), label + " canonical size") ||
++            context_count != size_to_u64_or_throw(
++                operation.causal_context.size(), label + " context count") ||
++            predecessor_count != size_to_u64_or_throw(
++                operation.predecessor_operation_ids.size(),
++                label + " predecessor count")) {
++            throw std::runtime_error(
++                label + " canonical operation row attestation mismatch");
++        }
++        if (!states.emplace(operation_id, state).second) {
++            throw std::runtime_error(label + " duplicate operation row");
++        }
++        operations.push_back(std::move(operation));
++    }
++    return {std::move(operations), std::move(states)};
++}
++
++void verify_parent_edges_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::vector<SyncReplicaOperation>& operations,
++    const DurableMeta& meta,
++    const std::string& label) {
++    const std::uint64_t row_count = count_rows_or_throw(
++        db, "SELECT count(*) FROM main.sync_replica_parent_edges;",
++        label + " parent edge count");
++    if (row_count != meta.retained_predecessor_ids) {
++        throw std::runtime_error(
++            label + " parent edge count disagrees with retained charge");
++    }
++    std::vector<std::tuple<std::string, std::uint64_t, std::string>> expected;
++    expected.reserve(u64_to_size_or_throw(row_count, label + " parent edge count"));
++    for (const SyncReplicaOperation& operation : operations) {
++        for (std::size_t index = 0;
++             index < operation.predecessor_operation_ids.size(); ++index) {
++            expected.emplace_back(
++                operation.operation_id,
++                static_cast<std::uint64_t>(index),
++                operation.predecessor_operation_ids[index]);
++        }
++    }
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT child_operation_id,parent_ordinal,parent_operation_id "
++        "FROM main.sync_replica_parent_edges "
++        "ORDER BY child_operation_id,parent_ordinal;",
++        label + " parent edge query prepare");
++    std::size_t index = 0;
++    for (;;) {
++        const int result = sqlite3_step(statement.stmt);
++        if (result == SQLITE_DONE) break;
++        if (result != SQLITE_ROW) {
++            throw_sqlite_exception(
++                sqlite3_db_handle(statement.stmt), result,
++                label + " parent edge query");
++        }
++        if (index >= expected.size()) {
++            throw std::runtime_error(label + " has an extra parent edge");
++        }
++        const auto observed = std::tuple{
++            sqlite_column_text_or_throw(
++                statement.stmt, 0, 64U, label + " parent child id"),
++            sqlite_column_u64_or_throw(
++                statement.stmt, 1, label + " parent ordinal"),
++            sqlite_column_text_or_throw(
++                statement.stmt, 2, 64U, label + " parent id")};
++        if (observed != expected[index]) {
++            throw std::runtime_error(label + " parent edge attestation mismatch");
++        }
++        ++index;
++    }
++    if (index != expected.size()) {
++        throw std::runtime_error(label + " is missing a parent edge");
++    }
++}
++
++void verify_heads_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaModel& model,
++    const std::string& label) {
++    const std::vector<std::string> expected =
++        model.causal_head_operation_ids();
++    const std::uint64_t row_count = count_rows_or_throw(
++        db, "SELECT count(*) FROM main.sync_replica_heads;",
++        label + " head count");
++    if (row_count != size_to_u64_or_throw(expected.size(), label + " heads")) {
++        throw std::runtime_error(label + " head row count mismatch");
++    }
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT operation_id FROM main.sync_replica_heads "
++        "ORDER BY operation_id;",
++        label + " head query prepare");
++    std::size_t index = 0;
++    for (;;) {
++        const int result = sqlite3_step(statement.stmt);
++        if (result == SQLITE_DONE) break;
++        if (result != SQLITE_ROW) {
++            throw_sqlite_exception(
++                sqlite3_db_handle(statement.stmt), result,
++                label + " head query");
++        }
++        if (index >= expected.size() ||
++            sqlite_column_text_or_throw(
++                statement.stmt, 0, 64U, label + " head id") !=
++                expected[index]) {
++            throw std::runtime_error(label + " head projection mismatch");
++        }
++        ++index;
++    }
++}
++
++using VisibleRow =
++    std::tuple<std::string, std::uint64_t, std::string, bool, bool>;
++
++[[nodiscard]] std::vector<VisibleRow> expected_visible_rows(
++    const SyncReplicaModel& model) {
++    std::vector<VisibleRow> rows;
++    for (const SyncReplicaPathView& view : model.visible_paths()) {
++        const std::set<std::string> preserved(
++            view.preserved_file_operation_ids.begin(),
++            view.preserved_file_operation_ids.end());
++        for (std::size_t index = 0;
++             index < view.visible_operation_ids.size(); ++index) {
++            const std::string& operation_id = view.visible_operation_ids[index];
++            rows.emplace_back(
++                view.canonical_path,
++                static_cast<std::uint64_t>(index),
++                operation_id,
++                operation_id == view.primary_operation_id,
++                preserved.contains(operation_id));
++        }
++    }
++    return rows;
++}
++
++void verify_visible_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaModel& model,
++    const std::string& label) {
++    const std::vector<VisibleRow> expected = expected_visible_rows(model);
++    const std::uint64_t row_count = count_rows_or_throw(
++        db, "SELECT count(*) FROM main.sync_replica_visible;",
++        label + " visible row count");
++    if (row_count != size_to_u64_or_throw(
++                         expected.size(), label + " visible rows")) {
++        throw std::runtime_error(label + " visible row count mismatch");
++    }
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT canonical_path,visible_ordinal,operation_id,is_primary,"
++        "preserve_file FROM main.sync_replica_visible "
++        "ORDER BY canonical_path,visible_ordinal;",
++        label + " visible query prepare");
++    std::size_t index = 0;
++    for (;;) {
++        const int result = sqlite3_step(statement.stmt);
++        if (result == SQLITE_DONE) break;
++        if (result != SQLITE_ROW) {
++            throw_sqlite_exception(
++                sqlite3_db_handle(statement.stmt), result,
++                label + " visible query");
++        }
++        if (index >= expected.size()) {
++            throw std::runtime_error(label + " has an extra visible row");
++        }
++        const VisibleRow observed{
++            sqlite_column_text_or_throw(
++                statement.stmt, 0, kSyncManifestRelativePathMaxBytes,
++                label + " visible path"),
++            sqlite_column_u64_or_throw(
++                statement.stmt, 1, label + " visible ordinal"),
++            sqlite_column_text_or_throw(
++                statement.stmt, 2, 64U, label + " visible operation id"),
++            sqlite_column_bool_or_throw(
++                statement.stmt, 3, label + " visible primary"),
++            sqlite_column_bool_or_throw(
++                statement.stmt, 4, label + " visible preserve")};
++        if (observed != expected[index]) {
++            throw std::runtime_error(label + " visible projection mismatch");
++        }
++        ++index;
++    }
++    if (index != expected.size()) {
++        throw std::runtime_error(label + " is missing a visible row");
++    }
++}
++
++[[nodiscard]] std::vector<SyncReplicaSqliteOutboxIntent>
++read_outbox_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const DurableMeta& meta,
++    const std::map<std::string, SyncReplicaEvidenceState>& operation_ids,
++    const std::string& label) {
++    const std::uint64_t row_count = count_rows_or_throw(
++        db, "SELECT count(*) FROM main.sync_replica_outbox;",
++        label + " outbox count");
++    if (row_count != meta.outbox_intent_count ||
++        row_count > meta.limits.max_outbox_intents) {
++        throw std::runtime_error(
++            label + " outbox row count disagrees with durable policy");
++    }
++    std::vector<SyncReplicaSqliteOutboxIntent> outbox;
++    outbox.reserve(u64_to_size_or_throw(row_count, label + " outbox count"));
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT destination_device_id,operation_id,enqueued_generation_be "
++        "FROM main.sync_replica_outbox "
++        "ORDER BY destination_device_id,operation_id;",
++        label + " outbox query prepare");
++    for (;;) {
++        const int result = sqlite3_step(statement.stmt);
++        if (result == SQLITE_DONE) break;
++        if (result != SQLITE_ROW) {
++            throw_sqlite_exception(
++                sqlite3_db_handle(statement.stmt), result,
++                label + " outbox query");
++        }
++        SyncReplicaSqliteOutboxIntent intent;
++        intent.destination_device_id = sqlite_column_text_or_throw(
++            statement.stmt, 0, kSyncManifestIdMaxBytes,
++            label + " outbox destination");
++        intent.operation_id = sqlite_column_text_or_throw(
++            statement.stmt, 1, 64U, label + " outbox operation id");
++        intent.enqueued_generation = column_u64_be_or_throw(
++            statement.stmt, 2, label + " outbox generation");
++        if (!sync_id_is_valid(intent.destination_device_id) ||
++            !is_lowercase_sha256_hex(intent.operation_id) ||
++            !operation_ids.contains(intent.operation_id) ||
++            intent.enqueued_generation == 0U ||
++            intent.enqueued_generation > meta.state_generation) {
++            throw std::runtime_error(label + " outbox intent is invalid");
++        }
++        outbox.push_back(std::move(intent));
++    }
++    const std::uint64_t destination_bytes =
++        outbox_destination_bytes_or_throw(outbox);
++    if (destination_bytes != meta.outbox_destination_bytes ||
++        destination_bytes > meta.limits.max_outbox_destination_bytes ||
++        outbox_digest_or_throw(meta.folder_id, outbox) != meta.outbox_digest) {
++        throw std::runtime_error(label + " outbox attestation mismatch");
++    }
++    return outbox;
++}
++
++[[nodiscard]] LoadedState load_state_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& expected_folder_id,
++    const SyncReplicaActor& expected_local_actor,
++    const std::string& label) {
++    verify_schema_or_throw(db, label);
++    require_foreign_keys_or_throw(db, label);
++    require_no_foreign_key_violations_or_throw(db, label);
++    DurableMeta meta = read_meta_or_throw(db, label);
++    if (meta.folder_id != expected_folder_id ||
++        meta.local_actor != expected_local_actor) {
++        throw std::runtime_error(
++            label + " folder or local actor identity mismatch");
++    }
++
++    auto [operations, stored_states] =
++        read_operations_or_throw(db, meta, label);
++    verify_parent_edges_or_throw(db, operations, meta, label);
++    SyncReplicaDurableState durable;
++    durable.folder_id = meta.folder_id;
++    durable.local_actor = meta.local_actor;
++    durable.last_local_counter = meta.last_local_counter;
++    durable.local_operation_ids =
++        read_local_operation_ids_or_throw(db, meta, label);
++    if (local_operation_digest_or_throw(
++            meta.folder_id, meta.local_actor, durable.local_operation_ids) !=
++        meta.local_operation_digest) {
++        throw std::runtime_error(
++            label + " local operation authority digest mismatch");
++    }
++    durable.operations = std::move(operations);
++    SyncReplicaModel model = SyncReplicaModel::restore_or_throw(
++        std::move(durable), meta.limits.model);
++
++    if (size_to_u64_or_throw(model.evidence_count(), label + " evidence count") !=
++            meta.evidence_count ||
++        size_to_u64_or_throw(model.operation_count(), label + " active count") !=
++            meta.active_count ||
++        model.retained_canonical_bytes() != meta.retained_canonical_bytes ||
++        model.retained_context_entry_count() !=
++            meta.retained_context_entries ||
++        model.retained_predecessor_id_count() !=
++            meta.retained_predecessor_ids ||
++        model.local_actor_compromised() != meta.local_actor_compromised ||
++        model.operation_set_digest() != meta.operation_set_digest ||
++        model.evidence_set_digest() != meta.evidence_set_digest ||
++        model.visible_state_digest() != meta.visible_state_digest) {
++        throw std::runtime_error(label + " durable model metadata mismatch");
++    }
++    for (const auto& [operation_id, stored_state] : stored_states) {
++        if (model.evidence_state(operation_id) != stored_state) {
++            throw std::runtime_error(
++                label + " stored evidence projection mismatch");
++        }
++    }
++    verify_heads_or_throw(db, model, label);
++    verify_visible_or_throw(db, model, label);
++    std::vector<SyncReplicaSqliteOutboxIntent> outbox =
++        read_outbox_or_throw(db, meta, stored_states, label);
++    return {std::move(meta), std::move(model), std::move(stored_states),
++            std::move(outbox)};
++}
++
++[[nodiscard]] DurableMeta meta_from_state_or_throw(
++    const SyncReplicaModel& model,
++    const SyncReplicaSqliteOwnerLimits& limits,
++    std::uint64_t state_generation,
++    std::uint64_t policy_generation,
++    const std::vector<SyncReplicaSqliteOutboxIntent>& outbox) {
++    DurableMeta meta;
++    meta.folder_id = model.folder_id();
++    meta.local_actor = model.local_actor();
++    meta.last_local_counter = model.last_local_counter();
++    meta.state_generation = state_generation;
++    meta.policy_generation = policy_generation;
++    meta.limits = limits;
++    meta.evidence_count = size_to_u64_or_throw(
++        model.evidence_count(), "sync replica SQLite evidence count");
++    meta.active_count = size_to_u64_or_throw(
++        model.operation_count(), "sync replica SQLite active count");
++    meta.retained_canonical_bytes = model.retained_canonical_bytes();
++    meta.retained_context_entries = model.retained_context_entry_count();
++    meta.retained_predecessor_ids = model.retained_predecessor_id_count();
++    meta.outbox_intent_count = size_to_u64_or_throw(
++        outbox.size(), "sync replica SQLite outbox count");
++    meta.outbox_destination_bytes =
++        outbox_destination_bytes_or_throw(outbox);
++    meta.local_actor_compromised = model.local_actor_compromised();
++    meta.local_operation_digest = local_operation_digest_or_throw(
++        model.folder_id(), model.local_actor(), model.local_operation_ids());
++    meta.operation_set_digest = model.operation_set_digest();
++    meta.evidence_set_digest = model.evidence_set_digest();
++    meta.visible_state_digest = model.visible_state_digest();
++    meta.outbox_digest = outbox_digest_or_throw(model.folder_id(), outbox);
++    meta.cutpoint_digest = cutpoint_digest_or_throw(meta);
++    return meta;
++}
++
++void update_meta_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const DurableMeta& meta,
++    const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "UPDATE main.sync_replica_meta SET "
++        "folder_id=?,local_device_id=?,local_epoch_be=?,"
++        "last_local_counter_be=?,state_generation_be=?,policy_generation_be=?,"
++        "max_operations_be=?,max_context_entries_be=?,max_predecessor_ids_be=?,"
++        "max_canonical_operation_bytes_be=?,max_retained_canonical_bytes_be=?,"
++        "max_retained_context_entries_be=?,max_retained_predecessor_ids_be=?,"
++        "max_outbox_intents_be=?,max_outbox_destination_bytes_be=?,"
++        "evidence_count_be=?,active_count_be=?,retained_canonical_bytes_be=?,"
++        "retained_context_entries_be=?,retained_predecessor_ids_be=?,"
++        "outbox_intent_count_be=?,outbox_destination_bytes_be=?,"
++        "local_actor_compromised=?,local_operation_digest=?,operation_set_digest=?,"
++        "evidence_set_digest=?,visible_state_digest=?,outbox_digest=?,"
++        "cutpoint_digest=? WHERE id=1;",
++        label + " meta update prepare");
++    bind_meta_common_or_throw(statement.stmt, 1, meta, label + " meta update");
++    sqlite_step_done_or_throw(statement.stmt, label + " meta update");
++    auto borrow = db.borrow();
++    if (sqlite3_changes(borrow.get()) != 1) {
++        throw std::runtime_error(label + " meta update did not affect one row");
++    }
++}
++
++void insert_operation_rows_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaOperation& operation,
++    SyncReplicaEvidenceState state,
++    const SyncReplicaModelLimits& limits,
++    bool local_operation,
++    const std::string& label) {
++    const std::string canonical =
++        encode_sync_replica_operation_canonical_or_throw(operation, limits);
++    SyncSqliteStmt operation_insert = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_operations("
++        "operation_id,canonical_bytes,canonical_size_be,context_count_be,"
++        "predecessor_count_be,evidence_state) VALUES(?,?,?,?,?,?);",
++        label + " operation insert prepare");
++    sqlite_bind_text_or_throw(
++        operation_insert.stmt, 1, operation.operation_id,
++        label + " bind operation id");
++    sqlite_bind_blob_or_throw(
++        operation_insert.stmt, 2, canonical,
++        label + " bind canonical operation");
++    bind_u64_be_or_throw(
++        operation_insert.stmt, 3,
++        size_to_u64_or_throw(canonical.size(), label + " canonical size"),
++        label + " bind canonical size");
++    bind_u64_be_or_throw(
++        operation_insert.stmt, 4,
++        size_to_u64_or_throw(
++            operation.causal_context.size(), label + " context count"),
++        label + " bind context count");
++    bind_u64_be_or_throw(
++        operation_insert.stmt, 5,
++        size_to_u64_or_throw(
++            operation.predecessor_operation_ids.size(),
++            label + " predecessor count"),
++        label + " bind predecessor count");
++    sqlite_bind_text_or_throw(
++        operation_insert.stmt, 6, std::string(evidence_state_text(state)),
++        label + " bind evidence state");
++    sqlite_step_done_or_throw(
++        operation_insert.stmt, label + " operation insert");
++
++    if (!operation.predecessor_operation_ids.empty()) {
++        SyncSqliteStmt parent_insert = sqlite_prepare_or_throw(
++            db,
++            "INSERT INTO main.sync_replica_parent_edges("
++            "child_operation_id,parent_ordinal,parent_operation_id)"
++            "VALUES(?,?,?);",
++            label + " parent insert prepare");
++        for (std::size_t index = 0;
++             index < operation.predecessor_operation_ids.size(); ++index) {
++            sqlite_bind_text_or_throw(
++                parent_insert.stmt, 1, operation.operation_id,
++                label + " bind parent child");
++            sqlite_bind_u64_or_throw(
++                parent_insert.stmt, 2,
++                static_cast<std::uint64_t>(index),
++                label + " bind parent ordinal");
++            sqlite_bind_text_or_throw(
++                parent_insert.stmt, 3,
++                operation.predecessor_operation_ids[index],
++                label + " bind parent id");
++            sqlite_step_done_or_throw(
++                parent_insert.stmt, label + " parent insert");
++            reset_statement_or_throw(
++                parent_insert.stmt, label + " parent insert");
++        }
++    }
++
++    if (local_operation) {
++        SyncSqliteStmt local_insert = sqlite_prepare_or_throw(
++            db,
++            "INSERT INTO main.sync_replica_local_operations("
++            "counter_be,operation_id) VALUES(?,?);",
++            label + " local operation insert prepare");
++        bind_u64_be_or_throw(
++            local_insert.stmt, 1, operation.dot.counter,
++            label + " bind local counter");
++        sqlite_bind_text_or_throw(
++            local_insert.stmt, 2, operation.operation_id,
++            label + " bind local operation id");
++        sqlite_step_done_or_throw(
++            local_insert.stmt, label + " local operation insert");
++    }
++}
++
++void rewrite_projection_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaModel& model,
++    const std::map<std::string, SyncReplicaEvidenceState>& persisted_states,
++    const std::string& label) {
++    SyncSqliteStmt state_update = sqlite_prepare_or_throw(
++        db,
++        "UPDATE main.sync_replica_operations SET evidence_state=? "
++        "WHERE operation_id=?;",
++        label + " evidence state update prepare");
++    for (const SyncReplicaOperation& operation :
++         model.all_evidence_operations()) {
++        const auto state = model.evidence_state(operation.operation_id);
++        if (!state.has_value()) {
++            throw std::logic_error(
++                label + " model omitted an evidence state");
++        }
++        const auto persisted = persisted_states.find(operation.operation_id);
++        // New rows were inserted with their final state. Existing rows are
++        // rewritten only when new evidence actually changes their projection.
++        if (persisted == persisted_states.end() ||
++            persisted->second == *state) {
++            continue;
++        }
++        sqlite_bind_text_or_throw(
++            state_update.stmt, 1,
++            std::string(evidence_state_text(*state)),
++            label + " bind evidence state");
++        sqlite_bind_text_or_throw(
++            state_update.stmt, 2, operation.operation_id,
++            label + " bind evidence operation id");
++        sqlite_step_done_or_throw(
++            state_update.stmt, label + " evidence state update");
++        auto borrow = db.borrow();
++        if (sqlite3_changes(borrow.get()) != 1) {
++            throw std::runtime_error(
++                label + " evidence state update missed its row");
++        }
++        reset_statement_or_throw(
++            state_update.stmt, label + " evidence state update");
++    }
++
++    sqlite_exec_or_throw(
++        db,
++        "DELETE FROM main.sync_replica_heads;"
++        "DELETE FROM main.sync_replica_visible;",
++        label + " clear derived projection");
++
++    SyncSqliteStmt head_insert = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_heads(operation_id) VALUES(?);",
++        label + " head insert prepare");
++    for (const std::string& operation_id :
++         model.causal_head_operation_ids()) {
++        sqlite_bind_text_or_throw(
++            head_insert.stmt, 1, operation_id,
++            label + " bind head id");
++        sqlite_step_done_or_throw(
++            head_insert.stmt, label + " head insert");
++        reset_statement_or_throw(
++            head_insert.stmt, label + " head insert");
++    }
++
++    SyncSqliteStmt visible_insert = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_visible("
++        "canonical_path,visible_ordinal,operation_id,is_primary,preserve_file)"
++        "VALUES(?,?,?,?,?);",
++        label + " visible insert prepare");
++    for (const VisibleRow& row : expected_visible_rows(model)) {
++        sqlite_bind_text_or_throw(
++            visible_insert.stmt, 1, std::get<0>(row),
++            label + " bind visible path");
++        sqlite_bind_u64_or_throw(
++            visible_insert.stmt, 2, std::get<1>(row),
++            label + " bind visible ordinal");
++        sqlite_bind_text_or_throw(
++            visible_insert.stmt, 3, std::get<2>(row),
++            label + " bind visible operation");
++        sqlite_bind_bool_or_throw(
++            visible_insert.stmt, 4, std::get<3>(row),
++            label + " bind visible primary");
++        sqlite_bind_bool_or_throw(
++            visible_insert.stmt, 5, std::get<4>(row),
++            label + " bind visible preserve");
++        sqlite_step_done_or_throw(
++            visible_insert.stmt, label + " visible insert");
++        reset_statement_or_throw(
++            visible_insert.stmt, label + " visible insert");
++    }
++}
++
++void insert_outbox_intents_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::vector<SyncReplicaSqliteOutboxIntent>& intents,
++    const std::string& label) {
++    if (intents.empty()) return;
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_outbox("
++        "destination_device_id,operation_id,enqueued_generation_be)"
++        "VALUES(?,?,?);",
++        label + " outbox insert prepare");
++    for (const SyncReplicaSqliteOutboxIntent& intent : intents) {
++        sqlite_bind_text_or_throw(
++            statement.stmt, 1, intent.destination_device_id,
++            label + " bind outbox destination");
++        sqlite_bind_text_or_throw(
++            statement.stmt, 2, intent.operation_id,
++            label + " bind outbox operation");
++        bind_u64_be_or_throw(
++            statement.stmt, 3, intent.enqueued_generation,
++            label + " bind outbox generation");
++        sqlite_step_done_or_throw(
++            statement.stmt, label + " outbox insert");
++        reset_statement_or_throw(
++            statement.stmt, label + " outbox insert");
++    }
++}
++
++[[nodiscard]] std::vector<std::string> validate_destinations_or_throw(
++    std::span<const std::string> destinations,
++    const std::string& local_device_id,
++    const std::string& label) {
++    std::vector<std::string> canonical(destinations.begin(), destinations.end());
++    for (const std::string& destination : canonical) {
++        if (!sync_id_is_valid(destination)) {
++            throw std::invalid_argument(label + " destination id is invalid");
++        }
++        if (destination == local_device_id) {
++            throw std::invalid_argument(
++                label + " refuses a self-directed outbox intent");
++        }
++    }
++    std::sort(canonical.begin(), canonical.end());
++    if (std::adjacent_find(canonical.begin(), canonical.end()) !=
++        canonical.end()) {
++        throw std::invalid_argument(
++            label + " destination list contains a duplicate");
++    }
++    return canonical;
++}
++
++void require_outbox_capacity_or_throw(
++    const LoadedState& state,
++    const std::vector<std::string>& destinations,
++    const std::string& label) {
++    const std::uint64_t added_count = size_to_u64_or_throw(
++        destinations.size(), label + " destination count");
++    const std::uint64_t prospective_count = checked_add_or_throw(
++        state.meta.outbox_intent_count, added_count,
++        label + " outbox intent count");
++    if (prospective_count > state.meta.limits.max_outbox_intents) {
++        throw std::length_error(
++            label + " outbox intent capacity would be exceeded");
++    }
++    std::uint64_t added_bytes = 0;
++    for (const std::string& destination : destinations) {
++        added_bytes = checked_add_or_throw(
++            added_bytes,
++            size_to_u64_or_throw(destination.size(), label + " destination bytes"),
++            label + " destination bytes");
++    }
++    const std::uint64_t prospective_bytes = checked_add_or_throw(
++        state.meta.outbox_destination_bytes, added_bytes,
++        label + " outbox destination bytes");
++    if (prospective_bytes >
++        state.meta.limits.max_outbox_destination_bytes) {
++        throw std::length_error(
++            label + " outbox destination-byte capacity would be exceeded");
++    }
++}
++
++void require_write_authority_or_throw(
++    SyncSqliteTransaction& transaction,
++    SyncSqliteDbHandleSlot& db,
++    const std::string& label) {
++    auto borrow = db.borrow();
++    if (!transaction.authorizes_write(borrow.get())) {
++        throw std::logic_error(
++            label + " typed transaction did not mint write authority");
++    }
++}
++
++void require_snapshot_authority_or_throw(
++    SyncSqliteTransaction& transaction,
++    SyncSqliteDbHandleSlot& db,
++    const std::string& label) {
++    auto borrow = db.borrow();
++    if (!transaction.authorizes_snapshot(borrow.get())) {
++        throw std::logic_error(
++            label + " typed transaction did not pin snapshot authority");
++    }
++}
++
++[[nodiscard]] SyncReplicaSqliteSnapshot snapshot_from_loaded(
++    const LoadedState& loaded) {
++    SyncReplicaSqliteSnapshot snapshot;
++    snapshot.durable = loaded.model.durable_state();
++    snapshot.limits = loaded.meta.limits;
++    snapshot.state_generation = loaded.meta.state_generation;
++    snapshot.policy_generation = loaded.meta.policy_generation;
++    snapshot.outbox = loaded.outbox;
++    snapshot.local_operation_digest = loaded.meta.local_operation_digest;
++    snapshot.operation_set_digest = loaded.meta.operation_set_digest;
++    snapshot.evidence_set_digest = loaded.meta.evidence_set_digest;
++    snapshot.visible_state_digest = loaded.meta.visible_state_digest;
++    snapshot.outbox_digest = loaded.meta.outbox_digest;
++    snapshot.cutpoint_digest = loaded.meta.cutpoint_digest;
++    return snapshot;
++}
++
++// SQLite executes connection-local TEMP triggers inside the caller's
++// transaction. A trigger can therefore succeed while silently changing a row
++// after the owner's insert/update statement. Reload the complete staged state
++// through the independent restore path and compare it with the intended
++// cutpoint before COMMIT. Any mismatch or restore failure unwinds the typed
++// transaction, preventing a corrupted generation from being published.
++void attest_and_commit_staged_cutpoint_or_throw(
++    SyncSqliteTransaction& transaction,
++    SyncSqliteDbHandleSlot& db,
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    const SyncReplicaModel& expected_model,
++    const DurableMeta& expected_meta,
++    const std::vector<SyncReplicaSqliteOutboxIntent>& expected_outbox,
++    const std::string& label) {
++    LoadedState observed = load_state_or_throw(
++        db, folder_id, local_actor, label + " staged re-attestation");
++    if (observed.meta != expected_meta ||
++        observed.model.durable_state() != expected_model.durable_state() ||
++        observed.outbox != expected_outbox) {
++        throw std::runtime_error(
++            label + " staged cutpoint does not match intended publication");
++    }
++    require_write_authority_or_throw(
++        transaction, db, label + " staged commit");
++    transaction.commit();
++}
++
++}  // namespace
++
++SyncReplicaSqliteOwner::SyncReplicaSqliteOwner(
++    SyncSqliteDbHandleSlot& db,
++    std::string folder_id,
++    SyncReplicaActor local_actor,
++    SyncReplicaSqliteOwnerLimits initial_limits,
++    std::string label)
++    : db_(db),
++      folder_id_(std::move(folder_id)),
++      local_actor_(std::move(local_actor)),
++      label_(std::move(label)) {
++    if (label_.empty()) {
++        throw std::invalid_argument(
++            "sync replica SQLite owner label must not be empty");
++    }
++    validate_owner_limits_or_throw(
++        folder_id_, local_actor_, initial_limits, label_);
++
++    sqlite_exec_or_throw(
++        db_, "PRAGMA foreign_keys=ON;PRAGMA trusted_schema=OFF;",
++        label_ + " connection hardening");
++    require_foreign_keys_or_throw(db_, label_);
++
++    SyncSqliteTransaction transaction(
++        db_, label_ + " schema initialization",
++        SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " schema initialization");
++    const auto observed = read_schema_objects_or_throw(db_, label_);
++    if (observed.empty()) {
++        for (const SchemaDefinition& definition : kSchema) {
++            sqlite_exec_or_throw(
++                db_, create_statement(definition),
++                label_ + " create " + std::string(definition.name));
++        }
++        verify_schema_or_throw(db_, label_);
++        const DurableMeta meta = insert_initial_meta_or_throw(
++            db_, folder_id_, local_actor_, initial_limits, label_);
++        const SyncReplicaModel empty(
++            folder_id_, local_actor_, initial_limits.model);
++        attest_and_commit_staged_cutpoint_or_throw(
++            transaction, db_, folder_id_, local_actor_, empty, meta, {},
++            label_ + " schema initialization");
++    } else {
++        verify_schema_or_throw(db_, label_);
++        (void)load_state_or_throw(
++            db_, folder_id_, local_actor_, label_ + " existing database");
++        require_write_authority_or_throw(
++            transaction, db_, label_ + " existing database");
++        transaction.commit();
++    }
++
++    // Constructor publication is withheld until every exact operation and
++    // redundant projection row has been independently restored and attested.
++    (void)snapshot_or_throw();
++}
++
++SyncReplicaSqliteSnapshot SyncReplicaSqliteOwner::snapshot_or_throw() {
++    SyncSqliteTransaction transaction(
++        db_, label_ + " snapshot", SyncSqliteTransactionMode::Deferred);
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " snapshot");
++    // A deferred SQLite transaction acquires snapshot authority on its first
++    // read, not at BEGIN. Verify the typed guard after the exact restore has
++    // pinned that read view and before publishing any derived state.
++    require_snapshot_authority_or_throw(
++        transaction, db_, label_ + " snapshot");
++    SyncReplicaSqliteSnapshot snapshot = snapshot_from_loaded(loaded);
++    transaction.commit();
++    return snapshot;
++}
++
++SyncReplicaOperation SyncReplicaSqliteOwner::create_local_file_or_throw(
++    std::string canonical_path,
++    std::uint64_t size_bytes,
++    std::string content_sha256,
++    std::span<const std::string> destination_device_ids) {
++    SyncSqliteTransaction transaction(
++        db_, label_ + " local file publication",
++        SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " local file publication");
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " local file publication");
++    const std::vector<std::string> destinations =
++        validate_destinations_or_throw(
++            destination_device_ids, local_actor_.device_id,
++            label_ + " local file publication");
++    require_outbox_capacity_or_throw(
++        loaded, destinations, label_ + " local file publication");
++
++    const std::uint64_t generation = increment_or_throw(
++        loaded.meta.state_generation,
++        label_ + " state generation");
++    SyncReplicaOperation operation = loaded.model.create_local_file_or_throw(
++        std::move(canonical_path), size_bytes, std::move(content_sha256));
++    const auto state = loaded.model.evidence_state(operation.operation_id);
++    if (state != SyncReplicaEvidenceState::Active) {
++        throw std::logic_error(
++            label_ + " locally minted file did not project active");
++    }
++
++    std::vector<SyncReplicaSqliteOutboxIntent> added;
++    added.reserve(destinations.size());
++    for (const std::string& destination : destinations) {
++        added.push_back({destination, operation.operation_id, generation});
++    }
++    loaded.outbox.insert(
++        loaded.outbox.end(), added.begin(), added.end());
++    std::sort(
++        loaded.outbox.begin(), loaded.outbox.end(),
++        [](const auto& left, const auto& right) {
++            return std::tie(left.destination_device_id, left.operation_id) <
++                   std::tie(right.destination_device_id, right.operation_id);
++        });
++
++    insert_operation_rows_or_throw(
++        db_, operation, *state, loaded.meta.limits.model, true,
++        label_ + " local file publication");
++    insert_outbox_intents_or_throw(
++        db_, added, label_ + " local file publication");
++    rewrite_projection_or_throw(
++        db_, loaded.model, loaded.persisted_states,
++        label_ + " local file publication");
++    const DurableMeta meta = meta_from_state_or_throw(
++        loaded.model, loaded.meta.limits, generation,
++        loaded.meta.policy_generation, loaded.outbox);
++    update_meta_or_throw(
++        db_, meta, label_ + " local file publication");
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
++        loaded.outbox, label_ + " local file publication");
++    return operation;
++}
++
++SyncReplicaOperation SyncReplicaSqliteOwner::create_local_tombstone_or_throw(
++    std::string canonical_path,
++    std::span<const std::string> destination_device_ids) {
++    SyncSqliteTransaction transaction(
++        db_, label_ + " local tombstone publication",
++        SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " local tombstone publication");
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " local tombstone publication");
++    const std::vector<std::string> destinations =
++        validate_destinations_or_throw(
++            destination_device_ids, local_actor_.device_id,
++            label_ + " local tombstone publication");
++    require_outbox_capacity_or_throw(
++        loaded, destinations, label_ + " local tombstone publication");
++
++    const std::uint64_t generation = increment_or_throw(
++        loaded.meta.state_generation,
++        label_ + " state generation");
++    SyncReplicaOperation operation =
++        loaded.model.create_local_tombstone_or_throw(
++            std::move(canonical_path));
++    const auto state = loaded.model.evidence_state(operation.operation_id);
++    if (state != SyncReplicaEvidenceState::Active) {
++        throw std::logic_error(
++            label_ + " locally minted tombstone did not project active");
++    }
++
++    std::vector<SyncReplicaSqliteOutboxIntent> added;
++    added.reserve(destinations.size());
++    for (const std::string& destination : destinations) {
++        added.push_back({destination, operation.operation_id, generation});
++    }
++    loaded.outbox.insert(
++        loaded.outbox.end(), added.begin(), added.end());
++    std::sort(
++        loaded.outbox.begin(), loaded.outbox.end(),
++        [](const auto& left, const auto& right) {
++            return std::tie(left.destination_device_id, left.operation_id) <
++                   std::tie(right.destination_device_id, right.operation_id);
++        });
++
++    insert_operation_rows_or_throw(
++        db_, operation, *state, loaded.meta.limits.model, true,
++        label_ + " local tombstone publication");
++    insert_outbox_intents_or_throw(
++        db_, added, label_ + " local tombstone publication");
++    rewrite_projection_or_throw(
++        db_, loaded.model, loaded.persisted_states,
++        label_ + " local tombstone publication");
++    const DurableMeta meta = meta_from_state_or_throw(
++        loaded.model, loaded.meta.limits, generation,
++        loaded.meta.policy_generation, loaded.outbox);
++    update_meta_or_throw(
++        db_, meta, label_ + " local tombstone publication");
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
++        loaded.outbox, label_ + " local tombstone publication");
++    return operation;
++}
++
++SyncReplicaAdmission SyncReplicaSqliteOwner::accept_remote_or_throw(
++    const SyncReplicaOperation& operation) {
++    SyncSqliteTransaction transaction(
++        db_, label_ + " remote admission",
++        SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " remote admission");
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " remote admission");
++    const SyncReplicaAdmission admission =
++        loaded.model.accept_remote_or_throw(operation);
++    if (admission == SyncReplicaAdmission::Duplicate ||
++        admission == SyncReplicaAdmission::CapacityBlocked) {
++        transaction.commit();
++        return admission;
++    }
++
++    const std::uint64_t generation = increment_or_throw(
++        loaded.meta.state_generation,
++        label_ + " state generation");
++    const auto state = loaded.model.evidence_state(operation.operation_id);
++    if (!state.has_value()) {
++        throw std::logic_error(
++            label_ + " admitted remote operation has no evidence state");
++    }
++    insert_operation_rows_or_throw(
++        db_, operation, *state, loaded.meta.limits.model, false,
++        label_ + " remote admission");
++    rewrite_projection_or_throw(
++        db_, loaded.model, loaded.persisted_states,
++        label_ + " remote admission");
++    const DurableMeta meta = meta_from_state_or_throw(
++        loaded.model, loaded.meta.limits, generation,
++        loaded.meta.policy_generation, loaded.outbox);
++    update_meta_or_throw(db_, meta, label_ + " remote admission");
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
++        loaded.outbox, label_ + " remote admission");
++    return admission;
++}
++
++bool SyncReplicaSqliteOwner::acknowledge_outbox_or_throw(
++    const std::string& destination_device_id,
++    const std::string& operation_id) {
++    if (!sync_id_is_valid(destination_device_id) ||
++        !is_lowercase_sha256_hex(operation_id)) {
++        throw std::invalid_argument(
++            label_ + " outbox acknowledgement identity is invalid");
++    }
++    SyncSqliteTransaction transaction(
++        db_, label_ + " outbox acknowledgement",
++        SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " outbox acknowledgement");
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " outbox acknowledgement");
++    const auto found = std::find_if(
++        loaded.outbox.begin(), loaded.outbox.end(),
++        [&](const SyncReplicaSqliteOutboxIntent& intent) {
++            return intent.destination_device_id == destination_device_id &&
++                   intent.operation_id == operation_id;
++        });
++    if (found == loaded.outbox.end()) {
++        transaction.commit();
++        return false;
++    }
++    loaded.outbox.erase(found);
++
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db_,
++        "DELETE FROM main.sync_replica_outbox "
++        "WHERE destination_device_id=? AND operation_id=?;",
++        label_ + " outbox acknowledgement delete prepare");
++    sqlite_bind_text_or_throw(
++        statement.stmt, 1, destination_device_id,
++        label_ + " bind acknowledgement destination");
++    sqlite_bind_text_or_throw(
++        statement.stmt, 2, operation_id,
++        label_ + " bind acknowledgement operation");
++    sqlite_step_done_or_throw(
++        statement.stmt, label_ + " outbox acknowledgement delete");
++    {
++        auto borrow = db_.borrow();
++        if (sqlite3_changes(borrow.get()) != 1) {
++            throw std::runtime_error(
++                label_ + " outbox acknowledgement missed its exact intent");
++        }
++    }
++    const std::uint64_t generation = increment_or_throw(
++        loaded.meta.state_generation,
++        label_ + " state generation");
++    const DurableMeta meta = meta_from_state_or_throw(
++        loaded.model, loaded.meta.limits, generation,
++        loaded.meta.policy_generation, loaded.outbox);
++    update_meta_or_throw(
++        db_, meta, label_ + " outbox acknowledgement");
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
++        loaded.outbox, label_ + " outbox acknowledgement");
++    return true;
++}
++
++std::optional<SyncReplicaSqliteOutboxDelivery>
++SyncReplicaSqliteOwner::outbox_delivery_or_throw(
++    const std::string& destination_device_id,
++    const std::string& operation_id) {
++    if (!sync_id_is_valid(destination_device_id) ||
++        !is_lowercase_sha256_hex(operation_id)) {
++        throw std::invalid_argument(
++            label_ + " outbox delivery identity is invalid");
++    }
++    SyncSqliteTransaction transaction(
++        db_, label_ + " outbox delivery", SyncSqliteTransactionMode::Deferred);
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " outbox delivery");
++    require_snapshot_authority_or_throw(
++        transaction, db_, label_ + " outbox delivery");
++    const auto intent = std::find_if(
++        loaded.outbox.begin(), loaded.outbox.end(),
++        [&](const SyncReplicaSqliteOutboxIntent& candidate) {
++            return candidate.destination_device_id == destination_device_id &&
++                   candidate.operation_id == operation_id;
++        });
++    if (intent == loaded.outbox.end()) {
++        transaction.commit();
++        return std::nullopt;
++    }
++    const std::optional<SyncReplicaOperation> operation =
++        loaded.model.evidence_operation_by_id(operation_id);
++    if (!operation.has_value()) {
++        throw std::logic_error(
++            label_ + " outbox intent lost its canonical operation owner");
++    }
++    SyncReplicaSqliteOutboxDelivery delivery{*intent, *operation};
++    transaction.commit();
++    return delivery;
++}
++
++void SyncReplicaSqliteOwner::replace_limits_or_throw(
++    const SyncReplicaSqliteOwnerLimits& replacement) {
++    validate_owner_limits_or_throw(
++        folder_id_, local_actor_, replacement,
++        label_ + " replacement policy");
++    SyncSqliteTransaction transaction(
++        db_, label_ + " policy replacement",
++        SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " policy replacement");
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " policy replacement");
++    if (loaded.meta.limits == replacement) {
++        transaction.commit();
++        return;
++    }
++
++    // Restoration under the replacement policy proves every retained envelope
++    // and aggregate charge fits before the durable policy changes.
++    SyncReplicaModel replacement_model = SyncReplicaModel::restore_or_throw(
++        loaded.model.durable_state(), replacement.model);
++    if (size_to_u64_or_throw(
++            loaded.outbox.size(), label_ + " replacement outbox count") >
++            replacement.max_outbox_intents ||
++        outbox_destination_bytes_or_throw(loaded.outbox) >
++            replacement.max_outbox_destination_bytes) {
++        throw std::length_error(
++            label_ + " retained outbox does not fit replacement policy");
++    }
++    const std::uint64_t state_generation = increment_or_throw(
++        loaded.meta.state_generation,
++        label_ + " state generation");
++    const std::uint64_t policy_generation = increment_or_throw(
++        loaded.meta.policy_generation,
++        label_ + " policy generation");
++    const DurableMeta meta = meta_from_state_or_throw(
++        replacement_model, replacement, state_generation,
++        policy_generation, loaded.outbox);
++    update_meta_or_throw(db_, meta, label_ + " policy replacement");
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db_, folder_id_, local_actor_, replacement_model, meta,
++        loaded.outbox, label_ + " policy replacement");
++}
++
++}  // namespace anonsync
+--- /dev/null
++++ b/src/sync_replica_sqlite_owner.hpp
+@@ -0,0 +1,125 @@
++#pragma once
++
++#include "sync_replica_model.hpp"
++#include "sync_sqlite_support.hpp"
++
++#include <cstdint>
++#include <optional>
++#include <span>
++#include <string>
++#include <vector>
++
++namespace anonsync {
++
++// Durable policy for one replica folder. The model limits govern retained
++// evidence; the independent outbox limits govern lightweight destination
++// intents. Canonical operation bytes are stored once regardless of fanout.
++struct SyncReplicaSqliteOwnerLimits final {
++    SyncReplicaModelLimits model;
++    std::uint64_t max_outbox_intents = 1000000ULL;
++    std::uint64_t max_outbox_destination_bytes = 64ULL * 1024ULL * 1024ULL;
++
++    bool operator==(const SyncReplicaSqliteOwnerLimits&) const = default;
++};
++
++struct SyncReplicaSqliteOutboxIntent final {
++    std::string destination_device_id;
++    std::string operation_id;
++    std::uint64_t enqueued_generation = 0;
++
++    bool operator==(const SyncReplicaSqliteOutboxIntent&) const = default;
++};
++
++struct SyncReplicaSqliteOutboxDelivery final {
++    SyncReplicaSqliteOutboxIntent intent;
++    SyncReplicaOperation operation;
++
++    bool operator==(const SyncReplicaSqliteOutboxDelivery&) const = default;
++};
++
++struct SyncReplicaSqliteSnapshot final {
++    SyncReplicaDurableState durable;
++    SyncReplicaSqliteOwnerLimits limits;
++    std::uint64_t state_generation = 0;
++    std::uint64_t policy_generation = 0;
++    std::vector<SyncReplicaSqliteOutboxIntent> outbox;
++    // Binds the exact counter->operation authority map. This cannot be
++    // reconstructed from the evidence set when a local same-dot fork exists.
++    std::string local_operation_digest;
++    std::string operation_set_digest;
++    std::string evidence_set_digest;
++    std::string visible_state_digest;
++    std::string outbox_digest;
++    // Unkeyed structural seal over identity, policy generations, exact resource
++    // counters, and all projection/outbox digests. It detects torn or casual
++    // metadata edits; it is not a substitute for an authenticated local store.
++    std::string cutpoint_digest;
++
++    bool operator==(const SyncReplicaSqliteSnapshot&) const = default;
++};
++
++// SQLite-backed correctness slice for one folder and one local actor epoch.
++//
++// The database is the owner: each public operation opens one exact typed
++// transaction, reloads and independently attests canonical evidence plus every
++// redundant projection row, applies the pure replica model, and publishes the
++// new evidence/projection/mint authority/outbox cutpoint together. This is an
++// intentionally O(history) reference owner, not yet an incremental production
++// projector. All SQL names are explicitly bound to main, and the exact stored
++// sqlite_schema text is part of the durable protocol.
++class SyncReplicaSqliteOwner final {
++public:
++    SyncReplicaSqliteOwner(
++        SyncSqliteDbHandleSlot& db,
++        std::string folder_id,
++        SyncReplicaActor local_actor,
++        SyncReplicaSqliteOwnerLimits initial_limits = {},
++        std::string label = "sync replica SQLite owner");
++
++    SyncReplicaSqliteOwner(const SyncReplicaSqliteOwner&) = delete;
++    SyncReplicaSqliteOwner& operator=(const SyncReplicaSqliteOwner&) = delete;
++    SyncReplicaSqliteOwner(SyncReplicaSqliteOwner&&) = delete;
++    SyncReplicaSqliteOwner& operator=(SyncReplicaSqliteOwner&&) = delete;
++
++    [[nodiscard]] SyncReplicaSqliteSnapshot snapshot_or_throw();
++
++    [[nodiscard]] SyncReplicaOperation create_local_file_or_throw(
++        std::string canonical_path,
++        std::uint64_t size_bytes,
++        std::string content_sha256,
++        std::span<const std::string> destination_device_ids = {});
++
++    [[nodiscard]] SyncReplicaOperation create_local_tombstone_or_throw(
++        std::string canonical_path,
++        std::span<const std::string> destination_device_ids = {});
++
++    // Duplicate and CapacityBlocked are durable no-ops: neither advances the
++    // state generation nor rewrites projection rows. The retention policy that
++    // caused CapacityBlocked is itself persisted and survives restart.
++    [[nodiscard]] SyncReplicaAdmission accept_remote_or_throw(
++        const SyncReplicaOperation& operation);
++
++    // Retires one exact unsettled sender intent only. Canonical evidence remains
++    // retained and can be reused by other destinations without payload copies.
++    [[nodiscard]] bool acknowledge_outbox_or_throw(
++        const std::string& destination_device_id,
++        const std::string& operation_id);
++
++    [[nodiscard]] std::optional<SyncReplicaSqliteOutboxDelivery>
++    outbox_delivery_or_throw(
++        const std::string& destination_device_id,
++        const std::string& operation_id);
++
++    // Policy change is explicit durable state. It succeeds only when all
++    // retained evidence and current outbox intents fit the replacement limits.
++    void replace_limits_or_throw(
++        const SyncReplicaSqliteOwnerLimits& replacement);
++
++private:
++    SyncSqliteDbHandleSlot& db_;
++    std::string folder_id_;
++    SyncReplicaActor local_actor_;
++    std::string label_;
++};
++
++}  // namespace anonsync
+--- /dev/null
++++ b/tests/sync_replica_sqlite_owner_test.cpp
+@@ -0,0 +1,903 @@
++#include "sha256_digest.hpp"
++#include "sync_replica_sqlite_owner.hpp"
++#include "sync_sqlite_support.hpp"
++
++#include <array>
++#include <barrier>
++#include <chrono>
++#include <cstdint>
++#include <cstring>
++#include <filesystem>
++#include <exception>
++#include <iostream>
++#include <optional>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <thread>
++#include <utility>
++#include <vector>
++
++#include <sqlite3.h>
++
++#ifdef __linux__
++#include "self_exec_test_process.hpp"
++
++#include <unistd.h>
++#endif
++
++namespace {
++
++using anonsync::SyncReplicaActor;
++using anonsync::SyncReplicaAdmission;
++using anonsync::SyncReplicaEvidenceState;
++using anonsync::SyncReplicaOperation;
++using anonsync::SyncReplicaSqliteOwner;
++using anonsync::SyncReplicaSqliteOwnerLimits;
++using anonsync::SyncReplicaSqliteSnapshot;
++using anonsync::SyncSqliteDb;
++
++std::size_t checks = 0;
++
++[[noreturn]] void fail(const std::string& message) {
++    throw std::runtime_error(message);
++}
++
++void require(bool condition, const std::string& message) {
++    ++checks;
++    if (!condition) fail(message);
++}
++
++template <typename Callable>
++void require_error(
++    Callable&& callable,
++    std::string_view expected_fragment,
++    const std::string& message) {
++    ++checks;
++    try {
++        std::forward<Callable>(callable)();
++    } catch (const std::exception& error) {
++        if (std::string_view(error.what()).find(expected_fragment) ==
++            std::string_view::npos) {
++            fail(message + " returned unexpected error: " + error.what());
++        }
++        return;
++    }
++    fail(message + " did not reject");
++}
++
++struct TempDatabasePath final {
++    std::filesystem::path path;
++
++    explicit TempDatabasePath(std::string_view stem) {
++        const auto tick = std::chrono::steady_clock::now()
++                              .time_since_epoch()
++                              .count();
++#ifdef __linux__
++        const long process = static_cast<long>(::getpid());
++#else
++        const long process = 0;
++#endif
++        path = std::filesystem::temp_directory_path() /
++               (std::string(stem) + "-" + std::to_string(process) + "-" +
++                std::to_string(tick) + ".sqlite3");
++    }
++
++    ~TempDatabasePath() {
++        std::error_code ignored;
++        std::filesystem::remove(path, ignored);
++        std::filesystem::remove(path.string() + "-wal", ignored);
++        std::filesystem::remove(path.string() + "-shm", ignored);
++        std::filesystem::remove(path.string() + "-journal", ignored);
++    }
++};
++
++SyncSqliteDb open_database(const std::filesystem::path& path) {
++    SyncSqliteDb owner;
++    int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
++                SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_PRIVATECACHE;
++#ifdef SQLITE_OPEN_NOFOLLOW
++    flags |= SQLITE_OPEN_NOFOLLOW;
++#endif
++    const int result = sqlite3_open_v2(
++        path.string().c_str(), owner.db.out(), flags, nullptr);
++    if (result != SQLITE_OK) {
++        throw std::runtime_error(anonsync::sqlite_error_message(
++            owner.db, "replica SQLite owner test open"));
++    }
++    anonsync::sqlite_set_busy_timeout_or_throw(
++        owner.db, 5000, "replica SQLite owner test busy timeout");
++    anonsync::sqlite_exec_or_throw(
++        owner.db,
++        "PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;"
++        "PRAGMA wal_autocheckpoint=1;",
++        "replica SQLite owner test durability profile");
++    return owner;
++}
++
++void exec(SyncSqliteDb& db, const std::string& sql) {
++    anonsync::sqlite_exec_or_throw(
++        db.db, sql, "replica SQLite owner test SQL");
++}
++
++std::uint64_t scalar_count(
++    SyncSqliteDb& db,
++    const std::string& table_name) {
++    anonsync::SyncSqliteStmt statement = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "SELECT count(*) FROM main." + table_name + ";",
++        "replica SQLite owner test count prepare");
++    const int row = sqlite3_step(statement.stmt);
++    if (row != SQLITE_ROW) {
++        fail("replica SQLite owner test count query did not return a row");
++    }
++    const std::uint64_t value = anonsync::sqlite_column_u64_or_throw(
++        statement.stmt, 0, "replica SQLite owner test count");
++    if (sqlite3_step(statement.stmt) != SQLITE_DONE) {
++        fail("replica SQLite owner test count query returned extra rows");
++    }
++    return value;
++}
++
++SyncReplicaActor actor(std::string device_id, std::uint64_t epoch) {
++    return {std::move(device_id), epoch};
++}
++
++SyncReplicaSqliteOwnerLimits limits(
++    std::uint64_t max_operations,
++    std::uint64_t max_outbox_intents = 64U,
++    std::uint64_t max_outbox_destination_bytes = 4096U) {
++    SyncReplicaSqliteOwnerLimits value;
++    value.model.max_operations = max_operations;
++    value.model.max_context_entries = 64U;
++    value.model.max_predecessor_ids = 64U;
++    value.model.max_canonical_operation_bytes = 256U * 1024U;
++    value.model.max_retained_canonical_bytes = 16U * 1024U * 1024U;
++    value.model.max_retained_context_entries = 4096U;
++    value.model.max_retained_predecessor_ids = 4096U;
++    value.max_outbox_intents = max_outbox_intents;
++    value.max_outbox_destination_bytes = max_outbox_destination_bytes;
++    return value;
++}
++
++SyncReplicaOperation root_operation(
++    const std::string& folder,
++    const SyncReplicaActor& operation_actor,
++    const std::string& path,
++    const std::string& payload) {
++    SyncReplicaOperation operation;
++    operation.folder_id = folder;
++    operation.canonical_path = path;
++    operation.kind = anonsync::SyncReplicaValueKind::File;
++    operation.size_bytes = static_cast<std::uint64_t>(payload.size());
++    operation.content_sha256 = anonsync::sha256_hex(payload);
++    operation.dot = {operation_actor, 1U};
++    operation.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(operation);
++    return operation;
++}
++
++SyncReplicaOperation child_operation(
++    const SyncReplicaOperation& parent,
++    const SyncReplicaActor& child_actor,
++    const std::string& payload) {
++    SyncReplicaOperation operation;
++    operation.folder_id = parent.folder_id;
++    operation.canonical_path = parent.canonical_path;
++    operation.kind = anonsync::SyncReplicaValueKind::File;
++    operation.size_bytes = static_cast<std::uint64_t>(payload.size());
++    operation.content_sha256 = anonsync::sha256_hex(payload);
++    operation.dot = {child_actor, 1U};
++    operation.causal_context = {{parent.dot.actor, parent.dot.counter}};
++    operation.predecessor_operation_ids = {parent.operation_id};
++    operation.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(operation);
++    return operation;
++}
++
++void test_atomic_local_publication_and_single_copy_outbox() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-local");
++    const std::string folder = "folder-sqlite-local";
++    const SyncReplicaActor local = actor("device-sqlite-local", 1001U);
++    SyncReplicaSqliteSnapshot committed;
++    SyncReplicaOperation operation;
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U), "local publication owner");
++        const SyncReplicaSqliteSnapshot empty = owner.snapshot_or_throw();
++        require(empty.state_generation == 1U &&
++                    empty.policy_generation == 1U &&
++                    empty.durable.operations.empty() && empty.outbox.empty(),
++                "fresh SQLite owner did not publish its exact empty generation");
++
++        const std::vector<std::string> destinations{
++            "device-sqlite-peer-b", "device-sqlite-peer-c"};
++        operation = owner.create_local_file_or_throw(
++            "docs/report.bin", 7U, anonsync::sha256_hex("payload"),
++            destinations);
++        committed = owner.snapshot_or_throw();
++        require(committed.state_generation == 2U &&
++                    committed.policy_generation == 1U &&
++                    committed.durable.last_local_counter == 1U &&
++                    committed.durable.operations.size() == 1U &&
++                    committed.outbox.size() == 2U,
++                "local publication did not atomically advance evidence, counter, and fanout");
++        require(committed.outbox[0].operation_id == operation.operation_id &&
++                    committed.outbox[1].operation_id == operation.operation_id &&
++                    committed.outbox[0].enqueued_generation == 2U &&
++                    committed.outbox[1].enqueued_generation == 2U,
++                "fanout intents did not bind one operation and one commit generation");
++        require(scalar_count(db, "sync_replica_operations") == 1U &&
++                    scalar_count(db, "sync_replica_outbox") == 2U,
++                "fanout cloned canonical operation rows instead of lightweight intents");
++
++        const auto delivery_b = owner.outbox_delivery_or_throw(
++            "device-sqlite-peer-b", operation.operation_id);
++        const auto delivery_c = owner.outbox_delivery_or_throw(
++            "device-sqlite-peer-c", operation.operation_id);
++        require(delivery_b.has_value() && delivery_c.has_value() &&
++                    delivery_b->operation == operation &&
++                    delivery_c->operation == operation,
++                "outbox delivery did not resolve both intents through one canonical owner");
++
++        exec(db,
++             "CREATE TEMP TABLE sync_replica_meta(id INTEGER,folder_id TEXT);"
++             "INSERT INTO temp.sync_replica_meta VALUES(1,'attacker-folder');"
++             "CREATE TEMP TABLE sync_replica_operations(operation_id TEXT);"
++             "INSERT INTO temp.sync_replica_operations VALUES('attacker');"
++             "CREATE TEMP TABLE sync_replica_outbox(destination_device_id TEXT);"
++             "INSERT INTO temp.sync_replica_outbox VALUES('attacker');");
++        require(owner.snapshot_or_throw() == committed,
++                "TEMP shadows redirected main-bound durable replica reads");
++
++        require(owner.acknowledge_outbox_or_throw(
++                    "device-sqlite-peer-b", operation.operation_id),
++                "exact outbox acknowledgement did not retire its intent");
++        const SyncReplicaSqliteSnapshot acknowledged = owner.snapshot_or_throw();
++        require(acknowledged.state_generation == 3U &&
++                    acknowledged.durable == committed.durable &&
++                    acknowledged.outbox.size() == 1U &&
++                    acknowledged.outbox.front().destination_device_id ==
++                        "device-sqlite-peer-c",
++                "outbox acknowledgement changed evidence or retired the wrong destination");
++        require(!owner.acknowledge_outbox_or_throw(
++                    "device-sqlite-peer-b", operation.operation_id) &&
++                    owner.snapshot_or_throw() == acknowledged,
++                "idempotent acknowledgement advanced durable generation");
++        committed = acknowledged;
++    }
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        // Existing durable policy is authoritative; this argument is only the
++        // initialization policy for a database with no replica schema.
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(999U), "local restart owner");
++        require(owner.snapshot_or_throw() == committed,
++                "restart did not restore the exact committed evidence/outbox cutpoint");
++        const auto remaining = owner.outbox_delivery_or_throw(
++            "device-sqlite-peer-c", operation.operation_id);
++        require(remaining.has_value() && remaining->operation == operation,
++                "restart lost the canonical payload behind an unsettled intent");
++    }
++}
++
++void test_durable_capacity_policy_and_retry() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-capacity");
++    const std::string folder = "folder-sqlite-capacity";
++    const SyncReplicaActor local = actor("device-sqlite-capacity", 1101U);
++    const SyncReplicaOperation first = root_operation(
++        folder, actor("device-sqlite-remote-a", 1102U),
++        "remote/first.bin", "first");
++    const SyncReplicaOperation second = root_operation(
++        folder, actor("device-sqlite-remote-b", 1103U),
++        "remote/second.bin", "second");
++    SyncReplicaSqliteSnapshot blocked_baseline;
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(1U), "capacity owner");
++        require(owner.accept_remote_or_throw(first) ==
++                    SyncReplicaAdmission::InsertedActive,
++                "capacity fixture did not admit its first valid envelope");
++        blocked_baseline = owner.snapshot_or_throw();
++        require(owner.accept_remote_or_throw(second) ==
++                    SyncReplicaAdmission::CapacityBlocked &&
++                    owner.snapshot_or_throw() == blocked_baseline,
++                "capacity-blocked remote evidence mutated durable state");
++    }
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(99U), "capacity restart owner");
++        require(owner.accept_remote_or_throw(second) ==
++                    SyncReplicaAdmission::CapacityBlocked &&
++                    owner.snapshot_or_throw() == blocked_baseline,
++                "restart forgot the durable policy that caused backpressure");
++
++        SyncReplicaSqliteOwnerLimits expanded = blocked_baseline.limits;
++        expanded.model.max_operations = 2U;
++        owner.replace_limits_or_throw(expanded);
++        const SyncReplicaSqliteSnapshot policy_changed = owner.snapshot_or_throw();
++        require(policy_changed.state_generation ==
++                    blocked_baseline.state_generation + 1U &&
++                    policy_changed.policy_generation ==
++                    blocked_baseline.policy_generation + 1U &&
++                    policy_changed.durable == blocked_baseline.durable,
++                "explicit policy replacement did not preserve exact evidence");
++        require(owner.accept_remote_or_throw(second) ==
++                    SyncReplicaAdmission::InsertedActive,
++                "same exact valid envelope was not admissible after capacity expansion");
++        const SyncReplicaSqliteSnapshot admitted = owner.snapshot_or_throw();
++        require(admitted.durable.operations.size() == 2U &&
++                    admitted.state_generation ==
++                        policy_changed.state_generation + 1U,
++                "post-policy retry did not publish one atomic evidence generation");
++        require(owner.accept_remote_or_throw(second) ==
++                    SyncReplicaAdmission::Duplicate &&
++                    owner.snapshot_or_throw() == admitted,
++                "exact duplicate rewrote durable state or advanced generation");
++
++        SyncReplicaSqliteOwnerLimits too_small = admitted.limits;
++        too_small.model.max_operations = 1U;
++        require_error(
++            [&] { owner.replace_limits_or_throw(too_small); },
++            "exceeds configured operation limit",
++            "policy shrink below retained evidence was not rejected atomically");
++        require(owner.snapshot_or_throw() == admitted,
++                "failed policy shrink mutated durable policy or evidence");
++    }
++}
++
++void test_projection_and_redundant_attestation() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-fork");
++    const std::string folder = "folder-sqlite-fork";
++    const SyncReplicaActor local = actor("device-sqlite-fork-local", 1201U);
++    const SyncReplicaActor fork_actor = actor("device-sqlite-fork-remote", 1202U);
++    const SyncReplicaOperation fork_a = root_operation(
++        folder, fork_actor, "fork/a.bin", "fork-a");
++    const SyncReplicaOperation fork_b = root_operation(
++        folder, fork_actor, "fork/b.bin", "fork-b");
++
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(8U), "fork projection owner");
++    require(owner.accept_remote_or_throw(fork_a) ==
++                SyncReplicaAdmission::InsertedActive &&
++                owner.accept_remote_or_throw(fork_b) ==
++                SyncReplicaAdmission::InsertedQuarantined,
++            "same-dot fork fixture did not produce deterministic quarantine");
++    const SyncReplicaSqliteSnapshot snapshot = owner.snapshot_or_throw();
++    anonsync::SyncReplicaModel restored =
++        anonsync::SyncReplicaModel::restore_or_throw(
++            snapshot.durable, snapshot.limits.model);
++    require(restored.evidence_state(fork_a.operation_id) ==
++                    SyncReplicaEvidenceState::QuarantinedDotFork &&
++                restored.evidence_state(fork_b.operation_id) ==
++                    SyncReplicaEvidenceState::QuarantinedDotFork &&
++                restored.operation_count() == 0U,
++            "durable fork projection selected an arrival-order winner");
++
++    exec(db,
++         "UPDATE main.sync_replica_operations SET evidence_state='active' "
++         "WHERE operation_id='" + fork_a.operation_id + "';");
++    require_error(
++        [&] { (void)owner.snapshot_or_throw(); },
++        "stored evidence projection mismatch",
++        "tampered evidence-state cache was trusted over exact reprojection");
++}
++
++void test_transaction_failure_rolls_back_entire_cutpoint() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-rollback");
++    const std::string folder = "folder-sqlite-rollback";
++    const SyncReplicaActor local = actor("device-sqlite-rollback", 1301U);
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "rollback owner");
++    const SyncReplicaSqliteSnapshot empty = owner.snapshot_or_throw();
++    const std::vector<std::string> destinations{"device-sqlite-rollback-peer"};
++
++    exec(db,
++         "CREATE TEMP TRIGGER fail_outbox_insert "
++         "BEFORE INSERT ON main.sync_replica_outbox "
++         "BEGIN SELECT RAISE(ABORT,'injected outbox failure'); END;");
++    require_error(
++        [&] {
++            (void)owner.create_local_file_or_throw(
++                "rollback/one.bin", 3U, anonsync::sha256_hex("one"),
++                destinations);
++        },
++        "injected outbox failure",
++        "outbox-stage SQL failure did not abort local publication");
++    require(owner.snapshot_or_throw() == empty &&
++                scalar_count(db, "sync_replica_operations") == 0U &&
++                scalar_count(db, "sync_replica_outbox") == 0U,
++            "outbox-stage failure left a counter, operation, projection, or intent prefix");
++    exec(db, "DROP TRIGGER temp.fail_outbox_insert;");
++
++    const SyncReplicaOperation committed = owner.create_local_file_or_throw(
++        "rollback/one.bin", 3U, anonsync::sha256_hex("one"), destinations);
++    const SyncReplicaSqliteSnapshot baseline = owner.snapshot_or_throw();
++    exec(db,
++         "CREATE TEMP TRIGGER fail_meta_update "
++         "BEFORE UPDATE ON main.sync_replica_meta "
++         "BEGIN SELECT RAISE(ABORT,'injected meta failure'); END;");
++    require_error(
++        [&] {
++            (void)owner.create_local_tombstone_or_throw(
++                "rollback/one.bin", destinations);
++        },
++        "injected meta failure",
++        "final metadata-stage SQL failure did not abort local publication");
++    require(owner.snapshot_or_throw() == baseline &&
++                scalar_count(db, "sync_replica_operations") == 1U &&
++                scalar_count(db, "sync_replica_outbox") == 1U &&
++                owner.outbox_delivery_or_throw(
++                    "device-sqlite-rollback-peer", committed.operation_id)
++                    .has_value(),
++            "metadata-stage failure exposed a partially committed tombstone cutpoint");
++}
++
++void test_schema_contract_and_outbox_tamper_detection() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-tamper");
++    const std::string folder = "folder-sqlite-tamper";
++    const SyncReplicaActor local = actor("device-sqlite-tamper", 1401U);
++    SyncReplicaOperation operation;
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U), "tamper seed owner");
++        const std::vector<std::string> destinations{"device-sqlite-tamper-peer"};
++        operation = owner.create_local_file_or_throw(
++            "tamper/file.bin", 4U, anonsync::sha256_hex("file"),
++            destinations);
++        exec(db,
++             "UPDATE main.sync_replica_outbox SET enqueued_generation_be=x'0000000000000000' "
++             "WHERE operation_id='" + operation.operation_id + "';");
++        require_error(
++            [&] { (void)owner.snapshot_or_throw(); },
++            "outbox intent is invalid",
++            "tampered outbox generation survived restore attestation");
++    }
++
++    TempDatabasePath policy_file("anonsync-replica-sqlite-owner-policy-seal");
++    {
++        SyncSqliteDb db = open_database(policy_file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U), "policy seal seed owner");
++        exec(db,
++             "UPDATE main.sync_replica_meta SET "
++             "max_operations_be=x'0000000000000011' WHERE id=1;");
++        require_error(
++            [&] { (void)owner.snapshot_or_throw(); },
++            "cutpoint digest mismatch",
++            "casual durable-policy edit bypassed the structural cutpoint seal");
++    }
++
++    TempDatabasePath schema_file("anonsync-replica-sqlite-owner-schema");
++    {
++        SyncSqliteDb db = open_database(schema_file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U), "schema seed owner");
++        exec(db, "DROP INDEX main.sync_replica_outbox_operation;");
++    }
++    {
++        SyncSqliteDb db = open_database(schema_file.path);
++        require_error(
++            [&] {
++                SyncReplicaSqliteOwner owner(
++                    db.db, folder, local, limits(16U),
++                    "schema reopen owner");
++            },
++            "missing required object",
++            "partial durable schema was silently repaired or accepted");
++    }
++}
++
++void test_exact_schema_attachment_and_precommit_reattestation() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-trigger-guard");
++    const std::string folder = "folder-sqlite-trigger-guard";
++    const SyncReplicaActor local = actor("device-sqlite-trigger-guard", 1421U);
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "trigger guard owner");
++    const SyncReplicaSqliteSnapshot baseline = owner.snapshot_or_throw();
++
++    // An object's own name is not sufficient schema evidence: an unrelated
++    // trigger name can still attach executable behavior to a replica table.
++    exec(db,
++         "CREATE TRIGGER main.unrelated_audit_trigger "
++         "AFTER INSERT ON sync_replica_operations BEGIN SELECT 1; END;");
++    require_error(
++        [&] { (void)owner.snapshot_or_throw(); },
++        "unexpected sync_replica object",
++        "main trigger attached under an unrelated name escaped schema attestation");
++    exec(db, "DROP TRIGGER main.unrelated_audit_trigger;");
++    require(owner.snapshot_or_throw() == baseline,
++            "rejected attached trigger changed the durable cutpoint");
++
++    // TEMP objects are connection-local and intentionally remain available for
++    // fault injection. A successful AFTER trigger must nevertheless be caught
++    // by the full staged reload before COMMIT, then rolled back with its writes.
++    exec(db,
++         "CREATE TEMP TRIGGER silent_outbox_mutation "
++         "AFTER INSERT ON main.sync_replica_outbox "
++         "BEGIN UPDATE main.sync_replica_outbox "
++         "SET enqueued_generation_be=x'0000000000000000' "
++         "WHERE destination_device_id=NEW.destination_device_id "
++         "AND operation_id=NEW.operation_id; END;");
++    const std::vector<std::string> destinations{
++        "device-sqlite-trigger-peer"};
++    require_error(
++        [&] {
++            (void)owner.create_local_file_or_throw(
++                "trigger/file.bin", 4U, anonsync::sha256_hex("file"),
++                destinations);
++        },
++        "outbox intent is invalid",
++        "silent TEMP-trigger mutation was committed as a successful publication");
++    require(owner.snapshot_or_throw() == baseline &&
++                scalar_count(db, "sync_replica_operations") == 0U &&
++                scalar_count(db, "sync_replica_outbox") == 0U,
++            "pre-commit re-attestation failure left a durable transaction prefix");
++    exec(db, "DROP TRIGGER temp.silent_outbox_mutation;");
++
++    const SyncReplicaOperation committed = owner.create_local_file_or_throw(
++        "trigger/file.bin", 4U, anonsync::sha256_hex("file"), destinations);
++    require(owner.outbox_delivery_or_throw(
++                destinations.front(), committed.operation_id)
++                .has_value(),
++            "owner did not recover after rolling back a silently mutated stage");
++}
++
++void test_local_authority_mapping_digest() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-local-authority");
++    const std::string folder = "folder-sqlite-local-authority";
++    const SyncReplicaActor local = actor("device-sqlite-local-authority", 1431U);
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "local authority owner");
++    const SyncReplicaOperation authorized = owner.create_local_file_or_throw(
++        "authority/file.bin", 10U, anonsync::sha256_hex("authorized"));
++    SyncReplicaOperation fork = authorized;
++    fork.content_sha256 = anonsync::sha256_hex("forged-fork");
++    fork.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(fork);
++    require(owner.accept_remote_or_throw(fork) ==
++                SyncReplicaAdmission::InsertedQuarantined,
++            "local-authority fixture did not retain its same-dot fork");
++    const SyncReplicaSqliteSnapshot compromised = owner.snapshot_or_throw();
++    require(compromised.durable.local_operation_ids ==
++                    std::vector<std::string>{authorized.operation_id} &&
++                compromised.durable.operations.size() == 2U &&
++                compromised.local_operation_digest.size() == 64U,
++            "local authority mapping was not exposed as exact digest-bound state");
++
++    // Either fork is structurally capable of occupying counter 1. Operation and
++    // evidence set digests are identical under this swap, so the dedicated
++    // authority-map digest is what makes the corruption observable.
++    exec(db,
++         "UPDATE main.sync_replica_local_operations SET operation_id='" +
++             fork.operation_id +
++             "' WHERE counter_be=x'0000000000000001';");
++    require_error(
++        [&] { (void)owner.snapshot_or_throw(); },
++        "local operation authority digest mismatch",
++        "same-dot fork substitution rewrote local mint authority undetected");
++    exec(db,
++         "UPDATE main.sync_replica_local_operations SET operation_id='" +
++             authorized.operation_id +
++             "' WHERE counter_be=x'0000000000000001';");
++    require(owner.snapshot_or_throw() == compromised,
++            "restoring the exact local authority mapping did not restore the cutpoint");
++}
++
++void test_pending_dependency_restart_and_activation() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-pending");
++    const std::string folder = "folder-sqlite-pending";
++    const SyncReplicaActor local = actor("device-sqlite-pending-local", 1441U);
++    const SyncReplicaOperation parent = root_operation(
++        folder, actor("device-sqlite-pending-parent", 1442U),
++        "pending/file.bin", "parent");
++    const SyncReplicaOperation child = child_operation(
++        parent, actor("device-sqlite-pending-child", 1443U), "child");
++    SyncReplicaSqliteSnapshot pending;
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U), "pending child owner");
++        require(owner.accept_remote_or_throw(child) ==
++                    SyncReplicaAdmission::InsertedPending,
++                "child-first admission did not persist exact pending evidence");
++        pending = owner.snapshot_or_throw();
++        const anonsync::SyncReplicaModel model =
++            anonsync::SyncReplicaModel::restore_or_throw(
++                pending.durable, pending.limits.model);
++        require(model.evidence_state(child.operation_id) ==
++                    SyncReplicaEvidenceState::PendingMissingDependency &&
++                    model.missing_predecessor_operation_ids() ==
++                        std::vector<std::string>{parent.operation_id} &&
++                    scalar_count(db, "sync_replica_parent_edges") == 1U,
++                "pending cutpoint lost its exact parent edge or fetch request");
++    }
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(99U), "pending restart owner");
++        require(owner.snapshot_or_throw() == pending,
++                "restart changed a pending evidence cutpoint");
++        require(owner.accept_remote_or_throw(parent) ==
++                    SyncReplicaAdmission::InsertedActive,
++                "late exact parent was not admitted after pending restart");
++        const SyncReplicaSqliteSnapshot activated = owner.snapshot_or_throw();
++        const anonsync::SyncReplicaModel model =
++            anonsync::SyncReplicaModel::restore_or_throw(
++                activated.durable, activated.limits.model);
++        const auto visible = model.visible_path("pending/file.bin");
++        require(model.evidence_state(parent.operation_id) ==
++                    SyncReplicaEvidenceState::Active &&
++                    model.evidence_state(child.operation_id) ==
++                    SyncReplicaEvidenceState::Active &&
++                    model.missing_predecessor_operation_ids().empty() &&
++                    model.causal_head_operation_ids() ==
++                        std::vector<std::string>{child.operation_id} &&
++                    visible.has_value() &&
++                    visible->primary_operation_id == child.operation_id,
++                "late parent did not atomically reproject the persisted child active");
++        require(activated.state_generation == pending.state_generation + 1U &&
++                    scalar_count(db, "sync_replica_operations") == 2U &&
++                    scalar_count(db, "sync_replica_parent_edges") == 1U,
++                "dependency activation rewrote evidence rows or advanced multiple generations");
++    }
++}
++
++void test_outbox_budget_precedes_local_mint() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-outbox-budget");
++    const std::string folder = "folder-sqlite-outbox-budget";
++    const SyncReplicaActor local = actor("device-sqlite-outbox-budget", 1447U);
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U, 1U, 128U),
++        "outbox budget owner");
++    const SyncReplicaSqliteSnapshot empty = owner.snapshot_or_throw();
++    const std::vector<std::string> two_destinations{
++        "device-sqlite-budget-a", "device-sqlite-budget-b"};
++    require_error(
++        [&] {
++            (void)owner.create_local_file_or_throw(
++                "budget/blocked.bin", 1U, anonsync::sha256_hex("x"),
++                two_destinations);
++        },
++        "outbox intent capacity",
++        "fanout over outbox capacity consumed local mint authority");
++    require(owner.snapshot_or_throw() == empty,
++            "outbox preflight denial changed evidence, counter, or generation");
++
++    const std::vector<std::string> duplicate_destinations{
++        "device-sqlite-budget-a", "device-sqlite-budget-a"};
++    require_error(
++        [&] {
++            (void)owner.create_local_tombstone_or_throw(
++                "budget/duplicate.bin", duplicate_destinations);
++        },
++        "contains a duplicate",
++        "duplicate destination list reached durable publication");
++    const std::vector<std::string> self_destination{local.device_id};
++    require_error(
++        [&] {
++            (void)owner.create_local_tombstone_or_throw(
++                "budget/self.bin", self_destination);
++        },
++        "self-directed",
++        "self-directed outbox intent reached durable publication");
++    require(owner.snapshot_or_throw() == empty,
++            "invalid destination preflights changed the empty cutpoint");
++
++    const std::vector<std::string> one_destination{
++        "device-sqlite-budget-a"};
++    (void)owner.create_local_file_or_throw(
++        "budget/one.bin", 1U, anonsync::sha256_hex("one"), one_destination);
++    const SyncReplicaSqliteSnapshot full = owner.snapshot_or_throw();
++    require_error(
++        [&] {
++            (void)owner.create_local_file_or_throw(
++                "budget/two.bin", 1U, anonsync::sha256_hex("two"),
++                one_destination);
++        },
++        "outbox intent capacity",
++        "full sender outbox consumed a second local counter before denial");
++    require(owner.snapshot_or_throw() == full &&
++                full.durable.last_local_counter == 1U &&
++                full.durable.operations.size() == 1U &&
++                full.outbox.size() == 1U,
++            "full sender outbox denial left a local operation prefix");
++}
++
++void test_concurrent_writers_serialize_local_counter_authority() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-concurrent");
++    const std::string folder = "folder-sqlite-concurrent";
++    const SyncReplicaActor local = actor("device-sqlite-concurrent", 1451U);
++    {
++        // Freeze the database profile before the two owner connections race to
++        // initialize/use the replica schema.
++        SyncSqliteDb profile = open_database(file.path);
++    }
++
++    std::barrier start(2);
++    std::array<std::exception_ptr, 2> errors{};
++    std::array<SyncReplicaOperation, 2> operations{};
++    std::array<std::thread, 2> writers;
++    for (std::size_t index = 0; index < writers.size(); ++index) {
++        writers[index] = std::thread([&, index] {
++            try {
++                SyncSqliteDb db = open_database(file.path);
++                start.arrive_and_wait();
++                SyncReplicaSqliteOwner owner(
++                    db.db, folder, local, limits(16U),
++                    "concurrent writer owner");
++                const std::vector<std::string> destinations{
++                    "device-sqlite-concurrent-peer-" +
++                    std::to_string(index)};
++                operations[index] = owner.create_local_file_or_throw(
++                    "concurrent/file-" + std::to_string(index) + ".bin",
++                    1U, anonsync::sha256_hex(std::to_string(index)),
++                    destinations);
++            } catch (...) {
++                errors[index] = std::current_exception();
++            }
++        });
++    }
++    for (std::thread& writer : writers) writer.join();
++    for (const std::exception_ptr& error : errors) {
++        if (error) std::rethrow_exception(error);
++    }
++
++    require(operations[0].operation_id != operations[1].operation_id &&
++                operations[0].dot.actor == local &&
++                operations[1].dot.actor == local &&
++                ((operations[0].dot.counter == 1U &&
++                  operations[1].dot.counter == 2U) ||
++                 (operations[0].dot.counter == 2U &&
++                  operations[1].dot.counter == 1U)),
++            "concurrent writers reused or skipped local dot authority");
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "concurrent recovery owner");
++    const SyncReplicaSqliteSnapshot snapshot = owner.snapshot_or_throw();
++    require(snapshot.durable.last_local_counter == 2U &&
++                snapshot.durable.local_operation_ids.size() == 2U &&
++                snapshot.durable.operations.size() == 2U &&
++                snapshot.outbox.size() == 2U,
++            "serialized concurrent writers did not publish two complete cutpoints");
++}
++
++#ifdef __linux__
++constexpr std::string_view kReplicaCrashHelper =
++    "--anonsync-replica-sqlite-owner-crash-helper-v1";
++constexpr std::string_view kReplicaCrashFolder = "folder-sqlite-crash";
++constexpr std::string_view kReplicaCrashDevice = "device-sqlite-crash";
++constexpr std::uint64_t kReplicaCrashEpoch = 1501U;
++
++void crash_after_outbox_insert(
++    void*, int operation, const char*, const char* table_name,
++    sqlite3_int64) {
++    if (operation == SQLITE_INSERT && table_name != nullptr &&
++        std::strcmp(table_name, "sync_replica_outbox") == 0) {
++        ::_exit(73);
++    }
++}
++
++int run_replica_crash_helper(int argc, char** argv) {
++    try {
++        anonsync::test::verify_self_exec_child_boundary_or_throw();
++        if (argc != 3 || argv == nullptr || argv[1] == nullptr ||
++            argv[2] == nullptr || std::string_view(argv[1]) != kReplicaCrashHelper) {
++            throw std::runtime_error(
++                "invalid replica SQLite crash helper instruction");
++        }
++        const std::filesystem::path database_path(argv[2]);
++        const std::string filename = database_path.filename().string();
++        if (!database_path.is_absolute() ||
++            database_path != database_path.lexically_normal() ||
++            database_path.extension() != ".sqlite3" ||
++            filename.rfind("anonsync-replica-sqlite-owner-crash-", 0) != 0) {
++            throw std::runtime_error(
++                "replica SQLite crash helper path binding failed");
++        }
++
++        SyncSqliteDb db = open_database(database_path);
++        SyncReplicaSqliteOwner owner(
++            db.db, std::string(kReplicaCrashFolder),
++            actor(std::string(kReplicaCrashDevice), kReplicaCrashEpoch),
++            limits(16U), "crash self-exec owner");
++        auto borrow = db.db.borrow();
++        sqlite3_update_hook(
++            borrow.get(), &crash_after_outbox_insert, nullptr);
++        const std::vector<std::string> destinations{
++            "device-sqlite-crash-peer"};
++        (void)owner.create_local_file_or_throw(
++            "crash/file.bin", 5U, anonsync::sha256_hex("crash"),
++            destinations);
++        return 75;
++    } catch (const std::exception& error) {
++        std::cerr << "replica SQLite crash helper failed: "
++                  << error.what() << '\n';
++        return 74;
++    }
++}
++
++void test_process_crash_before_commit_recovers_old_generation() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-crash");
++    const std::string folder(kReplicaCrashFolder);
++    const SyncReplicaActor local =
++        actor(std::string(kReplicaCrashDevice), kReplicaCrashEpoch);
++    SyncReplicaSqliteSnapshot baseline;
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U), "crash seed owner");
++        baseline = owner.snapshot_or_throw();
++    }
++
++    anonsync::test::SelfExecTestProcess child =
++        anonsync::test::spawn_self_exec_test_process_or_throw(
++            anonsync::test::current_self_executable_or_throw(),
++            {std::string(kReplicaCrashHelper), file.path.string()});
++    child.wait_for_exact_exit(
++        73, std::chrono::seconds(10),
++        "replica SQLite post-outbox pre-commit crash helper");
++    require(true,
++            "child crashed at the intended post-outbox/pre-commit frontier");
++
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "crash recovery owner");
++    require(owner.snapshot_or_throw() == baseline &&
++                scalar_count(db, "sync_replica_operations") == 0U &&
++                scalar_count(db, "sync_replica_outbox") == 0U,
++            "SQLite recovery exposed a transaction prefix after process death");
++}
++#endif
++
++}  // namespace
++
++int main(int argc, char** argv) {
++#ifdef __linux__
++    if (argc >= 2 && argv != nullptr && argv[1] != nullptr &&
++        std::string_view(argv[1]) == kReplicaCrashHelper) {
++        return run_replica_crash_helper(argc, argv);
++    }
++#endif
++    try {
++        if (argc != 1) {
++            throw std::runtime_error(
++                "unexpected sync replica SQLite owner test arguments");
++        }
++        test_atomic_local_publication_and_single_copy_outbox();
++        test_durable_capacity_policy_and_retry();
++        test_projection_and_redundant_attestation();
++        test_transaction_failure_rolls_back_entire_cutpoint();
++        test_schema_contract_and_outbox_tamper_detection();
++        test_exact_schema_attachment_and_precommit_reattestation();
++        test_local_authority_mapping_digest();
++        test_pending_dependency_restart_and_activation();
++        test_outbox_budget_precedes_local_mint();
++        test_concurrent_writers_serialize_local_counter_authority();
++#ifdef __linux__
++        test_process_crash_before_commit_recovers_old_generation();
++#endif
++        std::cout << "sync replica SQLite owner tests passed: "
++                  << checks << " checks\n";
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "sync replica SQLite owner tests failed after "
++                  << checks << " checks: " << error.what() << '\n';
++        return 1;
++    }
++}
+--- a/tools/audit_raw_fork_boundaries.py
++++ b/tools/audit_raw_fork_boundaries.py
+@@ -97,6 +97,11 @@
+         "spawn_self_exec_test_process_or_throw(",
+         "wait_for_exit_code(",
+     ),
++    "tests/sync_replica_sqlite_owner_test.cpp": (
++        "--anonsync-replica-sqlite-owner-crash-helper-v1",
++        "spawn_self_exec_test_process_or_throw(",
++        "wait_for_exact_exit(",
++    ),
+ }
+ FORBIDDEN_CHOREOGRAPHY = {
+     "fork": FORK_CALL,
+@@ -301,7 +306,7 @@
+         )
+     require(
+         migrated_ok,
+-        "seven_fresh_state_campaigns_use_pinned_self_exec_images",
++        "eight_fresh_state_campaigns_use_pinned_self_exec_images",
+         "; ".join(migrated_detail),
+     )
+ 
+@@ -349,12 +354,13 @@
+         "anonsync_sqlite_runtime_payload_store_test PRIVATE\n    anonsync_self_exec_test_process",
+         "anonsync_peer_ingress_schema_attestation_test PRIVATE\n    anonsync_self_exec_test_process",
+         "anonsync_sqlite_transaction_allocator_fault_test PRIVATE",
++        "anonsync_sync_replica_sqlite_owner_test PRIVATE\n    anonsync_self_exec_test_process",
+     )
+     require(
+         all(token in cmake for token in cmake_tokens)
+         and all(target in cmake for target in INHERITED_CONSUMER_TARGETS),
+         "build_graph_binds_inherited_and_fresh_image_owners",
+-        "CMake carries the exact discovered inherited-consumer inventory and all seven fresh-image campaigns",
++        "CMake carries the exact discovered inherited-consumer inventory and all eight fresh-image campaigns",
+     )
+     require(
+         "anonsync_raw_fork_boundary_source_audit" in cmake
+@@ -383,7 +389,7 @@
+             "raw_fork_translation_units": 1,
+             "inherited_consumer_translation_units": 13,
+             "inherited_spawn_sites": 24,
+-            "fresh_image_migrated_campaigns": 7,
++            "fresh_image_migrated_campaigns": 8,
+         },
+         "inventory_metrics_are_exact",
+         ", ".join(f"{key}={value}" for key, value in metrics.items()),
+--- a/tools/audit_self_exec_test_process.py
++++ b/tools/audit_self_exec_test_process.py
+@@ -28,6 +28,7 @@
+     Path("tests/sqlite_transaction_allocator_fault_test.cpp"),
+     Path("tests/sqlite_connection_authority_test.cpp"),
+     Path("tests/sqlite_owner_generation_borrow_test.cpp"),
++    Path("tests/sync_replica_sqlite_owner_test.cpp"),
+     Path("tools/audit_raw_fork_boundaries.py"),
+     Path("tools/audit_sqlite_transaction_allocator_fault.py"),
+     Path("tools/audit_self_exec_test_process.py"),
+@@ -66,7 +67,7 @@
+ 
+ def report_missing(root: Path, missing: list[str], output: Path | None) -> int:
+     report = {
+-        "format": "anonsync-self-exec-test-process-audit-v8",
++        "format": "anonsync-self-exec-test-process-audit-v9",
+         "root": str(root),
+         "passed": False,
+         "passed_checks": 0,
+@@ -126,6 +127,7 @@
+     owner_generation_test = text[
+         Path("tests/sqlite_owner_generation_borrow_test.cpp")
+     ]
++    replica_sqlite_owner_test = text[Path("tests/sync_replica_sqlite_owner_test.cpp")]
+     raw_fork_audit = text[Path("tools/audit_raw_fork_boundaries.py")]
+     allocator_fault_audit = text[
+         Path("tools/audit_sqlite_transaction_allocator_fault.py")
+@@ -578,6 +580,12 @@
+             "wait_for_exit_code(",
+             "SQLite owner-generation borrow/close race campaign",
+         ),
++        (
++            replica_sqlite_owner_test,
++            "--anonsync-replica-sqlite-owner-crash-helper-v1",
++            "wait_for_exact_exit(",
++            "replica SQLite publication cutpoint crash campaign",
++        ),
+     )
+     require(
+         checks,
+@@ -591,7 +599,7 @@
+             and "::waitpid(" not in body
+             for body, helper_flag, wait_token, _ in additional_campaigns
+         ),
+-        "six_non_capture_campaigns_use_fresh_images",
++        "seven_non_capture_campaigns_use_fresh_images",
+         "; ".join(label for _, _, _, label in additional_campaigns),
+     )
+     require(
+@@ -623,13 +631,13 @@
+         and "one_raw_fork_is_owned_by_the_shared_test_boundary" in raw_fork_audit
+         and "discovered_inherited_state_consumers_match_the_exact_inventory"
+         in raw_fork_audit
+-        and "seven_fresh_state_campaigns_use_pinned_self_exec_images"
++        and "eight_fresh_state_campaigns_use_pinned_self_exec_images"
+         in raw_fork_audit
+         and "inventory_metrics_are_exact" in raw_fork_audit
+         and '"test_raw_fork_calls": 1' in raw_fork_audit
+         and '"inherited_spawn_sites": 24' in raw_fork_audit,
+         "raw_fork_inventory_is_fail_closed_and_exact",
+-        "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 30 inherited or fresh-image process sites",
++        "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 32 inherited or fresh-image process sites",
+     )
+ 
+     require(
+@@ -801,7 +809,7 @@
+                 "focused_reset_helper_rebinds_parent_evidence_after_exec",
+                 "frontier_helper_rebinds_path_hashes_and_cutpoint_after_exec",
+                 "release_verifier_requires_entire_selfexec_surface",
+-                "six_non_capture_campaigns_use_fresh_images",
++                "seven_non_capture_campaigns_use_fresh_images",
+                 "raw_fork_inventory_is_fail_closed_and_exact",
+                 "successful_wait_kills_identity_bound_group_before_reap",
+                 "support_has_one_dependency_free_leaf_and_sanitizer_guards",
+@@ -821,7 +829,7 @@
+ 
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-self-exec-test-process-audit-v8",
++        "format": "anonsync-self-exec-test-process-audit-v9",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+--- a/tools/audit_sqlite_transaction_allocator_fault.py
++++ b/tools/audit_sqlite_transaction_allocator_fault.py
+@@ -457,14 +457,14 @@
+     require(
+         checks,
+         "tests/sqlite_transaction_allocator_fault_test.cpp" in raw_fork_audit
+-        and "seven_fresh_state_campaigns_use_pinned_self_exec_images"
++        and "eight_fresh_state_campaigns_use_pinned_self_exec_images"
+         in raw_fork_audit
+         and '"test_raw_fork_calls": 1' in raw_fork_audit
+         and '"tests/inherited_test_process.cpp": 1' in raw_fork_audit
+         and '"tests/sqlite_transaction_allocator_fault_test.cpp": 1'
+         not in raw_fork_audit,
+         "raw_fork_inventory_removes_allocator_bridge_exception",
+-        "the exact raw-fork gate centralizes its sole test call and classifies the allocator campaign as one of seven pinned fresh-image migrations",
++        "the exact raw-fork gate centralizes its sole test call and classifies the allocator campaign as one of eight pinned fresh-image migrations",
+     )
+     parent_segment = segment(worker, "int parent_main()", "#else")
+     require(
+--- /dev/null
++++ b/tools/audit_sync_replica_sqlite_owner.py
+@@ -0,0 +1,416 @@
++#!/usr/bin/env python3
++"""Fail-closed structural audit for the SQLite replica cutpoint owner."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++REQUIRED = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_replica_model.hpp"),
++    Path("src/sync_replica_sqlite_owner.hpp"),
++    Path("src/sync_replica_sqlite_owner.cpp"),
++    Path("tests/sync_replica_sqlite_owner_test.cpp"),
++    Path("tools/audit_sync_replica_sqlite_owner.py"),
++    Path("tools/verify_release_package.py"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def ordered(text: str, *tokens: str) -> bool:
++    cursor = -1
++    for token in tokens:
++        cursor = text.find(token, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
++def function_body(text: str, signature: str) -> str:
++    start = text.find(signature)
++    if start < 0:
++        return ""
++    brace = text.find("{", start)
++    if brace < 0:
++        return ""
++    depth = 0
++    for index in range(brace, len(text)):
++        if text[index] == "{":
++            depth += 1
++        elif text[index] == "}":
++            depth -= 1
++            if depth == 0:
++                return text[start : index + 1]
++    return ""
++
++
++def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
++    violations = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-sync-replica-sqlite-owner-audit-v1",
++        "root": str(root),
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if output is None:
++        sys.stdout.write(rendered)
++    else:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++    return 0 if not violations else 1
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root", type=Path, default=Path(__file__).resolve().parents[1]
++    )
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    checks: list[Check] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    missing = [path.as_posix() for path in REQUIRED if not (root / path).is_file()]
++    require(not missing, "required_files_exist", f"missing={missing}")
++    if missing:
++        return emit(root, args.json, checks)
++
++    text = {
++        path.as_posix(): (root / path).read_text(encoding="utf-8")
++        for path in REQUIRED
++    }
++    cmake = text["CMakeLists.txt"]
++    model_header = text["src/sync_replica_model.hpp"]
++    header = text["src/sync_replica_sqlite_owner.hpp"]
++    owner = text["src/sync_replica_sqlite_owner.cpp"]
++    runtime = text["tests/sync_replica_sqlite_owner_test.cpp"]
++    verifier = text["tools/verify_release_package.py"]
++
++    require(
++        "class SyncReplicaSqliteOwner final" in header
++        and "SyncReplicaSqliteOwner(const SyncReplicaSqliteOwner&) = delete" in header
++        and "SyncReplicaSqliteOwner(SyncReplicaSqliteOwner&&) = delete" in header,
++        "owner_is_single_nontransferable_authority",
++        "one object owns one folder/local-actor cutpoint on one exact handle slot",
++    )
++    require(
++        all(
++            token in header
++            for token in (
++                "SyncReplicaModelLimits model",
++                "max_outbox_intents",
++                "max_outbox_destination_bytes",
++                "state_generation",
++                "policy_generation",
++            )
++        ),
++        "evidence_and_outbox_policies_are_independent_durable_state",
++        "sender pressure is not mislabeled as evidence validity",
++    )
++    require(
++        "local_operation_digest" in header
++        and "cutpoint_digest" in header
++        and "not a substitute for an authenticated local store" in header,
++        "structural_seals_bind_authority_without_overclaiming_authentication",
++        "the API exposes both the local mint map digest and the unkeyed cutpoint caveat",
++    )
++    require(
++        "local_operation_ids()" in model_header
++        and "const std::vector<std::string>&" in model_header,
++        "local_authority_map_has_noncopying_const_view",
++        "durable attestation does not clone all evidence merely to hash local counter bindings",
++    )
++
++    schema = owner[owner.find("constexpr std::array<SchemaDefinition") :]
++    require(
++        schema.count(") STRICT") >= 7
++        and "sync_replica_operations" in schema
++        and "sync_replica_parent_edges" in schema
++        and "sync_replica_local_operations" in schema
++        and "sync_replica_heads" in schema
++        and "sync_replica_visible" in schema
++        and "sync_replica_outbox" in schema,
++        "schema_uses_strict_exact_owner_tables",
++        "canonical evidence, authority, projection, and sender intents have explicit typed owners",
++    )
++    read_schema = function_body(owner, "read_schema_objects_or_throw(")
++    require(
++        "name GLOB 'sync_replica_*' OR" in read_schema
++        and "tbl_name GLOB 'sync_replica_*'" in read_schema
++        and "observed.size() >= kSchema.size() + 1U" in read_schema,
++        "schema_scan_covers_object_name_and_attachment_target_with_bound",
++        "an unrelated trigger/index name cannot hide executable attachment to a replica table",
++    )
++    verify_schema = function_body(owner, "verify_schema_or_throw(")
++    require(
++        "schema contains an unexpected sync_replica object" in verify_schema
++        and "exact sqlite_schema contract mismatch" in verify_schema
++        and "schema is missing required object" in verify_schema,
++        "schema_contract_rejects_extra_changed_and_missing_objects",
++        "the owner never silently repairs a partial or augmented protocol schema",
++    )
++    constructor = function_body(owner, "SyncReplicaSqliteOwner::SyncReplicaSqliteOwner(")
++    require(
++        ordered(
++            constructor,
++            "PRAGMA foreign_keys=ON;PRAGMA trusted_schema=OFF;",
++            "SyncSqliteTransaction transaction",
++            "verify_schema_or_throw",
++            "load_state_or_throw",
++        ),
++        "connection_hardening_precedes_schema_transaction_and_publication",
++        "foreign keys are enabled outside the transaction and schema SQL is not trusted",
++    )
++    require(
++        "PRAGMA main.foreign_key_check;" in owner
++        and "requires SQLite foreign key enforcement" in owner,
++        "restore_checks_live_foreign_key_policy_and_rows",
++        "declared references are enforced and independently scanned on every cutpoint load",
++    )
++    require(
++        all(
++            token in owner
++            for token in (
++                "canonical_bytes BLOB NOT NULL",
++                "canonical_size_be BLOB NOT NULL",
++                "context_count_be BLOB NOT NULL",
++                "predecessor_count_be BLOB NOT NULL",
++                "decode_sync_replica_operation_canonical_or_throw",
++                "canonical operation row attestation mismatch",
++            )
++        ),
++        "canonical_operation_rows_are_exactly_decoded_and_remeasured",
++        "stored summaries never replace exact operation-byte authority",
++    )
++    require(
++        "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)" in owner
++        and "PRIMARY KEY(destination_device_id,operation_id)" in owner
++        and "canonical operation bytes are stored once regardless of fanout" in header.lower(),
++        "outbox_fanout_references_one_canonical_owner",
++        "each destination stores only identity and generation, not a payload clone",
++    )
++
++    local_digest = function_body(owner, "local_operation_digest_or_throw(")
++    cutpoint = function_body(owner, "cutpoint_digest_or_throw(")
++    load = function_body(owner, "load_state_or_throw(")
++    require(
++        "anonsync-sync-replica-sqlite-local-authority-v1" in local_digest
++        and "local_actor.epoch" in local_digest
++        and "local_operation_ids" in local_digest
++        and "meta.local_operation_digest" in cutpoint
++        and "local operation authority digest mismatch" in load,
++        "local_counter_to_operation_authority_is_digest_bound_and_restored",
++        "same-dot fork substitution cannot preserve the durable cutpoint unnoticed",
++    )
++    require(
++        all(
++            token in cutpoint
++            for token in (
++                "meta.folder_id",
++                "meta.local_actor.device_id",
++                "meta.last_local_counter",
++                "meta.state_generation",
++                "meta.policy_generation",
++                "meta.evidence_count",
++                "meta.outbox_intent_count",
++                "meta.operation_set_digest",
++                "meta.evidence_set_digest",
++                "meta.visible_state_digest",
++                "meta.outbox_digest",
++            )
++        ),
++        "cutpoint_seal_frames_identity_policy_counters_and_digests",
++        "casual/torn metadata edits cannot independently relabel a generation",
++    )
++    require(
++        ordered(
++            load,
++            "verify_schema_or_throw",
++            "require_foreign_keys_or_throw",
++            "require_no_foreign_key_violations_or_throw",
++            "read_meta_or_throw",
++            "read_operations_or_throw",
++            "verify_parent_edges_or_throw",
++            "SyncReplicaModel::restore_or_throw",
++            "verify_heads_or_throw",
++            "verify_visible_or_throw",
++            "read_outbox_or_throw",
++        ),
++        "restore_rederives_every_redundant_projection_from_exact_evidence",
++        "schema, canonical bytes, parent graph, model state, views, and outbox are one read cutpoint",
++    )
++
++    staged = function_body(owner, "attest_and_commit_staged_cutpoint_or_throw(")
++    require(
++        ordered(
++            staged,
++            "load_state_or_throw",
++            "observed.meta != expected_meta",
++            "observed.model.durable_state() != expected_model.durable_state()",
++            "observed.outbox != expected_outbox",
++            "require_write_authority_or_throw",
++            "transaction.commit()",
++        ),
++        "every_mutating_commit_is_preceded_by_independent_full_re_attestation",
++        "successful TEMP-trigger row mutation cannot be returned as a committed publication",
++    )
++
++    local_file = function_body(owner, "SyncReplicaSqliteOwner::create_local_file_or_throw(")
++    local_tombstone = function_body(
++        owner, "SyncReplicaSqliteOwner::create_local_tombstone_or_throw("
++    )
++    for name, body in (("file", local_file), ("tombstone", local_tombstone)):
++        require(
++            ordered(
++                body,
++                "load_state_or_throw",
++                "validate_destinations_or_throw",
++                "require_outbox_capacity_or_throw",
++                "increment_or_throw",
++                "create_local_",
++                "insert_operation_rows_or_throw",
++                "insert_outbox_intents_or_throw",
++                "rewrite_projection_or_throw",
++                "update_meta_or_throw",
++                "attest_and_commit_staged_cutpoint_or_throw",
++            ),
++            f"local_{name}_publication_has_one_atomic_evidence_projection_outbox_cutpoint",
++            "outbox capacity is proven before mint; commit follows full staged restore",
++        )
++    require(
++        "destination list contains a duplicate" in owner
++        and "refuses a self-directed outbox intent" in owner
++        and "outbox intent capacity would be exceeded" in owner
++        and "outbox destination-byte capacity would be exceeded" in owner,
++        "destination_and_sender_budgets_fail_closed_before_mint",
++        "duplicate/self fanout and independent count/byte pressure are explicit errors",
++    )
++
++    remote = function_body(owner, "SyncReplicaSqliteOwner::accept_remote_or_throw(")
++    require(
++        ordered(
++            remote,
++            "load_state_or_throw",
++            "loaded.model.accept_remote_or_throw",
++            "SyncReplicaAdmission::Duplicate",
++            "SyncReplicaAdmission::CapacityBlocked",
++            "insert_operation_rows_or_throw",
++            "rewrite_projection_or_throw",
++            "update_meta_or_throw",
++            "attest_and_commit_staged_cutpoint_or_throw",
++        ),
++        "remote_duplicate_and_capacity_paths_are_durable_noops",
++        "only newly retained evidence advances the SQLite state generation",
++    )
++    acknowledge = function_body(
++        owner, "SyncReplicaSqliteOwner::acknowledge_outbox_or_throw("
++    )
++    require(
++        ordered(
++            acknowledge,
++            "destination_device_id == destination_device_id",
++            "intent.operation_id == operation_id",
++            "DELETE FROM main.sync_replica_outbox",
++            "sqlite3_changes",
++            "attest_and_commit_staged_cutpoint_or_throw",
++        ),
++        "acknowledgement_retires_one_exact_unsettled_intent",
++        "canonical evidence and other destination intents remain owned",
++    )
++    delivery = function_body(owner, "SyncReplicaSqliteOwner::outbox_delivery_or_throw(")
++    require(
++        "LoadedState loaded = load_state_or_throw" in delivery
++        and "snapshot_or_throw" not in delivery
++        and "evidence_operation_by_id" in delivery
++        and "require_snapshot_authority_or_throw" in delivery,
++        "delivery_avoids_a_second_full_snapshot_publication_copy",
++        "the O(history) restore remains, but only the requested operation is copied out",
++    )
++    replace = function_body(owner, "SyncReplicaSqliteOwner::replace_limits_or_throw(")
++    require(
++        ordered(
++            replace,
++            "validate_owner_limits_or_throw",
++            "load_state_or_throw",
++            "SyncReplicaModel::restore_or_throw",
++            "retained outbox does not fit replacement policy",
++            "policy_generation",
++            "attest_and_commit_staged_cutpoint_or_throw",
++        ),
++        "policy_replacement_is_explicit_fit_checked_and_atomic",
++        "restart cannot silently reinterpret retained evidence under caller defaults",
++    )
++
++    require(
++        all(
++            token in runtime
++            for token in (
++                "unrelated_audit_trigger",
++                "silent_outbox_mutation",
++                "local operation authority digest mismatch",
++                "InsertedPending",
++                "pending restart owner",
++                "outbox budget owner",
++                "crash_after_outbox_insert",
++                "verify_self_exec_child_boundary_or_throw",
++                "spawn_self_exec_test_process_or_throw",
++                "wait_for_exact_exit(",
++                "std::barrier start(2)",
++            )
++        ),
++        "runtime_covers_schema_trigger_authority_restart_budget_concurrency_and_crash",
++        "tests exercise the dangerous boundaries rather than only the happy path",
++    )
++    require(
++        "anonsync_sync_replica_sqlite_owner_test" in cmake
++        and "anonsync_sync_replica_sqlite_owner" in cmake
++        and "TIMEOUT 60" in cmake
++        and "audit_sync_replica_sqlite_owner.py" in cmake,
++        "owner_runtime_and_structural_audit_are_registered",
++        "CMake builds, sanitizes, and executes the new correctness slice",
++    )
++    require(
++        "revision_number >= 869" in verifier
++        and "src/sync_replica_sqlite_owner.hpp" in verifier
++        and "src/sync_replica_sqlite_owner.cpp" in verifier
++        and "tests/sync_replica_sqlite_owner_test.cpp" in verifier
++        and "tools/audit_sync_replica_sqlite_owner.py" in verifier,
++        "release_verifier_makes_rev0869_owner_files_mandatory",
++        "a sealed archive cannot claim rev0869 while omitting the cutpoint owner or audit",
++    )
++    require(
++        "INSERT OR" not in owner and "ON CONFLICT" not in owner,
++        "writes_do_not_mask_identity_or_projection_conflicts",
++        "constraint conflicts abort the typed transaction instead of being normalized away",
++    )
++    require(
++        "intentionally O(history) reference owner" in header
++        and "incremental production" in header,
++        "reference_owner_complexity_is_an_explicit_nonclaim",
++        "full-history reload/reprojection is correctness scaffolding, not a production scaling claim",
++    )
++
++    return emit(root, args.json, checks)
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -430,6 +430,13 @@
+             "tests/sync_replica_capacity_backpressure_test.cpp",
+             "tools/audit_sync_replica_capacity_backpressure.py",
+         })
++    if revision_number is not None and revision_number >= 869:
++        revision_scoped_required.update({
++            "src/sync_replica_sqlite_owner.hpp",
++            "src/sync_replica_sqlite_owner.cpp",
++            "tests/sync_replica_sqlite_owner_test.cpp",
++            "tools/audit_sync_replica_sqlite_owner.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

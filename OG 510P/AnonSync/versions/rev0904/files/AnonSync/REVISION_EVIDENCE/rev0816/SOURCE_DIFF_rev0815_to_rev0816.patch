@@ -1,0 +1,2377 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -734,6 +734,21 @@
+ target_compile_options(
+   anonsync_sqlite_transaction_exception_composition_test PRIVATE
+   -Wall -Wextra -Wpedantic)
++if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ANONSYNC_USE_BUNDLED_SQLITE)
++  # SQLite's global allocator can only be replaced before initialization. The
++  # campaign therefore execs one fresh worker for every transaction-stack cut.
++  add_executable(anonsync_sqlite_transaction_allocator_fault_test
++    tests/sqlite_transaction_allocator_fault_test.cpp)
++  target_include_directories(
++    anonsync_sqlite_transaction_allocator_fault_test PRIVATE
++    ${CMAKE_CURRENT_SOURCE_DIR}/src)
++  target_link_libraries(
++    anonsync_sqlite_transaction_allocator_fault_test PRIVATE
++    anonsync_sqlite_support)
++  target_compile_options(
++    anonsync_sqlite_transaction_allocator_fault_test PRIVATE
++    -Wall -Wextra -Wpedantic)
++endif()
+ add_executable(anonsync_sqlite_process_authority_fork_test
+   tests/sqlite_process_authority_fork_test.cpp)
+ target_include_directories(anonsync_sqlite_process_authority_fork_test PRIVATE
+@@ -973,6 +988,10 @@
+     anonsync_peer_ingress_retention_integrity_test
+     anonsync_peer_ingress_schema_attestation_test
+     anonsync_peer_ingress_connection_profile_test)
++  if(TARGET anonsync_sqlite_transaction_allocator_fault_test)
++    list(APPEND ANONSYNC_SANITIZER_COMPILE_TARGETS
++      anonsync_sqlite_transaction_allocator_fault_test)
++  endif()
+   # Keep the multi-megabyte reviewed amalgamation out of the default C++
+   # sanitizer lane. Instrumenting it dominates cloud builds and can prevent
+   # the AnonSync ownership code from being exercised at all. A dedicated job
+@@ -1023,6 +1042,10 @@
+       anonsync_peer_ingress_connection_profile_test)
+     target_link_options(${tgt} PRIVATE -fsanitize=address,undefined)
+   endforeach()
++  if(TARGET anonsync_sqlite_transaction_allocator_fault_test)
++    target_link_options(anonsync_sqlite_transaction_allocator_fault_test PRIVATE
++      -fsanitize=address,undefined)
++  endif()
+ endif()
+ include(CTest)
+ if(ANONSYNC_ENABLE_LIBFUZZER)
+@@ -1107,6 +1130,10 @@
+   add_test(NAME anonsync_sqlite_transaction_exception_composition_source_audit
+     COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_transaction_exception_composition.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  add_test(NAME anonsync_sqlite_transaction_allocator_fault_source_audit
++    COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_transaction_allocator_fault.py
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   add_test(NAME anonsync_sqlite_source_first_move_source_audit
+     COMMAND ${Python3_EXECUTABLE}
+@@ -1199,6 +1226,12 @@
+   COMMAND anonsync_sqlite_transaction_exception_composition_test)
+ set_tests_properties(anonsync_sqlite_transaction_exception_composition_test
+   PROPERTIES TIMEOUT 15)
++if(TARGET anonsync_sqlite_transaction_allocator_fault_test)
++  add_test(NAME anonsync_sqlite_transaction_allocator_fault_test
++    COMMAND anonsync_sqlite_transaction_allocator_fault_test)
++  set_tests_properties(anonsync_sqlite_transaction_allocator_fault_test
++    PROPERTIES TIMEOUT 120)
++endif()
+ add_test(NAME anonsync_sqlite_process_authority_fork_test
+   COMMAND anonsync_sqlite_process_authority_fork_test)
+ set_tests_properties(anonsync_sqlite_process_authority_fork_test
+--- a/src/runner.cpp
++++ b/src/runner.cpp
+@@ -700,10 +700,8 @@
+ }
+ 
+ void sqlite_exec_checked(sqlite3* db, const std::string& sql, const std::string& label) {
+-    char* err = nullptr;
+-    if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err) != SQLITE_OK) {
+-        std::string msg = err ? err : sqlite3_errmsg(db);
+-        sqlite3_free(err);
++    if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) != SQLITE_OK) {
++        const std::string msg = sqlite3_errmsg(db);
+         throw std::runtime_error(label + ": " + msg);
+     }
+ }
+@@ -1001,9 +999,8 @@
+         sender.replay_cache_reserved = true;
+     } catch (...) {
+         if (!committed) {
+-            char* err = nullptr;
+-            sqlite3_exec(db.get(), "ROLLBACK;", nullptr, nullptr, &err);
+-            sqlite3_free(err);
++            (void)sqlite3_exec(
++                db.get(), "ROLLBACK;", nullptr, nullptr, nullptr);
+         }
+         throw;
+     }
+--- a/src/sqlite_replay_ledger.cpp
++++ b/src/sqlite_replay_ledger.cpp
+@@ -309,10 +309,8 @@
+ }
+ 
+ void sqlite_exec_or_throw(sqlite3* db, const std::string& sql, const std::string& label) {
+-    char* err = nullptr;
+-    if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err) != SQLITE_OK) {
+-        std::string msg = err ? err : sqlite3_errmsg(db);
+-        sqlite3_free(err);
++    if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr) != SQLITE_OK) {
++        const std::string msg = sqlite3_errmsg(db);
+         throw std::runtime_error(label + ": " + msg);
+     }
+ }
+@@ -404,10 +402,9 @@
+         return;
+     }
+     sqlite3_busy_timeout(db, 100);
+-    char* err = nullptr;
+-    int rc = sqlite3_exec(db, "BEGIN IMMEDIATE; ROLLBACK;", nullptr, nullptr, &err);
+-    std::string msg = err ? err : sqlite3_errmsg(db);
+-    if (err) sqlite3_free(err);
++    const int rc = sqlite3_exec(
++        db, "BEGIN IMMEDIATE; ROLLBACK;", nullptr, nullptr, nullptr);
++    const std::string msg = sqlite3_errmsg(db);
+     sqlite3_close(db);
+     if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED || msg.find("locked") != std::string::npos || msg.find("busy") != std::string::npos) {
+         throw std::runtime_error("sqlite-wal snapshot restore refuses destination with active writer lock: " + path);
+@@ -2341,10 +2338,8 @@
+             const std::exception_ptr failure = std::current_exception();
+             budget.detach();
+             if (transaction_active) {
+-                char* rollback_error = nullptr;
+                 (void)sqlite3_exec(
+-                    db, "ROLLBACK;", nullptr, nullptr, &rollback_error);
+-                sqlite3_free(rollback_error);
++                    db, "ROLLBACK;", nullptr, nullptr, nullptr);
+             }
+             sqlite_close_best_effort(db);
+             std::rethrow_exception(failure);
+@@ -2563,9 +2558,8 @@
+         sqlite_exec_or_throw(db_, "COMMIT;",
+                              "sqlite-wal replay ledger schema transaction commit failed");
+     } catch (...) {
+-        char* rollback_error = nullptr;
+-        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &rollback_error);
+-        sqlite3_free(rollback_error);
++        (void)sqlite3_exec(
++            db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+         throw;
+     }
+ 
+@@ -2925,9 +2919,8 @@
+         effect_outbox_inflight_++;
+         return out;
+     } catch (...) {
+-        char* err = nullptr;
+-        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &err);
+-        if (err) sqlite3_free(err);
++        (void)sqlite3_exec(
++            db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+         throw;
+     }
+ }
+@@ -3070,9 +3063,8 @@
+         reason = "sqlite-wal effect transition committed append-only terminal state " + terminal_state;
+         return true;
+     } catch (const std::exception& e) {
+-        char* err = nullptr;
+-        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &err);
+-        if (err) sqlite3_free(err);
++        (void)sqlite3_exec(
++            db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+         reason = e.what();
+         effect_transition_rejections_++;
+         return false;
+@@ -3233,9 +3225,8 @@
+         reason = "sqlite-wal replay ledger committed staged rows with BEGIN IMMEDIATE and WAL/FULL synchronous profile; integrated ingress sender replay rows, prepared ledger entries, and outbox reservations share the same transaction when supplied";
+         return true;
+     } catch (const std::exception& e) {
+-        char* err = nullptr;
+-        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &err);
+-        if (err) sqlite3_free(err);
++        (void)sqlite3_exec(
++            db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+         pending_.clear();
+         staged_jtis_.clear();
+         staged_event_identities_.clear();
+@@ -3686,9 +3677,8 @@
+         sqlite_close_or_throw(db, "sqlite-wal effect relay downstream close failed");
+         return out;
+     } catch (...) {
+-        char* err = nullptr;
+-        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &err);
+-        if (err) sqlite3_free(err);
++        (void)sqlite3_exec(
++            db, "ROLLBACK;", nullptr, nullptr, nullptr);
+         sqlite_close_best_effort(db);
+         throw;
+     }
+--- a/src/sync_sqlite_connection_authority.cpp
++++ b/src/sync_sqlite_connection_authority.cpp
+@@ -7,6 +7,7 @@
+ #include <atomic>
+ #include <cstdint>
+ #include <limits>
++#include <new>
+ #include <stdexcept>
+ #include <string>
+ #include <string_view>
+@@ -546,6 +547,74 @@
+                                  true);
+ }
+ 
++struct AuthorizerOwnershipProbeObservation final {
++    int prepare_result = SQLITE_MISUSE;
++    int finalize_result = SQLITE_OK;
++    bool callback_observed = false;
++    bool statement_produced = false;
++};
++
++AuthorizerOwnershipProbeObservation observe_authorizer_ownership_noexcept(
++    sqlite3* db,
++    ConnectionAuthorityState& state) noexcept {
++    ++state.probe_nonce;
++    state.observed_probe_nonce = 0;
++    state.probe_active = true;
++
++    sqlite3_stmt* statement = nullptr;
++    static constexpr char kProbeSql[] = "SELECT 1;";
++    AuthorizerOwnershipProbeObservation observation;
++    observation.prepare_result = sqlite3_prepare_v3(
++        db,
++        kProbeSql,
++        static_cast<int>(sizeof(kProbeSql) - 1),
++        SQLITE_PREPARE_PERSISTENT,
++        &statement,
++        nullptr);
++    state.probe_active = false;
++    observation.callback_observed =
++        state.observed_probe_nonce == state.probe_nonce;
++    observation.statement_produced = statement != nullptr;
++    observation.finalize_result =
++        statement != nullptr ? sqlite3_finalize(statement) : SQLITE_OK;
++    return observation;
++}
++
++SyncSqliteBoundaryAuthorityStatus classify_authorizer_observation_noexcept(
++    const AuthorizerOwnershipProbeObservation& observation) noexcept {
++    if (observation.callback_observed) {
++        // The exact bridge generation ran, but a failed prepare/finalize does
++        // not provide a healthy completed probe. Reject this use without
++        // revoking identity evidence that was positively observed.
++        return observation.prepare_result == SQLITE_OK &&
++                       observation.statement_produced &&
++                       observation.finalize_result == SQLITE_OK
++                   ? SyncSqliteBoundaryAuthorityStatus::Current
++                   : SyncSqliteBoundaryAuthorityStatus::Indeterminate;
++    }
++
++    const int primary_result = observation.prepare_result & 0xff;
++    switch (primary_result) {
++        case SQLITE_NOMEM:
++        case SQLITE_BUSY:
++        case SQLITE_LOCKED:
++        case SQLITE_INTERRUPT:
++        case SQLITE_IOERR:
++        case SQLITE_FULL:
++        case SQLITE_CANTOPEN:
++        case SQLITE_PROTOCOL:
++        case SQLITE_ABORT:
++            // SQLite may have failed before it reached the callback. Absence of
++            // an observation is therefore not evidence of callback replacement.
++            return SyncSqliteBoundaryAuthorityStatus::Indeterminate;
++        default:
++            // Success without callback, SQLITE_AUTH, malformed-authorizer
++            // SQLITE_ERROR, and other deterministic failures invalidate the
++            // ownership probe rather than granting a retryable identity claim.
++            return SyncSqliteBoundaryAuthorityStatus::Invalid;
++    }
++}
++
+ void run_authorizer_ownership_probe_or_throw(
+     sqlite3* db,
+     ConnectionAuthorityState& state,
+@@ -561,47 +630,34 @@
+         throw std::overflow_error(label + " exhausted authorizer probe nonces");
+     }
+ 
+-    ++state.probe_nonce;
+-    state.observed_probe_nonce = 0;
+-    state.probe_active = true;
+-
+-    sqlite3_stmt* statement = nullptr;
+-    static constexpr char kProbeSql[] = "SELECT 1;";
+-    const int prepare_rc = sqlite3_prepare_v3(db,
+-                                              kProbeSql,
+-                                              static_cast<int>(sizeof(kProbeSql) - 1),
+-                                              SQLITE_PREPARE_PERSISTENT,
+-                                              &statement,
+-                                              nullptr);
+-    state.probe_active = false;
+-    const std::uint64_t observed = state.observed_probe_nonce;
+-    const int finalize_rc = statement != nullptr ? sqlite3_finalize(statement)
+-                                                 : SQLITE_OK;
+-
+-    const bool callback_observed = observed == state.probe_nonce;
+-    if (prepare_rc != SQLITE_OK) {
+-        if (!callback_observed && (prepare_rc & 0xff) == SQLITE_AUTH) {
++    const AuthorizerOwnershipProbeObservation observation =
++        observe_authorizer_ownership_noexcept(db, state);
++    if (observation.prepare_result != SQLITE_OK) {
++        if (!observation.callback_observed &&
++            (observation.prepare_result & 0xff) == SQLITE_AUTH) {
+             throw std::runtime_error(
+                 label +
+                 " authorizer ownership probe failed: callback was disabled, "
+                 "replaced, or did not observe the exact generation");
+         }
+-        throw_sqlite_exception(
+-            db, prepare_rc, label + " prepare authorizer ownership probe");
+-    }
+-    if (!callback_observed) {
++        throw_sqlite_exception(db,
++                               observation.prepare_result,
++                               label + " prepare authorizer ownership probe");
++    }
++    if (!observation.callback_observed) {
+         throw std::runtime_error(
+             label +
+             " authorizer ownership probe failed: callback was disabled, replaced, "
+             "or did not observe the exact generation");
+     }
+-    if (statement == nullptr) {
++    if (!observation.statement_produced) {
+         throw std::runtime_error(
+             label + " authorizer ownership probe produced no statement");
+     }
+-    if (finalize_rc != SQLITE_OK) {
+-        throw_sqlite_exception(
+-            db, finalize_rc, label + " finalize authorizer ownership probe");
++    if (observation.finalize_result != SQLITE_OK) {
++        throw_sqlite_exception(db,
++                               observation.finalize_result,
++                               label + " finalize authorizer ownership probe");
+     }
+ }
+ 
+@@ -612,15 +668,15 @@
+     const std::string& sql,
+     const std::string& label) {
+     TransactionPermitScope permit(state, operation, label);
+-    char* raw_error = nullptr;
+-    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &raw_error);
++    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+     const bool observed = permit.observed();
+-    const std::string detail =
+-        raw_error != nullptr ? std::string(raw_error) : std::string();
+-    if (raw_error != nullptr) sqlite3_free(raw_error);
+ 
+     if (rc != SQLITE_OK) {
+-        throw_sqlite_exception(db, rc, label, detail);
++        // Do not ask sqlite3_exec() to allocate a second error string after a
++        // transaction-stack effect. sqlite3_errmsg() remains connection-owned,
++        // and removing this allocation makes the returned boundary state the
++        // only post-effect evidence that must be composed by the caller.
++        throw_sqlite_exception(db, rc, label);
+     }
+     if (!observed) {
+         throw std::runtime_error(
+@@ -638,15 +694,15 @@
+     const std::string& sql,
+     const std::string& label) {
+     SavepointPermitScope permit(state, operation, savepoint_name, label);
+-    char* raw_error = nullptr;
+-    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &raw_error);
++    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+     const bool observed = permit.observed();
+-    const std::string detail =
+-        raw_error != nullptr ? std::string(raw_error) : std::string();
+-    if (raw_error != nullptr) sqlite3_free(raw_error);
+ 
+     if (rc != SQLITE_OK) {
+-        throw_sqlite_exception(db, rc, label, detail);
++        // Do not ask sqlite3_exec() to allocate a second error string after a
++        // transaction-stack effect. sqlite3_errmsg() remains connection-owned,
++        // and removing this allocation makes the returned boundary state the
++        // only post-effect evidence that must be composed by the caller.
++        throw_sqlite_exception(db, rc, label);
+     }
+     // Success without observation means another callback accepted and
+     // executed the SQL after our ownership probe. The caller must update its
+@@ -1499,7 +1555,8 @@
+     sqlite3_mutex_leave(mutex);
+ }
+ 
+-bool sync_sqlite_savepoint_boundary_authorizes_noexcept(
++SyncSqliteBoundaryAuthorityStatus
++sync_sqlite_savepoint_boundary_authority_status_noexcept(
+     sqlite3* db,
+     const SyncSqliteSavepointBoundaryProof& proof) noexcept {
+     if (db == nullptr || proof.db != db ||
+@@ -1508,35 +1565,55 @@
+             proof.owner_thread_incarnation) ||
+         !sync_sqlite_mutex_capability_is_live_noexcept(
+             proof.retained_capability_state)) {
+-        return false;
++        return SyncSqliteBoundaryAuthorityStatus::Invalid;
+     }
+ 
+     sqlite3_mutex* mutex = sqlite3_db_mutex(db);
+-    if (mutex == nullptr) return false;
++    if (mutex == nullptr) return SyncSqliteBoundaryAuthorityStatus::Invalid;
+     sqlite3_mutex_enter(mutex);
+-    bool current = false;
++    SyncSqliteBoundaryAuthorityStatus status =
++        SyncSqliteBoundaryAuthorityStatus::Invalid;
+     try {
+         if (!proof.fenced) {
+-            current =
++            const bool current =
+                 load_connection_authority_state_or_throw(
+                     db, true, "validate unfenced typed savepoint") == nullptr &&
+                 sqlite3_get_autocommit(db) == 0;
++            status = current ? SyncSqliteBoundaryAuthorityStatus::Current
++                             : SyncSqliteBoundaryAuthorityStatus::Invalid;
+         } else {
+             ConnectionAuthorityState& state =
+                 validate_fenced_savepoint_proof_or_throw(
+                     db, proof, "validate typed savepoint authority", false);
+-            run_authorizer_ownership_probe_or_throw(
+-                db, state, "validate typed savepoint authority");
+-            current = true;
+-        }
++            if (state.probe_active || state.transaction_permit_active ||
++                state.savepoint_permit_active ||
++                state.probe_nonce == std::numeric_limits<std::uint64_t>::max()) {
++                status = SyncSqliteBoundaryAuthorityStatus::Indeterminate;
++            } else {
++                status = classify_authorizer_observation_noexcept(
++                    observe_authorizer_ownership_noexcept(db, state));
++            }
++        }
++    } catch (const std::bad_alloc&) {
++        // Diagnostic construction or another host allocation can fail after a
++        // SQLite probe error. Preserve the same retryable uncertainty.
++        status = SyncSqliteBoundaryAuthorityStatus::Indeterminate;
+     } catch (...) {
+-        current = false;
++        status = SyncSqliteBoundaryAuthorityStatus::Invalid;
+     }
+     sqlite3_mutex_leave(mutex);
+-    return current;
+-}
+-
+-bool sync_sqlite_transaction_boundary_authorizes_noexcept(
++    return status;
++}
++
++bool sync_sqlite_savepoint_boundary_authorizes_noexcept(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof) noexcept {
++    return sync_sqlite_savepoint_boundary_authority_status_noexcept(db, proof) ==
++           SyncSqliteBoundaryAuthorityStatus::Current;
++}
++
++SyncSqliteBoundaryAuthorityStatus
++sync_sqlite_transaction_boundary_authority_status_noexcept(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof) noexcept {
+     if (db == nullptr || proof.db != db ||
+@@ -1545,31 +1622,50 @@
+             proof.owner_thread_incarnation) ||
+         !sync_sqlite_mutex_capability_is_live_noexcept(
+             proof.retained_capability_state)) {
+-        return false;
+-    }
+-    if (!proof.fenced) return sqlite3_get_autocommit(db) == 0;
++        return SyncSqliteBoundaryAuthorityStatus::Invalid;
++    }
++    if (!proof.fenced) {
++        return sqlite3_get_autocommit(db) == 0
++                   ? SyncSqliteBoundaryAuthorityStatus::Current
++                   : SyncSqliteBoundaryAuthorityStatus::Invalid;
++    }
+ 
+     sqlite3_mutex* mutex = sqlite3_db_mutex(db);
+-    if (mutex == nullptr) return false;
++    if (mutex == nullptr) return SyncSqliteBoundaryAuthorityStatus::Invalid;
+     sqlite3_mutex_enter(mutex);
+-    bool current = false;
++    SyncSqliteBoundaryAuthorityStatus status =
++        SyncSqliteBoundaryAuthorityStatus::Invalid;
+     try {
+         ConnectionAuthorityState& state =
+             validate_boundary_proof_or_throw(
+                 db, proof, "validate typed transaction authority");
+         if (sqlite3_get_autocommit(db) == 0) {
+-            run_authorizer_ownership_probe_or_throw(
+-                db, state, "validate typed transaction authority");
+-            current = true;
++            if (state.probe_active || state.transaction_permit_active ||
++                state.savepoint_permit_active ||
++                state.probe_nonce == std::numeric_limits<std::uint64_t>::max()) {
++                status = SyncSqliteBoundaryAuthorityStatus::Indeterminate;
++            } else {
++                status = classify_authorizer_observation_noexcept(
++                    observe_authorizer_ownership_noexcept(db, state));
++            }
+         } else {
+             state.active_transaction_generation = 0;
+             state.active_savepoints.clear();
+         }
++    } catch (const std::bad_alloc&) {
++        status = SyncSqliteBoundaryAuthorityStatus::Indeterminate;
+     } catch (...) {
+-        current = false;
++        status = SyncSqliteBoundaryAuthorityStatus::Invalid;
+     }
+     sqlite3_mutex_leave(mutex);
+-    return current;
++    return status;
++}
++
++bool sync_sqlite_transaction_boundary_authorizes_noexcept(
++    sqlite3* db,
++    const SyncSqliteTransactionBoundaryProof& proof) noexcept {
++    return sync_sqlite_transaction_boundary_authority_status_noexcept(db, proof) ==
++           SyncSqliteBoundaryAuthorityStatus::Current;
+ }
+ 
+ void rollback_sync_sqlite_savepoint_boundary_noexcept(
+--- a/src/sync_sqlite_connection_authority_internal.hpp
++++ b/src/sync_sqlite_connection_authority_internal.hpp
+@@ -63,6 +63,18 @@
+     Rollback
+ };
+ 
++// A use-time authority probe has three outcomes. Invalid means exact identity
++// evidence is known to have changed or ended. Indeterminate means the probe
++// itself could not complete (for example SQLITE_NOMEM) and therefore must not
++// permanently revoke a generation that may still be live. Callers fail closed
++// for the current operation in both non-current states, but may retry only the
++// indeterminate one.
++enum class SyncSqliteBoundaryAuthorityStatus {
++    Current,
++    Invalid,
++    Indeterminate
++};
++
+ // Reports whether this handle already carries AnonSync-owned client data. This
+ // does not claim that the callback is still installed; callers use it only to
+ // decide whether a restrictive policy must be reinstalled before typed SQL can
+@@ -125,6 +137,11 @@
+ // True while the exact fenced generation remains anywhere in the current
+ // stack, or (for explicitly unfenced compatibility) while the connection still
+ // reports an explicit transaction.
++[[nodiscard]] SyncSqliteBoundaryAuthorityStatus
++sync_sqlite_savepoint_boundary_authority_status_noexcept(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof) noexcept;
++
+ [[nodiscard]] bool sync_sqlite_savepoint_boundary_authorizes_noexcept(
+     sqlite3* db,
+     const SyncSqliteSavepointBoundaryProof& proof) noexcept;
+@@ -145,6 +162,11 @@
+ // Returns true only while the exact connection incarnation, authorizer
+ // generation, transaction generation, and owned authorizer callback remain
+ // current and SQLite still reports an explicit transaction.
++[[nodiscard]] SyncSqliteBoundaryAuthorityStatus
++sync_sqlite_transaction_boundary_authority_status_noexcept(
++    sqlite3* db,
++    const SyncSqliteTransactionBoundaryProof& proof) noexcept;
++
+ [[nodiscard]] bool sync_sqlite_transaction_boundary_authorizes_noexcept(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof) noexcept;
+--- a/src/sync_sqlite_runtime.cpp
++++ b/src/sync_sqlite_runtime.cpp
+@@ -27,11 +27,9 @@
+ void runtime_exec_or_throw(sqlite3* db,
+                            const std::string& sql,
+                            const std::string& label) {
+-    char* error = nullptr;
+-    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &error);
++    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+     if (rc == SQLITE_OK) return;
+-    const std::string detail = error != nullptr ? error : runtime_error_detail(db);
+-    if (error != nullptr) sqlite3_free(error);
++    const std::string detail = runtime_error_detail(db);
+     throw std::runtime_error(label + ": " + detail + " (sqlite rc=" +
+                              std::to_string(rc) + ")");
+ }
+--- a/src/sync_sqlite_support.cpp
++++ b/src/sync_sqlite_support.cpp
+@@ -189,12 +189,12 @@
+ void sqlite_exec_or_throw(sqlite3* db, const std::string& sql, const std::string& label) {
+     if (db == nullptr) throw std::invalid_argument(label + ": database handle is null");
+     if (sql.empty()) throw std::invalid_argument(label + ": SQL is empty");
+-    char* err = nullptr;
+-    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err);
++    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+     if (rc != SQLITE_OK) {
+-        const std::string detail = err != nullptr ? std::string(err) : std::string();
+-        if (err != nullptr) sqlite3_free(err);
+-        throw_sqlite_exception(db, rc, label, detail);
++        // sqlite3_exec() allocates its optional errmsg through sqlite3_malloc().
++        // The connection already retains the same diagnostic via sqlite3_errmsg(),
++        // so requesting a second buffer only adds an OOM cut and an ownership edge.
++        throw_sqlite_exception(db, rc, label);
+     }
+ }
+ 
+--- a/src/sync_sqlite_support.hpp
++++ b/src/sync_sqlite_support.hpp
+@@ -127,7 +127,10 @@
+ // One single-use permit is issued only by the typed guard and is bound to the
+ // exact connection incarnation, authorizer generation, and transaction
+ // generation. Unowned utility connections retain observation-based fallback
+-// semantics for compatibility.
++// semantics for compatibility. A use-time query also fails closed when SQLite
++// cannot complete the ownership probe. Such an indeterminate false result does
++// not revoke the exact generation; a later query may succeed once the transient
++// resource failure clears. Only observed end/supersession/replacement revokes it.
+ class SyncSqliteTransactionAuthority final {
+ public:
+     SyncSqliteTransactionAuthority() = default;
+--- a/src/sync_sqlite_transaction.cpp
++++ b/src/sync_sqlite_transaction.cpp
+@@ -43,15 +43,18 @@
+             state->boundary.owner_thread_incarnation)) {
+         return false;
+     }
+-    if (!sync_sqlite_transaction_boundary_authorizes_noexcept(
+-            db, state->boundary)) {
++    const SyncSqliteBoundaryAuthorityStatus status =
++        sync_sqlite_transaction_boundary_authority_status_noexcept(
++            db, state->boundary);
++    if (status == SyncSqliteBoundaryAuthorityStatus::Invalid) {
+         // Autocommit restoration, generation supersession, or authorizer
+         // replacement permanently revokes this guard generation. It can never
+         // authorize a later transaction on a reused SQLite handle.
+         state->active.store(false, std::memory_order_release);
+-        return false;
+-    }
+-    return true;
++    }
++    // Indeterminate is fail-closed for this use but preserves the exact
++    // generation so a later probe can recover after transient SQLite failure.
++    return status == SyncSqliteBoundaryAuthorityStatus::Current;
+ }
+ 
+ bool SyncSqliteTransactionAuthority::authorizes_snapshot(sqlite3* db) const noexcept {
+@@ -127,10 +130,18 @@
+     require_sync_sqlite_process_id_or_fail_stop(process_id_, label_ + " commit");
+     require_sync_sqlite_thread_incarnation_or_throw(
+         boundary_proof_->owner_thread_incarnation, label_ + " commit");
+-    if (!authority().authorizes(db_)) {
+-        revoke_authority();
+-        throw std::logic_error(
+-            label_ + " transaction boundary is no longer owned by this guard");
++    const SyncSqliteBoundaryAuthorityStatus preflight =
++        sync_sqlite_transaction_boundary_authority_status_noexcept(
++            db_, *boundary_proof_);
++    if (preflight != SyncSqliteBoundaryAuthorityStatus::Current) {
++        if (preflight == SyncSqliteBoundaryAuthorityStatus::Invalid) {
++            revoke_authority();
++            throw std::logic_error(
++                label_ + " transaction boundary is no longer owned by this guard");
++        }
++        throw std::runtime_error(
++            label_ +
++            " transaction boundary ownership could not be revalidated; retry is required");
+     }
+     try {
+         end_sync_sqlite_transaction_boundary_or_throw(
+@@ -141,8 +152,9 @@
+     } catch (...) {
+         // SQLITE_BUSY can leave COMMIT retryable. Preserve authority only when
+         // the exact bridge and transaction generation are still current.
+-        if (!sync_sqlite_transaction_boundary_authorizes_noexcept(
+-                db_, *boundary_proof_)) {
++        if (sync_sqlite_transaction_boundary_authority_status_noexcept(
++                db_, *boundary_proof_) ==
++            SyncSqliteBoundaryAuthorityStatus::Invalid) {
+             revoke_authority();
+         }
+         throw;
+@@ -155,7 +167,15 @@
+     require_sync_sqlite_process_id_or_fail_stop(process_id_, label_ + " rollback");
+     require_sync_sqlite_thread_incarnation_or_throw(
+         boundary_proof_->owner_thread_incarnation, label_ + " rollback");
+-    if (!authority().authorizes(db_)) {
++    const SyncSqliteBoundaryAuthorityStatus preflight =
++        sync_sqlite_transaction_boundary_authority_status_noexcept(
++            db_, *boundary_proof_);
++    if (preflight != SyncSqliteBoundaryAuthorityStatus::Current) {
++        if (preflight == SyncSqliteBoundaryAuthorityStatus::Indeterminate) {
++            throw std::runtime_error(
++                label_ +
++                " transaction boundary ownership could not be revalidated; retry is required");
++        }
+         const bool already_ended = sqlite3_get_autocommit(db_) != 0;
+         revoke_authority();
+         if (already_ended) return;
+@@ -170,8 +190,9 @@
+             SyncSqliteTransactionBoundaryEnd::Rollback,
+             label_ + " rollback");
+     } catch (...) {
+-        if (!sync_sqlite_transaction_boundary_authorizes_noexcept(
+-                db_, *boundary_proof_)) {
++        if (sync_sqlite_transaction_boundary_authority_status_noexcept(
++                db_, *boundary_proof_) ==
++            SyncSqliteBoundaryAuthorityStatus::Invalid) {
+             revoke_authority();
+         }
+         throw;
+@@ -287,11 +308,18 @@
+     require_sync_sqlite_process_id_or_fail_stop(process_id_, label_ + " release");
+     require_sync_sqlite_thread_incarnation_or_throw(
+         boundary_proof_->owner_thread_incarnation, label_ + " release");
+-    if (!sync_sqlite_savepoint_boundary_authorizes_noexcept(
+-            db_, *boundary_proof_)) {
+-        revoke_authority();
+-        throw std::logic_error(
+-            label_ + " savepoint boundary is no longer owned by this guard");
++    const SyncSqliteBoundaryAuthorityStatus preflight =
++        sync_sqlite_savepoint_boundary_authority_status_noexcept(
++            db_, *boundary_proof_);
++    if (preflight != SyncSqliteBoundaryAuthorityStatus::Current) {
++        if (preflight == SyncSqliteBoundaryAuthorityStatus::Invalid) {
++            revoke_authority();
++            throw std::logic_error(
++                label_ + " savepoint boundary is no longer owned by this guard");
++        }
++        throw std::runtime_error(
++            label_ +
++            " savepoint boundary ownership could not be revalidated; retry is required");
+     }
+     try {
+         end_sync_sqlite_savepoint_boundary_or_throw(
+@@ -300,8 +328,9 @@
+             SyncSqliteSavepointBoundaryEnd::Release,
+             label_ + " release");
+     } catch (...) {
+-        if (!sync_sqlite_savepoint_boundary_authorizes_noexcept(
+-                db_, *boundary_proof_)) {
++        if (sync_sqlite_savepoint_boundary_authority_status_noexcept(
++                db_, *boundary_proof_) ==
++            SyncSqliteBoundaryAuthorityStatus::Invalid) {
+             revoke_authority();
+         }
+         throw;
+@@ -314,8 +343,15 @@
+     require_sync_sqlite_process_id_or_fail_stop(process_id_, label_ + " rollback");
+     require_sync_sqlite_thread_incarnation_or_throw(
+         boundary_proof_->owner_thread_incarnation, label_ + " rollback");
+-    if (!sync_sqlite_savepoint_boundary_authorizes_noexcept(
+-            db_, *boundary_proof_)) {
++    const SyncSqliteBoundaryAuthorityStatus preflight =
++        sync_sqlite_savepoint_boundary_authority_status_noexcept(
++            db_, *boundary_proof_);
++    if (preflight != SyncSqliteBoundaryAuthorityStatus::Current) {
++        if (preflight == SyncSqliteBoundaryAuthorityStatus::Indeterminate) {
++            throw std::runtime_error(
++                label_ +
++                " savepoint boundary ownership could not be revalidated; retry is required");
++        }
+         const bool already_ended = sqlite3_get_autocommit(db_) != 0;
+         revoke_authority();
+         if (already_ended) return;
+@@ -330,8 +366,9 @@
+             SyncSqliteSavepointBoundaryEnd::Rollback,
+             label_ + " rollback");
+     } catch (...) {
+-        if (!sync_sqlite_savepoint_boundary_authorizes_noexcept(
+-                db_, *boundary_proof_)) {
++        if (sync_sqlite_savepoint_boundary_authority_status_noexcept(
++                db_, *boundary_proof_) ==
++            SyncSqliteBoundaryAuthorityStatus::Invalid) {
+             revoke_authority();
+         }
+         throw;
+--- /dev/null
++++ b/tests/sqlite_transaction_allocator_fault_test.cpp
+@@ -0,0 +1,880 @@
++#include "sync_sqlite_connection_authority.hpp"
++#include "sync_sqlite_support.hpp"
++
++#include <algorithm>
++#include <array>
++#include <charconv>
++#include <cstdint>
++#include <cstdlib>
++#include <exception>
++#include <iostream>
++#include <memory>
++#include <optional>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <system_error>
++#include <utility>
++#include <vector>
++
++#if defined(__linux__)
++#include <cerrno>
++#include <sys/types.h>
++#include <sys/wait.h>
++#include <unistd.h>
++#endif
++
++#include <sqlite3.h>
++
++namespace {
++
++using namespace anonsync;
++
++[[noreturn]] void fail(const std::string& message) {
++    throw std::runtime_error(message);
++}
++
++void require(bool condition, const std::string& message, std::uint64_t& checks) {
++    ++checks;
++    if (!condition) fail(message);
++}
++
++int allow_policy(void*,
++                 int,
++                 const char*,
++                 const char*,
++                 const char*,
++                 const char*) noexcept {
++    return SQLITE_OK;
++}
++
++struct FaultAllocatorState final {
++    sqlite3_mem_methods base{};
++    std::uint64_t attempts = 0;
++    std::uint64_t failures = 0;
++    std::uint64_t fail_at = 0;
++    std::uint64_t live_blocks = 0;
++    std::uint64_t live_bytes = 0;
++    std::uint64_t peak_live_bytes = 0;
++    bool accounting_corrupt = false;
++    bool armed = false;
++    bool sticky = false;
++    bool configured = false;
++};
++
++FaultAllocatorState g_allocator;
++
++bool allocation_should_fail(int bytes) noexcept {
++    if (!g_allocator.armed || bytes <= 0) return false;
++    ++g_allocator.attempts;
++    if (g_allocator.fail_at == 0) return false;
++    const bool fail_now = g_allocator.sticky
++                              ? g_allocator.attempts >= g_allocator.fail_at
++                              : g_allocator.attempts == g_allocator.fail_at;
++    if (fail_now) ++g_allocator.failures;
++    return fail_now;
++}
++
++void account_allocation(void* memory) noexcept {
++    if (memory == nullptr) return;
++    ++g_allocator.live_blocks;
++    const int size = g_allocator.base.xSize(memory);
++    if (size > 0) {
++        g_allocator.live_bytes += static_cast<std::uint64_t>(size);
++        g_allocator.peak_live_bytes =
++            std::max(g_allocator.peak_live_bytes, g_allocator.live_bytes);
++    }
++}
++
++void account_free(void* memory) noexcept {
++    if (memory == nullptr) return;
++    const int size = g_allocator.base.xSize(memory);
++    if (g_allocator.live_blocks == 0 ||
++        (size > 0 && g_allocator.live_bytes < static_cast<std::uint64_t>(size))) {
++        g_allocator.accounting_corrupt = true;
++        return;
++    }
++    --g_allocator.live_blocks;
++    if (size > 0) g_allocator.live_bytes -= static_cast<std::uint64_t>(size);
++}
++
++void* fault_malloc(int bytes) noexcept {
++    if (allocation_should_fail(bytes)) return nullptr;
++    void* const memory = g_allocator.base.xMalloc(bytes);
++    account_allocation(memory);
++    return memory;
++}
++
++void fault_free(void* memory) noexcept {
++    account_free(memory);
++    g_allocator.base.xFree(memory);
++}
++
++void* fault_realloc(void* memory, int bytes) noexcept {
++    if (allocation_should_fail(bytes)) return nullptr;
++    const int old_size = memory != nullptr ? g_allocator.base.xSize(memory) : 0;
++    void* const replacement = g_allocator.base.xRealloc(memory, bytes);
++    if (replacement == nullptr) return nullptr;
++    if (memory == nullptr) {
++        account_allocation(replacement);
++        return replacement;
++    }
++    const int new_size = g_allocator.base.xSize(replacement);
++    if (old_size > 0 &&
++        g_allocator.live_bytes >= static_cast<std::uint64_t>(old_size)) {
++        g_allocator.live_bytes -= static_cast<std::uint64_t>(old_size);
++    } else if (old_size > 0) {
++        g_allocator.accounting_corrupt = true;
++    }
++    if (new_size > 0) {
++        g_allocator.live_bytes += static_cast<std::uint64_t>(new_size);
++        g_allocator.peak_live_bytes =
++            std::max(g_allocator.peak_live_bytes, g_allocator.live_bytes);
++    }
++    return replacement;
++}
++
++int fault_size(void* memory) noexcept {
++    return g_allocator.base.xSize(memory);
++}
++
++int fault_roundup(int bytes) noexcept {
++    return g_allocator.base.xRoundup(bytes);
++}
++
++int fault_init(void*) noexcept {
++    return g_allocator.base.xInit != nullptr
++               ? g_allocator.base.xInit(g_allocator.base.pAppData)
++               : SQLITE_OK;
++}
++
++void fault_shutdown(void*) noexcept {
++    if (g_allocator.base.xShutdown != nullptr) {
++        g_allocator.base.xShutdown(g_allocator.base.pAppData);
++    }
++}
++
++class FaultAllocatorRuntime final {
++public:
++    FaultAllocatorRuntime() {
++        if (sqlite3_shutdown() != SQLITE_OK) {
++            fail("could not place SQLite in pre-initialization state");
++        }
++        if (sqlite3_config(SQLITE_CONFIG_GETMALLOC, &g_allocator.base) !=
++            SQLITE_OK) {
++            fail("SQLITE_CONFIG_GETMALLOC was rejected");
++        }
++        if (g_allocator.base.xMalloc == nullptr ||
++            g_allocator.base.xFree == nullptr ||
++            g_allocator.base.xRealloc == nullptr ||
++            g_allocator.base.xSize == nullptr ||
++            g_allocator.base.xRoundup == nullptr) {
++            fail("SQLite returned an incomplete base allocator");
++        }
++
++        sqlite3_mem_methods overlay = g_allocator.base;
++        overlay.xMalloc = fault_malloc;
++        overlay.xFree = fault_free;
++        overlay.xRealloc = fault_realloc;
++        overlay.xSize = fault_size;
++        overlay.xRoundup = fault_roundup;
++        overlay.xInit = fault_init;
++        overlay.xShutdown = fault_shutdown;
++        overlay.pAppData = nullptr;
++        if (sqlite3_config(SQLITE_CONFIG_MALLOC, &overlay) != SQLITE_OK) {
++            fail("SQLITE_CONFIG_MALLOC rejected the fault overlay");
++        }
++        if (sqlite3_initialize() != SQLITE_OK) {
++            fail("SQLite initialization failed with the fault overlay installed");
++        }
++        g_allocator.configured = true;
++    }
++
++    ~FaultAllocatorRuntime() {
++        if (!shutdown_) {
++            g_allocator.armed = false;
++            g_allocator.configured = false;
++            (void)sqlite3_shutdown();
++        }
++    }
++
++    void shutdown_or_throw() {
++        if (shutdown_) return;
++        g_allocator.armed = false;
++        const int rc = sqlite3_shutdown();
++        g_allocator.configured = false;
++        shutdown_ = true;
++        if (rc != SQLITE_OK) fail("SQLite shutdown failed");
++        if (g_allocator.accounting_corrupt) {
++            fail("SQLite allocator live-block accounting became inconsistent");
++        }
++        if (g_allocator.live_blocks != 0 || g_allocator.live_bytes != 0) {
++            fail("SQLite worker retained overlay allocations after shutdown: blocks=" +
++                 std::to_string(g_allocator.live_blocks) + " bytes=" +
++                 std::to_string(g_allocator.live_bytes));
++        }
++    }
++
++    FaultAllocatorRuntime(const FaultAllocatorRuntime&) = delete;
++    FaultAllocatorRuntime& operator=(const FaultAllocatorRuntime&) = delete;
++
++private:
++    bool shutdown_ = false;
++};
++
++struct FaultOutcome final {
++    std::uint64_t attempts = 0;
++    std::uint64_t failures = 0;
++    std::exception_ptr error;
++};
++
++template <typename Function>
++FaultOutcome run_with_fault(std::uint64_t fail_at,
++                            bool sticky,
++                            Function&& function) {
++    if (!g_allocator.configured || g_allocator.armed) {
++        fail("allocator fault boundary was armed in an invalid state");
++    }
++    g_allocator.attempts = 0;
++    g_allocator.failures = 0;
++    g_allocator.fail_at = fail_at;
++    g_allocator.sticky = sticky;
++    g_allocator.armed = true;
++
++    std::exception_ptr error;
++    try {
++        function();
++    } catch (...) {
++        error = std::current_exception();
++    }
++
++    const FaultOutcome outcome{
++        g_allocator.attempts, g_allocator.failures, std::move(error)};
++    g_allocator.armed = false;
++    g_allocator.fail_at = 0;
++    g_allocator.sticky = false;
++    return outcome;
++}
++
++struct SqliteCloser final {
++    void operator()(sqlite3* db) const noexcept {
++        if (db != nullptr) (void)sqlite3_close_v2(db);
++    }
++};
++using SqlitePtr = std::unique_ptr<sqlite3, SqliteCloser>;
++
++SqlitePtr open_memory_database() {
++    sqlite3* raw = nullptr;
++    const int rc = sqlite3_open_v2(
++        ":memory:",
++        &raw,
++        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
++        nullptr);
++    if (rc != SQLITE_OK) {
++        const std::string reason =
++            raw != nullptr ? sqlite3_errmsg(raw) : "unknown SQLite open error";
++        if (raw != nullptr) (void)sqlite3_close_v2(raw);
++        fail("could not open allocator-fault database: " + reason);
++    }
++    return SqlitePtr(raw);
++}
++
++struct Fixture final {
++    SqlitePtr db = open_memory_database();
++    SyncSqliteConnectionAuthorityProof authority;
++
++    Fixture() {
++        sqlite_exec_or_throw(db.get(),
++                             "CREATE TABLE trace_rows(value INTEGER PRIMARY KEY);",
++                             "allocator-fault schema");
++        authority = install_sync_sqlite_connection_authority_or_throw(
++            db.get(), allow_policy, nullptr, "allocator-fault authority");
++        if (!authority.valid()) fail("allocator-fault authority is invalid");
++    }
++};
++
++void insert_row(sqlite3* db, int value) {
++    sqlite_exec_or_throw(db,
++                         "INSERT INTO trace_rows(value) VALUES(" +
++                             std::to_string(value) + ");",
++                         "allocator-fault insert");
++}
++
++std::vector<int> rows(sqlite3* db) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT value FROM trace_rows ORDER BY value;",
++        "allocator-fault row snapshot");
++    std::vector<int> result;
++    for (;;) {
++        const int rc = sqlite3_step(statement.stmt);
++        if (rc == SQLITE_DONE) break;
++        if (rc != SQLITE_ROW) {
++            throw_sqlite_exception(db, rc, "allocator-fault row step");
++        }
++        result.push_back(sqlite3_column_int(statement.stmt, 0));
++    }
++    return result;
++}
++
++std::string render_rows(const std::vector<int>& values) {
++    std::string out = "[";
++    for (std::size_t index = 0; index < values.size(); ++index) {
++        if (index != 0) out += ",";
++        out += std::to_string(values[index]);
++    }
++    out += "]";
++    return out;
++}
++
++void require_rows(sqlite3* db,
++                  std::vector<int> expected,
++                  const std::string& label,
++                  std::uint64_t& checks) {
++    const std::vector<int> observed = rows(db);
++    require(observed == expected,
++            label + " expected " + render_rows(expected) + " but observed " +
++                render_rows(observed),
++            checks);
++}
++
++enum class Scenario {
++    TransactionBegin,
++    SavepointBegin,
++    SavepointRelease,
++    SavepointRollback,
++    TransactionCommit,
++    TransactionRollback
++};
++
++constexpr std::array<std::pair<std::string_view, Scenario>, 6> kScenarios{{
++    {"transaction-begin", Scenario::TransactionBegin},
++    {"savepoint-begin", Scenario::SavepointBegin},
++    {"savepoint-release", Scenario::SavepointRelease},
++    {"savepoint-rollback", Scenario::SavepointRollback},
++    {"transaction-commit", Scenario::TransactionCommit},
++    {"transaction-rollback", Scenario::TransactionRollback},
++}};
++
++std::optional<Scenario> parse_scenario(std::string_view name) {
++    for (const auto& [candidate, scenario] : kScenarios) {
++        if (candidate == name) return scenario;
++    }
++    return std::nullopt;
++}
++
++std::string_view scenario_name(Scenario scenario) {
++    for (const auto& [name, candidate] : kScenarios) {
++        if (candidate == scenario) return name;
++    }
++    return "unknown";
++}
++
++void validate_fault_reached(const FaultOutcome& outcome,
++                            std::uint64_t fail_at,
++                            std::uint64_t& checks) {
++    if (fail_at == 0) return;
++    require(outcome.attempts >= fail_at,
++            "configured allocation cut was not reached",
++            checks);
++    require(outcome.failures >= 1,
++            "configured allocation cut did not reject an allocation",
++            checks);
++}
++
++FaultOutcome run_transaction_begin(std::uint64_t fail_at,
++                                   bool sticky,
++                                   std::uint64_t& checks) {
++    Fixture fixture;
++    std::unique_ptr<SyncSqliteTransaction> transaction;
++    const FaultOutcome outcome = run_with_fault(fail_at, sticky, [&] {
++        transaction = std::make_unique<SyncSqliteTransaction>(
++            fixture.db.get(), "allocator-fault transaction begin");
++    });
++    validate_fault_reached(outcome, fail_at, checks);
++
++    if (transaction != nullptr) {
++        require(transaction->active(),
++                "successful transaction begin did not retain authority",
++                checks);
++        insert_row(fixture.db.get(), 1);
++        transaction->rollback();
++    } else {
++        require(outcome.error != nullptr,
++                "failed transaction construction returned neither guard nor error",
++                checks);
++        require(sqlite3_get_autocommit(fixture.db.get()) != 0,
++                "failed transaction begin orphaned an explicit transaction",
++                checks);
++        SyncSqliteTransaction retry(
++            fixture.db.get(), "allocator-fault transaction begin retry");
++        require(retry.active(),
++                "transaction begin retry did not recover authority",
++                checks);
++        insert_row(fixture.db.get(), 2);
++        retry.rollback();
++    }
++    require_rows(fixture.db.get(), {}, "transaction begin recovery", checks);
++    return outcome;
++}
++
++FaultOutcome run_savepoint_begin(std::uint64_t fail_at,
++                                 bool sticky,
++                                 std::uint64_t& checks) {
++    Fixture fixture;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "allocator-fault savepoint-begin outer");
++    insert_row(fixture.db.get(), 1);
++    std::unique_ptr<SyncSqliteSavepoint> savepoint;
++    const FaultOutcome outcome = run_with_fault(fail_at, sticky, [&] {
++        savepoint = std::make_unique<SyncSqliteSavepoint>(
++            fixture.db.get(), transaction.authority(),
++            "allocator-fault savepoint begin");
++    });
++    validate_fault_reached(outcome, fail_at, checks);
++
++    if (sqlite3_get_autocommit(fixture.db.get()) != 0) {
++        require(savepoint == nullptr && outcome.error != nullptr,
++                "savepoint begin auto-rollback returned a live guard",
++                checks);
++        require(!transaction.active(),
++                "savepoint begin auto-rollback retained outer authority",
++                checks);
++        transaction.rollback();
++        require_rows(fixture.db.get(), {},
++                     "savepoint begin automatic outer rollback", checks);
++        SyncSqliteTransaction next(
++            fixture.db.get(), "allocator-fault post-savepoint-begin transaction");
++        next.rollback();
++        return outcome;
++    }
++
++    require(transaction.active(),
++            "savepoint begin cut revoked a still-live outer transaction",
++            checks);
++    if (savepoint != nullptr) {
++        require(savepoint->active(),
++                "successful savepoint begin did not retain authority",
++                checks);
++        insert_row(fixture.db.get(), 2);
++        savepoint->rollback();
++    } else {
++        require(outcome.error != nullptr,
++                "failed savepoint construction returned neither guard nor error",
++                checks);
++        SyncSqliteSavepoint retry(
++            fixture.db.get(), transaction.authority(),
++            "allocator-fault savepoint begin retry");
++        insert_row(fixture.db.get(), 3);
++        retry.rollback();
++    }
++    require_rows(fixture.db.get(), {1}, "savepoint begin recovery", checks);
++    transaction.rollback();
++    require_rows(fixture.db.get(), {}, "savepoint begin outer rollback", checks);
++    return outcome;
++}
++
++FaultOutcome run_savepoint_release(std::uint64_t fail_at,
++                                   bool sticky,
++                                   std::uint64_t& checks) {
++    Fixture fixture;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "allocator-fault savepoint-release outer");
++    insert_row(fixture.db.get(), 1);
++    SyncSqliteSavepoint savepoint(
++        fixture.db.get(), transaction.authority(),
++        "allocator-fault savepoint release");
++    insert_row(fixture.db.get(), 2);
++
++    const FaultOutcome outcome =
++        run_with_fault(fail_at, sticky, [&] { savepoint.release(); });
++    validate_fault_reached(outcome, fail_at, checks);
++    if (outcome.error != nullptr &&
++        sqlite3_get_autocommit(fixture.db.get()) != 0) {
++        require(!savepoint.active(),
++                "savepoint release auto-rollback retained mark authority",
++                checks);
++        require(!transaction.active(),
++                "savepoint release auto-rollback retained outer authority",
++                checks);
++        transaction.rollback();
++        require_rows(fixture.db.get(), {},
++                     "savepoint release automatic outer rollback", checks);
++        SyncSqliteTransaction next(
++            fixture.db.get(), "allocator-fault post-savepoint-release transaction");
++        next.rollback();
++        return outcome;
++    }
++    if (outcome.error != nullptr) {
++        require(savepoint.active(),
++                "failed savepoint release permanently revoked a live mark",
++                checks);
++        savepoint.release();
++    }
++    require(!savepoint.active(),
++            "savepoint release recovery left the mark authoritative",
++            checks);
++    require(transaction.active(),
++            "savepoint release ended or revoked the outer transaction",
++            checks);
++    transaction.commit();
++    require_rows(fixture.db.get(), {1, 2}, "savepoint release commit", checks);
++    return outcome;
++}
++
++FaultOutcome run_savepoint_rollback(std::uint64_t fail_at,
++                                    bool sticky,
++                                    std::uint64_t& checks) {
++    Fixture fixture;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "allocator-fault savepoint-rollback outer");
++    insert_row(fixture.db.get(), 1);
++    SyncSqliteSavepoint savepoint(
++        fixture.db.get(), transaction.authority(),
++        "allocator-fault savepoint rollback");
++    insert_row(fixture.db.get(), 2);
++
++    const FaultOutcome outcome =
++        run_with_fault(fail_at, sticky, [&] { savepoint.rollback(); });
++    validate_fault_reached(outcome, fail_at, checks);
++    if (outcome.error != nullptr &&
++        sqlite3_get_autocommit(fixture.db.get()) != 0) {
++        require(!savepoint.active(),
++                "savepoint rollback auto-rollback retained mark authority",
++                checks);
++        require(!transaction.active(),
++                "savepoint rollback auto-rollback retained outer authority",
++                checks);
++        transaction.rollback();
++        require_rows(fixture.db.get(), {},
++                     "savepoint rollback automatic outer rollback", checks);
++        SyncSqliteTransaction next(
++            fixture.db.get(), "allocator-fault post-savepoint-rollback transaction");
++        next.rollback();
++        return outcome;
++    }
++    if (outcome.error != nullptr) {
++        require(savepoint.active(),
++                "failed savepoint rollback permanently revoked a live mark",
++                checks);
++        // Retry must rewind work added after any successful partial ROLLBACK TO.
++        insert_row(fixture.db.get(), 3);
++        savepoint.rollback();
++    }
++    require(!savepoint.active(),
++            "savepoint rollback recovery left the mark authoritative",
++            checks);
++    require_rows(fixture.db.get(), {1}, "savepoint rollback rewind", checks);
++    transaction.commit();
++    require_rows(fixture.db.get(), {1}, "savepoint rollback commit", checks);
++    return outcome;
++}
++
++FaultOutcome run_transaction_commit(std::uint64_t fail_at,
++                                    bool sticky,
++                                    std::uint64_t& checks) {
++    Fixture fixture;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "allocator-fault transaction commit");
++    insert_row(fixture.db.get(), 1);
++
++    const FaultOutcome outcome =
++        run_with_fault(fail_at, sticky, [&] { transaction.commit(); });
++    validate_fault_reached(outcome, fail_at, checks);
++    if (outcome.error != nullptr && sqlite3_get_autocommit(fixture.db.get()) == 0) {
++        require(transaction.active(),
++                "failed commit revoked a still-live transaction",
++                checks);
++        transaction.commit();
++    }
++    require(sqlite3_get_autocommit(fixture.db.get()) != 0,
++            "commit recovery did not restore autocommit",
++            checks);
++    require(!transaction.active(),
++            "commit recovery retained transaction authority",
++            checks);
++    const std::vector<int> committed = rows(fixture.db.get());
++    require(committed.empty() || committed == std::vector<int>{1},
++            "failed commit produced an impossible row state " +
++                render_rows(committed),
++            checks);
++
++    SyncSqliteTransaction next(
++        fixture.db.get(), "allocator-fault post-commit transaction");
++    insert_row(fixture.db.get(), 2);
++    next.rollback();
++    require_rows(fixture.db.get(), committed,
++                 "post-commit generation isolation", checks);
++    return outcome;
++}
++
++FaultOutcome run_transaction_rollback(std::uint64_t fail_at,
++                                      bool sticky,
++                                      std::uint64_t& checks) {
++    Fixture fixture;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "allocator-fault transaction rollback");
++    insert_row(fixture.db.get(), 1);
++
++    const FaultOutcome outcome =
++        run_with_fault(fail_at, sticky, [&] { transaction.rollback(); });
++    validate_fault_reached(outcome, fail_at, checks);
++    if (outcome.error != nullptr && sqlite3_get_autocommit(fixture.db.get()) == 0) {
++        require(transaction.active(),
++                "failed rollback revoked a still-live transaction",
++                checks);
++        transaction.rollback();
++    }
++    require(sqlite3_get_autocommit(fixture.db.get()) != 0,
++            "rollback recovery did not restore autocommit",
++            checks);
++    require(!transaction.active(),
++            "rollback recovery retained transaction authority",
++            checks);
++    require_rows(fixture.db.get(), {}, "transaction rollback result", checks);
++
++    SyncSqliteTransaction next(
++        fixture.db.get(), "allocator-fault post-rollback transaction");
++    insert_row(fixture.db.get(), 2);
++    next.rollback();
++    require_rows(fixture.db.get(), {},
++                 "post-rollback generation isolation", checks);
++    return outcome;
++}
++
++FaultOutcome run_scenario(Scenario scenario,
++                          std::uint64_t fail_at,
++                          bool sticky,
++                          std::uint64_t& checks) {
++    switch (scenario) {
++        case Scenario::TransactionBegin:
++            return run_transaction_begin(fail_at, sticky, checks);
++        case Scenario::SavepointBegin:
++            return run_savepoint_begin(fail_at, sticky, checks);
++        case Scenario::SavepointRelease:
++            return run_savepoint_release(fail_at, sticky, checks);
++        case Scenario::SavepointRollback:
++            return run_savepoint_rollback(fail_at, sticky, checks);
++        case Scenario::TransactionCommit:
++            return run_transaction_commit(fail_at, sticky, checks);
++        case Scenario::TransactionRollback:
++            return run_transaction_rollback(fail_at, sticky, checks);
++    }
++    fail("unknown allocator-fault scenario");
++}
++
++std::uint64_t parse_uint64(std::string_view raw, const std::string& label) {
++    std::uint64_t value = 0;
++    const char* const begin = raw.data();
++    const char* const end = raw.data() + raw.size();
++    const auto result = std::from_chars(begin, end, value);
++    if (result.ec != std::errc{} || result.ptr != end) {
++        fail(label + " is not an exact uint64");
++    }
++    return value;
++}
++
++int worker_main(std::string_view scenario_raw,
++                std::string_view mode_raw,
++                std::string_view fail_at_raw) {
++    const std::optional<Scenario> scenario = parse_scenario(scenario_raw);
++    if (!scenario.has_value()) fail("unknown worker scenario");
++    const bool sticky = mode_raw == "sticky";
++    if (!sticky && mode_raw != "oneshot") fail("unknown worker fault mode");
++    const std::uint64_t fail_at = parse_uint64(fail_at_raw, "worker fail-at");
++
++    FaultAllocatorRuntime runtime;
++    std::uint64_t checks = 0;
++    const FaultOutcome outcome =
++        run_scenario(*scenario, fail_at, sticky, checks);
++    runtime.shutdown_or_throw();
++    ++checks;
++    std::cout << "scenario=" << scenario_name(*scenario)
++              << " mode=" << mode_raw
++              << " fail_at=" << fail_at
++              << " attempts=" << outcome.attempts
++              << " failures=" << outcome.failures
++              << " threw=" << (outcome.error != nullptr ? 1 : 0)
++              << " checks=" << checks << "\n";
++    return 0;
++}
++
++#if defined(__linux__)
++
++struct ChildResult final {
++    int exit_code = -1;
++    std::string output;
++};
++
++std::string executable_path() {
++    std::array<char, 4096> buffer{};
++    const ssize_t count =
++        ::readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
++    if (count <= 0 || static_cast<std::size_t>(count) >= buffer.size()) {
++        fail("could not resolve /proc/self/exe");
++    }
++    buffer[static_cast<std::size_t>(count)] = '\0';
++    return std::string(buffer.data(), static_cast<std::size_t>(count));
++}
++
++ChildResult run_worker_process(const std::string& executable,
++                               std::string_view scenario,
++                               std::string_view mode,
++                               std::uint64_t fail_at) {
++    // Materialize every exec argument before fork. The child then uses only
++    // async-signal-safe descriptor operations, execl(), and _Exit().
++    const std::string scenario_text(scenario);
++    const std::string mode_text(mode);
++    const std::string fail_at_text = std::to_string(fail_at);
++    int pipe_fds[2] = {-1, -1};
++    if (::pipe(pipe_fds) != 0) fail("worker pipe creation failed");
++
++    const pid_t child = ::fork();
++    if (child < 0) {
++        (void)::close(pipe_fds[0]);
++        (void)::close(pipe_fds[1]);
++        fail("worker fork failed");
++    }
++    if (child == 0) {
++        (void)::close(pipe_fds[0]);
++        if (::dup2(pipe_fds[1], STDOUT_FILENO) < 0 ||
++            ::dup2(pipe_fds[1], STDERR_FILENO) < 0) {
++            std::_Exit(120);
++        }
++        (void)::close(pipe_fds[1]);
++        ::execl(executable.c_str(),
++                executable.c_str(),
++                "--worker",
++                scenario_text.c_str(),
++                mode_text.c_str(),
++                fail_at_text.c_str(),
++                static_cast<char*>(nullptr));
++        std::_Exit(121);
++    }
++
++    (void)::close(pipe_fds[1]);
++    std::string output;
++    std::array<char, 4096> buffer{};
++    for (;;) {
++        const ssize_t count = ::read(pipe_fds[0], buffer.data(), buffer.size());
++        if (count > 0) {
++            output.append(buffer.data(), static_cast<std::size_t>(count));
++            continue;
++        }
++        if (count < 0 && errno == EINTR) continue;
++        break;
++    }
++    (void)::close(pipe_fds[0]);
++
++    int status = 0;
++    for (;;) {
++        const pid_t waited = ::waitpid(child, &status, 0);
++        if (waited == child) break;
++        if (waited < 0 && errno == EINTR) continue;
++        fail("worker waitpid failed");
++    }
++    ChildResult result;
++    result.output = std::move(output);
++    if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
++    return result;
++}
++
++std::uint64_t parse_output_field(const std::string& output,
++                                 std::string_view field) {
++    const std::string needle = std::string(field) + "=";
++    const std::size_t start = output.find(needle);
++    if (start == std::string::npos) {
++        fail("worker output omitted " + std::string(field) + ": " + output);
++    }
++    const std::size_t value_start = start + needle.size();
++    const std::size_t value_end = output.find_first_of(" \r\n", value_start);
++    return parse_uint64(
++        std::string_view(output).substr(value_start, value_end - value_start),
++        "worker output field " + std::string(field));
++}
++
++void require_worker_success(const ChildResult& result,
++                            std::string_view scenario,
++                            std::string_view mode,
++                            std::uint64_t fail_at,
++                            std::uint64_t& checks) {
++    ++checks;
++    if (result.exit_code != 0) {
++        fail("allocator worker failed for " + std::string(scenario) + " " +
++             std::string(mode) + " cut " + std::to_string(fail_at) +
++             ": " + result.output);
++    }
++}
++
++int parent_main() {
++    const std::string executable = executable_path();
++    std::uint64_t checks = 0;
++    std::uint64_t workers = 0;
++    std::uint64_t cutpoints = 0;
++
++    for (const auto& [name, scenario] : kScenarios) {
++        (void)scenario;
++        const ChildResult baseline =
++            run_worker_process(executable, name, "oneshot", 0);
++        ++workers;
++        require_worker_success(baseline, name, "oneshot", 0, checks);
++        const std::uint64_t attempts =
++            parse_output_field(baseline.output, "attempts");
++        require(attempts > 0,
++                "baseline worker reached no SQLite allocation boundary for " +
++                    std::string(name),
++                checks);
++        require(attempts <= 512,
++                "allocator cut frontier exceeded the reviewed bound for " +
++                    std::string(name),
++                checks);
++
++        for (std::uint64_t cut = 1; cut <= attempts; ++cut) {
++            for (std::string_view mode : {std::string_view("oneshot"),
++                                          std::string_view("sticky")}) {
++                const ChildResult result =
++                    run_worker_process(executable, name, mode, cut);
++                ++workers;
++                ++cutpoints;
++                require_worker_success(result, name, mode, cut, checks);
++                require(parse_output_field(result.output, "failures") >= 1,
++                        "allocator worker did not fire configured cut for " +
++                            std::string(name) + " " + std::string(mode) +
++                            " cut " + std::to_string(cut),
++                        checks);
++            }
++        }
++    }
++
++    std::cout << "PASS: SQLite transaction allocator-fault campaign "
++              << checks << " checks, " << workers << " isolated workers, "
++              << cutpoints << " injected cutpoints\n";
++    return 0;
++}
++
++#else
++
++int parent_main() {
++    std::cout << "SKIP: allocator-fault process campaign requires Linux\n";
++    return 0;
++}
++
++#endif
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    try {
++        if (argc == 5 && std::string_view(argv[1]) == "--worker") {
++            return worker_main(argv[2], argv[3], argv[4]);
++        }
++        if (argc != 1) fail("unexpected allocator-fault test arguments");
++        return parent_main();
++    } catch (const std::exception& error) {
++        std::cerr << "FAIL: " << error.what() << "\n";
++        return 1;
++    } catch (...) {
++        std::cerr << "FAIL: non-standard exception\n";
++        return 1;
++    }
++}
+--- a/tools/audit_sqlite_replay_ledger_schema_contract.py
++++ b/tools/audit_sqlite_replay_ledger_schema_contract.py
+@@ -189,13 +189,31 @@
+         "creation_uses_contract_without_second_ddl_copy",
+         "new-database DDL must come only from the exact owner",
+     )
+-    require(
+-        checks,
+-        '"BEGIN IMMEDIATE;"' in create_body
+-        and '"COMMIT;"' in create_body
+-        and 'sqlite3_exec(db_, "ROLLBACK;"' in create_body,
++    begin_position = create_body.find('"BEGIN IMMEDIATE;"')
++    contract_position = create_body.find(
++        "sqlite_replay_ledger_schema_contract()", begin_position
++    )
++    commit_position = create_body.find('"COMMIT;"', contract_position)
++    catch_position = create_body.find("catch (...)", commit_position)
++    rollback_without_errmsg = re.search(
++        r'sqlite3_exec\s*\(\s*db_,\s*"ROLLBACK;",\s*nullptr,\s*nullptr,\s*nullptr\s*\)',
++        create_body[catch_position:] if catch_position >= 0 else "",
++        re.S,
++    )
++    require(
++        checks,
++        0 <= begin_position < contract_position < commit_position < catch_position
++        and rollback_without_errmsg is not None,
+         "new_schema_and_seed_rows_are_transactional",
+-        "a crash or failed seed must not publish a partially initialized schema",
++        "creation, seed rows, exact commit, and best-effort rollback must remain one ordered transaction",
++    )
++    require(
++        checks,
++        rollback_without_errmsg is not None
++        and "rollback_error" not in create_body
++        and "sqlite3_free" not in create_body,
++        "schema_rollback_avoids_optional_exec_errmsg_allocation",
++        "error cleanup must not create another allocator cut while unwinding schema creation",
+     )
+     require(
+         checks,
+--- /dev/null
++++ b/tools/audit_sqlite_transaction_allocator_fault.py
+@@ -0,0 +1,533 @@
++#!/usr/bin/env python3
++"""Deterministic source audit for SQLite transaction allocator-fault recovery.
++
++The runtime campaign proves compiled behavior under allocation cuts. This audit
++binds the process-isolation machinery, allocator overlay, tri-state authority
++classification, retry/revocation split, and removal of redundant sqlite3_exec()
++error-buffer ownership from the reviewed runtime helpers.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import re
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++SENSITIVE_FILES = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_sqlite_connection_authority.cpp"),
++    Path("src/sync_sqlite_connection_authority_internal.hpp"),
++    Path("src/sync_sqlite_transaction.cpp"),
++    Path("src/sync_sqlite_support.hpp"),
++    Path("src/sync_sqlite_support.cpp"),
++    Path("src/sync_sqlite_runtime.cpp"),
++    Path("src/sqlite_replay_ledger.cpp"),
++    Path("src/runner.cpp"),
++    Path("tests/sqlite_transaction_allocator_fault_test.cpp"),
++    Path("tools/audit_sqlite_transaction_stack_authority.py"),
++    Path("tools/audit_sqlite_transaction_exception_composition.py"),
++    Path("tools/audit_sqlite_replay_ledger_schema_contract.py"),
++    Path("tools/verify_release_package.py"),
++)
++
++RUNTIME_EXEC_HELPERS = (
++    Path("src/sync_sqlite_connection_authority.cpp"),
++    Path("src/sync_sqlite_support.cpp"),
++    Path("src/sync_sqlite_runtime.cpp"),
++    Path("src/sqlite_replay_ledger.cpp"),
++    Path("src/runner.cpp"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def require(checks: list[Check], condition: bool, check_id: str, detail: str) -> None:
++    checks.append(Check(check_id, bool(condition), detail))
++
++
++def sha256_file(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def ordered(text: str, *needles: str) -> bool:
++    cursor = -1
++    for needle in needles:
++        cursor = text.find(needle, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
++def segment(text: str, start: str, end: str) -> str:
++    begin = text.find(start)
++    finish = text.find(end, begin + len(start)) if begin >= 0 else -1
++    if begin < 0 or finish < 0:
++        return ""
++    return text[begin:finish]
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root",
++        type=Path,
++        default=Path(__file__).resolve().parents[1],
++        help="AnonSync source root",
++    )
++    parser.add_argument("--json", type=Path, help="write deterministic JSON report")
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
++    if missing:
++        report = {
++            "format": "anonsync-sqlite-transaction-allocator-fault-audit-v1",
++            "root": str(root),
++            "passed": False,
++            "check_count": 0,
++            "checks": [],
++            "violations": [f"missing sensitive file: {path}" for path in missing],
++        }
++        rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++        if args.json:
++            args.json.parent.mkdir(parents=True, exist_ok=True)
++            args.json.write_text(rendered, encoding="utf-8")
++        else:
++            sys.stdout.write(rendered)
++        return 2
++
++    texts = {
++        path: (root / path).read_text(encoding="utf-8", errors="strict")
++        for path in SENSITIVE_FILES
++    }
++    cmake = texts[Path("CMakeLists.txt")]
++    authority = texts[Path("src/sync_sqlite_connection_authority.cpp")]
++    authority_internal = texts[Path("src/sync_sqlite_connection_authority_internal.hpp")]
++    transaction = texts[Path("src/sync_sqlite_transaction.cpp")]
++    support_hpp = texts[Path("src/sync_sqlite_support.hpp")]
++    worker = texts[Path("tests/sqlite_transaction_allocator_fault_test.cpp")]
++    stack_audit = texts[Path("tools/audit_sqlite_transaction_stack_authority.py")]
++    composition_audit = texts[
++        Path("tools/audit_sqlite_transaction_exception_composition.py")
++    ]
++    schema_contract_audit = texts[
++        Path("tools/audit_sqlite_replay_ledger_schema_contract.py")
++    ]
++    package_verifier = texts[Path("tools/verify_release_package.py")]
++
++    checks: list[Check] = []
++
++    target_section = segment(
++        cmake,
++        'if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ANONSYNC_USE_BUNDLED_SQLITE)',
++        "add_executable(anonsync_sqlite_process_authority_fork_test",
++    )
++    for needle, check_id in (
++        ('if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ANONSYNC_USE_BUNDLED_SQLITE)', "target_requires_linux_and_bundled_sqlite"),
++        ("add_executable(anonsync_sqlite_transaction_allocator_fault_test", "allocator_campaign_target_exists"),
++        ("tests/sqlite_transaction_allocator_fault_test.cpp", "allocator_campaign_source_is_compiled"),
++        ("anonsync_sqlite_support", "allocator_campaign_links_reviewed_owner"),
++        ("-Wall -Wextra -Wpedantic", "allocator_campaign_enables_warnings"),
++    ):
++        require(checks, needle in target_section, check_id, f"required target marker: {needle}")
++    require(
++        checks,
++        "anonsync_core_lib" not in target_section,
++        "allocator_campaign_avoids_unrelated_core_graph",
++        "the focused worker links the SQLite support boundary, not the full application core",
++    )
++    require(
++        checks,
++        cmake.count("add_executable(anonsync_sqlite_transaction_allocator_fault_test") == 1,
++        "allocator_campaign_target_is_singular",
++        "one conditional target must own the process campaign",
++    )
++    for needle, check_id in (
++        ("list(APPEND ANONSYNC_SANITIZER_COMPILE_TARGETS\n      anonsync_sqlite_transaction_allocator_fault_test)", "allocator_campaign_is_sanitizer_compiled"),
++        ("target_link_options(anonsync_sqlite_transaction_allocator_fault_test PRIVATE\n      -fsanitize=address,undefined)", "allocator_campaign_is_sanitizer_linked"),
++        ("add_test(NAME anonsync_sqlite_transaction_allocator_fault_test", "allocator_campaign_is_registered_in_ctest"),
++        ("set_tests_properties(anonsync_sqlite_transaction_allocator_fault_test\n    PROPERTIES TIMEOUT 120)", "allocator_campaign_has_bounded_ctest_timeout"),
++        ("anonsync_sqlite_transaction_allocator_fault_source_audit", "allocator_source_audit_is_registered_in_ctest"),
++        ("tools/audit_sqlite_transaction_allocator_fault.py", "allocator_source_audit_script_is_registered"),
++    ):
++        require(checks, needle in cmake, check_id, f"required CMake proof marker: {needle}")
++
++    for needle, check_id in (
++        ("enum class SyncSqliteBoundaryAuthorityStatus", "tri_state_authority_type_exists"),
++        ("Current", "tri_state_has_current"),
++        ("Invalid", "tri_state_has_invalid"),
++        ("Indeterminate", "tri_state_has_indeterminate"),
++        ("sync_sqlite_savepoint_boundary_authority_status_noexcept", "savepoint_status_api_exists"),
++        ("sync_sqlite_transaction_boundary_authority_status_noexcept", "transaction_status_api_exists"),
++    ):
++        require(checks, needle in authority_internal, check_id, f"required tri-state marker: {needle}")
++
++    classifier = segment(
++        authority,
++        "SyncSqliteBoundaryAuthorityStatus classify_authorizer_observation_noexcept(",
++        "void run_authorizer_ownership_probe_or_throw(",
++    )
++    require(
++        checks,
++        ordered(
++            classifier,
++            "if (observation.callback_observed)",
++            "observation.prepare_result == SQLITE_OK",
++            "observation.statement_produced",
++            "observation.finalize_result == SQLITE_OK",
++            "SyncSqliteBoundaryAuthorityStatus::Current",
++        ),
++        "current_requires_observed_completed_probe",
++        "Current requires the exact callback plus successful prepare, statement production, and finalize",
++    )
++    for result in (
++        "SQLITE_NOMEM",
++        "SQLITE_BUSY",
++        "SQLITE_LOCKED",
++        "SQLITE_INTERRUPT",
++        "SQLITE_IOERR",
++        "SQLITE_FULL",
++        "SQLITE_CANTOPEN",
++        "SQLITE_PROTOCOL",
++        "SQLITE_ABORT",
++    ):
++        require(
++            checks,
++            result in classifier,
++            "indeterminate_classifies_" + result.lower(),
++            f"resource/transient result remains retryable uncertainty: {result}",
++        )
++    require(
++        checks,
++        "return SyncSqliteBoundaryAuthorityStatus::Invalid;" in classifier,
++        "deterministic_probe_failure_is_invalid",
++        "absence of the exact callback without a transient result cannot preserve authority",
++    )
++    require(
++        checks,
++        authority.count("observe_authorizer_ownership_noexcept(") >= 4,
++        "throwing_and_noexcept_paths_share_probe_observation",
++        "one observation primitive feeds the normal probe and both use-time status paths",
++    )
++    require(
++        checks,
++        authority.count("SyncSqliteBoundaryAuthorityStatus::Indeterminate") >= 6,
++        "indeterminate_is_explicit_through_owner",
++        "resource uncertainty must not collapse back into a boolean owner test",
++    )
++    require(
++        checks,
++        authority.count("==\n           SyncSqliteBoundaryAuthorityStatus::Current") == 2,
++        "boolean_compatibility_wrappers_grant_only_current",
++        "legacy bool queries may authorize only the exact Current state",
++    )
++
++    authority_query = segment(
++        transaction,
++        "bool SyncSqliteTransactionAuthority::authorizes(",
++        "bool SyncSqliteTransactionAuthority::authorizes_snapshot(",
++    )
++    require(
++        checks,
++        "if (status == SyncSqliteBoundaryAuthorityStatus::Invalid)" in authority_query,
++        "authority_handle_revokes_only_invalid",
++        "an indeterminate probe fails this use without poisoning the retained generation",
++    )
++    require(
++        checks,
++        "return status == SyncSqliteBoundaryAuthorityStatus::Current;" in authority_query,
++        "authority_handle_fails_closed_when_not_current",
++        "both Invalid and Indeterminate must deny the current use",
++    )
++    require(
++        checks,
++        transaction.count("boundary ownership could not be revalidated; retry is required") == 4,
++        "four_mutating_preflights_expose_retryable_uncertainty",
++        "commit, rollback, release, and savepoint rollback distinguish Indeterminate",
++    )
++    require(
++        checks,
++        transaction.count("==\n            SyncSqliteBoundaryAuthorityStatus::Invalid") >= 4,
++        "catch_paths_revoke_only_observed_invalidity",
++        "post-effect exceptions preserve a still-live exact generation when revalidation is indeterminate",
++    )
++    require(
++        checks,
++        "if (!sync_sqlite_transaction_boundary_authorizes_noexcept" not in transaction
++        and "if (!sync_sqlite_savepoint_boundary_authorizes_noexcept" not in transaction,
++        "mutating_paths_do_not_conflate_false_with_revocation",
++        "the old boolean catch/preflight pattern must not return",
++    )
++    require(
++        checks,
++        "indeterminate false result" in support_hpp
++        and "Only observed end/supersession/replacement revokes it" in support_hpp,
++        "public_authority_contract_documents_indeterminate_retry",
++        "callers are told that fail-closed false does not always mean permanent revocation",
++    )
++
++    for needle, check_id in (
++        ("SQLITE_CONFIG_GETMALLOC", "worker_reads_exact_base_allocator"),
++        ("SQLITE_CONFIG_MALLOC", "worker_installs_allocator_overlay"),
++        ("sqlite3_initialize()", "worker_initializes_after_configuration"),
++        ("sqlite3_shutdown()", "worker_owns_global_sqlite_lifecycle"),
++        ("fault_malloc", "worker_wraps_malloc"),
++        ("fault_free", "worker_wraps_free"),
++        ("fault_realloc", "worker_wraps_realloc"),
++        ("fault_size", "worker_wraps_size"),
++        ("fault_roundup", "worker_wraps_roundup"),
++        ("fault_init", "worker_wraps_init"),
++        ("fault_shutdown", "worker_wraps_shutdown"),
++        ("live_blocks", "worker_tracks_live_blocks"),
++        ("live_bytes", "worker_tracks_live_bytes"),
++        ("accounting_corrupt", "worker_detects_accounting_underflow"),
++    ):
++        require(checks, needle in worker, check_id, f"required allocator marker: {needle}")
++    require(
++        checks,
++        ordered(
++            worker,
++            "sqlite3_shutdown()",
++            "SQLITE_CONFIG_GETMALLOC",
++            "SQLITE_CONFIG_MALLOC",
++            "sqlite3_initialize()",
++        ),
++        "allocator_overlay_is_installed_before_initialization",
++        "SQLite global allocator configuration is startup-sensitive",
++    )
++    require(
++        checks,
++        ordered(
++            segment(worker, "void shutdown_or_throw()", "FaultAllocatorRuntime(const"),
++            "g_allocator.armed = false",
++            "sqlite3_shutdown()",
++            "g_allocator.live_blocks != 0",
++            "g_allocator.live_bytes != 0",
++        ),
++        "worker_proves_overlay_allocations_are_released",
++        "shutdown is followed by explicit live-block and live-byte accounting checks",
++    )
++    require(
++        checks,
++        "g_allocator.sticky\n                              ? g_allocator.attempts >= g_allocator.fail_at\n                              : g_allocator.attempts == g_allocator.fail_at" in worker,
++        "worker_has_one_shot_and_persistent_failure_modes",
++        "one-shot cuts one allocation; sticky cuts the selected allocation and all successors",
++    )
++    require(
++        checks,
++        "std::exception_ptr error" in worker and "std::current_exception()" in worker,
++        "worker_preserves_boundary_exception_for_state_composition",
++        "the cut result is separated from the later recovery assertions",
++    )
++
++    scenario_names = (
++        "transaction-begin",
++        "savepoint-begin",
++        "savepoint-release",
++        "savepoint-rollback",
++        "transaction-commit",
++        "transaction-rollback",
++    )
++    for name in scenario_names:
++        require(
++            checks,
++            worker.count(f'"{name}"') >= 1,
++            "worker_covers_" + name.replace("-", "_"),
++            f"allocator campaign scenario is present: {name}",
++        )
++    require(
++        checks,
++        "constexpr std::array<std::pair<std::string_view, Scenario>, 6>" in worker,
++        "scenario_inventory_is_exactly_six",
++        "the reviewed transaction/savepoint boundaries have a fixed inventory",
++    )
++    for needle, check_id in (
++        ("failed transaction begin orphaned an explicit transaction", "begin_failure_cannot_orphan_transaction"),
++        ("savepoint begin cut revoked a still-live outer transaction", "savepoint_begin_preserves_live_outer_generation"),
++        ("failed savepoint release permanently revoked a live mark", "release_failure_preserves_live_mark"),
++        ("failed savepoint rollback permanently revoked a live mark", "rollback_failure_preserves_live_mark"),
++        ("failed commit revoked a still-live transaction", "commit_failure_preserves_live_transaction"),
++        ("failed rollback revoked a still-live transaction", "rollback_failure_preserves_live_transaction"),
++        ("automatic outer rollback", "worker_models_sqlite_automatic_outer_rollback"),
++        ("post-commit generation isolation", "worker_proves_post_commit_generation_isolation"),
++        ("post-rollback generation isolation", "worker_proves_post_rollback_generation_isolation"),
++    ):
++        require(checks, needle in worker, check_id, f"required recovery assertion: {needle}")
++    require(
++        checks,
++        worker.count("sqlite3_get_autocommit") >= 8,
++        "worker_observes_automatic_transaction_end",
++        "resource errors may end the outer transaction and must revoke both typed levels",
++    )
++    require(
++        checks,
++        "insert_row(fixture.db.get(), 3);\n        savepoint.rollback();" in worker,
++        "split_rollback_retry_rewinds_later_work",
++        "retry after a partial ROLLBACK TO must rewind work added after the failed close",
++    )
++
++    process_segment = segment(worker, "ChildResult run_worker_process(", "std::uint64_t parse_output_field(")
++    require(
++        checks,
++        all(marker in process_segment for marker in ("::fork()", "::execl(", "::waitpid(", "::pipe(", "::dup2(")),
++        "each_cut_execs_a_fresh_worker_process",
++        "global allocator configuration is isolated by fork/exec and observed by the parent",
++    )
++    child_segment = segment(process_segment, "if (child == 0)", "(void)::close(pipe_fds[1]);\n    std::string output")
++    require(
++        checks,
++        "std::string(" not in child_segment and "std::to_string(" not in child_segment,
++        "post_fork_child_avoids_cpp_allocation",
++        "all exec arguments are materialized before fork; the child performs descriptor operations and exec only",
++    )
++    require(
++        checks,
++        ordered(
++            process_segment,
++            "const std::string scenario_text",
++            "const std::string mode_text",
++            "const std::string fail_at_text",
++            "::fork()",
++        ),
++        "exec_arguments_are_materialized_before_fork",
++        "the child does not depend on allocator or locale state after fork",
++    )
++    parent_segment = segment(worker, "int parent_main()", "#else")
++    require(
++        checks,
++        "for (std::uint64_t cut = 1; cut <= attempts; ++cut)" in parent_segment,
++        "parent_walks_every_baseline_allocation_cut",
++        "every allocation observed by the no-fault boundary run is cut",
++    )
++    require(
++        checks,
++        'std::string_view("oneshot")' in parent_segment
++        and 'std::string_view("sticky")' in parent_segment,
++        "parent_runs_both_fault_modes_per_cut",
++        "every baseline cut is exercised once transiently and once persistently",
++    )
++    require(
++        checks,
++        "attempts <= 512" in parent_segment,
++        "allocation_frontier_has_reviewed_upper_bound",
++        "an accidental runaway worker expansion fails the proof instead of exploding CTest",
++    )
++    require(
++        checks,
++        'parse_output_field(result.output, "failures") >= 1' in parent_segment,
++        "parent_proves_each_requested_cut_fired",
++        "a successful child without an injected failure cannot count as a cutpoint pass",
++    )
++
++    raw_error_inventory: dict[str, dict[str, object]] = {}
++    raw_error_pattern = re.compile(
++        r"char\s*\*\s*(?:err|error|errmsg|raw_error|rollback_error)\b"
++        r"|sqlite3_exec\([^;]{0,600}&(?:err|error|errmsg|raw_error|rollback_error)\b",
++        re.DOTALL,
++    )
++    for path in RUNTIME_EXEC_HELPERS:
++        text = texts[path]
++        matches = [match.group(0)[:200] for match in raw_error_pattern.finditer(text)]
++        raw_error_inventory[path.as_posix()] = {
++            "match_count": len(matches),
++            "matches": matches,
++            "sqlite3_free_count": text.count("sqlite3_free("),
++        }
++        require(
++            checks,
++            not matches,
++            "runtime_exec_has_no_owned_errmsg_" + path.stem,
++            f"{path.as_posix()} must use connection-owned sqlite3_errmsg evidence",
++        )
++        require(
++            checks,
++            "sqlite3_free(" not in text,
++            "runtime_exec_has_no_errmsg_free_" + path.stem,
++            f"{path.as_posix()} has no sqlite3_exec error-buffer ownership edge",
++        )
++    require(
++        checks,
++        "sqlite3_exec() allocates its optional errmsg through sqlite3_malloc()" in texts[Path("src/sync_sqlite_support.cpp")],
++        "generic_exec_helper_documents_removed_oom_cut",
++        "the allocation/ownership rationale remains adjacent to the shared helper",
++    )
++    require(
++        checks,
++        authority.count("sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr)") >= 2,
++        "transaction_boundaries_do_not_request_optional_errmsg",
++        "post-effect state composition is not preceded by a redundant SQLite allocation",
++    )
++
++    require(
++        checks,
++        "tests/sqlite_transaction_allocator_fault_test.cpp" in package_verifier
++        and "tools/audit_sqlite_transaction_allocator_fault.py" in package_verifier,
++        "release_package_requires_allocator_proof_surface",
++        "the worker and source audit cannot be omitted while CMake retains stale references",
++    )
++    require(
++        checks,
++        "tests/sqlite_transaction_allocator_fault_test.cpp" in stack_audit
++        and "tools/audit_sqlite_transaction_allocator_fault.py" in stack_audit,
++        "broad_transaction_stack_audit_tracks_allocator_proof",
++        "the central stack inventory hashes both the runtime campaign and focused audit",
++    )
++    require(
++        checks,
++        "SyncSqliteBoundaryAuthorityStatus" in composition_audit
++        and "Indeterminate" in composition_audit,
++        "exception_composition_audit_tracks_tri_state_semantics",
++        "the earlier cutpoint model cannot silently regress to boolean revocation",
++    )
++    require(
++        checks,
++        "schema_rollback_avoids_optional_exec_errmsg_allocation"
++        in schema_contract_audit
++        and "rollback_without_errmsg" in schema_contract_audit,
++        "schema_contract_audit_tracks_no_errmsg_rollback",
++        "the existing schema transaction audit must require the allocation-free unwind form",
++    )
++
++    violations = [asdict(check) for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-sqlite-transaction-allocator-fault-audit-v1",
++        "root": str(root),
++        "passed": not violations,
++        "check_count": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++        "raw_sqlite_exec_error_buffer_inventory": raw_error_inventory,
++        "sensitive_file_sha256": {
++            path.as_posix(): sha256_file(root / path) for path in SENSITIVE_FILES
++        },
++        "interpretation": (
++            "Current requires a completed exact callback probe. Invalid revokes. "
++            "Indeterminate denies the present use but retains the exact generation for retry. "
++            "The isolated allocator campaign cuts every allocation on each no-fault boundary "
++            "frontier in both one-shot and persistent modes, and its overlay accounts all live blocks."
++        ),
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if args.json:
++        args.json.parent.mkdir(parents=True, exist_ok=True)
++        args.json.write_text(rendered, encoding="utf-8")
++    else:
++        sys.stdout.write(rendered)
++    return 0 if report["passed"] else 2
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+--- a/tools/audit_sqlite_transaction_exception_composition.py
++++ b/tools/audit_sqlite_transaction_exception_composition.py
+@@ -19,6 +19,7 @@
+ SENSITIVE_FILES = (
+     Path("CMakeLists.txt"),
+     Path("src/sync_sqlite_connection_authority.cpp"),
++    Path("src/sync_sqlite_connection_authority_internal.hpp"),
+     Path("src/sync_sqlite_transaction.cpp"),
+     Path("tests/sqlite_transaction_exception_composition_test.cpp"),
+     Path("tools/audit_sqlite_transaction_stack_authority.py"),
+@@ -98,6 +99,7 @@
+     }
+     cmake = texts[Path("CMakeLists.txt")]
+     authority = texts[Path("src/sync_sqlite_connection_authority.cpp")]
++    authority_internal = texts[Path("src/sync_sqlite_connection_authority_internal.hpp")]
+     transaction = texts[Path("src/sync_sqlite_transaction.cpp")]
+     runtime_test = texts[Path("tests/sqlite_transaction_exception_composition_test.cpp")]
+     stack_audit = texts[Path("tools/audit_sqlite_transaction_stack_authority.py")]
+@@ -221,6 +223,41 @@
+         "production_guard_rechecks_authority_after_failure",
+         "typed commit/rollback owners must retain authority only after a use-time boundary recheck",
+     )
++    for needle, check_id in (
++        ("enum class SyncSqliteBoundaryAuthorityStatus", "tri_state_boundary_status_exists"),
++        ("Current", "tri_state_current_exists"),
++        ("Invalid", "tri_state_invalid_exists"),
++        ("Indeterminate", "tri_state_indeterminate_exists"),
++        ("sync_sqlite_savepoint_boundary_authority_status_noexcept", "savepoint_status_query_exists"),
++        ("sync_sqlite_transaction_boundary_authority_status_noexcept", "transaction_status_query_exists"),
++    ):
++        require(
++            checks,
++            needle in authority_internal,
++            check_id,
++            f"required tri-state marker: {needle}",
++        )
++    require(
++        checks,
++        "if (status == SyncSqliteBoundaryAuthorityStatus::Invalid)" in transaction
++        and "return status == SyncSqliteBoundaryAuthorityStatus::Current;" in transaction,
++        "authority_query_denies_indeterminate_without_revocation",
++        "only observed Invalidity revokes; Indeterminate remains fail-closed and retryable",
++    )
++    require(
++        checks,
++        transaction.count("boundary ownership could not be revalidated; retry is required") == 4,
++        "all_mutating_preflights_preserve_indeterminate_retry",
++        "transaction/savepoint commit, rollback, and release expose the same retry contract",
++    )
++    require(
++        checks,
++        "if (!sync_sqlite_transaction_boundary_authorizes_noexcept" not in transaction
++        and "if (!sync_sqlite_savepoint_boundary_authorizes_noexcept" not in transaction,
++        "catch_paths_do_not_conflate_false_with_revocation",
++        "a transient ownership-probe failure must not permanently consume a live guard",
++    )
++
+     require(
+         checks,
+         "tests/sqlite_transaction_exception_composition_test.cpp" in stack_audit,
+--- a/tools/audit_sqlite_transaction_stack_authority.py
++++ b/tools/audit_sqlite_transaction_stack_authority.py
+@@ -33,6 +33,8 @@
+     Path("src/sync_peer_ingress_payload_store_schema.cpp"),
+     Path("tests/sqlite_connection_authority_test.cpp"),
+     Path("tests/sqlite_transaction_exception_composition_test.cpp"),
++    Path("tests/sqlite_transaction_allocator_fault_test.cpp"),
++    Path("tools/audit_sqlite_transaction_allocator_fault.py"),
+     Path("tests/sync_checkpoint_owner_fence_sqlite_test.cpp"),
+     Path("tests/sync_checkpoint_owner_schema_test.cpp"),
+     Path("tests/sqlite_runtime_payload_store_test.cpp"),
+@@ -156,6 +158,8 @@
+     composition_test = texts[
+         Path("tests/sqlite_transaction_exception_composition_test.cpp")
+     ]
++    allocator_test = texts[Path("tests/sqlite_transaction_allocator_fault_test.cpp")]
++    allocator_audit = texts[Path("tools/audit_sqlite_transaction_allocator_fault.py")]
+     checkpoint_fence_test = texts[Path("tests/sync_checkpoint_owner_fence_sqlite_test.cpp")]
+     checkpoint_schema_test = texts[Path("tests/sync_checkpoint_owner_schema_test.cpp")]
+     payload_test = texts[Path("tests/sqlite_runtime_payload_store_test.cpp")]
+@@ -438,6 +442,39 @@
+             check_id,
+             f"required exception-composition marker: {needle}",
+         )
++    for needle, check_id in (
++        ("SQLITE_CONFIG_GETMALLOC", "test_allocator_overlay_reads_base"),
++        ("SQLITE_CONFIG_MALLOC", "test_allocator_overlay_installs_before_init"),
++        ("constexpr std::array<std::pair<std::string_view, Scenario>, 6>", "test_allocator_six_boundary_inventory"),
++        ("failed savepoint release permanently revoked a live mark", "test_allocator_release_retry"),
++        ("failed savepoint rollback permanently revoked a live mark", "test_allocator_rollback_retry"),
++        ("failed commit revoked a still-live transaction", "test_allocator_commit_retry"),
++        ("failed rollback revoked a still-live transaction", "test_allocator_outer_rollback_retry"),
++        ("g_allocator.live_blocks != 0", "test_allocator_live_block_accounting"),
++        ("::fork()", "test_allocator_process_isolation"),
++        ("::execl(", "test_allocator_fresh_exec"),
++    ):
++        require(
++            checks,
++            needle in allocator_test,
++            check_id,
++            f"required allocator-fault marker: {needle}",
++        )
++    require(
++        checks,
++        "SyncSqliteBoundaryAuthorityStatus" in allocator_audit
++        and "Indeterminate" in allocator_audit,
++        "allocator_source_audit_tracks_tri_state_owner",
++        "the focused audit must bind the runtime campaign to retry/revocation semantics",
++    )
++    require(
++        checks,
++        "tests/sqlite_transaction_allocator_fault_test.cpp" in cmake
++        and "anonsync_sqlite_transaction_allocator_fault_source_audit" in cmake,
++        "allocator_campaign_and_audit_are_ctest_obligations",
++        "both compiled behavior and source shape must participate in the release gate",
++    )
++
+     require(
+         checks,
+         "caught late reset failure cannot commit the destructive DELETE prefix" in checkpoint_fence_test,
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -125,12 +125,14 @@
+         "tests/sqlite_process_authority_fork_test.cpp",
+         "tests/sqlite_connection_authority_test.cpp",
+         "tests/sqlite_transaction_exception_composition_test.cpp",
++        "tests/sqlite_transaction_allocator_fault_test.cpp",
+         "tests/sqlite_source_first_move_test.cpp",
+         "tests/peer_ingress_schema_attestation_test.cpp",
+         "tests/persistence/sqlite_persistence_process_authority_fork_test.cpp",
+         "tools/audit_sqlite_process_authority.py",
+         "tools/audit_sqlite_transaction_stack_authority.py",
+         "tools/audit_sqlite_transaction_exception_composition.py",
++        "tools/audit_sqlite_transaction_allocator_fault.py",
+         "tools/audit_sqlite_source_first_move.py",
+         "tools/audit_peer_ingress_schema_owner_generation.py",
+         "tools/verify_release_package.py",

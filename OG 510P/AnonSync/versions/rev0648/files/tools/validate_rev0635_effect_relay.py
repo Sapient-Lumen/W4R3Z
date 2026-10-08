@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""Rev0635 package validator: effect relay crash/reconciliation boundary."""
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import pathlib
+import sqlite3
+import subprocess
+import sys
+import tempfile
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+BIN = ROOT / "bin" / "rev0635" / "anonsync_core-linux-x86_64-gcc-openssl3-sqlite3"
+CAPS = ROOT / "gateway" / "rev0635-cpp-ledger-backend-capabilities.json"
+MANIFEST = ROOT / "schema" / "rev0635" / "slim-cube-manifest.json"
+CONTROLS = ROOT / "fixtures" / "rev0618" / "cpp-slim-gateway-context.json"
+CASES = ROOT / "fixtures" / "rev0618" / "cpp-slim-gateway-cases.jsonl"
+CONTRACTS = ROOT / "gateway" / "rev0618-cpp-slim-normalization-contract-table.json"
+PENDING_FORMAT = "anonsync-sqlite-effect-pending-report-v5-outbox-claim"
+RELAY_FORMAT = "anonsync-sqlite-effect-relay-report-v1"
+DOWNSTREAM_FORMAT = "anonsync-relay-downstream-store-v1"
+
+
+def run(args: list[object], *, expect_codes: set[int] | None = None, expect_ok: bool | None = None) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if expect_codes is None:
+        expect_codes = {0} if expect_ok is not False else set(range(1, 256))
+    if proc.returncode not in expect_codes:
+        print(proc.stdout, end="")
+        print(proc.stderr, end="", file=sys.stderr)
+        raise AssertionError(f"command exit {proc.returncode}, expected {sorted(expect_codes)}: {' '.join(map(str, args))}")
+    return proc
+
+
+def load_json(path: pathlib.Path) -> dict[str, object]:
+    return json.loads(path.read_text())
+
+
+def is_lower_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def b64url_uint(value: int) -> str:
+    raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def make_trust_and_key(tmp: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path, str, str]:
+    kid = "rev0635-validator-root"
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub = key.public_key().public_numbers()
+    key_path = tmp / "relay-signer.pem"
+    key_path.write_bytes(private_pem)
+    trust = {
+        "format": "anonsync-effect-transition-trust-profile-v2",
+        "revision_id": "rev0635-validator",
+        "verification_time": "2026-06-18T02:46:30Z",
+        "max_intent_age_seconds": 600,
+        "required_intent_subject": "sqlite-wal-effect-terminal-transition",
+        "allowed_terminal_states": ["applied", "failed", "compensated"],
+        "trusted_signers": [{
+            "kid": kid,
+            "alg": "RS256",
+            "status": "trusted",
+            "not_before": "2026-06-18T00:00:00Z",
+            "not_after": "2026-06-19T00:00:00Z",
+            "jwk": {
+                "kty": "RSA",
+                "kid": kid,
+                "use": "sig",
+                "alg": "RS256",
+                "n": b64url_uint(pub.n),
+                "e": b64url_uint(pub.e),
+            },
+        }],
+        "blocked_claim": "rev0635 validator trust profile only; not production PKI or HSM custody.",
+    }
+    trust_path = tmp / "relay-trust.json"
+    trust_text = json.dumps(trust, indent=2, sort_keys=True) + "\n"
+    trust_path.write_text(trust_text)
+    return key_path, trust_path, hashlib.sha256(trust_text.encode()).hexdigest(), kid
+
+
+def assert_manifest_hashes() -> None:
+    manifest = load_json(MANIFEST)
+    if manifest["format"] != "anonsync-slim-cube-manifest-v1" or manifest["revision_id"] != "rev0635":
+        raise AssertionError("active slim-cube manifest format/revision mismatch")
+    if manifest["capability_manifest"] != "gateway/rev0635-cpp-ledger-backend-capabilities.json":
+        raise AssertionError("active slim-cube manifest points at the wrong capability manifest")
+    for row in manifest["files"]:
+        path = ROOT / row["path"]
+        if not path.exists():
+            raise AssertionError(f"manifest file missing: {row['path']}")
+        data = path.read_bytes()
+        if len(data) != row["size_bytes"] or hashlib.sha256(data).hexdigest() != row["sha256"]:
+            raise AssertionError(f"manifest hash/size mismatch: {row['path']}")
+
+
+def assert_caps() -> None:
+    caps = load_json(CAPS)
+    if caps["format"] != "anonsync-ledger-backend-capabilities-v30":
+        raise AssertionError("capability format is not v30")
+    if caps["revision_id"] != "rev0635" or caps["parent_revision"] != "rev0634":
+        raise AssertionError("capability lineage mismatch")
+    sw = caps["backends"]["sqlite-wal"]
+    required = {
+        "ledger_schema_version": 10,
+        "effect_pending_report_format": PENDING_FORMAT,
+        "effect_relay_report_format": RELAY_FORMAT,
+        "effect_relay_downstream_store_format": DOWNSTREAM_FORMAT,
+        "snapshot_restore_minimum_capability_version": 30,
+    }
+    for key_name, expected in required.items():
+        if sw.get(key_name) != expected:
+            raise AssertionError(f"capability {key_name} mismatch: {sw.get(key_name)!r}")
+    for key_name in [
+        "effect_relay_once_command_supported",
+        "effect_relay_signed_transition_intent_required",
+        "effect_relay_transition_trust_profile_digest_pin_required",
+        "effect_relay_reconciliation_after_downstream_apply_gap_supported",
+        "effect_relay_injected_crash_after_downstream_selftest_required",
+        "effect_relay_downstream_prepared_evidence_mismatch_rejected",
+    ]:
+        if sw.get(key_name) is not True:
+            raise AssertionError(f"capability {key_name} is not true")
+
+
+def seed_single_effect_ledger(tmp: pathlib.Path, name: str) -> pathlib.Path:
+    ledger = tmp / f"{name}.sqlite"
+    report = tmp / f"{name}-report.json"
+    one_case = tmp / f"{name}-one-case.jsonl"
+    one_case.write_text(CASES.read_text().splitlines()[0] + "\n")
+    run([
+        BIN,
+        "--controls", CONTROLS,
+        "--cases-jsonl", one_case,
+        "--contracts", CONTRACTS,
+        "--ledger", ledger,
+        "--ledger-backend", "sqlite-wal",
+        "--ledger-backend-capabilities", CAPS,
+        "--ledger-reset",
+        "--ledger-commit-mode", "batch",
+        "--report", report,
+    ])
+    counters = load_json(report)["counters"]
+    if counters["ledger_effect_outbox_reserved"] != 1 or counters["ledger_effect_outbox_inflight"] != 0 or counters["ledger_effect_outbox_terminal"] != 0:
+        raise AssertionError(f"unexpected initial single-effect outbox counters: {counters}")
+    return ledger
+
+
+def relay_once(ledger: pathlib.Path, downstream: pathlib.Path, report: pathlib.Path, key: pathlib.Path, trust: pathlib.Path, trust_sha: str, kid: str, worker: str, now: int, lease: int, *, crash: bool = False, expect: set[int] = {0}) -> dict[str, object]:
+    args: list[object] = [
+        BIN,
+        "--ledger", ledger,
+        "--ledger-effect-relay-report", report,
+        "--ledger-effect-relay-downstream-store", downstream,
+        "--ledger-effect-relay-worker-id", worker,
+        "--ledger-effect-relay-now-epoch", now,
+        "--ledger-effect-relay-lease-seconds", lease,
+        "--ledger-effect-relay-signer-private-key-pem", key,
+        "--ledger-effect-relay-signer-kid", kid,
+        "--ledger-effect-transition-trust-profile", trust,
+        "--ledger-effect-transition-trust-profile-sha256", trust_sha,
+    ]
+    if crash:
+        args.append("--ledger-effect-relay-inject-crash-after-downstream")
+    proc = run(args, expect_codes=expect)
+    if expect == {0} or 75 in expect:
+        return load_json(report)
+    return {"stdout": proc.stdout, "stderr": proc.stderr}
+
+
+def pending_counts(ledger: pathlib.Path, tmp: pathlib.Path, suffix: str) -> tuple[int, int, int]:
+    report = tmp / f"pending-{suffix}.json"
+    run([BIN, "--ledger", ledger, "--ledger-effect-pending-report", report])
+    got = load_json(report)
+    if got["format"] != PENDING_FORMAT:
+        raise AssertionError("pending report format mismatch")
+    return (got["outbox_reserved_count"], got["outbox_inflight_count"], got["terminal_effect_count"])
+
+
+def assert_relay_recovery(tmp: pathlib.Path) -> None:
+    key, trust, trust_sha, kid = make_trust_and_key(tmp)
+    ledger = seed_single_effect_ledger(tmp, "recovery-ledger")
+    downstream = tmp / "downstream.sqlite"
+    crash = relay_once(ledger, downstream, tmp / "relay-crash.json", key, trust, trust_sha, kid, "validator-A", 1781750700, 60, crash=True, expect={75})
+    if crash["format"] != RELAY_FORMAT or crash["revision_id"] != "rev0635":
+        raise AssertionError("crash relay report identity mismatch")
+    if crash["claimed"] is not True or crash["downstream_touched"] is not True or crash["transition_closed"] is not False:
+        raise AssertionError(f"unexpected crash report booleans: {crash}")
+    if crash["downstream"]["inserted"] is not True or crash["downstream"]["replayed_existing"] is not False or crash["downstream"]["observation_count"] != 1:
+        raise AssertionError(f"unexpected downstream crash report: {crash['downstream']}")
+    if pending_counts(ledger, tmp, "after-crash") != (0, 1, 0):
+        raise AssertionError("crash left unexpected pending/outbox counts")
+    early = relay_once(ledger, downstream, tmp / "relay-early.json", key, trust, trust_sha, kid, "validator-B", 1781750730, 60)
+    if early["claimed"] is not False or early["downstream_touched"] is not False:
+        raise AssertionError("fresh inflight lease was incorrectly claimed")
+    recovered = relay_once(ledger, downstream, tmp / "relay-recovered.json", key, trust, trust_sha, kid, "validator-C", 1781750761, 60)
+    if recovered["claimed"] is not True or recovered["transition_closed"] is not True:
+        raise AssertionError(f"recovery did not close terminally: {recovered}")
+    if recovered["claim"]["previous_outbox_state"] != "inflight" or recovered["claim"]["dispatch_attempts"] != 2:
+        raise AssertionError("recovery did not stale-reclaim the inflight row")
+    if recovered["downstream"]["replayed_existing"] is not True or recovered["downstream"]["observation_count"] != 2:
+        raise AssertionError("recovery did not replay existing downstream evidence")
+    if recovered["downstream"]["result_digest_sha256"] != crash["downstream"]["result_digest_sha256"]:
+        raise AssertionError("recovery changed downstream result digest")
+    if not is_lower_sha256(recovered["transition"]["transition_intent_id"]):
+        raise AssertionError("missing signed relay transition evidence")
+    if pending_counts(ledger, tmp, "after-recovery") != (0, 0, 1):
+        raise AssertionError("recovery left unexpected pending/outbox counts")
+
+    # Start a separate crash gap, then tamper with the downstream journal. The relay must refuse to sign terminal evidence.
+    tamper_ledger = seed_single_effect_ledger(tmp, "tamper-ledger")
+    tamper_downstream = tmp / "tamper-downstream.sqlite"
+    tamper_crash = relay_once(tamper_ledger, tamper_downstream, tmp / "relay-tamper-crash.json", key, trust, trust_sha, kid, "validator-D", 1781750800, 60, crash=True, expect={75})
+    tampered_effect = tamper_crash["claim"]["effect_idempotency_key"]
+    con = sqlite3.connect(tamper_downstream)
+    try:
+        con.execute("UPDATE downstream_effects SET result_digest_sha256=? WHERE effect_idempotency_key=?", ("0" * 64, tampered_effect))
+        con.commit()
+    finally:
+        con.close()
+    proc = run([
+        BIN,
+        "--ledger", tamper_ledger,
+        "--ledger-effect-relay-report", tmp / "relay-tamper-recover.json",
+        "--ledger-effect-relay-downstream-store", tamper_downstream,
+        "--ledger-effect-relay-worker-id", "validator-E",
+        "--ledger-effect-relay-now-epoch", 1781750861,
+        "--ledger-effect-relay-lease-seconds", 60,
+        "--ledger-effect-relay-signer-private-key-pem", key,
+        "--ledger-effect-relay-signer-kid", kid,
+        "--ledger-effect-transition-trust-profile", trust,
+        "--ledger-effect-transition-trust-profile-sha256", trust_sha,
+    ], expect_codes=set(range(1, 256)))
+    if "result digest" not in (proc.stdout + proc.stderr).lower():
+        raise AssertionError("tampered downstream result digest was not clearly rejected")
+
+
+def assert_downgrade_rejected(tmp: pathlib.Path) -> None:
+    downgraded = tmp / "rev0635-downgraded-capabilities.json"
+    caps = load_json(CAPS)
+    caps["format"] = "anonsync-ledger-backend-capabilities-v29"
+    caps["revision_id"] = "rev0634-forged"
+    caps["backends"]["sqlite-wal"]["snapshot_restore_minimum_capability_version"] = 29
+    downgraded.write_text(json.dumps(caps, indent=2, sort_keys=True))
+    proc = run([
+        BIN,
+        "--controls", CONTROLS,
+        "--cases-jsonl", CASES,
+        "--contracts", CONTRACTS,
+        "--ledger", tmp / "downgrade.sqlite",
+        "--ledger-backend", "sqlite-wal",
+        "--ledger-backend-capabilities", downgraded,
+        "--ledger-reset",
+        "--ledger-commit-mode", "batch",
+        "--report", tmp / "downgrade-report.json",
+    ], expect_codes=set(range(1, 256)))
+    if "v30" not in (proc.stdout + proc.stderr):
+        raise AssertionError("downgrade rejection did not name v30 requirement")
+
+
+def main() -> int:
+    if not BIN.exists():
+        raise AssertionError(f"missing packaged binary: {BIN}")
+    if not os.access(BIN, os.X_OK):
+        raise AssertionError(f"packaged binary is not executable: {BIN}")
+    assert_manifest_hashes()
+    assert_caps()
+    help_text = run([BIN, "--help"]).stdout
+    if "--ledger-effect-relay-report" not in help_text or "--selftest-ledger-sqlite-effect-relay" not in help_text:
+        raise AssertionError("relay CLI/help surface missing")
+    run([BIN, "--selftest-ledger-sqlite-effect-relay"])
+    with tempfile.TemporaryDirectory(prefix="anonsync-rev0635-validator-") as td:
+        tmp = pathlib.Path(td)
+        assert_relay_recovery(tmp)
+        assert_downgrade_rejected(tmp)
+    print(json.dumps({
+        "validator": "rev0635-effect-relay-reconciliation",
+        "status": "passed",
+        "binary": str(BIN.relative_to(ROOT)),
+        "capabilities": str(CAPS.relative_to(ROOT)),
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

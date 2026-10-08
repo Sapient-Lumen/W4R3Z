@@ -1,0 +1,3819 @@
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index d1493d299baee11639ee984d25864e93a3ad6b67..644f45bc5435180dbc43d847ca9c4cbb36e78fd9 100755
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -1553,9 +1553,22 @@ int command_run(const Options& options) {
+             observed_local_actions = {};
+             return observed_local_actions;
+         }
++        const auto completed_quarantine = owner.payload_quarantine_status();
++        if (completed_quarantine.completed_generation != 0U) {
++            status_server->complete_payload_quarantine_request_or_throw(
++                completed_quarantine.completed_generation);
++        }
+         observed_local_actions = status_server->action_snapshot();
+         owner.observe_payload_recheck_request_generation_or_throw(
+             observed_local_actions.recheck_request_generation);
++        if (observed_local_actions.payload_quarantine_request.has_value()) {
++            const auto& request =
++                *observed_local_actions.payload_quarantine_request;
++            owner.observe_payload_quarantine_request_or_throw(
++                request.request_generation,
++                request.expected_content_sha256,
++                request.observed_content_sha256);
++        }
+         return observed_local_actions;
+     };
+     for (;;) {
+@@ -1616,19 +1629,23 @@ int command_run(const Options& options) {
+             }
+         }
+ 
++        const bool payload_quarantine_pending =
++            owner.payload_quarantine_status().pending;
+         const bool payload_recheck_pending =
+             owner.payload_recheck_status().pending;
+         publish_status(
+             current_service_state(),
+-            payload_recheck_pending
+-                ? "payload_recheck"
+-                : (owner.payload_integrity_fault_active()
++            payload_quarantine_pending
++                ? "payload_quarantine"
++                : (payload_recheck_pending
++                       ? "payload_recheck"
++                       : (owner.payload_integrity_fault_active()
+                        ? "payload_integrity_reproof"
+                        : (!owner.initial_repair_complete()
+                               ? "initial_repair"
+                               : (owner.ingress_ready()
+                                      ? "peer_service_step"
+-                                     : "ingress_publication"))));
++                                     : "ingress_publication")))));
+         const auto actions_before_step = observe_local_actions_or_throw();
+         if (actions_before_step.stop_requested) {
+             stop_reason = "local_stop_requested";
+@@ -1693,8 +1710,7 @@ int command_run(const Options& options) {
+         if (bounded_wait != 0U && !local_drain_pending) {
+             if (status_server) {
+                 (void)status_server->wait_for_action_request_or_timeout(
+-                    actions_after_step.recheck_request_generation,
+-                    bounded_wait);
++                    actions_after_step, bounded_wait);
+             } else {
+                 std::this_thread::sleep_for(
+                     std::chrono::milliseconds(bounded_wait));
+@@ -1702,14 +1718,28 @@ int command_run(const Options& options) {
+         }
+     }
+     if (status_server) {
+-        // Close action admission before terminal status is frozen. A recheck
+-        // racing any non-local stop reason is therefore either included in
+-        // this exact generation cutpoint or rejected after drain; it can never
+-        // receive acceptance after the owner's final observation.
++        // Publish any owner-completed quarantine cutpoint before closing action
++        // admission. A quarantine or recheck racing any non-local stop reason
++        // is then either included in this exact combined action snapshot or
++        // rejected after drain; neither can be accepted after the owner's
++        // final observation.
++        const auto completed_quarantine = owner.payload_quarantine_status();
++        if (completed_quarantine.completed_generation != 0U) {
++            status_server->complete_payload_quarantine_request_or_throw(
++                completed_quarantine.completed_generation);
++        }
+         observed_local_actions =
+             status_server->seal_actions_for_owner_shutdown();
+         owner.observe_payload_recheck_request_generation_or_throw(
+             observed_local_actions.recheck_request_generation);
++        if (observed_local_actions.payload_quarantine_request.has_value()) {
++            const auto& request =
++                *observed_local_actions.payload_quarantine_request;
++            owner.observe_payload_quarantine_request_or_throw(
++                request.request_generation,
++                request.expected_content_sha256,
++                request.observed_content_sha256);
++        }
+     }
+     service_manager.announce_stopping(
+         "Stopping: " + std::string(stop_reason));
+@@ -1720,6 +1750,7 @@ int command_run(const Options& options) {
+             std::chrono::steady_clock::now() - service_started_at);
+     const auto& counters = owner.counters();
+     const auto payload_recheck = owner.payload_recheck_status();
++    const auto payload_quarantine = owner.payload_quarantine_status();
+     const auto service_manager_snapshot = service_manager.snapshot();
+ 
+     std::cout
+@@ -1817,6 +1848,10 @@ int command_run(const Options& options) {
+         << anonsync::
+                render_sync_replica_peer_service_payload_recheck_status_json(
+                    payload_recheck)
++        << ",\"payload_quarantine\":"
++        << anonsync::
++               render_sync_replica_peer_service_payload_quarantine_status_json(
++                   payload_quarantine)
+         << ",\"payload_integrity_fault_active\":"
+         << json_bool(owner.payload_integrity_fault_active())
+         << ",\"payload_integrity_faults_observed\":"
+@@ -1857,6 +1892,18 @@ int command_run(const Options& options) {
+         << counters.payload_recheck_convergence_snapshot_observations
+         << ",\"payload_recheck_convergence_mutation_full_scans\":"
+         << counters.payload_recheck_convergence_mutation_full_scans
++        << ",\"payload_quarantine_requests_observed\":"
++        << counters.payload_quarantine_requests_observed
++        << ",\"payload_quarantine_requests_coalesced\":"
++        << counters.payload_quarantine_requests_coalesced
++        << ",\"payload_quarantine_attempts\":"
++        << counters.payload_quarantine_attempts
++        << ",\"payload_quarantine_completions\":"
++        << counters.payload_quarantine_completions
++        << ",\"payload_quarantine_images_preserved\":"
++        << counters.payload_quarantine_images_preserved
++        << ",\"payload_quarantine_observed_content_changes\":"
++        << counters.payload_quarantine_observed_content_changes
+         << ",\"initial_repairs\":" << counters.initial_repairs
+         << ",\"periodic_repairs\":" << counters.periodic_repairs
+         << ",\"filesystem_wake_repairs\":"
+@@ -1977,7 +2024,17 @@ int command_run(const Options& options) {
+             << ",\"payload_recheck_recovered_integrity_fault\":"
+             << json_bool(
+                    step.payload_recheck_recovered_integrity_fault)
+-            << '}';
++            << ",\"payload_quarantine_generation\":"
++            << step.payload_quarantine_generation
++            << ",\"payload_quarantine_result\":";
++        if (step.payload_quarantine_result.has_value()) {
++            std::cout << anonsync::
++                render_sync_replica_file_payload_store_quarantine_result_json(
++                    *step.payload_quarantine_result);
++        } else {
++            std::cout << "null";
++        }
++        std::cout << '}';
+     }
+ 
+     std::cout << ",\"last_cycle\":";
+@@ -3270,6 +3327,31 @@ int command_recheck(const Options& options) {
+     return 0;
+ }
+ 
++int command_quarantine(const Options& options) {
++    options.require_only(
++        {"socket", "expected", "observed", "timeout-milliseconds"});
++    const fs::path socket_path = require_absolute_path(
++        options.one("socket"), "--socket");
++    const std::string expected = options.one("expected");
++    const std::string observed = options.one("observed");
++    if (!anonsync::is_lowercase_sha256_hex(expected) ||
++        !anonsync::is_lowercase_sha256_hex(observed) ||
++        expected == observed) {
++        throw std::invalid_argument(
++            "--expected and --observed must be distinct lowercase SHA-256 "
++            "digests");
++    }
++    const std::uint64_t timeout_milliseconds = option_uint64_or(
++        options, "timeout-milliseconds",
++        anonsync::kSyncLocalStatusSocketDefaultTimeoutMilliseconds);
++    std::cout
++        << anonsync::request_sync_local_status_payload_quarantine_or_throw(
++               socket_path, expected, observed, timeout_milliseconds,
++               "anonsync_sync quarantine")
++        << '\n';
++    return 0;
++}
++
+ void print_usage(std::ostream& output) {
+     output
+         << "AnonSync bounded peer synchronization\n\n"
+@@ -3325,6 +3407,9 @@ void print_usage(std::ostream& output) {
+            "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync recheck --socket ABSOLUTE_SOCKET "
+            "[--timeout-milliseconds N]\n"
++        << "  anonsync_sync quarantine --socket ABSOLUTE_SOCKET "
++           "--expected LOWERCASE_SHA256 --observed LOWERCASE_SHA256 "
++           "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync stop --socket ABSOLUTE_SOCKET "
+            "[--timeout-milliseconds N]\n\n"
+         << "once performs one local configured-folder pass, at most one "
+@@ -3339,7 +3424,12 @@ void print_usage(std::ostream& output) {
+            "generation-tracked maintenance obligation that hashes every current "
+            "payload byte and moves the exact resulting snapshot into ordinary "
+            "convergence; acceptance is not completion, so status reports the "
+-           "requested and completed generations. share-create is the idempotent first "
++           "requested and completed generations. quarantine accepts one exact "
++           "active expected/observed corruption pair, preserves that byte image "
++           "outside the authoritative payload namespace with a bounded no-replace "
++           "rename, and leaves ordinary convergence to re-fetch and re-prove the "
++           "expected payload; it is not restore, versioning, deletion, or garbage "
++           "collection. share-create is the idempotent first "
+            "local-share workflow: it creates or resumes one exact deployment "
+            "under an owner-only instance-bound state directory, explicitly "
+            "adopts and publishes existing regular files through the ordinary "
+@@ -3434,6 +3524,9 @@ int main(int argc, char** argv) {
+         if (command == "recheck") {
+             return command_recheck(options);
+         }
++        if (command == "quarantine") {
++            return command_quarantine(options);
++        }
+         throw std::invalid_argument("unknown command: " + command);
+     } catch (const std::invalid_argument& error) {
+         emit_error(command, "invalid_arguments", error.what());
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index ad13c72cb8cde5e4ec7d9fe7067a2b9c41911e05..36f2218246f65b1baa2c34be2976ea47f9d4236f 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -3,6 +3,7 @@
+ #if !defined(_WIN32)
+ 
+ #include "anonsync_json_parser.hpp"
++#include "sha256_digest.hpp"
+ #include "sync_directory_authority.hpp"
+ 
+ #include <array>
+@@ -40,14 +41,17 @@ using Clock = std::chrono::steady_clock;
+ constexpr std::string_view kStatusRequest = "status\n";
+ constexpr std::string_view kStopRequest = "stop\n";
+ constexpr std::string_view kRecheckRequest = "recheck\n";
++constexpr std::string_view kQuarantineRequestPrefix = "quarantine ";
+ constexpr std::string_view kStopResponseSchema =
+     "anonsync.local-stop.response.v1";
+ constexpr std::string_view kRecheckResponseSchema =
+     "anonsync.local-recheck.response.v1";
++constexpr std::string_view kQuarantineResponseSchema =
++    "anonsync.local-quarantine.response.v1";
+ constexpr std::string_view kUnsupportedResponse =
+     "{\"schema\":\"anonsync.local-status.response.v1\","
+     "\"ok\":false,\"error\":\"unsupported_request\"}";
+-constexpr std::size_t kMaximumRequestBytes = 64U;
++constexpr std::size_t kMaximumRequestBytes = 192U;
+ constexpr std::uint64_t kServerClientTimeoutMilliseconds = 1000U;
+ 
+ struct SocketPathIdentity final {
+@@ -75,6 +79,33 @@ struct LocalSocketResponse final {
+     return std::string(label) + " " + std::string(child);
+ }
+ 
++[[nodiscard]] std::optional<std::pair<std::string, std::string>>
++parse_payload_quarantine_request(std::string_view request) {
++    constexpr std::size_t kDigestCharacters = 64U;
++    constexpr std::size_t kExactBytes =
++        kQuarantineRequestPrefix.size() + kDigestCharacters + 1U +
++        kDigestCharacters + 1U;
++    if (request.size() != kExactBytes ||
++        !request.starts_with(kQuarantineRequestPrefix) ||
++        request.back() != '\n') {
++        return std::nullopt;
++    }
++    request.remove_prefix(kQuarantineRequestPrefix.size());
++    request.remove_suffix(1U);
++    if (request.size() != kDigestCharacters * 2U + 1U ||
++        request[kDigestCharacters] != ' ') {
++        return std::nullopt;
++    }
++    const std::string_view expected = request.substr(0U, kDigestCharacters);
++    const std::string_view observed = request.substr(kDigestCharacters + 1U);
++    if (!is_lowercase_sha256_hex(expected) ||
++        !is_lowercase_sha256_hex(observed) || expected == observed) {
++        return std::nullopt;
++    }
++    return std::pair<std::string, std::string>{
++        std::string(expected), std::string(observed)};
++}
++
+ [[nodiscard]] LocalPeerCredentials observe_local_peer_or_throw(
+     int descriptor,
+     std::string_view label) {
+@@ -698,6 +729,53 @@ void validate_recheck_response_or_throw(
+     }
+ }
+ 
++void validate_quarantine_response_or_throw(
++    std::string_view response,
++    const LocalPeerCredentials& peer,
++    std::string_view expected_content_sha256,
++    std::string_view observed_content_sha256,
++    std::string_view label) {
++    const Json parsed = parse_json_object_or_throw(response, label);
++    const std::string terminal_class = parsed.at("terminal_class").str();
++    const bool accepted = terminal_class == "accepted";
++    const bool rejected = terminal_class == "rejected";
++    const std::size_t expected_fields = rejected ? 8U : 7U;
++    if ((!accepted && !rejected) || parsed.o.size() != expected_fields ||
++        parsed.at("schema").str() != kQuarantineResponseSchema ||
++        parsed.at("command").str() != "quarantine" ||
++        parsed.at("expected_content_sha256").str() !=
++            expected_content_sha256 ||
++        parsed.at("observed_content_sha256").str() !=
++            observed_content_sha256) {
++        throw std::runtime_error(
++            std::string(label) +
++            " has an invalid payload-quarantine response shape");
++    }
++    const std::uint64_t generation = exact_nonnegative_uint64_or_throw(
++        parsed.at("request_generation"), label);
++    if (accepted && generation == 0U) {
++        throw std::runtime_error(
++            std::string(label) + " accepted generation is zero");
++    }
++    if (rejected) {
++        const std::string reason = parsed.at("reason").str();
++        if (reason != "drain_requested" &&
++            reason != "different_quarantine_pending") {
++            throw std::runtime_error(
++                std::string(label) +
++                " has an invalid payload-quarantine rejection reason");
++        }
++    }
++    const long long reported_pid = exact_positive_pid_or_throw(
++        parsed.at("server_pid"), label);
++    if (peer.process_id.has_value() &&
++        reported_pid != static_cast<long long>(*peer.process_id)) {
++        throw std::runtime_error(
++            std::string(label) +
++            " server_pid does not match the connected Unix peer");
++    }
++}
++
+ }  // namespace
+ 
+ struct SyncLocalStatusSocketServer::State final {
+@@ -712,6 +790,10 @@ struct SyncLocalStatusSocketServer::State final {
+     std::condition_variable action_condition;
+     bool drain_requested = false;
+     std::uint64_t recheck_generation = 0U;
++    std::uint64_t quarantine_generation = 0U;
++    std::uint64_t quarantine_completed_generation = 0U;
++    std::optional<SyncLocalStatusSocketPayloadQuarantineRequest>
++        quarantine_pending;
+     std::string snapshot;
+     std::optional<std::string> failure;
+     std::thread worker;
+@@ -873,6 +955,64 @@ struct SyncLocalStatusSocketServer::State final {
+         return response.str();
+     }
+ 
++    [[nodiscard]] std::string request_payload_quarantine_response(
++        std::string expected_content_sha256,
++        std::string observed_content_sha256) {
++        bool accepted = false;
++        std::string rejection_reason;
++        std::uint64_t generation = 0U;
++        SyncLocalStatusSocketPayloadQuarantineRequest new_request{
++            0U, expected_content_sha256, observed_content_sha256};
++        {
++            std::lock_guard lock(mutex);
++            generation = quarantine_generation;
++            if (drain_requested) {
++                rejection_reason = "drain_requested";
++            } else if (quarantine_pending.has_value() &&
++                       (quarantine_pending->expected_content_sha256 !=
++                            expected_content_sha256 ||
++                        quarantine_pending->observed_content_sha256 !=
++                            observed_content_sha256)) {
++                rejection_reason = "different_quarantine_pending";
++            } else {
++                if (generation >= static_cast<std::uint64_t>(
++                                      std::numeric_limits<long long>::max())) {
++                    throw std::overflow_error(
++                        label +
++                        " payload quarantine request generation is exhausted");
++                }
++                ++generation;
++                quarantine_generation = generation;
++                if (quarantine_pending.has_value()) {
++                    quarantine_pending->request_generation = generation;
++                } else {
++                    new_request.request_generation = generation;
++                    quarantine_pending.emplace(std::move(new_request));
++                }
++                accepted = true;
++            }
++        }
++        if (accepted) action_condition.notify_all();
++        std::ostringstream response;
++        response
++            << "{\"schema\":\"" << kQuarantineResponseSchema
++            << "\",\"command\":\"quarantine\","
++               "\"terminal_class\":\""
++            << (accepted ? "accepted" : "rejected") << "\"";
++        if (!accepted) {
++            response << ",\"reason\":\"" << rejection_reason << "\"";
++        }
++        response
++            << ",\"request_generation\":" << generation
++            << ",\"expected_content_sha256\":\""
++            << expected_content_sha256
++            << "\",\"observed_content_sha256\":\""
++            << observed_content_sha256
++            << "\",\"server_pid\":"
++            << static_cast<long long>(::getpid()) << '}';
++        return response.str();
++    }
++
+     void serve_client_noexcept(int descriptor) noexcept {
+         try {
+             (void)observe_local_peer_or_throw(
+@@ -890,6 +1030,15 @@ struct SyncLocalStatusSocketServer::State final {
+                 response = request_drain_response();
+             } else if (request.has_value() && *request == kRecheckRequest) {
+                 response = request_recheck_response();
++            } else if (request.has_value()) {
++                const auto quarantine =
++                    parse_payload_quarantine_request(*request);
++                if (quarantine.has_value()) {
++                    response = request_payload_quarantine_response(
++                        quarantine->first, quarantine->second);
++                } else {
++                    response = std::string(kUnsupportedResponse);
++                }
+             } else {
+                 response = std::string(kUnsupportedResponse);
+             }
+@@ -1028,6 +1177,7 @@ SyncLocalStatusSocketServer::action_snapshot() const {
+     return {
+         state_->drain_requested,
+         state_->recheck_generation,
++        state_->quarantine_pending,
+     };
+ }
+ 
+@@ -1040,14 +1190,45 @@ SyncLocalStatusSocketServer::seal_actions_for_owner_shutdown() {
+         terminal_actions = {
+             state_->drain_requested,
+             state_->recheck_generation,
++            state_->quarantine_pending,
+         };
+     }
+     state_->action_condition.notify_all();
+     return terminal_actions;
+ }
+ 
++void SyncLocalStatusSocketServer::
++complete_payload_quarantine_request_or_throw(
++    std::uint64_t completed_generation) {
++    std::lock_guard lock(state_->mutex);
++    if (completed_generation < state_->quarantine_completed_generation) {
++        throw std::invalid_argument(
++            state_->label +
++            " payload quarantine completion generation regressed");
++    }
++    if (completed_generation > state_->quarantine_generation) {
++        throw std::invalid_argument(
++            state_->label +
++            " payload quarantine completion is a future generation");
++    }
++    if (completed_generation == state_->quarantine_completed_generation) {
++        return;
++    }
++    if (!state_->quarantine_pending.has_value() ||
++        completed_generation == 0U) {
++        throw std::invalid_argument(
++            state_->label +
++            " payload quarantine completion lacks a pending request");
++    }
++    state_->quarantine_completed_generation = completed_generation;
++    if (state_->quarantine_pending->request_generation <=
++        completed_generation) {
++        state_->quarantine_pending.reset();
++    }
++}
++
+ bool SyncLocalStatusSocketServer::wait_for_action_request_or_timeout(
+-    std::uint64_t observed_recheck_generation,
++    const SyncLocalStatusSocketActionSnapshot& observed_actions,
+     std::uint64_t timeout_milliseconds) {
+     if (timeout_milliseconds >
+         kSyncLocalStatusSocketMaximumTimeoutMilliseconds) {
+@@ -1055,16 +1236,43 @@ bool SyncLocalStatusSocketServer::wait_for_action_request_or_timeout(
+             state_->label + " action wait exceeds 60000 milliseconds");
+     }
+     std::unique_lock lock(state_->mutex);
+-    const auto current_generation = [this] {
+-        return state_->recheck_generation;
+-    };
+-    if (observed_recheck_generation > current_generation()) {
++    if (observed_actions.recheck_request_generation >
++        state_->recheck_generation) {
+         throw std::invalid_argument(
+             state_->label + " action wait baseline is a future generation");
+     }
+-    const auto action_pending = [this, observed_recheck_generation] {
+-        return state_->drain_requested ||
+-            state_->recheck_generation > observed_recheck_generation;
++    if (observed_actions.payload_quarantine_request.has_value()) {
++        const auto& observed =
++            *observed_actions.payload_quarantine_request;
++        if (observed.request_generation > state_->quarantine_generation) {
++            throw std::invalid_argument(
++                state_->label +
++                " quarantine wait baseline is a future generation");
++        }
++        if (state_->quarantine_pending.has_value() &&
++            state_->quarantine_pending->request_generation ==
++                observed.request_generation &&
++            (state_->quarantine_pending->expected_content_sha256 !=
++                 observed.expected_content_sha256 ||
++             state_->quarantine_pending->observed_content_sha256 !=
++                 observed.observed_content_sha256)) {
++            throw std::invalid_argument(
++                state_->label +
++                " quarantine wait baseline changed at one generation");
++        }
++    }
++    const auto action_pending = [this, &observed_actions] {
++        if (state_->drain_requested) return true;
++        if (state_->recheck_generation >
++            observed_actions.recheck_request_generation) {
++            return true;
++        }
++        if (!state_->quarantine_pending.has_value()) return false;
++        if (!observed_actions.payload_quarantine_request.has_value()) {
++            return true;
++        }
++        return state_->quarantine_pending->request_generation >
++            observed_actions.payload_quarantine_request->request_generation;
+     };
+     if (action_pending() || timeout_milliseconds == 0U) {
+         return action_pending();
+@@ -1104,6 +1312,34 @@ std::string request_sync_local_status_recheck_or_throw(
+     return std::move(response.json);
+ }
+ 
++std::string request_sync_local_status_payload_quarantine_or_throw(
++    const fs::path& absolute_socket_path,
++    std::string expected_content_sha256,
++    std::string observed_content_sha256,
++    std::uint64_t timeout_milliseconds,
++    std::string_view label) {
++    if (!is_lowercase_sha256_hex(expected_content_sha256) ||
++        !is_lowercase_sha256_hex(observed_content_sha256) ||
++        expected_content_sha256 == observed_content_sha256) {
++        throw std::invalid_argument(
++            std::string(label) +
++            " requires distinct canonical SHA-256 digests");
++    }
++    std::string request;
++    request.reserve(kQuarantineRequestPrefix.size() + 64U + 1U + 64U + 1U);
++    request.append(kQuarantineRequestPrefix);
++    request.append(expected_content_sha256);
++    request.push_back(' ');
++    request.append(observed_content_sha256);
++    request.push_back('\n');
++    LocalSocketResponse response = request_local_socket_or_throw(
++        absolute_socket_path, request, timeout_milliseconds, label);
++    validate_quarantine_response_or_throw(
++        response.json, response.peer, expected_content_sha256,
++        observed_content_sha256, label);
++    return std::move(response.json);
++}
++
+ }  // namespace anonsync
+ 
+ #endif
+diff --git a/src/sync_local_status_socket.hpp b/src/sync_local_status_socket.hpp
+index a3efc779c57d123a867f89755615a3b6253c3f63..b45005f71816b924f94db16e759330ef43f4124b 100644
+--- a/src/sync_local_status_socket.hpp
++++ b/src/sync_local_status_socket.hpp
+@@ -5,6 +5,7 @@
+ #include <cstdint>
+ #include <filesystem>
+ #include <memory>
++#include <optional>
+ #include <string>
+ #include <string_view>
+ 
+@@ -29,24 +30,36 @@ void preflight_sync_local_status_socket_or_throw(
+     const std::filesystem::path& absolute_socket_path,
+     std::string_view label = "sync local status socket preflight");
+ 
++struct SyncLocalStatusSocketPayloadQuarantineRequest final {
++    std::uint64_t request_generation = 0U;
++    std::string expected_content_sha256;
++    std::string observed_content_sha256;
++
++    bool operator==(
++        const SyncLocalStatusSocketPayloadQuarantineRequest&) const = default;
++};
++
+ // One mutex-linearized observation of the local control plane. The socket
+-// worker may only advance the recheck generation or latch drain; the service
+-// owner reads both together so every generation accepted before drain is
+-// observed before shutdown.
++// worker may advance the recheck generation, retain one exact payload-
++// quarantine obligation, or latch drain. The service owner reads all actions
++// together so every request accepted before drain is observed before shutdown.
+ struct SyncLocalStatusSocketActionSnapshot final {
+     bool stop_requested = false;
+     std::uint64_t recheck_request_generation = 0U;
++    std::optional<SyncLocalStatusSocketPayloadQuarantineRequest>
++        payload_quarantine_request;
+ 
+     bool operator==(const SyncLocalStatusSocketActionSnapshot&) const = default;
+ };
+ 
+ // Narrow owner-only local service front end. The worker thread owns only the
+-// Unix socket, immutable JSON bytes, one drain latch, and one monotonic
+-// recheck generation, all copied or changed under one mutex. It never sees SQLite owners, TLS
+-// contexts, folder roots, or mutable service state. The exact "stop\n" request
+-// means: finish the current bounded owner step, then begin no new one. The exact
+-// "recheck\n" request accepts an owner-thread maintenance obligation; it does
+-// not itself inspect payload bytes. This is not a generic command dispatcher.
++// Unix socket, immutable JSON bytes, one drain latch, monotonic action
++// generations, and at most one exact payload-quarantine digest pair, all copied
++// or changed under one mutex. It never sees SQLite owners, TLS contexts, folder
++// roots, or mutable service state. "stop\n" begins drain; "recheck\n" accepts
++// a current-byte proof obligation; "quarantine EXPECTED OBSERVED\n" accepts
++// one exact bounded owner-thread mutation obligation. This is not a generic
++// command dispatcher.
+ class SyncLocalStatusSocketServer final {
+ public:
+     SyncLocalStatusSocketServer(
+@@ -78,11 +91,17 @@ public:
+     [[nodiscard]] SyncLocalStatusSocketActionSnapshot
+     seal_actions_for_owner_shutdown();
+ 
+-    // Waits for drain or for a generation newer than the caller's exact
+-    // observation. A future baseline is rejected rather than silently turning
+-    // a generation bug into a full retry-sleep latency.
++    // Marks one owner-observed quarantine generation complete. A newer
++    // coalesced request for the same pair remains pending; future or regressed
++    // completions are rejected. This method never mutates payload bytes.
++    void complete_payload_quarantine_request_or_throw(
++        std::uint64_t completed_generation);
++
++    // Waits for drain or for an action newer than the caller's exact combined
++    // observation. Future recheck or quarantine baselines are rejected rather
++    // than turning an owner-generation bug into fallback sleep latency.
+     [[nodiscard]] bool wait_for_action_request_or_timeout(
+-        std::uint64_t observed_recheck_generation,
++        const SyncLocalStatusSocketActionSnapshot& observed_actions,
+         std::uint64_t timeout_milliseconds);
+ 
+ private:
+@@ -118,6 +137,18 @@ private:
+         kSyncLocalStatusSocketDefaultTimeoutMilliseconds,
+     std::string_view label = "sync local recheck request");
+ 
++// Sends one exact digest-pair request. Only one pair may remain pending; repeat
++// requests for that pair coalesce by generation, while a different pair is
++// rejected until the owner reports completion. Acceptance preserves bytes but
++// is not itself quarantine completion.
++[[nodiscard]] std::string request_sync_local_status_payload_quarantine_or_throw(
++    const std::filesystem::path& absolute_socket_path,
++    std::string expected_content_sha256,
++    std::string observed_content_sha256,
++    std::uint64_t timeout_milliseconds =
++        kSyncLocalStatusSocketDefaultTimeoutMilliseconds,
++    std::string_view label = "sync local payload quarantine request");
++
+ }  // namespace anonsync
+ 
+ #endif
+diff --git a/src/sync_replica_file_payload_store.cpp b/src/sync_replica_file_payload_store.cpp
+index 2e0d5151a99efdf52ffc43364fac07ad428e49a2..f07008104d69fb319eaf2c1a0aab77ff940ab06c 100755
+--- a/src/sync_replica_file_payload_store.cpp
++++ b/src/sync_replica_file_payload_store.cpp
+@@ -95,6 +95,8 @@ constexpr std::string_view kStagedPrefixBasenamePrefix =
+     ".anonsync-payload-prefix-v1-";
+ constexpr std::string_view kAssemblyBasenamePrefix =
+     ".anonsync-payload-assemble-v1-";
++constexpr std::string_view kQuarantineBasenamePrefix =
++    ".anonsync-payload-quarantine-v1-";
+ constexpr std::size_t kSha256HexCharacters = 64U;
+ constexpr std::size_t kStreamingBufferBytes = 64U * 1024U;
+ constexpr std::uint64_t kMaximumPersistentInteger =
+@@ -242,6 +244,14 @@ struct PublicationResidueEntry final {
+     struct stat status {};
+ };
+ 
++struct QuarantineEntry final {
++    std::string basename;
++    std::string expected_content_sha256;
++    std::string observed_content_sha256;
++    std::uint64_t size_bytes = 0U;
++    struct stat status {};
++};
++
+ struct VerificationIndexFileObservation final {
+     bool present = false;
+     bool usable = false;
+@@ -264,7 +274,9 @@ struct ScannedPayloadIndex final {
+     std::vector<StagedPrefixEntry> staged_prefixes;
+     std::vector<AssemblyEntry> assemblies;
+     std::vector<PublicationResidueEntry> publication_residues;
++    std::vector<QuarantineEntry> quarantines;
+     std::uint64_t indexed_bytes = 0U;
++    std::uint64_t quarantine_bytes = 0U;
+     // Diagnostic work accounting for this scan. These values never enter the
+     // canonical snapshot digest: an exact cold scan and an exact warm scan
+     // describe the same durable content authority.
+@@ -972,6 +984,11 @@ struct ParsedStagedPrefixBasename final {
+     std::uint64_t committed_prefix_bytes = 0U;
+ };
+ 
++struct ParsedQuarantineBasename final {
++    std::string expected_content_sha256;
++    std::string observed_content_sha256;
++};
++
+ [[nodiscard]] std::optional<std::uint64_t> parse_canonical_u64(
+     std::string_view text) {
+     if (text.empty()) return std::nullopt;
+@@ -1046,6 +1063,55 @@ parse_staged_prefix_basename(std::string_view basename) {
+         std::string(content), *total, *committed};
+ }
+ 
++[[nodiscard]] std::optional<ParsedQuarantineBasename>
++parse_quarantine_basename(std::string_view basename) {
++    if (!basename.starts_with(kQuarantineBasenamePrefix)) {
++        return std::nullopt;
++    }
++    basename.remove_prefix(kQuarantineBasenamePrefix.size());
++    if (basename.size() != 64U + 1U + 64U || basename[64U] != '-') {
++        return std::nullopt;
++    }
++    const std::string_view expected = basename.substr(0U, 64U);
++    const std::string_view observed = basename.substr(65U, 64U);
++    if (!is_lowercase_sha256_hex(expected) ||
++        !is_lowercase_sha256_hex(observed) || expected == observed) {
++        return std::nullopt;
++    }
++    return ParsedQuarantineBasename{
++        std::string(expected), std::string(observed)};
++}
++
++[[nodiscard]] std::string quarantine_basename_or_throw(
++    std::string_view expected_content_sha256,
++    std::string_view observed_content_sha256) {
++    if (!is_lowercase_sha256_hex(expected_content_sha256) ||
++        !is_lowercase_sha256_hex(observed_content_sha256) ||
++        expected_content_sha256 == observed_content_sha256) {
++        throw std::invalid_argument(
++            "sync replica payload quarantine digest pair is invalid");
++    }
++    std::string out;
++    out.reserve(kQuarantineBasenamePrefix.size() + 64U + 1U + 64U);
++    out.append(kQuarantineBasenamePrefix);
++    out.append(expected_content_sha256);
++    out.push_back('-');
++    out.append(observed_content_sha256);
++    return out;
++}
++
++[[nodiscard]] std::uint64_t maximum_quarantine_bytes(
++    const SyncReplicaFilePayloadStoreLimits& limits) noexcept {
++    const std::uint64_t entry_derived_limit =
++        limits.max_payload_bytes >
++                kMaximumPersistentInteger /
++                    kSyncReplicaFilePayloadStoreMaxQuarantineEntries
++            ? kMaximumPersistentInteger
++            : limits.max_payload_bytes *
++                  kSyncReplicaFilePayloadStoreMaxQuarantineEntries;
++    return std::min(limits.max_indexed_bytes, entry_derived_limit);
++}
++
+ [[nodiscard]] bool assembly_basename_is_exact(
+     std::string_view basename) noexcept {
+     if (!basename.starts_with(kAssemblyBasenamePrefix)) return false;
+@@ -1690,6 +1756,30 @@ void verify_named_regular_file_or_throw(
+     }
+ }
+ 
++void verify_named_entry_absent_or_throw(
++    int directory_descriptor,
++    std::string_view basename,
++    const std::string& label) {
++    const std::string name(basename);
++    struct stat observed{};
++    int result;
++    do {
++        result = ::fstatat(
++            directory_descriptor, name.c_str(), &observed,
++            AT_SYMLINK_NOFOLLOW);
++    } while (result != 0 && errno == EINTR);
++    if (result == 0) {
++        throw PayloadStoreObservationStaleError(
++            label + " namespace entry remains present");
++    }
++    const int error = errno;
++    if (error != ENOENT) {
++        throw std::runtime_error(
++            label + " namespace absence inspection failed: " +
++            error_text(error));
++    }
++}
++
+ [[nodiscard]] SyncPosixOpenedRegularFile open_store_file_or_throw(
+     int directory_descriptor,
+     std::string_view basename,
+@@ -2745,6 +2835,48 @@ void acquire_flock_nonblocking_or_throw(
+             continue;
+         }
+ 
++        if (const auto parsed = parse_quarantine_basename(basename);
++            parsed.has_value()) {
++            if (out.quarantines.size() >=
++                kSyncReplicaFilePayloadStoreMaxQuarantineEntries) {
++                throw std::length_error(
++                    label + " payload quarantine count exceeds fixed budget");
++            }
++            SyncPosixOpenedRegularFile opened = open_store_file_or_throw(
++                directory_descriptor, basename, scan_authority.path(),
++                descriptor_lease.resolution_capability(),
++                descriptor_lease.mount_identity(),
++                label + " payload quarantine " + std::string(basename));
++            OwnedFd file(opened.descriptor);
++            require_private_regular_file_or_throw(
++                opened.status, root_attestation,
++                label + " payload quarantine " + std::string(basename));
++            const std::uint64_t quarantine_bytes =
++                static_cast<std::uint64_t>(opened.status.st_size);
++            const std::uint64_t byte_limit = maximum_quarantine_bytes(limits);
++            if (quarantine_bytes > limits.max_payload_bytes ||
++                out.quarantine_bytes > byte_limit ||
++                quarantine_bytes > byte_limit - out.quarantine_bytes) {
++                throw std::length_error(
++                    label + " payload quarantine bytes exceed fixed budget");
++            }
++            if (synchronizes_store_observation(durability)) {
++                fsync_or_throw(
++                    file.get(),
++                    label + " payload quarantine " + std::string(basename));
++            }
++            verify_named_regular_file_or_throw(
++                directory_descriptor, basename, opened.status,
++                root_attestation,
++                label + " payload quarantine " + std::string(basename));
++            out.quarantines.push_back(QuarantineEntry{
++                std::string(basename), parsed->expected_content_sha256,
++                parsed->observed_content_sha256, quarantine_bytes,
++                opened.status});
++            out.quarantine_bytes += quarantine_bytes;
++            continue;
++        }
++
+         if (const auto parsed = parse_staged_prefix_basename(basename);
+             parsed.has_value()) {
+             if (out.transient_entry_count >= limits.max_transient_entries) {
+@@ -3500,6 +3632,9 @@ observe_staged_prefix_namespace_under_lease_or_throw(
+             scrub_state_seen = true;
+             continue;
+         }
++        if (parse_quarantine_basename(basename).has_value()) {
++            continue;
++        }
+         if (const auto parsed = parse_staged_prefix_basename(basename);
+             parsed.has_value()) {
+             if (parsed->content_sha256 != content_sha256) continue;
+@@ -3679,6 +3814,17 @@ void ensure_store_identity_or_throw(
+         root_authority, limits, identity_basename, expected, false,
+         label + " identity bootstrap preflight",
+         StoreObservationDurability::Reconcile, nullptr, nullptr, nullptr);
++    // Quarantine names are diagnostic evidence from an already identified
++    // store. They never participate in ordinary payload adoption: without an
++    // identity marker there is no authenticated folder/store generation that
++    // can explain or own those retained bytes. This rejection is intentionally
++    // outside the standalone payload-adoption exception.
++    if (!bootstrap.quarantines.empty()) {
++        throw std::runtime_error(
++            label +
++            " fresh bootstrap refuses pre-existing payload quarantine "
++            "evidence");
++    }
+     if (!allow_existing_payload_adoption &&
+         (!bootstrap.entries.empty() ||
+          bootstrap.transient_entry_count != 0U ||
+@@ -4125,6 +4271,160 @@ struct StagedPrefix final {
+     return nullptr;
+ }
+ 
++struct QuarantineNamespaceObservation final {
++    std::uint64_t entry_count = 0U;
++    std::uint64_t bytes = 0U;
++    std::optional<struct stat> exact_destination_status;
++};
++
++// Quarantine must remain available while the ordinary complete scanner is
++// intentionally fail-closed on the corrupt digest. This narrow traversal
++// validates the complete lexical root and opens every retained quarantine, but
++// does not hash unrelated authoritative payloads or grant snapshot authority.
++[[nodiscard]] QuarantineNamespaceObservation
++observe_quarantine_namespace_under_lease_or_throw(
++    const SyncDirectoryAuthority& root_authority,
++    const SyncReplicaFilePayloadStoreLimits& limits,
++    std::string_view identity_basename,
++    const StoreLease& lease,
++    std::string_view exact_destination_basename,
++    const std::string& label) {
++    using Access = sync_directory_authority_detail::
++        SyncDirectoryAuthorityAccess;
++    SyncDirectoryAuthority scan_authority =
++        reopen_matching_root_authority_or_throw(
++            root_authority, label + " independent cursor");
++    auto descriptor_lease =
++        Access::duplicate_shared_open_description_or_throw(
++            scan_authority, label + " scan");
++    OwnedFd root_descriptor(descriptor_lease.release_descriptor());
++
++    struct stat directory_before{};
++    if (::fstat(root_descriptor.get(), &directory_before) != 0) {
++        const int error = errno;
++        throw std::runtime_error(
++            label + " initial root fstat failed: " + error_text(error));
++    }
++    DIR* raw_stream = ::fdopendir(root_descriptor.get());
++    if (raw_stream == nullptr) {
++        const int error = errno;
++        throw std::runtime_error(
++            label + " directory stream open failed: " + error_text(error));
++    }
++    (void)root_descriptor.release();
++    OwnedDirectoryStream stream(raw_stream);
++    const int directory_descriptor = ::dirfd(stream.get());
++    if (directory_descriptor < 0) {
++        const int error = errno;
++        throw std::runtime_error(
++            label + " directory stream descriptor failed: " +
++            error_text(error));
++    }
++
++    const SyncDirectoryAttestation& root_attestation =
++        scan_authority.attestation();
++    QuarantineNamespaceObservation out;
++    bool identity_seen = false;
++    for (;;) {
++        errno = 0;
++        dirent* entry = ::readdir(stream.get());
++        if (entry == nullptr) {
++            if (errno != 0) {
++                const int error = errno;
++                throw std::runtime_error(
++                    label + " directory scan failed: " + error_text(error));
++            }
++            break;
++        }
++        const std::string_view basename(entry->d_name);
++        if (basename == "." || basename == "..") continue;
++
++        if (basename == identity_basename) {
++            if (identity_seen) {
++                throw std::runtime_error(
++                    label + " observed duplicate identity authority");
++            }
++            verify_named_regular_file_or_throw(
++                directory_descriptor, basename, lease.identity_status(),
++                root_attestation, label + " identity marker");
++            identity_seen = true;
++            continue;
++        }
++        if (payload_store_identity_basename_is_known(basename)) {
++            throw std::runtime_error(
++                label + " refuses a competing payload-store identity: " +
++                std::string(basename));
++        }
++        if (is_lowercase_sha256_hex(basename) ||
++            basename == kSyncReplicaFilePayloadVerificationIndexBasename ||
++            basename == kSyncReplicaFilePayloadScrubStateBasename ||
++            parse_staged_prefix_basename(basename).has_value() ||
++            parse_staged_range_basename(basename).has_value() ||
++            assembly_basename_is_exact(basename) ||
++            sync_atomic_file_publication_temp_basename_is_exact(basename)) {
++            continue;
++        }
++        const auto quarantine = parse_quarantine_basename(basename);
++        if (!quarantine.has_value()) {
++            throw std::runtime_error(
++                label + " refuses unexpected payload-root entry: " +
++                std::string(basename));
++        }
++        if (out.entry_count >=
++            kSyncReplicaFilePayloadStoreMaxQuarantineEntries) {
++            throw std::length_error(
++                label + " payload quarantine count exceeds fixed budget");
++        }
++        SyncPosixOpenedRegularFile opened = open_store_file_or_throw(
++            directory_descriptor, basename, scan_authority.path(),
++            descriptor_lease.resolution_capability(),
++            descriptor_lease.mount_identity(),
++            label + " retained quarantine " + std::string(basename));
++        OwnedFd file(opened.descriptor);
++        require_private_regular_file_or_throw(
++            opened.status, root_attestation,
++            label + " retained quarantine " + std::string(basename));
++        const std::uint64_t size_bytes =
++            static_cast<std::uint64_t>(opened.status.st_size);
++        const std::uint64_t byte_limit = maximum_quarantine_bytes(limits);
++        if (size_bytes > limits.max_payload_bytes || out.bytes > byte_limit ||
++            size_bytes > byte_limit - out.bytes) {
++            throw std::length_error(
++                label + " payload quarantine bytes exceed fixed budget");
++        }
++        verify_named_regular_file_or_throw(
++            directory_descriptor, basename, opened.status, root_attestation,
++            label + " retained quarantine " + std::string(basename));
++        ++out.entry_count;
++        out.bytes += size_bytes;
++        if (basename == exact_destination_basename) {
++            if (out.exact_destination_status.has_value()) {
++                throw std::runtime_error(
++                    label + " observed duplicate exact quarantine name");
++            }
++            out.exact_destination_status = opened.status;
++        }
++    }
++    if (!identity_seen) {
++        throw PayloadStoreObservationStaleError(
++            label + " identity marker disappeared during traversal");
++    }
++    struct stat directory_after{};
++    if (::fstat(directory_descriptor, &directory_after) != 0) {
++        const int error = errno;
++        throw std::runtime_error(
++            label + " final root fstat failed: " + error_text(error));
++    }
++    if (!same_directory_observation(directory_before, directory_after)) {
++        throw PayloadStoreObservationStaleError(
++            label + " payload root changed during quarantine observation");
++    }
++    scan_authority.verify_or_throw(label + " final scan root authority");
++    root_authority.verify_or_throw(label + " final retained root authority");
++    lease.verify_or_throw(root_authority, label + " final lease proof");
++    return out;
++}
++
+ }  // namespace
+ 
+ bool sync_replica_file_payload_store_range_basename_is_exact(
+@@ -4137,6 +4437,40 @@ bool sync_replica_file_payload_store_prefix_basename_is_exact(
+     return parse_staged_prefix_basename(basename).has_value();
+ }
+ 
++bool sync_replica_file_payload_store_quarantine_basename_is_exact(
++    std::string_view basename) {
++    return parse_quarantine_basename(basename).has_value();
++}
++
++std::string_view sync_replica_file_payload_store_quarantine_disposition_name(
++    SyncReplicaFilePayloadStoreQuarantineDisposition disposition) noexcept {
++    switch (disposition) {
++        case SyncReplicaFilePayloadStoreQuarantineDisposition::Quarantined:
++            return "quarantined";
++        case SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ActiveFaultMismatch:
++            return "active_fault_mismatch";
++        case SyncReplicaFilePayloadStoreQuarantineDisposition::PayloadAbsent:
++            return "payload_absent";
++        case SyncReplicaFilePayloadStoreQuarantineDisposition::
++                PayloadAlreadyRepaired:
++            return "payload_already_repaired";
++        case SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ObservedDigestChanged:
++            return "observed_digest_changed";
++        case SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ExactQuarantineAlreadyPresent:
++            return "exact_quarantine_already_present";
++        case SyncReplicaFilePayloadStoreQuarantineDisposition::
++                EntryCapacityExceeded:
++            return "entry_capacity_exceeded";
++        case SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ByteCapacityExceeded:
++            return "byte_capacity_exceeded";
++    }
++    return "unknown";
++}
++
+ struct SyncReplicaFilePayloadStoreOpenedPayload::State final {
+     int descriptor = -1;
+     SyncPosixRegularFileSnapshotMetadata metadata;
+@@ -6323,6 +6657,325 @@ SyncReplicaFilePayloadStore::snapshot_rechecking_current_bytes_or_throw()
+     return snapshot_with_reuse_policy_or_throw(true);
+ }
+ 
++SyncReplicaFilePayloadStoreQuarantineResult
++SyncReplicaFilePayloadStore::quarantine_corrupt_payload_or_throw(
++    std::string expected_content_sha256,
++    std::string observed_content_sha256) {
++    if (!state_) throw std::logic_error("file payload store is inactive");
++    if (!is_lowercase_sha256_hex(expected_content_sha256) ||
++        !is_lowercase_sha256_hex(observed_content_sha256) ||
++        expected_content_sha256 == observed_content_sha256) {
++        throw std::invalid_argument(
++            "payload quarantine requires distinct canonical SHA-256 digests");
++    }
++
++    State& store = *state_;
++    if (store.disposition ==
++        SyncReplicaFilePayloadStoreOpenDisposition::ReadOnlyInspect) {
++        throw std::logic_error(
++            store.label +
++            " read-only inspection store cannot quarantine payload bytes");
++    }
++
++    SyncReplicaFilePayloadStoreQuarantineResult result;
++    result.expected_content_sha256 = expected_content_sha256;
++    result.requested_observed_content_sha256 = observed_content_sha256;
++    result.current_observed_content_sha256 = observed_content_sha256;
++    const std::string target_quarantine_basename = quarantine_basename_or_throw(
++        expected_content_sha256, observed_content_sha256);
++
++    store.root_authority.verify_or_throw(
++        store.label + " payload quarantine source preflight");
++    ensure_store_identity_or_throw(
++        store.root_authority, store.limits, store.identity_basename,
++        store.legacy_identity_basename, store.expected_identity,
++        store.disposition, store.allow_existing_payload_adoption,
++        *store.verification_cache, store.label);
++
++    const auto active_fault = store.verification_cache->integrity_fault;
++    if (!active_fault.has_value() ||
++        active_fault->expected_digest() != expected_content_sha256 ||
++        active_fault->observed_digest() != observed_content_sha256) {
++        result.disposition =
++            SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ActiveFaultMismatch;
++        if (active_fault.has_value() &&
++            active_fault->expected_digest() == expected_content_sha256) {
++            result.current_observed_content_sha256 =
++                std::string(active_fault->observed_digest());
++        }
++        return result;
++    }
++
++    SyncDirectoryAuthority quarantine_root =
++        reopen_matching_root_authority_or_throw(
++            store.root_authority, store.label + " payload quarantine");
++    StoreLease mutation_lease = acquire_store_lease_or_throw(
++        quarantine_root, store.identity_basename, store.expected_identity,
++        SyncReplicaFilePayloadStoreLeaseMode::ExclusiveMutation,
++        store.label + " payload quarantine",
++        StoreObservationDurability::Reconcile);
++
++    const QuarantineNamespaceObservation retained =
++        observe_quarantine_namespace_under_lease_or_throw(
++            quarantine_root, store.limits, store.identity_basename,
++            mutation_lease, target_quarantine_basename,
++            store.label + " payload quarantine namespace");
++
++    using Access = sync_directory_authority_detail::
++        SyncDirectoryAuthorityAccess;
++    auto descriptor_lease =
++        Access::duplicate_shared_open_description_or_throw(
++            quarantine_root,
++            store.label + " payload quarantine retained root");
++    const SyncPosixDirectoryResolutionCapability resolution_capability =
++        descriptor_lease.resolution_capability();
++    const SyncPosixMountIdentity mount_identity =
++        descriptor_lease.mount_identity();
++    OwnedFd root_descriptor(descriptor_lease.release_descriptor());
++    const SyncDirectoryAttestation& root_attestation =
++        quarantine_root.attestation();
++
++    auto verify_nonmutating_cutpoint_or_throw =
++        [&](std::string_view outcome) {
++            const std::string outcome_label =
++                store.label + " payload quarantine " + std::string(outcome);
++            mutation_lease.verify_or_throw(
++                quarantine_root, outcome_label + " lease cutpoint");
++            quarantine_root.verify_or_throw(
++                outcome_label + " root proof");
++            store.root_authority.verify_or_throw(
++                outcome_label + " retained-root proof");
++        };
++
++    auto revoke_acceleration_after_namespace_mutation = [&]() {
++        // Quarantine changes the authoritative namespace without proving a
++        // new complete index. Revoke every acceleration surface except the
++        // active integrity fault, which remains the fail-closed recovery
++        // obligation until an ordinary complete scan proves the digest name
++        // absent or repaired.
++        store.verification_cache->generation.reset();
++        store.verification_cache->checkpoint.observation_known = true;
++        store.verification_cache->checkpoint.force_checkpoint = true;
++        store.verification_cache->checkpoint
++            .publication_capacity_observation_known = false;
++        store.verification_cache->checkpoint
++            .publication_capacity_available = false;
++        store.verification_cache->scrub_active.reset();
++        store.next_scrub_not_before =
++            std::chrono::steady_clock::time_point::min();
++    };
++
++    auto verify_exact_quarantine_or_throw = [&]() {
++        if (!retained.exact_destination_status.has_value()) return false;
++        SyncPosixOpenedRegularFile opened = open_store_file_or_throw(
++            root_descriptor.get(), target_quarantine_basename,
++            quarantine_root.path(), resolution_capability, mount_identity,
++            store.label + " exact retained payload quarantine");
++        OwnedFd file(opened.descriptor);
++        require_private_regular_file_or_throw(
++            opened.status, root_attestation,
++            store.label + " exact retained payload quarantine");
++        if (!same_regular_file_observation(
++                *retained.exact_destination_status, opened.status)) {
++            throw PayloadStoreObservationStaleError(
++                store.label +
++                " exact retained payload quarantine changed after scan");
++        }
++        const StreamedFileDigest streamed =
++            stream_hash_regular_file_or_throw(
++                file.get(), opened.status, std::nullopt,
++                store.label + " exact retained payload quarantine");
++        if (streamed.sha256 != observed_content_sha256) {
++            throw std::runtime_error(
++                store.label +
++                " exact quarantine name does not bind its observed bytes");
++        }
++        fsync_or_throw(
++            file.get(),
++            store.label + " exact retained payload quarantine");
++        verify_named_regular_file_or_throw(
++            root_descriptor.get(), target_quarantine_basename,
++            opened.status, root_attestation,
++            store.label + " exact retained payload quarantine");
++        result.size_bytes =
++            static_cast<std::uint64_t>(opened.status.st_size);
++        result.quarantine_basename = target_quarantine_basename;
++        return true;
++    };
++
++    std::optional<SyncPosixOpenedRegularFile> opened =
++        open_optional_store_file_or_throw(
++            root_descriptor.get(), expected_content_sha256,
++            quarantine_root.path(), resolution_capability, mount_identity,
++            store.label + " corrupt payload quarantine source");
++    if (!opened.has_value()) {
++        result.disposition = verify_exact_quarantine_or_throw()
++            ? SyncReplicaFilePayloadStoreQuarantineDisposition::
++                  ExactQuarantineAlreadyPresent
++            : SyncReplicaFilePayloadStoreQuarantineDisposition::PayloadAbsent;
++        verify_nonmutating_cutpoint_or_throw("absent-source");
++        return result;
++    }
++
++    OwnedFd source_file(opened->descriptor);
++    require_private_regular_file_or_throw(
++        opened->status, root_attestation,
++        store.label + " corrupt payload quarantine source");
++    result.size_bytes = static_cast<std::uint64_t>(opened->status.st_size);
++    if (result.size_bytes > store.limits.max_payload_bytes) {
++        throw std::length_error(
++            store.label + " corrupt payload exceeds payload byte limit");
++    }
++    const StreamedFileDigest streamed = stream_hash_regular_file_or_throw(
++        source_file.get(), opened->status, std::nullopt,
++        store.label + " corrupt payload quarantine current-byte proof");
++    result.current_observed_content_sha256 = streamed.sha256;
++    verify_named_regular_file_or_throw(
++        root_descriptor.get(), expected_content_sha256, opened->status,
++        root_attestation,
++        store.label + " corrupt payload quarantine source");
++
++    if (streamed.sha256 == expected_content_sha256) {
++        result.disposition =
++            SyncReplicaFilePayloadStoreQuarantineDisposition::
++                PayloadAlreadyRepaired;
++        verify_nonmutating_cutpoint_or_throw("repaired-source");
++        return result;
++    }
++    if (streamed.sha256 != observed_content_sha256) {
++        (void)retain_process_integrity_fault(
++            *store.verification_cache, expected_content_sha256,
++            streamed.sha256);
++        result.disposition =
++            SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ObservedDigestChanged;
++        store.next_scrub_not_before =
++            std::chrono::steady_clock::time_point::min();
++        verify_nonmutating_cutpoint_or_throw("changed-source");
++        return result;
++    }
++
++    if (verify_exact_quarantine_or_throw()) {
++        // A previous quarantine may already retain this exact wrong byte
++        // image while the authoritative digest name has since reappeared and
++        // corrupted to the same bytes again. The explicit exact-pair action
++        // must still remove that current corrupt name or recovery would be
++        // permanently stuck. The already retained destination was fully
++        // rehashed above, so removing this duplicate source does not discard
++        // the requested byte image.
++        mutation_lease.verify_or_throw(
++            quarantine_root,
++            store.label + " duplicate payload quarantine pre-unlink cutpoint");
++        unlink_scanned_private_file_or_throw(
++            root_descriptor.get(), expected_content_sha256, opened->status,
++            root_attestation,
++            store.label + " duplicate corrupt payload quarantine source");
++        fsync_or_throw(
++            root_descriptor.get(),
++            store.label + " duplicate corrupt payload quarantine directory");
++        verify_named_entry_absent_or_throw(
++            root_descriptor.get(), expected_content_sha256,
++            store.label + " duplicate quarantined payload source");
++        verify_named_regular_file_or_throw(
++            root_descriptor.get(), target_quarantine_basename,
++            *retained.exact_destination_status, root_attestation,
++            store.label + " duplicate quarantined payload destination");
++        mutation_lease.verify_or_throw(
++            quarantine_root,
++            store.label + " duplicate payload quarantine final cutpoint");
++        quarantine_root.verify_or_throw(
++            store.label + " duplicate payload quarantine final root proof");
++        store.root_authority.verify_or_throw(
++            store.label +
++            " duplicate payload quarantine final retained-root proof");
++        revoke_acceleration_after_namespace_mutation();
++        result.disposition =
++            SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ExactQuarantineAlreadyPresent;
++        return result;
++    }
++    if (retained.entry_count >=
++        kSyncReplicaFilePayloadStoreMaxQuarantineEntries) {
++        result.disposition =
++            SyncReplicaFilePayloadStoreQuarantineDisposition::
++                EntryCapacityExceeded;
++        verify_nonmutating_cutpoint_or_throw("entry-capacity");
++        return result;
++    }
++    const std::uint64_t quarantine_byte_limit =
++        maximum_quarantine_bytes(store.limits);
++    if (retained.bytes > quarantine_byte_limit ||
++        result.size_bytes > quarantine_byte_limit - retained.bytes) {
++        result.disposition =
++            SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ByteCapacityExceeded;
++        verify_nonmutating_cutpoint_or_throw("byte-capacity");
++        return result;
++    }
++
++    mutation_lease.verify_or_throw(
++        quarantine_root,
++        store.label + " payload quarantine pre-rename lease cutpoint");
++    quarantine_root.verify_or_throw(
++        store.label + " payload quarantine pre-rename root proof");
++    // Make the exact byte image durable before making its diagnostic name
++    // durable. Directory synchronization alone cannot promise that dirty
++    // in-place corruption survives a crash under the new quarantine name.
++    fsync_or_throw(
++        source_file.get(),
++        store.label + " corrupt payload quarantine source bytes");
++    verify_named_regular_file_or_throw(
++        root_descriptor.get(), expected_content_sha256, opened->status,
++        root_attestation,
++        store.label + " corrupt payload quarantine durable source");
++    rename_noreplace_at_or_throw(
++        root_descriptor.get(), expected_content_sha256,
++        target_quarantine_basename,
++        store.label + " corrupt payload quarantine");
++    fsync_or_throw(
++        root_descriptor.get(),
++        store.label + " corrupt payload quarantine directory");
++
++    struct stat renamed_status{};
++    if (::fstat(source_file.get(), &renamed_status) != 0) {
++        const int error = errno;
++        throw std::runtime_error(
++            store.label + " quarantined payload fstat failed: " +
++            error_text(error));
++    }
++    require_private_regular_file_or_throw(
++        renamed_status, root_attestation,
++        store.label + " quarantined payload");
++    if (!same_regular_file_rename_transition(
++            opened->status, renamed_status)) {
++        throw std::runtime_error(
++            store.label +
++            " corrupt payload inode changed across quarantine rename");
++    }
++    verify_named_entry_absent_or_throw(
++        root_descriptor.get(), expected_content_sha256,
++        store.label + " quarantined payload source");
++    verify_named_regular_file_or_throw(
++        root_descriptor.get(), target_quarantine_basename, renamed_status,
++        root_attestation,
++        store.label + " quarantined payload destination");
++    mutation_lease.verify_or_throw(
++        quarantine_root,
++        store.label + " payload quarantine final lease cutpoint");
++    quarantine_root.verify_or_throw(
++        store.label + " payload quarantine final root proof");
++    store.root_authority.verify_or_throw(
++        store.label + " payload quarantine final retained-root proof");
++
++    revoke_acceleration_after_namespace_mutation();
++
++    result.quarantine_basename = target_quarantine_basename;
++    result.disposition =
++        SyncReplicaFilePayloadStoreQuarantineDisposition::Quarantined;
++    return result;
++}
++
+ SyncReplicaFilePayloadStoreSnapshot
+ SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
+     bool require_current_bytes) const {
+diff --git a/src/sync_replica_file_payload_store.hpp b/src/sync_replica_file_payload_store.hpp
+index 2f9cd5fc73d57434ad05c75c9ad4b0f1fe771bc0..cc43a6ffcfe1596a59d190c2c7a104696c16ca67 100755
+--- a/src/sync_replica_file_payload_store.hpp
++++ b/src/sync_replica_file_payload_store.hpp
+@@ -32,6 +32,12 @@ static_assert(
+     kSyncReplicaFilePayloadStoreMaxEntries);
+ inline constexpr std::uint64_t
+     kSyncReplicaFilePayloadStoreMaxTransientEntries = 65536U;
++// Corrupt bytes are preserved only through an explicit exact-pair operator
++// action. A fixed archive frontier prevents repeated faults from becoming an
++// unbounded hidden retention policy; quarantine is diagnostic evidence, not
++// version history or garbage collection.
++inline constexpr std::uint64_t
++    kSyncReplicaFilePayloadStoreMaxQuarantineEntries = 16U;
+ 
+ struct SyncReplicaFilePayloadStoreLimits final {
+     std::uint64_t max_entries = 4096U;
+@@ -145,6 +151,42 @@ sync_replica_file_payload_store_range_basename_is_exact(
+ sync_replica_file_payload_store_prefix_basename_is_exact(
+     std::string_view basename);
+ 
++// Canonical non-authoritative quarantine name. It binds both the immutable
++// digest name that failed and the exact corrupt byte image observed at the
++// quarantine cutpoint. Quarantined bytes are never returned by content
++// inventory or targeted payload access.
++[[nodiscard]] bool
++sync_replica_file_payload_store_quarantine_basename_is_exact(
++    std::string_view basename);
++
++enum class SyncReplicaFilePayloadStoreQuarantineDisposition : std::uint8_t {
++    Quarantined = 1,
++    ActiveFaultMismatch = 2,
++    PayloadAbsent = 3,
++    PayloadAlreadyRepaired = 4,
++    ObservedDigestChanged = 5,
++    ExactQuarantineAlreadyPresent = 6,
++    EntryCapacityExceeded = 7,
++    ByteCapacityExceeded = 8,
++};
++
++[[nodiscard]] std::string_view
++sync_replica_file_payload_store_quarantine_disposition_name(
++    SyncReplicaFilePayloadStoreQuarantineDisposition disposition) noexcept;
++
++struct SyncReplicaFilePayloadStoreQuarantineResult final {
++    SyncReplicaFilePayloadStoreQuarantineDisposition disposition =
++        SyncReplicaFilePayloadStoreQuarantineDisposition::ActiveFaultMismatch;
++    std::string expected_content_sha256;
++    std::string requested_observed_content_sha256;
++    std::string current_observed_content_sha256;
++    std::string quarantine_basename;
++    std::uint64_t size_bytes = 0U;
++
++    bool operator==(
++        const SyncReplicaFilePayloadStoreQuarantineResult&) const = default;
++};
++
+ // Stable classification for the cooperative lease frontier. This is local
+ // availability evidence, not operation, attempt, or effect authority.
+ enum class SyncReplicaFilePayloadStoreLeaseMode : std::uint8_t {
+@@ -713,6 +755,18 @@ public:
+     [[nodiscard]] SyncReplicaFilePayloadStoreSnapshot
+     snapshot_rechecking_current_bytes_or_throw() const;
+ 
++    // Explicitly preserves one exact currently corrupt payload image outside
++    // the authoritative digest namespace. The request must match the active
++    // process-local integrity witness exactly. Under the exclusive store lease,
++    // current bytes are rehashed again; changed, repaired, or absent content is
++    // reported without rename. A successful no-replace rename is directory-
++    // synced and leaves the integrity alarm active until a later complete scan
++    // proves the authoritative digest name absent or good.
++    [[nodiscard]] SyncReplicaFilePayloadStoreQuarantineResult
++    quarantine_corrupt_payload_or_throw(
++        std::string expected_content_sha256,
++        std::string observed_content_sha256);
++
+ private:
+     [[nodiscard]] SyncReplicaFilePayloadStoreSnapshot
+     snapshot_with_reuse_policy_or_throw(bool require_current_bytes) const;
+diff --git a/src/sync_replica_peer_service.cpp b/src/sync_replica_peer_service.cpp
+index cc37943ab77c30d30ebc54816c1cdf899a323dfc..eaae3959d3bab8958cdd83abf69afc7b8aaaef3c 100644
+--- a/src/sync_replica_peer_service.cpp
++++ b/src/sync_replica_peer_service.cpp
+@@ -2,6 +2,7 @@
+ 
+ #if !defined(_WIN32)
+ 
++#include "sha256_digest.hpp"
+ #include "sync_replica_i2p_ingress_worker.hpp"
+ #include "sync_replica_peer_service_integrity_evidence.hpp"
+ #include "sync_replica_reconciliation_tls_exchange.hpp"
+@@ -116,6 +117,7 @@ enum class PayloadAuthorityFailureContext : std::uint8_t {
+     OutboundNetworkStep = 4U,
+     InboundNetworkStep = 5U,
+     OperatorRecheck = 6U,
++    OperatorQuarantine = 7U,
+ };
+ 
+ [[nodiscard]] bool network_outcome_is_unknown(
+@@ -458,6 +460,9 @@ std::string_view sync_replica_peer_service_step_disposition_name(
+         case SyncReplicaPeerServiceStepDisposition::
+                 OperatorPayloadRecheckCompleted:
+             return "operator_payload_recheck_completed";
++        case SyncReplicaPeerServiceStepDisposition::
++                OperatorPayloadQuarantineCompleted:
++            return "operator_payload_quarantine_completed";
+     }
+     return "unknown";
+ }
+@@ -510,6 +515,13 @@ struct SyncReplicaPeerServiceOwner::State final {
+     std::uint64_t
+         payload_recheck_last_convergence_mutation_full_scan_count = 0U;
+     bool payload_recheck_last_completion_recovered_integrity_fault = false;
++    std::uint64_t payload_quarantine_requested_generation = 0U;
++    std::uint64_t payload_quarantine_started_generation = 0U;
++    std::uint64_t payload_quarantine_completed_generation = 0U;
++    std::string payload_quarantine_expected_content_sha256;
++    std::string payload_quarantine_observed_content_sha256;
++    std::optional<SyncReplicaFilePayloadStoreQuarantineResult>
++        payload_quarantine_last_result;
+     bool ingress_is_ready = false;
+     bool ingress_setup_in_progress = false;
+     Clock::time_point next_ingress_attempt_at = Clock::time_point::min();
+@@ -833,16 +845,98 @@ struct SyncReplicaPeerServiceOwner::State final {
+         }
+     }
+ 
+-    void record_payload_integrity_fault_or_throw(
+-        const SyncReplicaFilePayloadStoreIntegrityError& error) {
++    [[nodiscard]] bool payload_quarantine_pending() const noexcept {
++        return payload_quarantine_requested_generation >
++            payload_quarantine_completed_generation;
++    }
++
++    [[nodiscard]] SyncReplicaPeerServicePayloadQuarantineStatus
++    payload_quarantine_status() const {
++        SyncReplicaPeerServicePayloadQuarantineStatus status;
++        status.requested_generation = payload_quarantine_requested_generation;
++        status.started_generation = payload_quarantine_started_generation;
++        status.completed_generation = payload_quarantine_completed_generation;
++        status.pending = payload_quarantine_pending();
++        status.expected_content_sha256 =
++            payload_quarantine_expected_content_sha256;
++        status.observed_content_sha256 =
++            payload_quarantine_observed_content_sha256;
++        status.retry_delay_milliseconds = remaining_milliseconds(
++            Clock::now(), next_payload_store_lease_retry_at);
++        status.last_result = payload_quarantine_last_result;
++        return status;
++    }
++
++    void observe_payload_quarantine_request_or_throw(
++        std::uint64_t generation,
++        std::string expected_content_sha256,
++        std::string observed_content_sha256) {
++        if (generation == 0U ||
++            !is_lowercase_sha256_hex(expected_content_sha256) ||
++            !is_lowercase_sha256_hex(observed_content_sha256) ||
++            expected_content_sha256 == observed_content_sha256) {
++            throw std::invalid_argument(
++                label + " payload quarantine request is not canonical");
++        }
++        if (generation < payload_quarantine_requested_generation) {
++            throw std::invalid_argument(
++                label +
++                " payload quarantine request generation regressed from " +
++                std::to_string(payload_quarantine_requested_generation) +
++                " to " + std::to_string(generation));
++        }
++        if (generation == payload_quarantine_requested_generation) {
++            if (payload_quarantine_expected_content_sha256 !=
++                    expected_content_sha256 ||
++                payload_quarantine_observed_content_sha256 !=
++                    observed_content_sha256) {
++                throw std::invalid_argument(
++                    label +
++                    " payload quarantine pair changed at one generation");
++            }
++            return;
++        }
++
++        const bool pending_before = payload_quarantine_pending();
++        if (pending_before &&
++            (payload_quarantine_expected_content_sha256 !=
++                 expected_content_sha256 ||
++             payload_quarantine_observed_content_sha256 !=
++                 observed_content_sha256)) {
++            throw std::invalid_argument(
++                label +
++                " payload quarantine pair changed while an older generation "
++                "remains pending");
++        }
++        const std::uint64_t delta =
++            generation - payload_quarantine_requested_generation;
++        add_saturating(
++            counters.payload_quarantine_requests_observed, delta);
++        const std::uint64_t coalesced = pending_before ? delta : delta - 1U;
++        add_saturating(
++            counters.payload_quarantine_requests_coalesced, coalesced);
++        payload_quarantine_requested_generation = generation;
++        payload_quarantine_expected_content_sha256 =
++            std::move(expected_content_sha256);
++        payload_quarantine_observed_content_sha256 =
++            std::move(observed_content_sha256);
++        if (!pending_before) {
++            next_payload_store_lease_retry_at = Clock::time_point::min();
++        }
++    }
++
++    void record_payload_integrity_evidence_or_throw(
++        std::string_view expected_content_sha256,
++        std::string_view observed_content_sha256,
++        bool failure_persisted) {
++
+         const Clock::time_point now = Clock::now();
+         if (!payload_integrity_fault.has_value()) {
+             ActivePayloadIntegrityFault active;
+             const auto update =
+                 merge_sync_replica_peer_service_payload_integrity_evidence(
+-                    active.evidence, error.expected_content_sha256(),
+-                    error.observed_content_sha256(),
+-                    error.failure_persisted());
++                    active.evidence, expected_content_sha256,
++                    observed_content_sha256, failure_persisted);
+             if (update !=
+                 SyncReplicaPeerServicePayloadIntegrityEvidenceUpdate::
+                     NewExpectedContent) {
+@@ -857,9 +951,8 @@ struct SyncReplicaPeerServiceOwner::State final {
+             const auto update =
+                 merge_sync_replica_peer_service_payload_integrity_evidence(
+                     payload_integrity_fault->evidence,
+-                    error.expected_content_sha256(),
+-                    error.observed_content_sha256(),
+-                    error.failure_persisted());
++                    expected_content_sha256, observed_content_sha256,
++                    failure_persisted);
+             if (update ==
+                 SyncReplicaPeerServicePayloadIntegrityEvidenceUpdate::
+                     NewExpectedContent) {
+@@ -874,6 +967,13 @@ struct SyncReplicaPeerServiceOwner::State final {
+             now, retry_delay, label + " payload integrity reproof");
+     }
+ 
++    void record_payload_integrity_fault_or_throw(
++        const SyncReplicaFilePayloadStoreIntegrityError& error) {
++        record_payload_integrity_evidence_or_throw(
++            error.expected_content_sha256(),
++            error.observed_content_sha256(), error.failure_persisted());
++    }
++
+     [[nodiscard]] SyncReplicaPeerServiceStepResult
+     state_preserving_deferral_step(
+         SyncReplicaPeerServiceStepDisposition disposition) const noexcept {
+@@ -1193,6 +1293,69 @@ struct SyncReplicaPeerServiceOwner::State final {
+             target_generation, hashed_entry_count, hashed_bytes);
+     }
+ 
++    [[nodiscard]] SyncReplicaPeerServiceStepResult
++    operator_payload_quarantine_step_or_throw() {
++        if (!payload_quarantine_pending()) {
++            throw std::logic_error(
++                label +
++                " operator payload quarantine lacks a pending generation");
++        }
++        const std::uint64_t target_generation =
++            payload_quarantine_requested_generation;
++        payload_quarantine_started_generation = target_generation;
++        increment_saturating(counters.payload_quarantine_attempts);
++
++        SyncReplicaFilePayloadStoreQuarantineResult quarantine =
++            folder_process.payload_store_or_throw()
++                .quarantine_corrupt_payload_or_throw(
++                    payload_quarantine_expected_content_sha256,
++                    payload_quarantine_observed_content_sha256);
++        if (quarantine.disposition ==
++            SyncReplicaFilePayloadStoreQuarantineDisposition::
++                ObservedDigestChanged) {
++            record_payload_integrity_evidence_or_throw(
++                quarantine.expected_content_sha256,
++                quarantine.current_observed_content_sha256, false);
++            increment_saturating(
++                counters.payload_quarantine_observed_content_changes);
++        } else if (
++            quarantine.disposition ==
++                SyncReplicaFilePayloadStoreQuarantineDisposition::Quarantined ||
++            quarantine.disposition ==
++                SyncReplicaFilePayloadStoreQuarantineDisposition::PayloadAbsent ||
++            quarantine.disposition ==
++                SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    PayloadAlreadyRepaired ||
++            quarantine.disposition ==
++                SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    ExactQuarantineAlreadyPresent) {
++            // The operator action changed or proved the faulted namespace. Let
++            // the next ordinary complete convergence step establish whether
++            // authority can be restored without waiting behind an old alarm
++            // retry cutpoint.
++            next_payload_integrity_reproof_at = Clock::time_point::min();
++        }
++
++        payload_quarantine_completed_generation = target_generation;
++        payload_quarantine_last_result = quarantine;
++        next_payload_store_lease_retry_at = Clock::time_point::min();
++        increment_saturating(counters.payload_quarantine_completions);
++        if (quarantine.disposition ==
++            SyncReplicaFilePayloadStoreQuarantineDisposition::Quarantined) {
++            increment_saturating(
++                counters.payload_quarantine_images_preserved);
++        }
++
++        SyncReplicaPeerServiceStepResult result =
++            state_preserving_deferral_step(
++                SyncReplicaPeerServiceStepDisposition::
++                    OperatorPayloadQuarantineCompleted);
++        result.payload_quarantine_generation = target_generation;
++        result.payload_quarantine_result = std::move(quarantine);
++        increment_saturating(counters.steps);
++        return result;
++    }
++
+     [[nodiscard]] SyncReplicaPeerServiceStepResult repair_step_or_throw(
+         bool initial,
+         bool filesystem_wake = false) {
+@@ -1592,11 +1755,28 @@ observe_payload_recheck_request_generation_or_throw(
+     state_->observe_payload_recheck_request_generation_or_throw(generation);
+ }
+ 
++SyncReplicaPeerServicePayloadQuarantineStatus
++SyncReplicaPeerServiceOwner::payload_quarantine_status() const {
++    return state_->payload_quarantine_status();
++}
++
++void SyncReplicaPeerServiceOwner::
++observe_payload_quarantine_request_or_throw(
++    std::uint64_t generation,
++    std::string expected_content_sha256,
++    std::string observed_content_sha256) {
++    state_->observe_payload_quarantine_request_or_throw(
++        generation, std::move(expected_content_sha256),
++        std::move(observed_content_sha256));
++}
++
+ SyncReplicaPeerServiceStepResult
+ SyncReplicaPeerServiceOwner::run_next_or_throw() {
++    const bool operator_quarantine_pending =
++        state_->payload_quarantine_pending();
+     const bool operator_recheck_pending = state_->payload_recheck_pending();
+     if (state_->payload_integrity_fault.has_value() ||
+-        operator_recheck_pending) {
++        operator_recheck_pending || operator_quarantine_pending) {
+         // Fault mode suppresses ordinary ingress events, but native I2P
+         // publication still changes asynchronously. Keep its readiness and
+         // retry counters current without allowing an event to preempt the
+@@ -1607,7 +1787,8 @@ SyncReplicaPeerServiceOwner::run_next_or_throw() {
+             (void)state_->refresh_ingress_worker(false);
+         }
+         const Clock::time_point now = Clock::now();
+-        if (state_->payload_integrity_fault.has_value() &&
++        if (!operator_quarantine_pending &&
++            state_->payload_integrity_fault.has_value() &&
+             now < state_->next_payload_integrity_reproof_at) {
+             return state_->payload_integrity_backoff_step();
+         }
+@@ -1615,10 +1796,15 @@ SyncReplicaPeerServiceOwner::run_next_or_throw() {
+             return state_->payload_store_lease_backoff_step();
+         }
+         const PayloadAuthorityFailureContext context =
+-            operator_recheck_pending
+-            ? PayloadAuthorityFailureContext::OperatorRecheck
+-            : PayloadAuthorityFailureContext::IntegrityReproof;
++            operator_quarantine_pending
++                ? PayloadAuthorityFailureContext::OperatorQuarantine
++                : (operator_recheck_pending
++                       ? PayloadAuthorityFailureContext::OperatorRecheck
++                       : PayloadAuthorityFailureContext::IntegrityReproof);
+         try {
++            if (operator_quarantine_pending) {
++                return state_->operator_payload_quarantine_step_or_throw();
++            }
+             if (operator_recheck_pending) {
+                 return state_->operator_payload_recheck_step_or_throw();
+             }
+diff --git a/src/sync_replica_peer_service.hpp b/src/sync_replica_peer_service.hpp
+index 68377aa65d5945bc8c99256eb383bf8cc4365464..eb7ad52ca5cdb05dc54428b44798343cc9f5057b 100644
+--- a/src/sync_replica_peer_service.hpp
++++ b/src/sync_replica_peer_service.hpp
+@@ -162,6 +162,7 @@ enum class SyncReplicaPeerServiceStepDisposition : std::uint8_t {
+     InboundSessionIoFailed = 15U,
+     PayloadStoreLeaseBusyDeferred = 16U,
+     OperatorPayloadRecheckCompleted = 17U,
++    OperatorPayloadQuarantineCompleted = 18U,
+ };
+ 
+ [[nodiscard]] std::string_view sync_replica_peer_service_step_disposition_name(
+@@ -230,6 +231,25 @@ struct SyncReplicaPeerServicePayloadRecheckStatus final {
+         const SyncReplicaPeerServicePayloadRecheckStatus&) const = default;
+ };
+ 
++// Owner-thread projection of one exact payload-quarantine request accepted by
++// the local control socket. The pair remains an obligation until one bounded
++// store attempt returns a typed terminal disposition; lease contention retains
++// it. Quarantine preserves bytes outside authority and does not itself claim
++// repair, restore, version history, or garbage collection.
++struct SyncReplicaPeerServicePayloadQuarantineStatus final {
++    std::uint64_t requested_generation = 0U;
++    std::uint64_t started_generation = 0U;
++    std::uint64_t completed_generation = 0U;
++    bool pending = false;
++    std::string expected_content_sha256;
++    std::string observed_content_sha256;
++    std::uint64_t retry_delay_milliseconds = 0U;
++    std::optional<SyncReplicaFilePayloadStoreQuarantineResult> last_result;
++
++    bool operator==(
++        const SyncReplicaPeerServicePayloadQuarantineStatus&) const = default;
++};
++
+ struct SyncReplicaPeerServiceStepResult final {
+     SyncReplicaPeerServiceStepDisposition disposition =
+         SyncReplicaPeerServiceStepDisposition::InitialRepairCompleted;
+@@ -267,6 +287,9 @@ struct SyncReplicaPeerServiceStepResult final {
+         payload_recheck_convergence_snapshot_observation_count = 0U;
+     std::uint64_t payload_recheck_convergence_mutation_full_scan_count = 0U;
+     bool payload_recheck_recovered_integrity_fault = false;
++    std::uint64_t payload_quarantine_generation = 0U;
++    std::optional<SyncReplicaFilePayloadStoreQuarantineResult>
++        payload_quarantine_result;
+     std::optional<SyncReplicaStreamConnectReport> ingress_report;
+     std::optional<std::string> ingress_error;
+     std::optional<std::string> session_io_error;
+@@ -318,6 +341,12 @@ struct SyncReplicaPeerServiceCounters final {
+     std::uint64_t
+         payload_recheck_convergence_snapshot_observations = 0U;
+     std::uint64_t payload_recheck_convergence_mutation_full_scans = 0U;
++    std::uint64_t payload_quarantine_requests_observed = 0U;
++    std::uint64_t payload_quarantine_requests_coalesced = 0U;
++    std::uint64_t payload_quarantine_attempts = 0U;
++    std::uint64_t payload_quarantine_completions = 0U;
++    std::uint64_t payload_quarantine_images_preserved = 0U;
++    std::uint64_t payload_quarantine_observed_content_changes = 0U;
+ 
+     bool operator==(const SyncReplicaPeerServiceCounters&) const = default;
+ };
+@@ -388,6 +417,8 @@ public:
+     most_recent_payload_integrity_recovery() const;
+     [[nodiscard]] SyncReplicaPeerServicePayloadRecheckStatus
+     payload_recheck_status() const noexcept;
++    [[nodiscard]] SyncReplicaPeerServicePayloadQuarantineStatus
++    payload_quarantine_status() const;
+ 
+     // Observe the exact monotonically increasing generation accepted by the
+     // owner-only local socket. A new pending obligation may bypass one existing
+@@ -396,6 +427,14 @@ public:
+     void observe_payload_recheck_request_generation_or_throw(
+         std::uint64_t generation);
+ 
++    // Accepts the exact generation/pair observed in the combined local action
++    // snapshot. Same-pair generations coalesce; a changed pair while pending is
++    // rejected as a control-plane invariant violation.
++    void observe_payload_quarantine_request_or_throw(
++        std::uint64_t generation,
++        std::string expected_content_sha256,
++        std::string observed_content_sha256);
++
+     [[nodiscard]] SyncReplicaPeerServiceStepResult run_next_or_throw();
+ 
+ private:
+diff --git a/src/sync_replica_peer_service_status.cpp b/src/sync_replica_peer_service_status.cpp
+index 23cff6c36601c71ec04781ed84740749879b2cc6..42b90a879dc59ef76d7580d1de5289340b6ed9ed 100644
+--- a/src/sync_replica_peer_service_status.cpp
++++ b/src/sync_replica_peer_service_status.cpp
+@@ -311,6 +311,68 @@ void append_payload_recheck_status(
+         << '}';
+ }
+ 
++void append_payload_quarantine_result(
++    std::ostream& output,
++    const std::optional<SyncReplicaFilePayloadStoreQuarantineResult>& result) {
++    if (!result.has_value()) {
++        output << "null";
++        return;
++    }
++    output
++        << "{\"disposition\":"
++        << json_quote(
++               sync_replica_file_payload_store_quarantine_disposition_name(
++                   result->disposition))
++        << ",\"expected_content_sha256\":"
++        << json_quote(result->expected_content_sha256)
++        << ",\"requested_observed_content_sha256\":"
++        << json_quote(result->requested_observed_content_sha256)
++        << ",\"current_observed_content_sha256\":";
++    if (result->current_observed_content_sha256.empty()) {
++        output << "null";
++    } else {
++        output << json_quote(result->current_observed_content_sha256);
++    }
++    output << ",\"quarantine_basename\":";
++    if (result->quarantine_basename.empty()) {
++        output << "null";
++    } else {
++        output << json_quote(result->quarantine_basename);
++    }
++    output << ",\"size_bytes\":" << result->size_bytes << '}';
++}
++
++void append_payload_quarantine_status(
++    std::ostream& output,
++    const SyncReplicaPeerServicePayloadQuarantineStatus& status) {
++    output
++        << "{\"requested_generation\":"
++        << status.requested_generation
++        << ",\"started_generation\":"
++        << status.started_generation
++        << ",\"completed_generation\":"
++        << status.completed_generation
++        << ",\"pending\":" << json_bool(status.pending)
++        << ",\"expected_content_sha256\":";
++    if (status.expected_content_sha256.empty()) {
++        output << "null";
++    } else {
++        output << json_quote(status.expected_content_sha256);
++    }
++    output << ",\"observed_content_sha256\":";
++    if (status.observed_content_sha256.empty()) {
++        output << "null";
++    } else {
++        output << json_quote(status.observed_content_sha256);
++    }
++    output
++        << ",\"retry_delay_milliseconds\":"
++        << status.retry_delay_milliseconds
++        << ",\"last_result\":";
++    append_payload_quarantine_result(output, status.last_result);
++    output << '}';
++}
++
+ void validate_status_word_or_throw(
+     std::string_view value,
+     std::string_view label) {
+@@ -346,6 +408,20 @@ std::string render_sync_replica_peer_service_payload_recheck_status_json(
+     return output.str();
+ }
+ 
++std::string render_sync_replica_peer_service_payload_quarantine_status_json(
++    const SyncReplicaPeerServicePayloadQuarantineStatus& status) {
++    std::ostringstream output;
++    append_payload_quarantine_status(output, status);
++    return output.str();
++}
++
++std::string render_sync_replica_file_payload_store_quarantine_result_json(
++    const SyncReplicaFilePayloadStoreQuarantineResult& result) {
++    std::ostringstream output;
++    append_payload_quarantine_result(output, result);
++    return output.str();
++}
++
+ void account_sync_replica_peer_service_step(
+     SyncReplicaPeerServiceLoopSummary& summary,
+     const SyncReplicaPeerServiceStepResult& step) {
+@@ -450,6 +526,8 @@ void account_sync_replica_peer_service_step(
+                 PayloadStoreLeaseBusyDeferred:
+         case SyncReplicaPeerServiceStepDisposition::
+                 OperatorPayloadRecheckCompleted:
++        case SyncReplicaPeerServiceStepDisposition::
++                OperatorPayloadQuarantineCompleted:
+             break;
+     }
+     summary.last_step = step;
+@@ -483,6 +561,8 @@ std::string render_sync_replica_peer_service_status_json(
+         owner.most_recent_payload_integrity_recovery();
+     const SyncReplicaPeerServicePayloadRecheckStatus payload_recheck =
+         owner.payload_recheck_status();
++    const SyncReplicaPeerServicePayloadQuarantineStatus payload_quarantine =
++        owner.payload_quarantine_status();
+ 
+     std::ostringstream output;
+     output
+@@ -547,6 +627,8 @@ std::string render_sync_replica_peer_service_status_json(
+         output, payload_integrity, payload_integrity_recovery);
+     output << ",\"payload_recheck\":";
+     append_payload_recheck_status(output, payload_recheck);
++    output << ",\"payload_quarantine\":";
++    append_payload_quarantine_status(output, payload_quarantine);
+ 
+     output << ",\"stop_reason\":";
+     if (stop_reason.has_value()) {
+@@ -623,6 +705,18 @@ std::string render_sync_replica_peer_service_status_json(
+         << counters.payload_recheck_convergence_snapshot_observations
+         << ",\"payload_recheck_convergence_mutation_full_scans\":"
+         << counters.payload_recheck_convergence_mutation_full_scans
++        << ",\"payload_quarantine_requests_observed\":"
++        << counters.payload_quarantine_requests_observed
++        << ",\"payload_quarantine_requests_coalesced\":"
++        << counters.payload_quarantine_requests_coalesced
++        << ",\"payload_quarantine_attempts\":"
++        << counters.payload_quarantine_attempts
++        << ",\"payload_quarantine_completions\":"
++        << counters.payload_quarantine_completions
++        << ",\"payload_quarantine_images_preserved\":"
++        << counters.payload_quarantine_images_preserved
++        << ",\"payload_quarantine_observed_content_changes\":"
++        << counters.payload_quarantine_observed_content_changes
+         << ",\"cycles_complete\":" << summary.cycles_complete
+         << ",\"cycles_settled\":" << summary.cycles_settled
+         << ",\"cycles_changed\":" << summary.cycles_changed
+@@ -706,7 +800,12 @@ std::string render_sync_replica_peer_service_status_json(
+             << ",\"payload_recheck_recovered_integrity_fault\":"
+             << json_bool(
+                    step.payload_recheck_recovered_integrity_fault)
+-            << ",\"session_io_error\":";
++            << ",\"payload_quarantine_generation\":"
++            << step.payload_quarantine_generation
++            << ",\"payload_quarantine_result\":";
++        append_payload_quarantine_result(
++            output, step.payload_quarantine_result);
++        output << ",\"session_io_error\":";
+         if (step.session_io_error.has_value()) {
+             output << json_quote(*step.session_io_error);
+         } else {
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index 14591a1d9b8894b78218c17445767089174f124f..23483bee640c9dce8e40094a5d96a62df7603885 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v7";
++    "anonsync.peer-service.status.v8";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+@@ -64,6 +64,17 @@ void account_sync_replica_peer_service_step(
+ render_sync_replica_peer_service_payload_recheck_status_json(
+     const SyncReplicaPeerServicePayloadRecheckStatus& status);
+ 
++// Canonical operator projection for one exact quarantine obligation and its
++// typed terminal store result. Retained bytes remain non-authoritative; this
++// object reports preservation, not repair or restore authority.
++[[nodiscard]] std::string
++render_sync_replica_peer_service_payload_quarantine_status_json(
++    const SyncReplicaPeerServicePayloadQuarantineStatus& status);
++
++[[nodiscard]] std::string
++render_sync_replica_file_payload_store_quarantine_result_json(
++    const SyncReplicaFilePayloadStoreQuarantineResult& result);
++
+ // Produces one immutable, secret-free status snapshot. The caller may hand the
+ // resulting bytes to another thread; the renderer itself remains on the exact
+ // service-owner thread and never exports an owner or database capability.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index be88573be53a8f61b06bbc135af8eb8a9e90b348..7ad1882dca99e79fdf845e431eb03421385c26ff 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -127,6 +127,9 @@ int main() {
+         const std::string updated =
+             "{\"schema\":\"test.status.v1\",\"generation\":1,\"pid\":" +
+             process_id + "}";
++        const std::string quarantine_expected(64U, 'a');
++        const std::string quarantine_observed(64U, 'b');
++        const std::string quarantine_other(64U, 'c');
+ 
+         {
+             anonsync::SyncLocalStatusSocketServer server(
+@@ -139,13 +142,15 @@ int main() {
+                 "initial snapshot must be served exactly");
+             require(
+                 server.action_snapshot() ==
+-                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 0U},
++                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 0U, std::nullopt},
+                 "a new status socket must begin without drain or recheck");
+-            require(!server.wait_for_action_request_or_timeout(0U, 0U),
++            require(!server.wait_for_action_request_or_timeout(
++                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 0U, std::nullopt}, 0U),
+                     "a nonblocking action observation must begin false");
+             require_throws(
+                 [&] {
+-                    (void)server.wait_for_action_request_or_timeout(1U, 0U);
++                    (void)server.wait_for_action_request_or_timeout(
++                        anonsync::SyncLocalStatusSocketActionSnapshot{false, 1U, std::nullopt}, 0U);
+                 },
+                 "an action wait must reject a future generation baseline");
+ 
+@@ -175,7 +180,8 @@ int main() {
+             std::jthread recheck_waiter([&] {
+                 recheck_wait_started.store(true, std::memory_order_release);
+                 recheck_wait_completed.store(
+-                    server.wait_for_action_request_or_timeout(0U, 5000U),
++                    server.wait_for_action_request_or_timeout(
++                        anonsync::SyncLocalStatusSocketActionSnapshot{false, 0U, std::nullopt}, 5000U),
+                     std::memory_order_release);
+             });
+             while (!recheck_wait_started.load(std::memory_order_acquire)) {
+@@ -207,11 +213,13 @@ int main() {
+                 "accepted recheck must advance the generation");
+             require(
+                 server.action_snapshot() ==
+-                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 1U},
++                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 1U, std::nullopt},
+                 "action snapshot must bind accepted recheck without drain");
+-            require(server.wait_for_action_request_or_timeout(0U, 0U),
++            require(server.wait_for_action_request_or_timeout(
++                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 0U, std::nullopt}, 0U),
+                     "an older generation must observe pending action");
+-            require(!server.wait_for_action_request_or_timeout(1U, 0U),
++            require(!server.wait_for_action_request_or_timeout(
++                        anonsync::SyncLocalStatusSocketActionSnapshot{false, 1U, std::nullopt}, 0U),
+                     "the exact accepted generation must not remain pending");
+ 
+             const std::string second_recheck =
+@@ -229,13 +237,112 @@ int main() {
+                 server.action_snapshot().recheck_request_generation == 2U,
+                 "the second recheck generation must be observable");
+ 
++            const auto before_quarantine = server.action_snapshot();
++            std::atomic<bool> quarantine_wait_started{false};
++            std::atomic<bool> quarantine_wait_completed{false};
++            std::jthread quarantine_waiter([&] {
++                quarantine_wait_started.store(true, std::memory_order_release);
++                quarantine_wait_completed.store(
++                    server.wait_for_action_request_or_timeout(
++                        before_quarantine, 5000U),
++                    std::memory_order_release);
++            });
++            while (!quarantine_wait_started.load(std::memory_order_acquire)) {
++                std::this_thread::yield();
++            }
++            std::this_thread::sleep_for(std::chrono::milliseconds(20));
++            const std::string first_quarantine =
++                anonsync::request_sync_local_status_payload_quarantine_or_throw(
++                    socket_path, quarantine_expected, quarantine_observed);
++            quarantine_waiter.join();
++            require(
++                first_quarantine ==
++                    "{\"schema\":\"anonsync.local-quarantine.response.v1\","
++                    "\"command\":\"quarantine\","
++                    "\"terminal_class\":\"accepted\","
++                    "\"request_generation\":1,"
++                    "\"expected_content_sha256\":\"" +
++                        quarantine_expected +
++                        "\",\"observed_content_sha256\":\"" +
++                        quarantine_observed +
++                        "\",\"server_pid\":" + process_id + "}",
++                "first quarantine request must return exact acceptance");
++            require(
++                quarantine_wait_completed.load(std::memory_order_acquire),
++                "accepted quarantine must wake the combined action wait");
++            const auto quarantine_one = server.action_snapshot();
++            require(
++                quarantine_one.payload_quarantine_request.has_value() &&
++                    quarantine_one.payload_quarantine_request
++                            ->request_generation == 1U &&
++                    quarantine_one.payload_quarantine_request
++                            ->expected_content_sha256 == quarantine_expected &&
++                    quarantine_one.payload_quarantine_request
++                            ->observed_content_sha256 == quarantine_observed,
++                "combined action snapshot lost the exact quarantine pair");
++            require(
++                !server.wait_for_action_request_or_timeout(
++                    quarantine_one, 0U),
++                "the exact quarantine generation must not remain newly pending");
++
++            const std::string coalesced_quarantine =
++                anonsync::request_sync_local_status_payload_quarantine_or_throw(
++                    socket_path, quarantine_expected, quarantine_observed);
++            require(
++                coalesced_quarantine ==
++                    "{\"schema\":\"anonsync.local-quarantine.response.v1\","
++                    "\"command\":\"quarantine\","
++                    "\"terminal_class\":\"accepted\","
++                    "\"request_generation\":2,"
++                    "\"expected_content_sha256\":\"" +
++                        quarantine_expected +
++                        "\",\"observed_content_sha256\":\"" +
++                        quarantine_observed +
++                        "\",\"server_pid\":" + process_id + "}",
++                "same-pair quarantine must coalesce through a new generation");
++            const std::string conflicting_quarantine =
++                anonsync::request_sync_local_status_payload_quarantine_or_throw(
++                    socket_path, quarantine_expected, quarantine_other);
++            require(
++                conflicting_quarantine ==
++                    "{\"schema\":\"anonsync.local-quarantine.response.v1\","
++                    "\"command\":\"quarantine\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"different_quarantine_pending\","
++                    "\"request_generation\":2,"
++                    "\"expected_content_sha256\":\"" +
++                        quarantine_expected +
++                        "\",\"observed_content_sha256\":\"" +
++                        quarantine_other +
++                        "\",\"server_pid\":" + process_id + "}",
++                "different-pair quarantine must not overwrite pending authority");
++            server.complete_payload_quarantine_request_or_throw(1U);
++            require(
++                server.action_snapshot().payload_quarantine_request
++                        .has_value() &&
++                    server.action_snapshot().payload_quarantine_request
++                            ->request_generation == 2U,
++                "completion through an older generation cleared coalesced work");
++            server.complete_payload_quarantine_request_or_throw(2U);
++            server.complete_payload_quarantine_request_or_throw(2U);
++            require(
++                !server.action_snapshot().payload_quarantine_request
++                     .has_value(),
++                "exact completion did not release the pending quarantine slot");
++            require_throws(
++                [&] {
++                    server.complete_payload_quarantine_request_or_throw(3U);
++                },
++                "quarantine completion must reject a future generation");
++
+             std::atomic<bool> stop_wait_started{false};
+             std::atomic<bool> stop_wait_completed{false};
+             const auto stop_wait_started_at = std::chrono::steady_clock::now();
+             std::jthread stop_waiter([&] {
+                 stop_wait_started.store(true, std::memory_order_release);
+                 stop_wait_completed.store(
+-                    server.wait_for_action_request_or_timeout(2U, 5000U),
++                    server.wait_for_action_request_or_timeout(
++                        anonsync::SyncLocalStatusSocketActionSnapshot{false, 2U, std::nullopt}, 5000U),
+                     std::memory_order_release);
+             });
+             while (!stop_wait_started.load(std::memory_order_acquire)) {
+@@ -262,7 +369,8 @@ int main() {
+             require(
+                 stop_wait_elapsed < std::chrono::seconds(1),
+                 "stop request must not wait for the five-second fallback timeout");
+-            require(server.wait_for_action_request_or_timeout(2U, 100U),
++            require(server.wait_for_action_request_or_timeout(
++                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 2U, std::nullopt}, 100U),
+                     "latched stop request must wake bounded wait immediately");
+             const std::string repeated_stop =
+                 anonsync::request_sync_local_status_stop_or_throw(socket_path);
+@@ -292,11 +400,28 @@ int main() {
+             require(
+                 server.action_snapshot().recheck_request_generation == 2U,
+                 "post-drain rejection must not advance generation");
++            const std::string rejected_quarantine =
++                anonsync::request_sync_local_status_payload_quarantine_or_throw(
++                    socket_path, quarantine_expected, quarantine_observed);
++            require(
++                rejected_quarantine ==
++                    "{\"schema\":\"anonsync.local-quarantine.response.v1\","
++                    "\"command\":\"quarantine\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"drain_requested\","
++                    "\"request_generation\":2,"
++                    "\"expected_content_sha256\":\"" +
++                        quarantine_expected +
++                        "\",\"observed_content_sha256\":\"" +
++                        quarantine_observed +
++                        "\",\"server_pid\":" + process_id + "}",
++                "payload quarantine serialized after drain must be rejected");
+             require(
+                 server.action_snapshot() ==
+-                    anonsync::SyncLocalStatusSocketActionSnapshot{true, 2U},
++                    anonsync::SyncLocalStatusSocketActionSnapshot{true, 2U, std::nullopt},
+                 "drain snapshot must retain every pre-drain generation");
+-            require(server.wait_for_action_request_or_timeout(2U, 100U),
++            require(server.wait_for_action_request_or_timeout(
++                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 2U, std::nullopt}, 100U),
+                     "latched drain must wake the unified action wait");
+ 
+             require(::chmod(socket_path.c_str(), 0660U) == 0,
+@@ -319,6 +444,14 @@ int main() {
+                         socket_path);
+                 },
+                 "recheck must reject a socket without exact mode 0600");
++            require_throws(
++                [&] {
++                    (void)anonsync::
++                        request_sync_local_status_payload_quarantine_or_throw(
++                            socket_path, quarantine_expected,
++                            quarantine_observed);
++                },
++                "quarantine must reject a socket without exact mode 0600");
+             require_throws(
+                 [&] { server.require_healthy_or_throw(); },
+                 "server health must reject changed socket mode");
+@@ -349,6 +482,14 @@ int main() {
+                         socket_path);
+                 },
+                 "recheck must reject a socket beneath a non-private parent");
++            require_throws(
++                [&] {
++                    (void)anonsync::
++                        request_sync_local_status_payload_quarantine_or_throw(
++                            socket_path, quarantine_expected,
++                            quarantine_observed);
++                },
++                "quarantine must reject a socket beneath a non-private parent");
+             require(::chmod(temporary.path().c_str(), 0700U) == 0,
+                     "test must restore status parent mode");
+ 
+@@ -406,7 +547,7 @@ int main() {
+                 sealed.seal_actions_for_owner_shutdown();
+             require(
+                 terminal_actions ==
+-                    anonsync::SyncLocalStatusSocketActionSnapshot{true, 1U},
++                    anonsync::SyncLocalStatusSocketActionSnapshot{true, 1U, std::nullopt},
+                 "owner shutdown seal must bind all pre-seal actions");
+             require(
+                 sealed.seal_actions_for_owner_shutdown() == terminal_actions,
+@@ -496,6 +637,22 @@ int main() {
+                     temporary.path() / "missing.sock", 20U);
+             },
+             "rechecking through a missing local socket must fail");
++        require_throws(
++            [&] {
++                (void)anonsync::
++                    request_sync_local_status_payload_quarantine_or_throw(
++                        temporary.path() / "missing.sock",
++                        quarantine_expected, quarantine_observed, 20U);
++            },
++            "quarantining through a missing local socket must fail");
++        require_throws(
++            [&] {
++                (void)anonsync::
++                    request_sync_local_status_payload_quarantine_or_throw(
++                        socket_path, quarantine_expected,
++                        quarantine_expected);
++            },
++            "quarantine client must reject an identical digest pair");
+ 
+         std::cout << "sync_local_status_socket_test: " << checks
+                   << " checks passed\n";
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index 7e679efd920d7df30965d1d37be060ec44052304..70ebd9d720bd2a744f1496db42bd1a75774023a0 100755
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -2601,6 +2601,407 @@ void test_scrub_failure_is_reproved_persisted_and_repairable() {
+         "repaired payload did not durably clear stale failure evidence");
+ }
+ 
++void test_exact_corrupt_payload_quarantine_is_bounded_and_recoverable() {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.make_store_root("exact-quarantine");
++    const std::string folder = "folder-exact-corrupt-payload-quarantine";
++    const std::string good_payload =
++        "exact-quarantine-good-payload-current-byte-authority";
++    const std::string first_corrupt(good_payload.size(), 'Q');
++    const std::string second_corrupt(good_payload.size(), 'R');
++    const std::string expected_digest = anonsync::sha256_hex(good_payload);
++    const std::string first_observed = anonsync::sha256_hex(first_corrupt);
++    const std::string second_observed = anonsync::sha256_hex(second_corrupt);
++    const std::string unrelated_observed =
++        anonsync::sha256_hex("unrelated quarantine request");
++    const fs::path payload_path = root / expected_digest;
++
++    anonsync::SyncReplicaFilePayloadStoreLimits limits;
++    limits.max_entries = 8U;
++    limits.max_payload_bytes = 4096U;
++    limits.max_indexed_bytes = 16384U;
++    limits.max_transient_entries = 8U;
++    limits.max_transient_bytes = 1024U * 1024U;
++
++    anonsync::SyncReplicaFilePayloadStore store(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::CreateIfMissing,
++        limits, "exact corrupt payload quarantine");
++    require(
++        store.put_payload_or_throw(good_payload).disposition ==
++            anonsync::SyncReplicaFilePayloadStorePutDisposition::Inserted,
++        "exact-quarantine fixture did not publish the good payload");
++    overwrite_private_file(payload_path, first_corrupt);
++    require_integrity_error(
++        [&] { (void)store.snapshot_rechecking_current_bytes_or_throw(); },
++        expected_digest, first_observed, false,
++        "forced current-byte proof did not install the exact quarantine witness");
++
++    const auto wrong = store.quarantine_corrupt_payload_or_throw(
++        expected_digest, unrelated_observed);
++    require(
++        wrong.disposition ==
++                anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    ActiveFaultMismatch &&
++            wrong.current_observed_content_sha256 == first_observed &&
++            wrong.quarantine_basename.empty() &&
++            fs::is_regular_file(payload_path),
++        "a stale quarantine request moved bytes or lost the current witness");
++
++    overwrite_private_file(payload_path, second_corrupt);
++    const auto changed = store.quarantine_corrupt_payload_or_throw(
++        expected_digest, first_observed);
++    require(
++        changed.disposition ==
++                anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    ObservedDigestChanged &&
++            changed.current_observed_content_sha256 == second_observed &&
++            changed.quarantine_basename.empty() &&
++            changed.size_bytes == second_corrupt.size() &&
++            fs::is_regular_file(payload_path),
++        "quarantine accepted a stale observed-byte digest or lost new evidence");
++    const auto now_stale = store.quarantine_corrupt_payload_or_throw(
++        expected_digest, first_observed);
++    require(
++        now_stale.disposition ==
++                anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    ActiveFaultMismatch &&
++            now_stale.current_observed_content_sha256 == second_observed &&
++            now_stale.quarantine_basename.empty(),
++        "changed corruption did not replace the exact active request pair");
++
++    struct stat source_before{};
++    require(
++        ::stat(payload_path.c_str(), &source_before) == 0,
++        "exact-quarantine fixture could not stat the corrupt source inode");
++    const auto quarantined = store.quarantine_corrupt_payload_or_throw(
++        expected_digest, second_observed);
++    const fs::path quarantine_path = root / quarantined.quarantine_basename;
++    struct stat destination_after{};
++    require(
++        quarantined.disposition ==
++                anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    Quarantined &&
++            quarantined.expected_content_sha256 == expected_digest &&
++            quarantined.requested_observed_content_sha256 == second_observed &&
++            quarantined.current_observed_content_sha256 == second_observed &&
++            quarantined.size_bytes == second_corrupt.size() &&
++            !fs::exists(payload_path) &&
++            ::stat(quarantine_path.c_str(), &destination_after) == 0 &&
++            source_before.st_dev == destination_after.st_dev &&
++            source_before.st_ino == destination_after.st_ino &&
++            read_file_bytes(quarantine_path) == second_corrupt &&
++            anonsync::sync_replica_file_payload_store_quarantine_basename_is_exact(
++                quarantined.quarantine_basename),
++        "exact quarantine did not preserve the same corrupt inode outside authority");
++
++    const auto idempotent = store.quarantine_corrupt_payload_or_throw(
++        expected_digest, second_observed);
++    require(
++        idempotent.disposition ==
++                anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    ExactQuarantineAlreadyPresent &&
++            idempotent.size_bytes == second_corrupt.size() &&
++            read_file_bytes(quarantine_path) == second_corrupt,
++        "an exact retained quarantine was not byte-reproved idempotently");
++
++    const auto absent = store.snapshot_rechecking_current_bytes_or_throw();
++    require(
++        absent.entry_count() == 0U && absent.scan_hashed_entry_count() == 0U &&
++            absent.scan_hashed_bytes() == 0U && fs::is_regular_file(quarantine_path),
++        "complete absence reproof did not clear authority while retaining evidence");
++    require(
++        store.put_payload_or_throw(good_payload).disposition ==
++            anonsync::SyncReplicaFilePayloadStorePutDisposition::Inserted,
++        "ordinary convergence could not re-admit correct bytes after quarantine");
++    const auto repaired = store.snapshot_rechecking_current_bytes_or_throw();
++    require(
++        repaired.entry_count() == 1U &&
++            repaired.scan_hashed_entry_count() == 1U &&
++            repaired.scan_hashed_bytes() == good_payload.size() &&
++            repaired.copy_payload_for_operation_or_throw(
++                file_operation(folder, good_payload)) == good_payload &&
++            fs::is_regular_file(quarantine_path),
++        "re-admission did not restore payload authority alongside retained evidence");
++
++    // The same digest name can later corrupt to the same byte image again.
++    // The exact retained destination must make that second explicit action
++    // recoverable rather than permanently idempotent-but-stuck: its bytes are
++    // re-proved, the duplicate authoritative source is removed, and the
++    // original retained inode remains unchanged.
++    overwrite_private_file(payload_path, second_corrupt);
++    require_integrity_error(
++        [&] { (void)store.snapshot_rechecking_current_bytes_or_throw(); },
++        expected_digest, second_observed, false,
++        "repeated exact corruption did not reinstall quarantine authority");
++    struct stat retained_before_repeat{};
++    require(
++        ::stat(quarantine_path.c_str(), &retained_before_repeat) == 0,
++        "repeated exact-quarantine fixture lost its retained destination");
++    const auto repeated = store.quarantine_corrupt_payload_or_throw(
++        expected_digest, second_observed);
++    struct stat retained_after_repeat{};
++    require(
++        repeated.disposition ==
++                anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    ExactQuarantineAlreadyPresent &&
++            repeated.quarantine_basename == quarantined.quarantine_basename &&
++            !fs::exists(payload_path) &&
++            ::stat(quarantine_path.c_str(), &retained_after_repeat) == 0 &&
++            retained_before_repeat.st_dev == retained_after_repeat.st_dev &&
++            retained_before_repeat.st_ino == retained_after_repeat.st_ino &&
++            read_file_bytes(quarantine_path) == second_corrupt,
++        "an exact retained quarantine left repeated corrupt authority stuck");
++    require(
++        store.snapshot_rechecking_current_bytes_or_throw().entry_count() == 0U,
++        "repeated exact quarantine did not permit complete absence reproof");
++    require(
++        store.put_payload_or_throw(good_payload).disposition ==
++                anonsync::SyncReplicaFilePayloadStorePutDisposition::Inserted &&
++            store.snapshot_rechecking_current_bytes_or_throw().entry_count() ==
++                1U,
++        "repeated exact quarantine did not permit ordinary byte re-admission");
++
++    anonsync::SyncReplicaFilePayloadStore inspector(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ReadOnlyInspect,
++        limits, "exact quarantine read-only inspector");
++    require_error(
++        [&] {
++            (void)inspector.quarantine_corrupt_payload_or_throw(
++                expected_digest, second_observed);
++        },
++        "read-only inspection store cannot quarantine",
++        "forensic inspection acquired quarantine mutation authority");
++
++    require(
++        !anonsync::sync_replica_file_payload_store_quarantine_basename_is_exact(
++            ".anonsync-payload-quarantine-v1-not-a-digest") &&
++            !anonsync::sync_replica_file_payload_store_quarantine_basename_is_exact(
++                quarantined.quarantine_basename + "-tail"),
++        "payload quarantine parser accepted a non-canonical retained name");
++}
++
++void test_fresh_bootstrap_never_adopts_quarantine_evidence() {
++    TemporaryDirectory temporary;
++    const fs::path root =
++        temporary.make_store_root("quarantine-bootstrap-rejection");
++    const std::string folder = "folder-quarantine-bootstrap-rejection";
++    const std::string expected = anonsync::sha256_hex("expected-bootstrap");
++    const std::string observed = anonsync::sha256_hex("observed-bootstrap");
++    const fs::path quarantine_path =
++        root / (std::string(".anonsync-payload-quarantine-v1-") + expected +
++                "-" + observed);
++    write_private_file(quarantine_path, "unbound diagnostic bytes");
++
++    require_error(
++        [&] {
++            anonsync::SyncReplicaFilePayloadStore owner(
++                folder, root,
++                anonsync::SyncReplicaFilePayloadStoreOpenDisposition::
++                    CreateIfMissing,
++                {}, "standalone quarantine bootstrap rejection");
++            (void)owner.snapshot_or_throw();
++        },
++        "fresh bootstrap refuses pre-existing payload quarantine evidence",
++        "standalone adoption silently assigned unbound quarantine evidence to a fresh store identity");
++
++    std::size_t retained_entries = 0U;
++    for (const auto& ignored : fs::directory_iterator(root)) {
++        (void)ignored;
++        ++retained_entries;
++    }
++    require(
++        retained_entries == 1U && fs::is_regular_file(quarantine_path),
++        "quarantine bootstrap rejection mutated evidence or published an identity marker");
++}
++
++void test_quarantine_bytes_cannot_exceed_active_indexed_byte_budget() {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.make_store_root("quarantine-byte-budget");
++    const std::string folder = "folder-quarantine-byte-budget";
++
++    anonsync::SyncReplicaFilePayloadStoreLimits limits;
++    limits.max_entries = 8U;
++    limits.max_payload_bytes = 8U;
++    limits.max_indexed_bytes = 16U;
++    limits.max_transient_entries = 8U;
++    limits.max_transient_bytes = 1024U * 1024U;
++
++    {
++        anonsync::SyncReplicaFilePayloadStore owner(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::CreateIfMissing,
++            limits, "quarantine indexed-byte budget bootstrap");
++        require(
++            owner.snapshot_or_throw().entry_count() == 0U,
++            "quarantine indexed-byte budget fixture did not establish an empty identity");
++    }
++
++    const auto quarantine_name = [](std::string_view expected_seed,
++                                    std::string_view observed_seed) {
++        return std::string(".anonsync-payload-quarantine-v1-") +
++            anonsync::sha256_hex(std::string(expected_seed)) + "-" +
++            anonsync::sha256_hex(std::string(observed_seed));
++    };
++    write_private_file(
++        root / quarantine_name("expected-1", "observed-1"),
++        std::string(8U, 'A'));
++    write_private_file(
++        root / quarantine_name("expected-2", "observed-2"),
++        std::string(8U, 'B'));
++
++    {
++        anonsync::SyncReplicaFilePayloadStore inspector(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ReadOnlyInspect,
++            limits, "quarantine indexed-byte budget exact frontier");
++        require(
++            inspector.snapshot_or_throw().entry_count() == 0U,
++            "quarantine bytes at the active indexed-byte frontier entered payload authority");
++    }
++
++    write_private_file(
++        root / quarantine_name("expected-3", "observed-3"), "C");
++    anonsync::SyncReplicaFilePayloadStore over_budget(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ReadOnlyInspect,
++        limits, "quarantine indexed-byte budget overflow");
++    require_error(
++        [&] { (void)over_budget.snapshot_or_throw(); },
++        "payload quarantine bytes exceed fixed budget",
++        "hidden quarantine bytes exceeded the active indexed-byte budget");
++}
++
++void test_quarantine_capacity_is_a_typed_nonfatal_result() {
++    const auto quarantine_name = [](std::string_view expected_seed,
++                                    std::string_view observed_seed) {
++        return std::string(".anonsync-payload-quarantine-v1-") +
++            anonsync::sha256_hex(std::string(expected_seed)) + "-" +
++            anonsync::sha256_hex(std::string(observed_seed));
++    };
++
++    {
++        TemporaryDirectory temporary;
++        const fs::path root =
++            temporary.make_store_root("quarantine-entry-capacity");
++        const std::string folder = "folder-quarantine-entry-capacity";
++        const std::string good_payload =
++            "quarantine-entry-capacity-good-payload";
++        const std::string corrupt_payload(good_payload.size(), 'E');
++        const std::string expected_digest = anonsync::sha256_hex(good_payload);
++        const std::string observed_digest =
++            anonsync::sha256_hex(corrupt_payload);
++        const fs::path payload_path = root / expected_digest;
++
++        anonsync::SyncReplicaFilePayloadStoreLimits limits;
++        limits.max_entries = 8U;
++        limits.max_payload_bytes = 4096U;
++        limits.max_indexed_bytes = 16384U;
++        limits.max_transient_entries = 8U;
++        limits.max_transient_bytes = 1024U * 1024U;
++
++        anonsync::SyncReplicaFilePayloadStore store(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::
++                CreateIfMissing,
++            limits, "quarantine entry-capacity typed result");
++        require(
++            store.put_payload_or_throw(good_payload).disposition ==
++                anonsync::SyncReplicaFilePayloadStorePutDisposition::Inserted,
++            "entry-capacity fixture did not publish its good payload");
++        for (std::uint64_t index = 0U;
++             index <
++                 anonsync::kSyncReplicaFilePayloadStoreMaxQuarantineEntries;
++             ++index) {
++            const std::string suffix = std::to_string(index);
++            write_private_file(
++                root / quarantine_name(
++                           "entry-expected-" + suffix,
++                           "entry-observed-" + suffix),
++                "Q");
++        }
++        overwrite_private_file(payload_path, corrupt_payload);
++        require_integrity_error(
++            [&] { (void)store.snapshot_rechecking_current_bytes_or_throw(); },
++            expected_digest, observed_digest, false,
++            "entry-capacity fixture did not install its active fault");
++
++        const auto full = store.quarantine_corrupt_payload_or_throw(
++            expected_digest, observed_digest);
++        require(
++            full.disposition ==
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        EntryCapacityExceeded &&
++                full.quarantine_basename.empty() &&
++                full.size_bytes == corrupt_payload.size() &&
++                fs::is_regular_file(payload_path) &&
++                read_file_bytes(payload_path) == corrupt_payload,
++            "a full quarantine frontier threw or mutated instead of returning a typed entry-capacity result");
++        require_integrity_error(
++            [&] { (void)store.snapshot_rechecking_current_bytes_or_throw(); },
++            expected_digest, observed_digest, false,
++            "entry-capacity completion accidentally cleared the active fault");
++    }
++
++    {
++        TemporaryDirectory temporary;
++        const fs::path root =
++            temporary.make_store_root("quarantine-byte-capacity");
++        const std::string folder = "folder-quarantine-byte-capacity";
++        const std::string good_payload = "GOODBYTE";
++        const std::string corrupt_payload = "BADBYTES";
++        const std::string expected_digest = anonsync::sha256_hex(good_payload);
++        const std::string observed_digest =
++            anonsync::sha256_hex(corrupt_payload);
++        const fs::path payload_path = root / expected_digest;
++
++        anonsync::SyncReplicaFilePayloadStoreLimits limits;
++        limits.max_entries = 8U;
++        limits.max_payload_bytes = 8U;
++        limits.max_indexed_bytes = 16U;
++        limits.max_transient_entries = 8U;
++        limits.max_transient_bytes = 1024U * 1024U;
++
++        anonsync::SyncReplicaFilePayloadStore store(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::
++                CreateIfMissing,
++            limits, "quarantine byte-capacity typed result");
++        require(
++            store.put_payload_or_throw(good_payload).disposition ==
++                anonsync::SyncReplicaFilePayloadStorePutDisposition::Inserted,
++            "byte-capacity fixture did not publish its good payload");
++        write_private_file(
++            root / quarantine_name("byte-expected-1", "byte-observed-1"),
++            std::string(8U, 'A'));
++        write_private_file(
++            root / quarantine_name("byte-expected-2", "byte-observed-2"),
++            std::string(8U, 'B'));
++        overwrite_private_file(payload_path, corrupt_payload);
++        require_integrity_error(
++            [&] { (void)store.snapshot_rechecking_current_bytes_or_throw(); },
++            expected_digest, observed_digest, false,
++            "byte-capacity fixture did not install its active fault");
++
++        const auto full = store.quarantine_corrupt_payload_or_throw(
++            expected_digest, observed_digest);
++        require(
++            full.disposition ==
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        ByteCapacityExceeded &&
++                full.quarantine_basename.empty() &&
++                full.size_bytes == corrupt_payload.size() &&
++                fs::is_regular_file(payload_path) &&
++                read_file_bytes(payload_path) == corrupt_payload,
++            "a full quarantine byte budget threw or mutated instead of returning a typed capacity result");
++        require_integrity_error(
++            [&] { (void)store.snapshot_rechecking_current_bytes_or_throw(); },
++            expected_digest, observed_digest, false,
++            "byte-capacity completion accidentally cleared the active fault");
++    }
++}
++
+ void test_process_fault_survives_scrub_record_loss_until_reproof() {
+     TemporaryDirectory temporary;
+     const fs::path root = temporary.make_store_root("process-fault-reproof");
+@@ -4926,6 +5327,35 @@ int main() {
+                         anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
+                             Advanced) == "advanced",
+             "payload scrub disposition names are not stable operator words");
++        require(
++            anonsync::sync_replica_file_payload_store_quarantine_disposition_name(
++                anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                    Quarantined) == "quarantined" &&
++                anonsync::sync_replica_file_payload_store_quarantine_disposition_name(
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        ActiveFaultMismatch) == "active_fault_mismatch" &&
++                anonsync::sync_replica_file_payload_store_quarantine_disposition_name(
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        PayloadAbsent) == "payload_absent" &&
++                anonsync::sync_replica_file_payload_store_quarantine_disposition_name(
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        PayloadAlreadyRepaired) == "payload_already_repaired" &&
++                anonsync::sync_replica_file_payload_store_quarantine_disposition_name(
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        ObservedDigestChanged) == "observed_digest_changed" &&
++                anonsync::sync_replica_file_payload_store_quarantine_disposition_name(
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        ExactQuarantineAlreadyPresent) ==
++                    "exact_quarantine_already_present" &&
++                anonsync::sync_replica_file_payload_store_quarantine_disposition_name(
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        EntryCapacityExceeded) ==
++                    "entry_capacity_exceeded" &&
++                anonsync::sync_replica_file_payload_store_quarantine_disposition_name(
++                    anonsync::SyncReplicaFilePayloadStoreQuarantineDisposition::
++                        ByteCapacityExceeded) ==
++                    "byte_capacity_exceeded",
++            "payload quarantine disposition names are not stable operator words");
+         const auto production_limits = anonsync::
+             sync_replica_file_payload_store_limits_for_payload_ceiling_or_throw(
+                 64ULL * 1024ULL * 1024ULL,
+@@ -4961,6 +5391,10 @@ int main() {
+         test_present_unusable_scrub_state_revokes_restart_acceleration();
+         test_disabled_scrub_settles_damaged_restart_fence_once();
+         test_scrub_failure_is_reproved_persisted_and_repairable();
++        test_exact_corrupt_payload_quarantine_is_bounded_and_recoverable();
++        test_fresh_bootstrap_never_adopts_quarantine_evidence();
++        test_quarantine_bytes_cannot_exceed_active_indexed_byte_budget();
++        test_quarantine_capacity_is_a_typed_nonfatal_result();
+         test_process_fault_survives_scrub_record_loss_until_reproof();
+         test_process_fault_permanently_revokes_live_snapshot_authority();
+         test_process_fault_preserves_original_target_across_second_mismatch();
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 769ef04b5fb7826667773884d4f11ad5987bf57f..0d8816ba694db3b546d263fa1dc93cde47e992f6 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -115,6 +115,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0959.md"),
+     Path("OWNER_TRIGGERED_PAYLOAD_RECHECK_AUDIT_rev0960.md"),
+     Path("REVISION_NOTES_rev0960.md"),
++    Path("EXACT_CORRUPT_PAYLOAD_QUARANTINE_AND_LINEARIZED_LOCAL_ACTION_AUDIT_rev0961.md"),
++    Path("REVISION_NOTES_rev0961.md"),
+ )
+ 
+ 
+@@ -354,6 +356,10 @@ def main() -> int:
+         "OWNER_TRIGGERED_PAYLOAD_RECHECK_AUDIT_rev0960.md"
+     ]
+     rev0960_notes = text["REVISION_NOTES_rev0960.md"]
++    quarantine_design = text[
++        "EXACT_CORRUPT_PAYLOAD_QUARANTINE_AND_LINEARIZED_LOCAL_ACTION_AUDIT_rev0961.md"
++    ]
++    rev0961_notes = text["REVISION_NOTES_rev0961.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -376,6 +382,17 @@ def main() -> int:
+         if rev0960_verifier_start >= 0 and rev0960_verifier_end >= 0
+         else ""
+     )
++    rev0961_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 961:"
++    )
++    rev0961_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0961_verifier_start
++    )
++    rev0961_verifier_block = (
++        verifier[rev0961_verifier_start:rev0961_verifier_end]
++        if rev0961_verifier_start >= 0 and rev0961_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     store_sources = cmake_call(
+@@ -798,7 +815,7 @@ def main() -> int:
+                 "root authority after descriptor duplication",
+             )
+         )
+-        and store.count("duplicate_shared_open_description_or_throw(") == 12
++        and store.count("duplicate_shared_open_description_or_throw(") == 14
+         and all(
+             "duplicate_shared_open_description_or_throw" in function_body(
+                 store, signature
+@@ -809,7 +826,9 @@ def main() -> int:
+                 "scan_store_namespace_or_throw(",
+                 "observe_staged_prefix_namespace_under_lease_or_throw(",
+                 "observe_exact_published_payload_without_rehash_or_throw(",
++                "observe_quarantine_namespace_under_lease_or_throw(",
+                 "SyncReplicaFilePayloadStore::begin_targeted_access_or_throw(",
++                "SyncReplicaFilePayloadStore::quarantine_corrupt_payload_or_throw(",
+                 "SyncReplicaFilePayloadStoreSnapshot::open_payload_for_operation_or_throw(",
+                 "SyncReplicaFilePayloadStoreSnapshot::copy_payload_range_for_operation_or_throw(",
+                 "SyncReplicaFilePayloadStore::stage_payload_range_or_throw(",
+@@ -4195,7 +4214,7 @@ def main() -> int:
+         and all(
+             token in service_configuration_runtime
+             for token in (
+-                "payload integrity external repair",
++                "payload after quarantine",
+                 "most_recent_recovery",
+                 "integrity recovery erased exact operator evidence",
+                 "payload-integrity recovery replaced the service process",
+@@ -4218,7 +4237,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v7"' in peer_status_h
++        '"anonsync.peer-service.status.v8"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4235,7 +4254,7 @@ def main() -> int:
+             )
+         )
+         and "render_sync_replica_peer_service_status_json" in sync_cli,
+-        "status_v7_exposes_scan_settlement_scrub_active_fault_recheck_and_bounded_recovery_history_once",
++        "status_v8_exposes_scan_settlement_scrub_active_fault_recheck_quarantine_and_bounded_recovery_history_once",
+         "one canonical live/terminal renderer distinguishes zero-read active-checkpoint settlement from failure repair while separating scrub scheduling observations, exact-pair active authority failure, and one process-local recovered event",
+     )
+ 
+@@ -4360,7 +4379,7 @@ def main() -> int:
+         "merge_sync_replica_peer_service_payload_integrity_evidence(",
+     )
+     fault_record = function_body(
+-        peer_service, "record_payload_integrity_fault_or_throw("
++        peer_service, "record_payload_integrity_evidence_or_throw("
+     )
+ 
+     require(
+@@ -4632,14 +4651,14 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v7"' in peer_status_h
++        '"anonsync.peer-service.status.v8"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v7"'
++        and '"anonsync.peer-service.status.v8"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v7"'
++        and '"anonsync.peer-service.status.v8"'
+         in service_i2p_ingress_runtime,
+-        "status_v7_binds_checkpoint_settlement_exact_pair_recheck_semantics_and_all_process_oracles",
++        "status_v8_binds_checkpoint_settlement_exact_pair_recheck_quarantine_semantics_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+     )
+ 
+@@ -5119,10 +5138,10 @@ def main() -> int:
+         )
+         and service_configuration_runtime.count(
+             "overwrite_payload_under_exclusive_store_lease("
+-        ) == 4
++        ) == 3
+         and service_configuration_runtime.count("overwrite_regular_file(") == 2,
+         "configured_service_fault_injection_holds_exact_store_exclusive_lease",
+-        "the process regression serializes all three deliberate payload mutations against shared authority scans through the exact reader-fenced identity inode rather than depending on compiler speed",
++        "the process regression serializes both deliberate corrupt-payload mutations against shared authority scans through the exact reader-fenced identity inode rather than depending on compiler speed",
+     )
+ 
+     require(
+@@ -5611,6 +5630,7 @@ def main() -> int:
+                 "std::lock_guard lock(state_->mutex)",
+                 "state_->drain_requested",
+                 "state_->recheck_generation",
++                "state_->quarantine_pending",
+             )
+         )
+         and all(
+@@ -5619,11 +5639,12 @@ def main() -> int:
+                 "std::unique_lock lock(state_->mutex)",
+                 "state_->drain_requested",
+                 "state_->recheck_generation >",
++                "state_->quarantine_pending->request_generation >",
+                 "state_->action_condition.wait_for(",
+             )
+         ),
+         "local_control_actions_have_one_mutex_linearization_model",
+-        "drain and recheck generation are observed and waited on only as one mutex-protected action state; obsolete split getters and redundant atomic shadow state are absent",
++        "drain, recheck generation, and one exact quarantine pair are observed and waited on only as one mutex-protected action state; obsolete split getters and redundant atomic shadow state are absent",
+     )
+ 
+     command_run = function_body(sync_cli, "int command_run(")
+@@ -5685,7 +5706,7 @@ def main() -> int:
+         and all(
+             token in local_status_runtime
+             for token in (
+-                "wait_for_action_request_or_timeout(2U, 5000U)",
++                "wait_for_action_request_or_timeout(",
+                 "post-drain rejection must not advance generation",
+                 "accepted recheck must not wait for the fallback timeout",
+             )
+@@ -5763,6 +5784,443 @@ def main() -> int:
+         "the revision record binds forced current-byte proof, exact snapshot handoff, generation coalescing, terminal action sealing, strict JSON evidence, operator nonclaims, and the mandatory package surface",
+     )
+ 
++    quarantine_store = function_body(
++        store,
++        "SyncReplicaFilePayloadStore::quarantine_corrupt_payload_or_throw(",
++    )
++    quarantine_observer = function_body(
++        store, "observe_quarantine_namespace_under_lease_or_throw("
++    )
++    full_store_scan = function_body(
++        store, "scan_store_namespace_or_throw("
++    )
++    staged_prefix_observer = function_body(
++        store, "observe_staged_prefix_namespace_under_lease_or_throw("
++    )
++    local_quarantine_request = function_body(
++        local_status, "request_payload_quarantine_response("
++    )
++    local_quarantine_completion = function_body(
++        local_status,
++        "complete_payload_quarantine_request_or_throw(",
++    )
++    operator_quarantine = function_body(
++        peer_service, "operator_payload_quarantine_step_or_throw()"
++    )
++    quarantine_status_renderer = function_body(
++        peer_status,
++        "render_sync_replica_peer_service_payload_quarantine_status_json(",
++    )
++    quarantine_result_renderer = function_body(
++        peer_status,
++        "render_sync_replica_file_payload_store_quarantine_result_json(",
++    )
++    command_quarantine = function_body(sync_cli, "int command_quarantine(")
++
++    require(
++        "kSyncReplicaFilePayloadStoreMaxQuarantineEntries = 16U" in store_h
++        and all(
++            token in store
++            for token in (
++                "kQuarantineBasenamePrefix",
++                ".anonsync-payload-quarantine-v1-",
++                "parse_quarantine_basename",
++                "basename.size() != 64U + 1U + 64U",
++                "expected == observed",
++                "maximum_quarantine_bytes",
++                "kMaximumPersistentInteger /",
++                "std::min(limits.max_indexed_bytes, entry_derived_limit)",
++            )
++        ),
++        "quarantine_name_and_capacity_are_canonical_fixed_and_overflow_checked",
++        "one exact expected/observed grammar and a sixteen-entry frontier capped by the active indexed-byte budget prevent diagnostic preservation from becoming an unbounded or disproportionately large hidden archive",
++    )
++
++    require(
++        all(
++            token in full_store_scan
++            for token in (
++                "parse_quarantine_basename(basename)",
++                "require_private_regular_file_or_throw",
++                "out.quarantines.push_back",
++                "out.quarantine_bytes",
++                "payload quarantine count exceeds fixed budget",
++                "payload quarantine bytes exceed fixed budget",
++            )
++        )
++        and "parse_quarantine_basename(basename).has_value()" in staged_prefix_observer
++        and ordered(
++            identity,
++            "const ScannedPayloadIndex bootstrap = scan_store_namespace_or_throw(",
++            "if (!bootstrap.quarantines.empty())",
++            "fresh bootstrap refuses pre-existing payload quarantine",
++            "if (!allow_existing_payload_adoption &&",
++            "product-bound bootstrap refuses adoption of pre-existing",
++        )
++        and "!bootstrap.quarantines.empty() ||" not in identity
++        and "standalone adoption silently assigned unbound quarantine evidence" in runtime,
++        "complete_scans_validate_quarantine_while_targeted_work_excludes_it_and_bootstrap_rejects_it",
++        "retained evidence remains visible to namespace health and capacity proof but cannot satisfy payload inventory, targeted access, or unexplained fresh-store adoption, including the standalone adoption path",
++    )
++
++    require(
++        all(
++            token in quarantine_store
++            for token in (
++                "read-only inspection store cannot quarantine payload bytes",
++                "store.verification_cache->integrity_fault",
++                "ActiveFaultMismatch",
++                "reopen_matching_root_authority_or_throw",
++                "SyncReplicaFilePayloadStoreLeaseMode::ExclusiveMutation",
++                "observe_quarantine_namespace_under_lease_or_throw",
++                "stream_hash_regular_file_or_throw",
++                "verify_named_regular_file_or_throw",
++            )
++        )
++        and ordered(
++            quarantine_store,
++            "store.verification_cache->integrity_fault",
++            "ActiveFaultMismatch",
++            "acquire_store_lease_or_throw",
++            "stream_hash_regular_file_or_throw",
++            "rename_noreplace_at_or_throw",
++        ),
++        "quarantine_requires_the_exact_active_process_fault_and_current_bytes_under_exclusive_authority",
++        "operator-supplied names are insufficient: the active pair, identity/root, cooperative mutation lease, current bytes, metadata, and pathname all precede the move",
++    )
++
++    require(
++        all(
++            token in quarantine_store
++            for token in (
++                "PayloadAlreadyRepaired",
++                "ObservedDigestChanged",
++                "PayloadAbsent",
++                "ExactQuarantineAlreadyPresent",
++                "verify_nonmutating_cutpoint_or_throw",
++                "target_quarantine_basename",
++                "result.quarantine_basename = target_quarantine_basename",
++            )
++        )
++        and quarantine_store.count(
++            "result.quarantine_basename = target_quarantine_basename"
++        ) == 2
++        and all(
++            token in runtime
++            for token in (
++                "wrong.quarantine_basename.empty()",
++                "changed.quarantine_basename.empty()",
++                "now_stale.quarantine_basename.empty()",
++            )
++        ),
++        "nonmutating_quarantine_results_do_not_invent_a_retained_destination",
++        "the result basename is populated only after an exact existing destination is byte-reproved or after the successful no-replace rename",
++    )
++
++    require(
++        all(
++            token in store_h + store
++            for token in (
++                "EntryCapacityExceeded",
++                "ByteCapacityExceeded",
++                "entry_capacity_exceeded",
++                "byte_capacity_exceeded",
++            )
++        )
++        and ordered(
++            quarantine_store,
++            "if (retained.entry_count >=",
++            "EntryCapacityExceeded",
++            'verify_nonmutating_cutpoint_or_throw("entry-capacity")',
++            "return result;",
++            "const std::uint64_t quarantine_byte_limit",
++            "ByteCapacityExceeded",
++            'verify_nonmutating_cutpoint_or_throw("byte-capacity")',
++            "return result;",
++        )
++        and all(
++            token in runtime
++            for token in (
++                "a full quarantine frontier threw or mutated instead of returning a typed entry-capacity result",
++                "a full quarantine byte budget threw or mutated instead of returning a typed capacity result",
++                "entry-capacity completion accidentally cleared the active fault",
++                "byte-capacity completion accidentally cleared the active fault",
++            )
++        ),
++        "ordinary_quarantine_capacity_is_a_typed_nonfatal_operator_result",
++        "an exact full entry or byte frontier completes the accepted request without mutating authority or terminating the retained daemon; structurally invalid over-budget namespaces remain fail-closed scan errors",
++    )
++
++    require(
++        ordered(
++            quarantine_store,
++            "if (!retained.exact_destination_status.has_value()) return false",
++            "open_store_file_or_throw",
++            "stream_hash_regular_file_or_throw",
++            "exact quarantine name does not bind its observed bytes",
++            "fsync_or_throw",
++            "verify_named_regular_file_or_throw",
++            "ExactQuarantineAlreadyPresent",
++        )
++        and all(
++            token in runtime
++            for token in (
++                "an exact retained quarantine was not byte-reproved idempotently",
++                "read_file_bytes(quarantine_path) == second_corrupt",
++            )
++        ),
++        "idempotent_quarantine_success_rehashes_the_retained_byte_image",
++        "a canonical destination filename is not recovery evidence; exact retained bytes and pathname identity are re-proved before idempotent success",
++    )
++
++    require(
++        ordered(
++            quarantine_store,
++            "if (verify_exact_quarantine_or_throw())",
++            "duplicate payload quarantine pre-unlink cutpoint",
++            "unlink_scanned_private_file_or_throw",
++            "duplicate corrupt payload quarantine directory",
++            "duplicate quarantined payload source",
++            "duplicate quarantined payload destination",
++            "revoke_acceleration_after_namespace_mutation",
++            "ExactQuarantineAlreadyPresent",
++        )
++        and all(
++            token in runtime
++            for token in (
++                "repeated exact corruption did not reinstall quarantine authority",
++                "an exact retained quarantine left repeated corrupt authority stuck",
++                "repeated exact quarantine did not permit complete absence reproof",
++                "repeated exact quarantine did not permit ordinary byte re-admission",
++            )
++        ),
++        "repeated_identical_corruption_cannot_become_idempotent_but_unrecoverable",
++        "after byte-reproving the exact retained image and the reappeared corrupt source, the explicit action removes only the duplicate authoritative name, revokes acceleration, and permits ordinary re-admission",
++    )
++
++    require(
++        ordered(
++            quarantine_store,
++            "pre-rename lease cutpoint",
++            "pre-rename root proof",
++            "corrupt payload quarantine source bytes",
++            "corrupt payload quarantine durable source",
++            "rename_noreplace_at_or_throw",
++            "fsync_or_throw",
++            "same_regular_file_rename_transition",
++            "verify_named_entry_absent_or_throw",
++            "verify_named_regular_file_or_throw",
++            "final lease cutpoint",
++            "revoke_acceleration_after_namespace_mutation();",
++            "Quarantined",
++        )
++        and "generation.reset()" in quarantine_store
++        and "scrub_active.reset()" in quarantine_store
++        and all(
++            token in runtime
++            for token in (
++                "source_before.st_dev == destination_after.st_dev",
++                "source_before.st_ino == destination_after.st_ino",
++                "same corrupt inode outside authority",
++            )
++        ),
++        "successful_quarantine_is_no_replace_same_inode_durable_and_revokes_acceleration",
++        "the exact open source bytes are synchronized before the same inode is moved outside authority, then the directory and both pathname transitions are re-proved while verification/checkpoint/scrub shortcuts are invalidated and the integrity alarm remains",
++    )
++
++    require(
++        all(
++            token in local_status_h + local_status
++            for token in (
++                "SyncLocalStatusSocketPayloadQuarantineRequest",
++                "payload_quarantine_request",
++                "quarantine EXPECTED OBSERVED\\n",
++                "anonsync.local-quarantine.response.v1",
++                "kMaximumRequestBytes = 192U",
++                "different_quarantine_pending",
++                "complete_payload_quarantine_request_or_throw",
++            )
++        )
++        and all(
++            token in local_quarantine_request
++            for token in (
++                "std::lock_guard lock(mutex)",
++                "drain_requested",
++                "quarantine_pending.has_value()",
++                "++generation",
++                "action_condition.notify_all()",
++                "std::ostringstream response",
++            )
++        ),
++        "local_quarantine_protocol_is_exact_pid_bound_and_uses_the_existing_action_mutex",
++        "one strict bounded request grammar advances only one mutex-owned exact-pair generation and wakes the capability-free socket owner before response allocation",
++    )
++
++    require(
++        all(
++            token in local_quarantine_completion
++            for token in (
++                "std::lock_guard lock(state_->mutex)",
++                "completed_generation < state_->quarantine_completed_generation",
++                "completed_generation > state_->quarantine_generation",
++                "state_->quarantine_pending->request_generation <=",
++                "state_->quarantine_pending.reset()",
++            )
++        )
++        and all(
++            token in local_status_runtime
++            for token in (
++                "different-pair quarantine must not overwrite pending authority",
++                "same-pair quarantine must coalesce through a new generation",
++                "completion through an older generation cleared coalesced work",
++                "payload quarantine serialized after drain must be rejected",
++                "drain snapshot must retain every pre-drain generation",
++            )
++        ),
++        "quarantine_generation_coalescing_completion_and_shutdown_order_are_executable",
++        "different pairs cannot overwrite one obligation, same-pair generations coalesce without lost completion, and the combined shutdown seal represents every accepted pre-drain request",
++    )
++
++    require(
++        all(
++            token in operator_quarantine
++            for token in (
++                "payload_quarantine_started_generation",
++                "payload_quarantine_attempts",
++                "quarantine_corrupt_payload_or_throw",
++                "ObservedDigestChanged",
++                "record_payload_integrity_evidence_or_throw",
++                "payload_quarantine_completed_generation",
++                "payload_quarantine_last_result",
++                "payload_quarantine_completions",
++                "payload_quarantine_images_preserved",
++            )
++        )
++        and ordered(
++            peer_owner_run,
++            "operator_quarantine_pending",
++            "PayloadAuthorityFailureContext::OperatorQuarantine",
++            "operator_payload_quarantine_step_or_throw",
++            "operator_payload_recheck_step_or_throw",
++            "payload_integrity_reproof_step_or_throw",
++        ),
++        "service_prioritizes_exact_quarantine_without_clearing_integrity_authority",
++        "the owner serializes the namespace mutation before recheck/reproof, retains typed lease deferral, updates changed exact-pair evidence, and completes only a typed store result",
++    )
++
++    require(
++        '"anonsync.peer-service.status.v8"' in peer_status_h
++        and all(
++            token in peer_status
++            for token in (
++                "requested_generation",
++                "started_generation",
++                "completed_generation",
++                "retry_delay_milliseconds",
++                "expected_content_sha256",
++                "observed_content_sha256",
++                "quarantine_basename",
++                "last_result",
++            )
++        )
++        and all(
++            token in peer_status + sync_cli + service_configuration_runtime
++            for token in (
++                "payload_quarantine_requests_observed",
++                "payload_quarantine_requests_coalesced",
++                "payload_quarantine_attempts",
++                "payload_quarantine_completions",
++                "payload_quarantine_images_preserved",
++                "payload_quarantine_observed_content_changes",
++            )
++        ),
++        "status_v8_canonically_exposes_exact_quarantine_obligation_result_and_accounting",
++        "live, terminal, and process-oracle surfaces share versioned generation, pair, retry, typed-result, preservation, and observed-content transition truth",
++    )
++
++    require(
++        all(
++            token in command_quarantine
++            for token in (
++                '"socket", "expected", "observed", "timeout-milliseconds"',
++                "is_lowercase_sha256_hex",
++                "request_sync_local_status_payload_quarantine_or_throw",
++            )
++        )
++        and all(
++            token in service_configuration_runtime
++            for token in (
++                '"anonsync.local-quarantine.response.v1"',
++                "payload quarantine acceptance was not exact",
++                "quarantine did not preserve the exact corrupt byte image",
++                "payload quarantine did not preserve the exact private ",
++                "source inode",
++                "re-admitted authoritative payload still aliases the ",
++                "quarantined inode",
++                "quarantine recovery did not expose the one full scan",
++                "payload-integrity recovery replaced the service process",
++            )
++        ),
++        "shipping_cli_process_oracle_proves_quarantine_preservation_readmission_and_same_pid_recovery",
++        "the configured service exercises the exact CLI response, held-lease fault path, same-inode evidence move, distinct-inode correct re-admission, truthful scan cost, retained history, and clean lifecycle",
++    )
++
++    require(
++        all(
++            token in quarantine_design
++            for token in (
++                "Heart of the mission",
++                "Product boundary",
++                "Exact active-fault authority",
++                "Rooted exclusive mutation path",
++                "Current-byte pair reproof",
++                "Same-inode no-replace preservation",
++                "Authority revocation and re-admission",
++                "One linearized local-action observation",
++                "Status contract",
++                "Mechanical process oracle",
++                "Audit/refactor findings",
++                "Research-informed product comparison",
++                "What this proves",
++                "What this does not prove",
++                "hostile same-UID",
++                "one mutation-authority full scan",
++            )
++        )
++        and all(
++            token in rev0961_notes
++            for token in (
++                "bounded operator recovery action",
++                "anonsync_sync quarantine --socket ABSOLUTE_SOCKET",
++                "anonsync.local-quarantine.response.v1",
++                "anonsync.peer-service.status.v8",
++                "same-inode no-replace rename",
++                "Nonclaims",
++                "GCC 14.2",
++                "Clang 17 ASan/UBSan",
++                "structural audit",
++            )
++        )
++        and "VALIDATION_PENDING_REV0961" not in rev0961_notes
++        and verifier.count(
++            "if revision_number is not None and revision_number >= 961:"
++        ) == 1
++        and all(
++            token in rev0961_verifier_block
++            for token in (
++                "EXACT_CORRUPT_PAYLOAD_QUARANTINE_AND_LINEARIZED_LOCAL_ACTION_AUDIT_rev0961.md",
++                "REVISION_NOTES_rev0961.md",
++                "src/sync_local_status_socket.hpp",
++                "src/sync_replica_file_payload_store.cpp",
++                "src/sync_replica_peer_service_status.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/audit_sync_file_payload_store.py",
++            )
++        ),
++        "rev0961_records_exact_quarantine_action_linearization_nonclaims_and_release_binding",
++        "the revision record binds exact-pair admission, same-inode bounded preservation, truthful result/status shape, ordinary re-admission cost, action ordering, explicit nonclaims, validation, and the mandatory package surface",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index e61a767dbf50ee8fe909d4b5adcf17b3c54a1368..42cf61f712151f5c394a547bf843795fb06f5b33 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -174,6 +174,51 @@ def overwrite_payload_under_exclusive_store_lease(
+         os.close(descriptor)
+ 
+ 
++def require_payload_quarantine_result(
++    value: Any, label: str
++) -> None:
++    if not isinstance(value, dict):
++        fail(f"{label} result was not an object")
++    disposition = value.get("disposition")
++    accepted_dispositions = {
++        "quarantined",
++        "active_fault_mismatch",
++        "payload_absent",
++        "payload_already_repaired",
++        "observed_digest_changed",
++        "exact_quarantine_already_present",
++    }
++    if disposition not in accepted_dispositions:
++        fail(f"{label} reported unknown disposition {disposition!r}")
++    expected = value.get("expected_content_sha256")
++    requested = value.get("requested_observed_content_sha256")
++    for field_name, digest in (
++        ("expected_content_sha256", expected),
++        ("requested_observed_content_sha256", requested),
++    ):
++        if not isinstance(digest, str) or len(digest) != 64:
++            fail(f"{label} omitted exact {field_name}")
++    current = value.get("current_observed_content_sha256")
++    if current is not None and (
++        not isinstance(current, str) or len(current) != 64
++    ):
++        fail(f"{label} current observed digest was neither exact nor null")
++    basename = value.get("quarantine_basename")
++    if basename is not None:
++        exact_basename = (
++            ".anonsync-payload-quarantine-v1-"
++            f"{expected}-{requested}"
++        )
++        if basename != exact_basename:
++            fail(
++                f"{label} quarantine basename was {basename!r}, expected "
++                f"{exact_basename!r}"
++            )
++    size_bytes = value.get("size_bytes")
++    if not isinstance(size_bytes, int) or size_bytes < 0:
++        fail(f"{label} omitted bounded size_bytes")
++
++
+ def require_payload_operator_status(
+     value: dict[str, Any], label: str
+ ) -> None:
+@@ -234,6 +279,12 @@ def require_payload_operator_status(
+         "payload_recheck_snapshot_handoffs",
+         "payload_recheck_convergence_snapshot_observations",
+         "payload_recheck_convergence_mutation_full_scans",
++        "payload_quarantine_requests_observed",
++        "payload_quarantine_requests_coalesced",
++        "payload_quarantine_attempts",
++        "payload_quarantine_completions",
++        "payload_quarantine_images_preserved",
++        "payload_quarantine_observed_content_changes",
+     ):
+         counter = counters.get(counter_name)
+         if not isinstance(counter, int) or counter < 0:
+@@ -261,6 +312,16 @@ def require_payload_operator_status(
+             field = last_step.get(integer_field)
+             if not isinstance(field, int) or field < 0:
+                 fail(f"{label} last step omitted bounded {integer_field}")
++        quarantine_generation = last_step.get("payload_quarantine_generation")
++        if not isinstance(quarantine_generation, int) or (
++            quarantine_generation < 0
++        ):
++            fail(f"{label} last step omitted payload quarantine generation")
++        quarantine_result = last_step.get("payload_quarantine_result")
++        if quarantine_result is not None:
++            require_payload_quarantine_result(
++                quarantine_result, f"{label} last-step payload quarantine"
++            )
+ 
+     recheck = value.get("payload_recheck")
+     if not isinstance(recheck, dict):
+@@ -299,6 +360,60 @@ def require_payload_operator_status(
+             f"generations: {json.dumps(recheck, sort_keys=True)}"
+         )
+ 
++    quarantine = value.get("payload_quarantine")
++    if not isinstance(quarantine, dict):
++        fail(f"{label} status omitted payload quarantine state")
++    for integer_field in (
++        "requested_generation",
++        "started_generation",
++        "completed_generation",
++        "retry_delay_milliseconds",
++    ):
++        field = quarantine.get(integer_field)
++        if not isinstance(field, int) or field < 0:
++            fail(
++                f"{label} payload quarantine omitted bounded "
++                f"{integer_field}"
++            )
++    if not isinstance(quarantine.get("pending"), bool):
++        fail(f"{label} payload quarantine omitted pending state")
++    quarantine_requested = quarantine["requested_generation"]
++    quarantine_started = quarantine["started_generation"]
++    quarantine_completed = quarantine["completed_generation"]
++    if quarantine_completed > quarantine_started or (
++        quarantine_started > quarantine_requested
++    ):
++        fail(
++            f"{label} payload quarantine generations were incoherent: "
++            f"{json.dumps(quarantine, sort_keys=True)}"
++        )
++    if quarantine["pending"] != (
++        quarantine_requested > quarantine_completed
++    ):
++        fail(
++            f"{label} payload quarantine pending state disagreed with its "
++            f"generations: {json.dumps(quarantine, sort_keys=True)}"
++        )
++    for digest_field in (
++        "expected_content_sha256", "observed_content_sha256"
++    ):
++        digest = quarantine.get(digest_field)
++        if quarantine_requested == 0:
++            if digest is not None:
++                fail(
++                    f"{label} payload quarantine invented {digest_field} "
++                    "before any request"
++                )
++        elif not isinstance(digest, str) or len(digest) != 64:
++            fail(
++                f"{label} payload quarantine omitted exact {digest_field}"
++            )
++    last_quarantine_result = quarantine.get("last_result")
++    if last_quarantine_result is not None:
++        require_payload_quarantine_result(
++            last_quarantine_result, f"{label} payload quarantine"
++        )
++
+     integrity = value.get("payload_integrity")
+     if not isinstance(integrity, dict):
+         fail(f"{label} status omitted payload integrity state")
+@@ -597,7 +712,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v7",
++                    "schema": "anonsync.peer-service.status.v8",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -776,11 +891,31 @@ def expect_terminal(
+             )
+         if value.get(
+             "payload_recheck_convergence_mutation_full_scans", -1
+-        ) != 0:
++        ) != 1:
+             fail(
+-                f"{label} recovery convergence hid a duplicate complete "
+-                "payload-store scan inside mutation authority"
++                f"{label} quarantine recovery did not expose the one full "
++                "scan required to establish mutation authority before "
++                "re-admission"
+             )
++        quarantine = value.get("payload_quarantine")
++        if not isinstance(quarantine, dict) or (
++            quarantine.get("pending") is not False
++        ) or quarantine.get("completed_generation", 0) < 1:
++            fail(f"{label} terminal did not settle payload quarantine")
++        last_result = quarantine.get("last_result")
++        require_payload_quarantine_result(
++            last_result, f"{label} terminal payload quarantine"
++        )
++        if last_result.get("disposition") != "quarantined":
++            fail(f"{label} terminal lost successful payload quarantine")
++        for field in (
++            "payload_quarantine_requests_observed",
++            "payload_quarantine_attempts",
++            "payload_quarantine_completions",
++            "payload_quarantine_images_preserved",
++        ):
++            if value.get(field, 0) < 1:
++                fail(f"{label} terminal omitted successful {field}")
+ 
+ 
+ def expect_config_failure(
+@@ -1470,7 +1605,8 @@ def main() -> int:
+             # endpoint. Corrupt one exact payload object after convergence and
+             # prove the service instead remains alive, publishes a fail-closed
+             # fault, performs no ordinary work until a complete reproof, and
+-            # recovers after an external exact-byte repair.
++            # recovers after the owner explicitly preserves the exact corrupt
++            # byte image outside payload authority.
+             source_payload_bytes = b"config-driven source payload\n"
+             source_payload_digest = hashlib.sha256(
+                 source_payload_bytes
+@@ -1766,11 +1902,44 @@ def main() -> int:
+                     "accounting"
+                 )
+ 
+-            overwrite_payload_under_exclusive_store_lease(
+-                source_payload_path,
+-                source_payload_bytes,
+-                "payload integrity external repair",
++            source_payload_before_quarantine = source_payload_path.stat()
++            quarantine_response = run_json(
++                [
++                    str(sync),
++                    "quarantine",
++                    "--socket",
++                    str(source_status),
++                    "--expected",
++                    source_payload_digest,
++                    "--observed",
++                    second_corrupted_payload_digest,
++                    "--timeout-milliseconds",
++                    "1000",
++                ],
++                label="owner-only exact corrupt payload quarantine",
+             )
++            expected_quarantine_response = {
++                "schema": "anonsync.local-quarantine.response.v1",
++                "command": "quarantine",
++                "terminal_class": "accepted",
++                "request_generation": 1,
++                "expected_content_sha256": source_payload_digest,
++                "observed_content_sha256": (
++                    second_corrupted_payload_digest
++                ),
++                "server_pid": source.pid,
++            }
++            if quarantine_response != expected_quarantine_response:
++                fail(
++                    "payload quarantine acceptance was not exact: "
++                    f"{json.dumps(quarantine_response, sort_keys=True)}"
++                )
++            quarantine_basename = (
++                ".anonsync-payload-quarantine-v1-"
++                f"{source_payload_digest}-{second_corrupted_payload_digest}"
++            )
++            quarantine_path = source_payload_path.parent / quarantine_basename
++
+             recovered_status = wait_for_payload_integrity_state(
+                 sync,
+                 source,
+@@ -1785,6 +1954,80 @@ def main() -> int:
+                     "complete current-byte reproof did not restore readiness: "
+                     f"{json.dumps(recovered_status, sort_keys=True)}"
+                 )
++            recovered_quarantine = recovered_status.get(
++                "payload_quarantine"
++            )
++            if not isinstance(recovered_quarantine, dict):
++                fail("integrity recovery omitted payload quarantine completion")
++            expected_quarantine_completion = {
++                "requested_generation": 1,
++                "started_generation": 1,
++                "completed_generation": 1,
++                "pending": False,
++                "expected_content_sha256": source_payload_digest,
++                "observed_content_sha256": second_corrupted_payload_digest,
++            }
++            for key, wanted in expected_quarantine_completion.items():
++                if recovered_quarantine.get(key) != wanted:
++                    fail(
++                        f"recovered payload quarantine field {key!r} was "
++                        f"{recovered_quarantine.get(key)!r}, expected "
++                        f"{wanted!r}: "
++                        f"{json.dumps(recovered_quarantine, sort_keys=True)}"
++                    )
++            quarantine_result = recovered_quarantine.get("last_result")
++            require_payload_quarantine_result(
++                quarantine_result, "recovered payload quarantine"
++            )
++            expected_quarantine_result = {
++                "disposition": "quarantined",
++                "expected_content_sha256": source_payload_digest,
++                "requested_observed_content_sha256": (
++                    second_corrupted_payload_digest
++                ),
++                "current_observed_content_sha256": (
++                    second_corrupted_payload_digest
++                ),
++                "quarantine_basename": quarantine_basename,
++                "size_bytes": len(second_corrupted_payload_bytes),
++            }
++            if quarantine_result != expected_quarantine_result:
++                fail(
++                    "payload quarantine result was not exact: "
++                    f"{json.dumps(quarantine_result, sort_keys=True)}"
++                )
++            if quarantine_path.read_bytes() != second_corrupted_payload_bytes:
++                fail("quarantine did not preserve the exact corrupt byte image")
++            quarantine_observation = quarantine_path.stat()
++            if (
++                quarantine_observation.st_dev
++                != source_payload_before_quarantine.st_dev
++                or quarantine_observation.st_ino
++                != source_payload_before_quarantine.st_ino
++                or quarantine_observation.st_nlink != 1
++                or stat.S_IMODE(quarantine_observation.st_mode) != 0o600
++            ):
++                fail(
++                    "payload quarantine did not preserve the exact private "
++                    "source inode"
++                )
++            if source_payload_path.read_bytes() != source_payload_bytes:
++                fail(
++                    "ordinary convergence did not re-admit the expected "
++                    "payload after quarantine"
++                )
++            re_admitted_observation = source_payload_path.stat()
++            if (
++                re_admitted_observation.st_dev
++                == quarantine_observation.st_dev
++                and re_admitted_observation.st_ino
++                == quarantine_observation.st_ino
++            ):
++                fail(
++                    "re-admitted authoritative payload still aliases the "
++                    "quarantined inode"
++                )
++
+             recovered_recheck = recovered_status.get("payload_recheck")
+             if not isinstance(recovered_recheck, dict):
+                 fail("integrity recovery omitted payload recheck completion")
+@@ -1795,7 +2038,7 @@ def main() -> int:
+                 "pending": False,
+                 "last_snapshot_handoffs": 1,
+                 "last_convergence_snapshot_observations": 0,
+-                "last_convergence_mutation_full_scans": 0,
++                "last_convergence_mutation_full_scans": 1,
+                 "last_completion_recovered_integrity_fault": True,
+             }
+             for key, wanted in expected_recheck_completion.items():
+@@ -1877,11 +2120,25 @@ def main() -> int:
+             if recovery_counters.get(
+                 "payload_recheck_convergence_mutation_full_scans",
+                 -1,
+-            ) != 0:
++            ) != 1:
+                 fail(
+-                    "integrity recovery hid a duplicate complete payload-store "
+-                    "scan inside mutation authority"
++                    "quarantine recovery did not expose the one full scan "
++                    "required to establish payload mutation authority before "
++                    "re-admitting the missing expected object"
+                 )
++            expected_quarantine_counters = {
++                "payload_quarantine_requests_observed": 1,
++                "payload_quarantine_attempts": 1,
++                "payload_quarantine_completions": 1,
++                "payload_quarantine_images_preserved": 1,
++                "payload_quarantine_observed_content_changes": 0,
++            }
++            for field, minimum in expected_quarantine_counters.items():
++                if recovery_counters.get(field, -1) < minimum:
++                    fail(
++                        f"integrity recovery did not account {field}: "
++                        f"{json.dumps(recovery_counters, sort_keys=True)}"
++                    )
+ 
+             # Request the signal-driven peer drain first. Otherwise the
+             # locally drained source can close while the receiver starts one
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index f18df8100b4cf700f79c8f028960cd22d2126033..3c5f07f966dc0aeb1f55b5232ae15949c65fc3d7 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -542,7 +542,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v7"
++                    value.get("schema") == "anonsync.peer-service.status.v8"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index dfc92f8a4ecf27469d0cb573297ec655c9043418..bb54734710a07d4356b849d19458854f23e3fd59 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1262,6 +1262,26 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 961:
++        revision_scoped_required.update({
++            "EXACT_CORRUPT_PAYLOAD_QUARANTINE_AND_LINEARIZED_LOCAL_ACTION_AUDIT_rev0961.md",
++            "REVISION_NOTES_rev0961.md",
++            "src/anonsync_sync.cpp",
++            "src/sync_local_status_socket.hpp",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_file_payload_store.hpp",
++            "src/sync_replica_file_payload_store.cpp",
++            "src/sync_replica_peer_service.hpp",
++            "src/sync_replica_peer_service.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_peer_service_status.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tests/sync_replica_file_payload_store_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

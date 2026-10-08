@@ -1,0 +1,6 @@
+# Rev0983 authority incidents
+
+1. A divergent integrated rev0983 branch and its GCC/Clang validators repeatedly restarted during validation. They implemented a different control/service design and were excluded; an explicit process-authority guard prevented them from sharing validation leases with the selected family-fence source.
+2. Long foreground CTest invocations were repeatedly cut at the cloudtainer execution boundary. Final registry authority is therefore an exact indexed ledger: each of the 262 registered tests received its own terminal CTest result against the same frozen GCC tree, and the 41 product tests were independently replayed in bounded shards.
+3. The cloudtainer remounted after final validation and removed the selected source and both build trees. The sealed rev0982 parent, binary-aware 15-file patch, active-projection inventory, final audits, indexed test ledgers, focused logs, and preseal wrapper backup survived. The release source was reconstructed from those records; every one of the 581 active file digests matched the retained validated projection before packaging.
+4. The final process oracle reports 381 checks. Earlier prose naming 372 described a pre-final oracle and was corrected before the structural audit and release manifest were sealed.

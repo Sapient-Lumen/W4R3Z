@@ -1,0 +1,27 @@
+# Documentation Index
+
+- `../MUST_READ_FIRST.md`
+- `../PROJECT_CHARTER.md`
+- `../ROADMAP.md`
+- `architecture/0001-system-context.md`
+- `architecture/0002-provider-strategy.md`
+- `architecture/0003-product-defaults.md`
+- `architecture/0004-performance-and-adaptation.md`
+- `architecture/0005-ui-surface.md`
+- `decisions/0001-bundled-runtime-product-posture.md`
+- `decisions/0002-invite-and-lan-discovery.md`
+- `decisions/0003-sync-detection-and-mobile-defaults.md`
+- `decisions/0004-performance-profiles-and-adaptation.md`
+- `decisions/0005-ui-surface-and-resilio-research-practice.md`
+- `research/must-reads.md`
+- `research/2026-03-07-upstream-baseline.md`
+- `research/2026-03-08-resilio-alignment.md`
+- `research/2026-03-08-performance-and-adaptive-discovery.md`
+- `research/2026-03-08-resilio-ui-and-change-practice.md`
+- `runbooks/llm-runbook.md`
+- `runbooks/archive-release.md`
+- `runbooks/discovery-service-check.md`
+- `runbooks/runtime-supervision.md`
+- `runbooks/benchmark-plan.md`
+- `runbooks/resilio-research-watch.md`
+- `context/current-brief.md`

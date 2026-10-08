@@ -1,0 +1,325 @@
+diff --git a/src/sync_replica_file_content_inventory.hpp b/src/sync_replica_file_content_inventory.hpp
+index 5965244..0ba614c 100644
+--- a/src/sync_replica_file_content_inventory.hpp
++++ b/src/sync_replica_file_content_inventory.hpp
+@@ -10,7 +10,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::uint64_t kSyncReplicaFileContentInventoryMaxEntries =
+-    65536U;
++    100000U;
+ 
+ // Bounded immutable proof of the exact file-content identities a local caller
+ // can supply. Construction owns, validates, sorts, and deduplicates every
+diff --git a/src/sync_replica_file_payload_store.hpp b/src/sync_replica_file_payload_store.hpp
+index d89c788..835a636 100644
+--- a/src/sync_replica_file_payload_store.hpp
++++ b/src/sync_replica_file_payload_store.hpp
+@@ -19,6 +19,16 @@ namespace anonsync {
+ 
+ inline constexpr std::uint64_t kSyncReplicaFilePayloadStoreMaxEntries =
+     kSyncReplicaFileContentInventoryMaxEntries;
++// The shipping folder/catalog owners admit 100,000 current paths. Production
++// payload composition must not silently retain the generic 4,096-entry test
++// default, or a valid tree of small unique files becomes unsynchronizable long
++// before the folder owner reaches its own reviewed boundary. This is a capacity
++// ceiling, not a retention promise: historical versions still require GC.
++inline constexpr std::uint64_t
++    kSyncReplicaFilePayloadStoreProductionMaxEntries = 100000U;
++static_assert(
++    kSyncReplicaFilePayloadStoreProductionMaxEntries <=
++    kSyncReplicaFilePayloadStoreMaxEntries);
+ inline constexpr std::uint64_t
+     kSyncReplicaFilePayloadStoreMaxTransientEntries = 65536U;
+ 
+diff --git a/src/sync_replica_file_payload_store.cpp b/src/sync_replica_file_payload_store.cpp
+index 19b2c68..f565129 100644
+--- a/src/sync_replica_file_payload_store.cpp
++++ b/src/sync_replica_file_payload_store.cpp
+@@ -1410,7 +1410,13 @@ void acquire_flock_nonblocking_or_throw(
+     }
+ 
+     ScannedPayloadIndex out;
+-    out.entries.reserve(static_cast<std::size_t>(limits.max_entries));
++    // The production owner admits 100,000 payload identities, but most stores
++    // are much smaller. Do not turn that safety ceiling into an unconditional
++    // multi-megabyte allocation on every scan; vector growth remains bounded by
++    // max_entries as entries are actually observed.
++    constexpr std::uint64_t kInitialPayloadIndexReserveEntries = 4096U;
++    out.entries.reserve(static_cast<std::size_t>(
++        std::min(limits.max_entries, kInitialPayloadIndexReserveEntries)));
+     const SyncDirectoryAttestation& root_attestation =
+         scan_authority.attestation();
+ 
+@@ -2441,6 +2447,8 @@ sync_replica_file_payload_store_limits_for_payload_ceiling_or_throw(
+             label + " payload ceiling cannot reserve exact assembly space");
+     }
+     SyncReplicaFilePayloadStoreLimits limits;
++    limits.max_entries =
++        kSyncReplicaFilePayloadStoreProductionMaxEntries;
+     limits.max_payload_bytes = max_payload_bytes;
+     limits.max_transient_bytes = std::max<std::uint64_t>(
+         limits.max_transient_bytes, max_payload_bytes * 2U);
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index 2239590..4a09130 100644
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -1746,6 +1746,7 @@ require_catalog_operation_or_throw(
+ void validate_convergence_pass_limits_or_throw(
+     const SyncReplicaFolderConvergencePassLimits& limits,
+     const SyncReplicaFolderScanLimits& owner_limits,
++    const SyncReplicaFilePayloadStoreLimits& payload_store_limits,
+     const std::string& label) {
+     SyncReplicaFolderObservationLimits traversal_limits;
+     traversal_limits.maximum_entries = limits.maximum_entries;
+@@ -1769,6 +1770,26 @@ void validate_convergence_pass_limits_or_throw(
+             label +
+             " pass relative-path limit exceeds the catalog byte budget");
+     }
++    if (limits.maximum_entries > owner_limits.max_catalog_entries) {
++        throw std::invalid_argument(
++            label +
++            " pass entry limit exceeds the retained catalog capacity");
++    }
++    if (limits.maximum_remote_paths > owner_limits.max_catalog_entries) {
++        throw std::invalid_argument(
++            label +
++            " pass remote-path limit exceeds the retained catalog capacity");
++    }
++    if (limits.maximum_entries > payload_store_limits.max_entries) {
++        throw std::invalid_argument(
++            label +
++            " pass entry limit exceeds the retained payload-store capacity");
++    }
++    if (limits.maximum_remote_paths > payload_store_limits.max_entries) {
++        throw std::invalid_argument(
++            label +
++            " pass remote-path limit exceeds the retained payload-store capacity");
++    }
+     if (limits.maximum_remote_paths == 0U ||
+         limits.maximum_remote_paths >
+             kSyncReplicaFolderScanMaxCatalogEntries) {
+@@ -3058,7 +3079,8 @@ SyncReplicaFolderScanOwner::run_convergence_pass_or_throw(
+             "sync replica folder scan owner is inactive");
+     }
+     validate_convergence_pass_limits_or_throw(
+-        limits, state_->limits, state_->label);
++        limits, state_->limits, state_->payload_store->limits(),
++        state_->label);
+ 
+     SyncReplicaFolderConvergencePassReport report;
+ 
+diff --git a/src/sync_replica_folder_process.cpp b/src/sync_replica_folder_process.cpp
+index 1017a09..d1e1248 100644
+--- a/src/sync_replica_folder_process.cpp
++++ b/src/sync_replica_folder_process.cpp
+@@ -20,6 +20,16 @@ namespace fs = std::filesystem;
+ constexpr std::array<std::string_view, 4> kSqliteFamilySuffixes{
+     "", "-journal", "-wal", "-shm"};
+ 
++static_assert(
++    SyncReplicaFolderScanLimits{}.max_catalog_entries ==
++    kSyncReplicaFilePayloadStoreProductionMaxEntries);
++static_assert(
++    SyncReplicaFolderConvergencePassLimits{}.maximum_entries ==
++    kSyncReplicaFilePayloadStoreProductionMaxEntries);
++static_assert(
++    SyncReplicaFolderConvergencePassLimits{}.maximum_remote_paths ==
++    kSyncReplicaFilePayloadStoreProductionMaxEntries);
++
+ [[nodiscard]] fs::path append_ascii_suffix(
+     const fs::path& path,
+     std::string_view suffix) {
+diff --git a/src/sync_replica_peer_service.cpp b/src/sync_replica_peer_service.cpp
+index 2dc3f9b..e6f5250 100644
+--- a/src/sync_replica_peer_service.cpp
++++ b/src/sync_replica_peer_service.cpp
+@@ -264,6 +264,18 @@ void validate_sync_replica_peer_service_limits_or_throw(
+     cycle.maximum_runtime_seconds = limits.cycle_runtime_seconds;
+     validate_sync_replica_sync_once_options_or_throw(
+         cycle, label + " outbound cycle");
++    if (limits.folder_limits.maximum_entries >
++        kSyncReplicaFilePayloadStoreProductionMaxEntries) {
++        throw std::invalid_argument(
++            label +
++            " folder maximum_entries exceeds the production durable capacity");
++    }
++    if (limits.folder_limits.maximum_remote_paths >
++        kSyncReplicaFilePayloadStoreProductionMaxEntries) {
++        throw std::invalid_argument(
++            label +
++            " folder maximum_remote_paths exceeds the production durable capacity");
++    }
+     if (limits.inbound_stage_timeout_seconds == 0U ||
+         limits.inbound_stage_timeout_seconds >
+             kSyncReplicaSessionSupervisorMaximumStageTimeoutSeconds) {
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index e555f13..698ad31 100644
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -2237,11 +2237,15 @@ int main() {
+                 64ULL * 1024ULL * 1024ULL,
+                 "payload-store production limit test");
+         require(
+-            production_limits.max_payload_bytes ==
++            production_limits.max_entries ==
++                    anonsync::kSyncReplicaFilePayloadStoreProductionMaxEntries &&
++                production_limits.max_entries ==
++                    anonsync::kSyncReplicaFileContentInventoryMaxEntries &&
++                production_limits.max_payload_bytes ==
+                     64ULL * 1024ULL * 1024ULL &&
+                 production_limits.max_transient_bytes >=
+                     128ULL * 1024ULL * 1024ULL,
+-            "production payload limits cannot complete the maximum admitted assembly");
++            "production payload limits do not match the admitted folder and assembly capacities");
+         test_existing_only_requires_explicit_bootstrap_without_mutation();
+         test_descriptor_streaming_publication_and_selection();
+         test_mutation_batch_amortizes_store_scan_and_releases_authority();
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index bcf54aa..d75d452 100644
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -1746,6 +1746,50 @@ void test_bounded_whole_folder_pass_limit_contract() {
+     require(
+         scan.snapshot_or_throw() == catalog_cutpoint,
+         "invalid payload mutation segment limits touched the catalog");
++
++    pass_limits = Fixture::pass_limits();
++    pass_limits.maximum_relative_path_bytes =
++        owner_limits.max_catalog_path_bytes;
++    pass_limits.maximum_entries = owner_limits.max_catalog_entries + 1U;
++    require_error(
++        [&] { (void)scan.run_convergence_pass_or_throw(pass_limits); },
++        "entry limit exceeds the retained catalog capacity",
++        "composed pass accepted more local entries than its catalog can retain");
++
++    pass_limits = Fixture::pass_limits();
++    pass_limits.maximum_relative_path_bytes =
++        owner_limits.max_catalog_path_bytes;
++    pass_limits.maximum_remote_paths = owner_limits.max_catalog_entries + 1U;
++    require_error(
++        [&] { (void)scan.run_convergence_pass_or_throw(pass_limits); },
++        "remote-path limit exceeds the retained catalog capacity",
++        "composed pass accepted more remote paths than its catalog can retain");
++
++    auto narrow_payload_limits = Fixture::payload_limits();
++    narrow_payload_limits.max_entries = 64U;
++    anonsync::SyncReplicaFilePayloadStore narrow_payload_store(
++        Fixture::folder_id,
++        fixture.temporary.make_directory("narrow-payload"),
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::CreateIfMissing,
++        narrow_payload_limits,
++        "folder-pass narrow payload store");
++    anonsync::SyncSqliteDb narrow_catalog_db = open_database(
++        fixture.temporary.path() / "narrow-catalog.sqlite3",
++        "folder-pass narrow-payload catalog database");
++    anonsync::SyncReplicaFolderScanOwner narrow_scan(
++        narrow_catalog_db.db, Fixture::folder_id, fixture.shared_root,
++        fixture.replica, narrow_payload_store, Fixture::scan_limits(),
++        "folder-pass narrow-payload owner");
++    require_error(
++        [&] {
++            (void)narrow_scan.run_convergence_pass_or_throw(
++                Fixture::pass_limits());
++        },
++        "entry limit exceeds the retained payload-store capacity",
++        "composed pass accepted more current entries than its payload store can retain");
++    require(
++        narrow_scan.snapshot_or_throw().entries.empty(),
++        "invalid payload-store composition touched the catalog before failing");
+ }
+ 
+ void test_publish_noop_restart_and_modify() {
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 5ab4767..1493266 100644
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -448,6 +448,7 @@ def main() -> int:
+                 "const SyncReplicaFilePayloadStoreSnapshot&) = delete",
+                 "std::unique_ptr<State> state_",
+                 "max_entries",
++                "kSyncReplicaFilePayloadStoreProductionMaxEntries = 100000U",
+                 "max_payload_bytes",
+                 "max_indexed_bytes",
+                 "max_transient_entries",
+@@ -551,11 +552,14 @@ def main() -> int:
+             production_limits,
+             "max_payload_bytes == 0U",
+             "kMaximumPersistentInteger / 2U",
++            "limits.max_entries =",
++            "kSyncReplicaFilePayloadStoreProductionMaxEntries",
++            "limits.max_payload_bytes = max_payload_bytes",
+             "max_transient_bytes = std::max<std::uint64_t>",
+             "validate_sync_replica_file_payload_store_limits_or_throw(limits)",
+         ),
+         "all_store_limits_are_validated_before_authority",
+-        "zero, inverted, persistent-integer, transient, and exact two-payload recovery budgets fail before root authority; the streamed complete-file extent is deliberately not constrained by one address-space allocation",
++        "zero, inverted, persistent-integer, transient, and exact two-payload recovery budgets fail before root authority; production explicitly composes the 100,000-entry folder capacity rather than inheriting the 4,096-entry generic test default",
+     )
+ 
+     regular_open = function_body(
+@@ -598,6 +602,13 @@ def main() -> int:
+     )
+ 
+     scan = function_body(store, "scan_store_namespace_or_throw(")
++    require(
++        "kInitialPayloadIndexReserveEntries = 4096U" in scan
++        and "std::min(limits.max_entries, kInitialPayloadIndexReserveEntries)"
++        in scan,
++        "production_entry_ceiling_does_not_force_eager_capacity_allocation",
++        "raising the durable production ceiling to 100,000 entries preserves bounded lazy vector growth for ordinary small stores",
++    )
+     require(
+         ordered(
+             scan,
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index 6876522..96eeeb9 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -545,6 +545,46 @@ def main() -> int:
+             network_step_horizon_seconds=15,
+         )
+ 
++        over_capacity_entries = (
++            source_runtime / "linked-peer-over-capacity-entries.json"
++        )
++        over_capacity_entries_value = json.loads(json.dumps(source_value))
++        over_capacity_entries_value["folder_limits"] = {
++            "maximum_entries": 100001
++        }
++        write_private_json(
++            over_capacity_entries, over_capacity_entries_value
++        )
++        expect_config_failure(
++            sync,
++            over_capacity_entries,
++            "over-capacity local-entry configuration",
++            message_contains=(
++                "maximum_entries exceeds the production durable capacity"
++            ),
++        )
++
++        over_capacity_remote_paths = (
++            source_runtime / "linked-peer-over-capacity-remote-paths.json"
++        )
++        over_capacity_remote_paths_value = json.loads(
++            json.dumps(source_value)
++        )
++        over_capacity_remote_paths_value["folder_limits"] = {
++            "maximum_remote_paths": 100001
++        }
++        write_private_json(
++            over_capacity_remote_paths, over_capacity_remote_paths_value
++        )
++        expect_config_failure(
++            sync,
++            over_capacity_remote_paths,
++            "over-capacity remote-path configuration",
++            message_contains=(
++                "maximum_remote_paths exceeds the production durable capacity"
++            ),
++        )
++
+         stop_boundary_config = source_runtime / "linked-peer-stop-boundary.json"
+         stop_boundary_value = json.loads(json.dumps(source_value))
+         stop_boundary_value["service"]["ingress_timeout_seconds"] = 3600

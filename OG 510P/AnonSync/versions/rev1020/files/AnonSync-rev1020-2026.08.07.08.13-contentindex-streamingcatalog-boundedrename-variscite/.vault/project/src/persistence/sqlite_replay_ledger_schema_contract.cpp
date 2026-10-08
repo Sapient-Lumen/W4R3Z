@@ -1,0 +1,243 @@
+#include "sqlite_replay_ledger_schema_contract.hpp"
+
+#include <array>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+
+namespace anonsync::persistence {
+namespace {
+
+using Definition = SqliteReplayLedgerSchemaDefinition;
+
+// Creation order is deliberate: every table exists before an explicit index
+// that targets it, and every referenced parent table exists before data is
+// initialized. Verification itself is order-independent.
+constexpr std::array<Definition, 14> kSchemaContract{{
+    {"table", "metadata", "metadata",
+     "CREATE TABLE metadata ("
+     "id INTEGER PRIMARY KEY CHECK(id=1),"
+     "line_count INTEGER NOT NULL CHECK(line_count >= 0),"
+     "head_hash TEXT NOT NULL CHECK(length(head_hash) > 0))"},
+    {"table", "ledger_entries", "ledger_entries",
+     "CREATE TABLE ledger_entries ("
+     "sequence INTEGER PRIMARY KEY CHECK(sequence > 0),"
+     "previous_hash TEXT NOT NULL CHECK(length(previous_hash) > 0),"
+     "entry_hash TEXT NOT NULL UNIQUE CHECK(length(entry_hash) = 64),"
+     "case_id TEXT NOT NULL,"
+     "kind TEXT NOT NULL CHECK(kind IN ('openapi','asyncapi')),"
+     "operation_id TEXT NOT NULL CHECK(length(operation_id) > 0),"
+     "contract_digest_sha256 TEXT NOT NULL CHECK(length(contract_digest_sha256) = 64),"
+     "jti TEXT NOT NULL UNIQUE CHECK(length(jti) > 0),"
+     "action TEXT NOT NULL CHECK(action IN ('allow','accept')),"
+     "cloud_event_source TEXT NOT NULL DEFAULT '',"
+     "cloud_event_id TEXT NOT NULL DEFAULT '',"
+     "effect_idempotency_key TEXT NOT NULL UNIQUE CHECK(length(effect_idempotency_key) = 64),"
+     "effect_state TEXT NOT NULL CHECK(effect_state='prepared'))"},
+    {"index", "ledger_async_event_identity_unique", "ledger_entries",
+     "CREATE UNIQUE INDEX ledger_async_event_identity_unique "
+     "ON ledger_entries(cloud_event_source, cloud_event_id) "
+     "WHERE kind='asyncapi' AND length(cloud_event_source) > 0 AND length(cloud_event_id) > 0"},
+    {"index", "ledger_effect_prepared_entry_evidence_unique", "ledger_entries",
+     "CREATE UNIQUE INDEX ledger_effect_prepared_entry_evidence_unique "
+     "ON ledger_entries(sequence, entry_hash, effect_idempotency_key)"},
+    {"table", "ledger_identity", "ledger_identity",
+     "CREATE TABLE ledger_identity ("
+     "id INTEGER PRIMARY KEY CHECK(id=1),"
+     "ledger_instance_id TEXT NOT NULL UNIQUE CHECK(length(ledger_instance_id) = 64))"},
+    {"table", "effect_transition_metadata", "effect_transition_metadata",
+     "CREATE TABLE effect_transition_metadata ("
+     "id INTEGER PRIMARY KEY CHECK(id=1),"
+     "line_count INTEGER NOT NULL CHECK(line_count >= 0),"
+     "head_hash TEXT NOT NULL CHECK(length(head_hash) > 0))"},
+    {"table", "effect_transitions", "effect_transitions",
+     "CREATE TABLE effect_transitions ("
+     "sequence INTEGER PRIMARY KEY CHECK(sequence > 0),"
+     "previous_hash TEXT NOT NULL CHECK(length(previous_hash) > 0),"
+     "transition_hash TEXT NOT NULL UNIQUE CHECK(length(transition_hash) = 64),"
+     "ledger_instance_id TEXT NOT NULL CHECK(length(ledger_instance_id) = 64),"
+     "effect_idempotency_key TEXT NOT NULL CHECK(length(effect_idempotency_key) = 64),"
+     "prepared_sequence INTEGER NOT NULL CHECK(prepared_sequence > 0),"
+     "prepared_entry_hash TEXT NOT NULL CHECK(length(prepared_entry_hash) = 64),"
+     "terminal_state TEXT NOT NULL CHECK(terminal_state IN ('applied','failed','compensated')),"
+     "result_digest_sha256 TEXT NOT NULL CHECK(length(result_digest_sha256) = 64),"
+     "transition_reason TEXT NOT NULL DEFAULT '',"
+     "transition_intent_id TEXT NOT NULL CHECK(length(transition_intent_id) > 0),"
+     "transition_intent_signer_kid TEXT NOT NULL CHECK(length(transition_intent_signer_kid) > 0),"
+     "transition_intent_sha256 TEXT NOT NULL CHECK(length(transition_intent_sha256) = 64),"
+     "FOREIGN KEY(ledger_instance_id) REFERENCES ledger_identity(ledger_instance_id),"
+     "FOREIGN KEY(effect_idempotency_key) REFERENCES ledger_entries(effect_idempotency_key),"
+     "FOREIGN KEY(prepared_sequence, prepared_entry_hash, effect_idempotency_key) "
+     "REFERENCES ledger_entries(sequence, entry_hash, effect_idempotency_key))"},
+    {"index", "effect_transitions_key_unique", "effect_transitions",
+     "CREATE UNIQUE INDEX effect_transitions_key_unique "
+     "ON effect_transitions(effect_idempotency_key)"},
+    {"index", "effect_transitions_intent_id_unique", "effect_transitions",
+     "CREATE UNIQUE INDEX effect_transitions_intent_id_unique "
+     "ON effect_transitions(transition_intent_id)"},
+    {"table", "effect_outbox", "effect_outbox",
+     "CREATE TABLE effect_outbox ("
+     "effect_idempotency_key TEXT PRIMARY KEY CHECK(length(effect_idempotency_key) = 64),"
+     "prepared_sequence INTEGER NOT NULL CHECK(prepared_sequence > 0),"
+     "prepared_entry_hash TEXT NOT NULL CHECK(length(prepared_entry_hash) = 64),"
+     "outbox_state TEXT NOT NULL CHECK(outbox_state IN ('reserved','inflight','applied','failed','compensated')),"
+     "dispatch_attempts INTEGER NOT NULL DEFAULT 0 CHECK(dispatch_attempts >= 0),"
+     "worker_claim_id TEXT NOT NULL DEFAULT '' CHECK(length(worker_claim_id) IN (0,64)),"
+     "worker_id TEXT NOT NULL DEFAULT '' CHECK(length(worker_id) <= 128),"
+     "claimed_at_epoch INTEGER NOT NULL DEFAULT 0 CHECK(claimed_at_epoch >= 0),"
+     "lease_expires_at_epoch INTEGER NOT NULL DEFAULT 0 CHECK(lease_expires_at_epoch >= 0),"
+     "last_result_digest_sha256 TEXT NOT NULL DEFAULT '' CHECK(length(last_result_digest_sha256) IN (0,64)),"
+     "updated_at_sequence INTEGER NOT NULL CHECK(updated_at_sequence >= 0),"
+     "FOREIGN KEY(effect_idempotency_key) REFERENCES ledger_entries(effect_idempotency_key),"
+     "FOREIGN KEY(prepared_sequence, prepared_entry_hash, effect_idempotency_key) "
+     "REFERENCES ledger_entries(sequence, entry_hash, effect_idempotency_key))"},
+    {"table", "ingress_sender_replay_cache", "ingress_sender_replay_cache",
+     "CREATE TABLE ingress_sender_replay_cache ("
+     "replay_key_sha256 TEXT PRIMARY KEY CHECK(length(replay_key_sha256) = 64),"
+     "format TEXT NOT NULL CHECK(format='anonsync-ingress-sender-replay-cache-v5-sqlite-ledger-integrated-transaction'),"
+     "service_config_sha256 TEXT NOT NULL CHECK(length(service_config_sha256) = 64),"
+     "ingress_profile_sha256 TEXT NOT NULL CHECK(length(ingress_profile_sha256) = 64),"
+     "sender_replay_cache_instance_id TEXT NOT NULL CHECK(length(sender_replay_cache_instance_id) > 0),"
+     "sender_proof_kid TEXT NOT NULL CHECK(length(sender_proof_kid) > 0),"
+     "principal TEXT NOT NULL CHECK(length(principal) > 0),"
+     "nonce TEXT NOT NULL CHECK(length(nonce) BETWEEN 16 AND 128),"
+     "issued_at_epoch INTEGER NOT NULL CHECK(issued_at_epoch > 0),"
+     "observed_at_epoch INTEGER NOT NULL CHECK(observed_at_epoch > 0),"
+     "replay_window_seconds INTEGER NOT NULL CHECK(replay_window_seconds BETWEEN 1 AND 86400),"
+     "material_sha256 TEXT NOT NULL CHECK(length(material_sha256) = 64),"
+     "prepared_sequence INTEGER NOT NULL CHECK(prepared_sequence > 0),"
+     "prepared_entry_hash TEXT NOT NULL CHECK(length(prepared_entry_hash) = 64),"
+     "effect_idempotency_key TEXT NOT NULL CHECK(length(effect_idempotency_key) = 64),"
+     "FOREIGN KEY(prepared_sequence, prepared_entry_hash, effect_idempotency_key) "
+     "REFERENCES ledger_entries(sequence, entry_hash, effect_idempotency_key))"},
+    {"index", "ingress_sender_replay_nonce_unique", "ingress_sender_replay_cache",
+     "CREATE UNIQUE INDEX ingress_sender_replay_nonce_unique "
+     "ON ingress_sender_replay_cache(service_config_sha256, ingress_profile_sha256, "
+     "sender_replay_cache_instance_id, sender_proof_kid, nonce)"},
+    {"index", "ingress_sender_replay_expiry", "ingress_sender_replay_cache",
+     "CREATE INDEX ingress_sender_replay_expiry "
+     "ON ingress_sender_replay_cache(issued_at_epoch)"},
+    {"table", "backend_profile", "backend_profile",
+     "CREATE TABLE backend_profile ("
+     "id INTEGER PRIMARY KEY CHECK(id=1),"
+     "backend_name TEXT NOT NULL CHECK(backend_name='sqlite-wal'),"
+     "schema_version INTEGER NOT NULL CHECK(schema_version=10),"
+     "hash_algorithm TEXT NOT NULL CHECK(hash_algorithm='sha256'),"
+     "entry_material_version TEXT NOT NULL "
+     "CHECK(entry_material_version='anonsync-replay-ledger-entry-v7-ledger-instance-bound-transition-intent'),"
+     "commit_protocol TEXT NOT NULL "
+     "CHECK(commit_protocol='sqlite-wal-begin-immediate-full-sync'))"},
+}};
+
+SqliteReplayLedgerSchemaVerification failure(
+    SqliteReplayLedgerSchemaFailure why,
+    std::size_t observed_index,
+    std::string_view expected_name = {}) {
+    SqliteReplayLedgerSchemaVerification out;
+    out.failure = why;
+    out.observed_index = observed_index;
+    out.expected_object_name.assign(expected_name);
+    return out;
+}
+
+}  // namespace
+
+std::string_view sqlite_replay_ledger_schema_failure_name(
+    SqliteReplayLedgerSchemaFailure failure_value) noexcept {
+    switch (failure_value) {
+        case SqliteReplayLedgerSchemaFailure::none:
+            return "none";
+        case SqliteReplayLedgerSchemaFailure::unexpected_object:
+            return "unexpected_object";
+        case SqliteReplayLedgerSchemaFailure::duplicate_object_name:
+            return "duplicate_object_name";
+        case SqliteReplayLedgerSchemaFailure::object_type_mismatch:
+            return "object_type_mismatch";
+        case SqliteReplayLedgerSchemaFailure::table_name_mismatch:
+            return "table_name_mismatch";
+        case SqliteReplayLedgerSchemaFailure::schema_sql_mismatch:
+            return "schema_sql_mismatch";
+        case SqliteReplayLedgerSchemaFailure::missing_object:
+            return "missing_object";
+    }
+    return "unknown_failure";
+}
+
+std::string SqliteReplayLedgerSchemaVerification::safe_summary() const {
+    std::string out = "sqlite_replay_ledger_schema[";
+    out += sqlite_replay_ledger_schema_failure_name(failure);
+    out += "]";
+    if (!expected_object_name.empty()) {
+        out += ":";
+        out += expected_object_name;
+    }
+    return out;
+}
+
+std::span<const SqliteReplayLedgerSchemaDefinition>
+sqlite_replay_ledger_schema_contract() noexcept {
+    return kSchemaContract;
+}
+
+std::string sqlite_replay_ledger_schema_create_statement(
+    const SqliteReplayLedgerSchemaDefinition& definition) {
+    if ((definition.type != "table" && definition.type != "index") ||
+        definition.name.empty() || definition.table_name.empty() ||
+        definition.stored_sql.empty()) {
+        throw std::invalid_argument(
+            "invalid SQLite replay-ledger schema definition");
+    }
+    std::string statement(definition.stored_sql);
+    statement.push_back(';');
+    return statement;
+}
+
+SqliteReplayLedgerSchemaVerification verify_sqlite_replay_ledger_schema(
+    std::span<const ObservedSqliteSchemaObject> observed) {
+    std::unordered_map<std::string_view, const Definition*> expected_by_name;
+    expected_by_name.reserve(kSchemaContract.size());
+    for (const Definition& definition : kSchemaContract) {
+        expected_by_name.emplace(definition.name, &definition);
+    }
+
+    std::unordered_set<std::string> seen_names;
+    seen_names.reserve(observed.size());
+    for (std::size_t index = 0; index < observed.size(); ++index) {
+        const ObservedSqliteSchemaObject& object = observed[index];
+        const auto expected_it = expected_by_name.find(object.name);
+        if (expected_it == expected_by_name.end()) {
+            return failure(SqliteReplayLedgerSchemaFailure::unexpected_object,
+                           index);
+        }
+        const Definition& expected = *expected_it->second;
+        if (!seen_names.insert(object.name).second) {
+            return failure(
+                SqliteReplayLedgerSchemaFailure::duplicate_object_name,
+                index, expected.name);
+        }
+        if (object.type != expected.type) {
+            return failure(SqliteReplayLedgerSchemaFailure::object_type_mismatch,
+                           index, expected.name);
+        }
+        if (object.table_name != expected.table_name) {
+            return failure(SqliteReplayLedgerSchemaFailure::table_name_mismatch,
+                           index, expected.name);
+        }
+        if (object.stored_sql != expected.stored_sql) {
+            return failure(SqliteReplayLedgerSchemaFailure::schema_sql_mismatch,
+                           index, expected.name);
+        }
+    }
+
+    for (const Definition& expected : kSchemaContract) {
+        if (seen_names.find(std::string(expected.name)) == seen_names.end()) {
+            return failure(SqliteReplayLedgerSchemaFailure::missing_object,
+                           observed.size(), expected.name);
+        }
+    }
+    return {};
+}
+
+}  // namespace anonsync::persistence

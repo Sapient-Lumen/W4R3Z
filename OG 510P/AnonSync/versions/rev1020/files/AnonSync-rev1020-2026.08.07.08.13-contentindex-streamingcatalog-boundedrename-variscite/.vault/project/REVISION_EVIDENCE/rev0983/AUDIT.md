@@ -1,0 +1,7 @@
+# Rev0983 audit record
+
+Rev0983 adds one bounded offline logical replacement ceremony for the primary replica SQLite database. The shipping command validates and retains a detached candidate before mutation, requires the exact current incarnation/recovery-epoch/cutpoint, publishes the displaced logical database as a private create-new rollback artifact, replaces through the retained descriptor-rooted SQLite destination owner, advances recovery lineage, closes the writer, and independently reopens the deployment before success.
+
+The adjacent audit corrected two authority defects. Candidate, rollback, manifest, and active database selections are compared as complete four-name SQLite families: main, `-journal`, `-wal`, and `-shm`. Candidate and rollback families must be disjoint, output-sidecar conflicts are rejected before resident capture and immediately before main-name publication, and no atomic hostile-writer reservation is claimed. The shared page-copy owner also no longer invokes a throwable observer after `sqlite3_backup_step()` returns `SQLITE_DONE`, because SQLite may already have committed the named destination at that terminal cutpoint.
+
+The package deliberately does not claim raw SQLite-family identity replacement, whole-share restore, payload/catalog/credential restoration, external anti-rollback authority, or crash-atomic completion between logical replacement and recovery-epoch advancement. The create-new rollback artifact and existing offline inspect/advance ceremony remain the conservative recovery bridge.

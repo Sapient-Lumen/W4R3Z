@@ -1,0 +1,2568 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 84a530d..a6ade95 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1087,6 +1087,10 @@ if(Python3_Interpreter_FOUND)
+     COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_process_authority.py
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
++  add_test(NAME anonsync_sqlite_transaction_stack_authority_source_audit
++    COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_transaction_stack_authority.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
+   add_test(NAME anonsync_sqlite_source_first_move_source_audit
+     COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_source_first_move.py
+diff --git a/src/sync_checkpoint_owner_fence.cpp b/src/sync_checkpoint_owner_fence.cpp
+index 8610c85..02ca894 100644
+--- a/src/sync_checkpoint_owner_fence.cpp
++++ b/src/sync_checkpoint_owner_fence.cpp
+@@ -803,6 +803,15 @@ void delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
+         attest_checkpoint_owner_schema_or_throw(
+             db, context + " checkpoint owner schema attestation");
+ 
++    // The reset permit authorizes one compound state transition, not merely a
++    // DELETE statement. Keep the cascade and the sticky-mode compare/reload in
++    // an exact nested savepoint so a caller that catches an exception and then
++    // commits the outer transaction cannot publish a partial reset.
++    SyncSqliteSavepoint reset(
++        db,
++        permit.transaction_authority_,
++        context + " atomic checkpoint root reset");
++
+     SyncSqliteStmt delete_stmt = sqlite_prepare_or_throw(
+         db,
+         "DELETE FROM main.sync_session_checkpoints WHERE session_id=?;",
+@@ -883,6 +892,7 @@ void delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
+         }
+     }
+ 
++    reset.release();
+     permit.consumed_ = true;
+ }
+ 
+diff --git a/src/sync_checkpoint_owner_schema.cpp b/src/sync_checkpoint_owner_schema.cpp
+index 5ca5bb5..ac9048e 100644
+--- a/src/sync_checkpoint_owner_schema.cpp
++++ b/src/sync_checkpoint_owner_schema.cpp
+@@ -657,79 +657,52 @@ void ensure_checkpoint_owner_schema_or_throw(
+         throw std::invalid_argument(context + " database handle is null");
+     }
+ 
+-    sqlite_exec_or_throw(
++    SyncSqliteSavepoint migration(
++        db, context + " atomic checkpoint owner-schema migration");
++    verify_constraint_enforcement_profile_or_throw(db, context);
++    verify_no_relevant_temp_objects_or_throw(db, context);
++    verify_no_checkpoint_root_triggers_or_throw(db, context);
++
++    // Validate any legacy owner evidence before creating the new sticky-mode
++    // object. A hostile preexisting lock table must not cause even a partial
++    // migration side effect.
++    const bool owner_lock_present =
++        attest_optional_owner_lock_table_or_throw(db, context);
++
++    const bool mode_present = exact_table_object_present_or_throw(
+         db,
+-        "SAVEPOINT anonsync_checkpoint_owner_schema_migration;",
+-        context + " begin atomic owner-schema migration");
+-    bool savepoint_open = true;
+-    try {
+-        verify_constraint_enforcement_profile_or_throw(db, context);
+-        verify_no_relevant_temp_objects_or_throw(db, context);
+-        verify_no_checkpoint_root_triggers_or_throw(db, context);
+-
+-        // Validate any legacy owner evidence before creating the new sticky-mode
+-        // object. A hostile preexisting lock table must not cause even a partial
+-        // migration side effect.
+-        const bool owner_lock_present =
+-            attest_optional_owner_lock_table_or_throw(db, context);
+-
+-        const bool mode_present = exact_table_object_present_or_throw(
++        kOwnerModeTable,
++        kOwnerModeStoredDdl,
++        true,
++        context + " sticky owner mode bootstrap object");
++    if (!mode_present) {
++        sqlite_exec_or_throw(
+             db,
+-            kOwnerModeTable,
+-            kOwnerModeStoredDdl,
+-            true,
+-            context + " sticky owner mode bootstrap object");
+-        if (!mode_present) {
+-            sqlite_exec_or_throw(
+-                db,
+-                std::string(kOwnerModeCreateDdl) + ";",
+-                context + " create exact sticky owner mode table");
+-        }
+-
+-        attest_mode_table_or_throw(db, context);
+-        if (owner_lock_present) {
+-            sqlite_exec_or_throw(
+-                db,
+-                "INSERT INTO main.sync_session_checkpoint_owner_modes"
+-                "(session_id, ownership_mode, latest_owner_lock_epoch, "
+-                "mode_updated_at_epoch, administrative_disable_evidence_id) "
+-                "SELECT owner.session_id, 'owner-required', "
+-                "owner.owner_lock_epoch, owner.updated_at_epoch, '' "
+-                "FROM main.sync_session_resume_transfer_daemon_owner_locks AS owner "
+-                "WHERE NOT EXISTS(SELECT 1 FROM "
+-                "main.sync_session_checkpoint_owner_modes AS mode "
+-                "WHERE mode.session_id=owner.session_id);",
+-                context + " atomically backfill legacy sticky owner modes");
+-        }
++            std::string(kOwnerModeCreateDdl) + ";",
++            context + " create exact sticky owner mode table");
++    }
+ 
+-        // Re-attest before publication of the savepoint so creation, migration,
+-        // and the exact schema proof are one SQLite atomic unit.
+-        attest_checkpoint_owner_schema_or_throw(
+-            db, context + " post-migration attestation");
++    attest_mode_table_or_throw(db, context);
++    if (owner_lock_present) {
+         sqlite_exec_or_throw(
+             db,
+-            "RELEASE anonsync_checkpoint_owner_schema_migration;",
+-            context + " publish atomic owner-schema migration");
+-        savepoint_open = false;
+-    } catch (...) {
+-        if (savepoint_open) {
+-            char* error = nullptr;
+-            const int rc = sqlite3_exec(
+-                db,
+-                "ROLLBACK TO anonsync_checkpoint_owner_schema_migration;"
+-                "RELEASE anonsync_checkpoint_owner_schema_migration;",
+-                nullptr,
+-                nullptr,
+-                &error);
+-            sqlite3_free(error);
+-            if (rc != SQLITE_OK) {
+-                throw std::runtime_error(
+-                    context +
+-                    " owner-schema migration failed and its savepoint could not be rolled back");
+-            }
+-        }
+-        throw;
++            "INSERT INTO main.sync_session_checkpoint_owner_modes"
++            "(session_id, ownership_mode, latest_owner_lock_epoch, "
++            "mode_updated_at_epoch, administrative_disable_evidence_id) "
++            "SELECT owner.session_id, 'owner-required', "
++            "owner.owner_lock_epoch, owner.updated_at_epoch, '' "
++            "FROM main.sync_session_resume_transfer_daemon_owner_locks AS owner "
++            "WHERE NOT EXISTS(SELECT 1 FROM "
++            "main.sync_session_checkpoint_owner_modes AS mode "
++            "WHERE mode.session_id=owner.session_id);",
++            context + " atomically backfill legacy sticky owner modes");
+     }
++
++    // Re-attest before publication so creation, migration, and the exact
++    // schema proof are one typed SQLite savepoint unit.
++    attest_checkpoint_owner_schema_or_throw(
++        db, context + " post-migration attestation");
++    migration.release();
+ }
+ 
+ }  // namespace anonsync::sync_checkpoint_owner_schema_internal
+diff --git a/src/sync_peer_ingress_payload_store_schema.cpp b/src/sync_peer_ingress_payload_store_schema.cpp
+index f08aee4..932b72d 100644
+--- a/src/sync_peer_ingress_payload_store_schema.cpp
++++ b/src/sync_peer_ingress_payload_store_schema.cpp
+@@ -9,7 +9,6 @@
+ #include <stdexcept>
+ #include <string>
+ #include <string_view>
+-#include <utility>
+ 
+ #include <sqlite3.h>
+ 
+@@ -250,46 +249,7 @@ void verify_exact_payload_schema_object_or_throw(
+     }
+ }
+ 
+-class PayloadSchemaSavepoint final {
+-private:
+-    sqlite3* db_ = nullptr;
+-    SyncSqliteProcessId process_id_ = 0;
+-    std::string label_;
+-    bool active_ = false;
+ 
+-public:
+-    PayloadSchemaSavepoint(sqlite3* db, std::string label)
+-        : db_(db),
+-          process_id_(current_sync_sqlite_process_id_noexcept()),
+-          label_(std::move(label)),
+-          active_(true) {
+-        sqlite_exec_or_throw(db_,
+-                             "SAVEPOINT anonsync_peer_payload_schema;",
+-                             label_ + " savepoint begin");
+-    }
+-    PayloadSchemaSavepoint(const PayloadSchemaSavepoint&) = delete;
+-    PayloadSchemaSavepoint& operator=(const PayloadSchemaSavepoint&) = delete;
+-    ~PayloadSchemaSavepoint() {
+-        if (!active_ || db_ == nullptr) return;
+-        if (!sync_sqlite_process_id_is_current(process_id_)) {
+-            fail_stop_on_sync_sqlite_capability_violation_noexcept();
+-        }
+-        sqlite3_exec(db_,
+-                     "ROLLBACK TO anonsync_peer_payload_schema;"
+-                     "RELEASE anonsync_peer_payload_schema;",
+-                     nullptr,
+-                     nullptr,
+-                     nullptr);
+-    }
+-    void commit() {
+-        require_sync_sqlite_process_id_or_fail_stop(
+-            process_id_, label_ + " savepoint commit");
+-        sqlite_exec_or_throw(db_,
+-                             "RELEASE anonsync_peer_payload_schema;",
+-                             label_ + " savepoint release");
+-        active_ = false;
+-    }
+-};
+ 
+ }  // namespace
+ 
+@@ -302,7 +262,7 @@ void ensure_peer_transport_ingress_payload_store_schema_or_throw(
+     const PeerTransportIngressSchemaSqlObject& index =
+         required_payload_schema_object("idx_sync_peer_transport_ingress_payload_digest");
+ 
+-    PayloadSchemaSavepoint savepoint(db, label + " atomic payload schema");
++    SyncSqliteSavepoint savepoint(db, label + " atomic payload schema");
+     if (schema_object_exists_or_throw(db, table.type, table.name,
+                                       label + " payload table")) {
+         // Validate a pre-existing object before adding anything else. A
+@@ -331,7 +291,7 @@ void ensure_peer_transport_ingress_payload_store_schema_or_throw(
+ 
+     verify_peer_transport_ingress_payload_store_schema_or_throw(
+         db, label + " exact schema verification");
+-    savepoint.commit();
++    savepoint.release();
+ }
+ 
+ void verify_peer_transport_ingress_payload_store_schema_or_throw(
+diff --git a/src/sync_sqlite_connection_authority.cpp b/src/sync_sqlite_connection_authority.cpp
+index 825d6e5..351392b 100644
+--- a/src/sync_sqlite_connection_authority.cpp
++++ b/src/sync_sqlite_connection_authority.cpp
+@@ -11,6 +11,7 @@
+ #include <string>
+ #include <string_view>
+ #include <utility>
++#include <vector>
+ 
+ #include <sqlite3.h>
+ 
+@@ -34,6 +35,18 @@ enum class TransactionPermitOperation : std::uint8_t {
+     Rollback
+ };
+ 
++enum class SavepointPermitOperation : std::uint8_t {
++    None,
++    Begin,
++    Release,
++    Rollback
++};
++
++struct ActiveSavepointFrame final {
++    std::uint64_t generation = 0;
++    std::string name;
++};
++
+ struct ConnectionAuthorityState final {
+     std::uint64_t magic = kStateMagic;
+     ConnectionAuthorityState* self = this;
+@@ -57,6 +70,18 @@ struct ConnectionAuthorityState final {
+         TransactionPermitOperation::None;
+     bool transaction_permit_active = false;
+     bool transaction_permit_observed = false;
++
++    // Typed savepoints are a second, independently single-use permit lane.
++    // The active vector mirrors only marks created by this bridge and is
++    // cleared whenever the owning outer transaction ends. Names are generated
++    // internally, so SQL text never contains caller-controlled identifiers.
++    std::uint64_t last_savepoint_generation = 0;
++    std::vector<ActiveSavepointFrame> active_savepoints;
++    SavepointPermitOperation savepoint_permit =
++        SavepointPermitOperation::None;
++    std::string savepoint_permit_name;
++    bool savepoint_permit_active = false;
++    bool savepoint_permit_observed = false;
+ };
+ 
+ class RetainedMutexCapabilityReservation final {
+@@ -182,7 +207,8 @@ public:
+             throw std::invalid_argument(label + " transaction permit is empty");
+         }
+         if (state_.transaction_permit_active ||
+-            state_.transaction_permit != TransactionPermitOperation::None) {
++            state_.transaction_permit != TransactionPermitOperation::None ||
++            state_.savepoint_permit_active) {
+             throw std::logic_error(
+                 label + " transaction boundary permit is already armed");
+         }
+@@ -208,6 +234,46 @@ private:
+     ConnectionAuthorityState& state_;
+ };
+ 
++class SavepointPermitScope final {
++public:
++    SavepointPermitScope(ConnectionAuthorityState& state,
++                         SavepointPermitOperation operation,
++                         std::string name,
++                         const std::string& label)
++        : state_(state) {
++        if (operation == SavepointPermitOperation::None || name.empty()) {
++            throw std::invalid_argument(label + " savepoint permit is empty");
++        }
++        if (state_.savepoint_permit_active ||
++            state_.savepoint_permit != SavepointPermitOperation::None ||
++            state_.transaction_permit_active) {
++            throw std::logic_error(
++                label + " transaction-stack permit is already armed");
++        }
++        state_.savepoint_permit = operation;
++        state_.savepoint_permit_name = std::move(name);
++        state_.savepoint_permit_observed = false;
++        state_.savepoint_permit_active = true;
++    }
++
++    ~SavepointPermitScope() {
++        state_.savepoint_permit_active = false;
++        state_.savepoint_permit_observed = false;
++        state_.savepoint_permit = SavepointPermitOperation::None;
++        state_.savepoint_permit_name.clear();
++    }
++
++    SavepointPermitScope(const SavepointPermitScope&) = delete;
++    SavepointPermitScope& operator=(const SavepointPermitScope&) = delete;
++
++    [[nodiscard]] bool observed() const noexcept {
++        return state_.savepoint_permit_observed;
++    }
++
++private:
++    ConnectionAuthorityState& state_;
++};
++
+ std::uint64_t process_salt() noexcept {
+     static const std::uint64_t salt = [] {
+         std::uint64_t value = 0;
+@@ -251,6 +317,22 @@ std::uint64_t allocate_transaction_generation_or_throw(
+     return state.last_transaction_generation;
+ }
+ 
++std::uint64_t allocate_savepoint_generation_or_throw(
++    ConnectionAuthorityState& state,
++    const std::string& label) {
++    if (state.last_savepoint_generation ==
++        std::numeric_limits<std::uint64_t>::max()) {
++        throw std::overflow_error(
++            label + " exhausted process-local SQLite savepoint generations");
++    }
++    ++state.last_savepoint_generation;
++    if (state.last_savepoint_generation == 0) {
++        throw std::overflow_error(
++            label + " produced an invalid SQLite savepoint generation");
++    }
++    return state.last_savepoint_generation;
++}
++
+ void destroy_connection_authority_state(void* raw) noexcept {
+     auto* state = static_cast<ConnectionAuthorityState*>(raw);
+     if (state == nullptr) return;
+@@ -318,6 +400,21 @@ bool transaction_operation_matches(TransactionPermitOperation operation,
+     return false;
+ }
+ 
++bool savepoint_operation_matches(SavepointPermitOperation operation,
++                                 const char* argument1) noexcept {
++    switch (operation) {
++        case SavepointPermitOperation::Begin:
++            return ascii_case_equal(argument1, "BEGIN");
++        case SavepointPermitOperation::Release:
++            return ascii_case_equal(argument1, "RELEASE");
++        case SavepointPermitOperation::Rollback:
++            return ascii_case_equal(argument1, "ROLLBACK");
++        case SavepointPermitOperation::None:
++            return false;
++    }
++    return false;
++}
++
+ int invoke_policy_or_deny(ConnectionAuthorityState& state,
+                           int action,
+                           const char* argument1,
+@@ -365,10 +462,27 @@ int connection_authorizer_bridge(void* raw,
+         return SQLITE_OK;
+     }
+ 
+-    // SAVEPOINT is also transaction-stack control: an outermost SAVEPOINT
+-    // starts a transaction and RELEASE of the outermost savepoint commits it.
+-    // Until a typed nested-scope API exists, every SAVEPOINT action is denied.
+-    if (action == SQLITE_SAVEPOINT) return SQLITE_DENY;
++    // SAVEPOINT is transaction-stack control: an outermost mark starts a
++    // transaction and RELEASE of that mark commits it. Only the typed bridge
++    // may arm one exact operation/name pair, and SQLITE_IGNORE is never a safe
++    // boundary decision.
++    if (action == SQLITE_SAVEPOINT) {
++        if (!state->savepoint_permit_active ||
++            state->savepoint_permit_observed ||
++            !savepoint_operation_matches(state->savepoint_permit, argument1) ||
++            argument2 == nullptr ||
++            state->savepoint_permit_name != argument2) {
++            return SQLITE_DENY;
++        }
++        state->savepoint_permit_observed = true;
++        return invoke_policy_or_deny(*state,
++                                     action,
++                                     argument1,
++                                     argument2,
++                                     database_name,
++                                     trigger_or_view,
++                                     false);
++    }
+ 
+     if (action == SQLITE_TRANSACTION) {
+         if (!state->transaction_permit_active ||
+@@ -407,9 +521,9 @@ void run_authorizer_ownership_probe_or_throw(
+     if (state.probe_active) {
+         throw std::logic_error(label + " authorizer ownership probe is reentrant");
+     }
+-    if (state.transaction_permit_active) {
++    if (state.transaction_permit_active || state.savepoint_permit_active) {
+         throw std::logic_error(
+-            label + " authorizer ownership probe crossed an armed transaction permit");
++            label + " authorizer ownership probe crossed an armed transaction-stack permit");
+     }
+     if (state.probe_nonce == std::numeric_limits<std::uint64_t>::max()) {
+         throw std::overflow_error(label + " exhausted authorizer probe nonces");
+@@ -484,6 +598,135 @@ void execute_permitted_transaction_sql_or_throw(
+     }
+ }
+ 
++[[nodiscard]] bool execute_permitted_savepoint_sql_or_throw(
++    sqlite3* db,
++    ConnectionAuthorityState& state,
++    SavepointPermitOperation operation,
++    const std::string& savepoint_name,
++    const std::string& sql,
++    const std::string& label) {
++    SavepointPermitScope permit(state, operation, savepoint_name, label);
++    char* raw_error = nullptr;
++    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &raw_error);
++    const bool observed = permit.observed();
++    const std::string detail =
++        raw_error != nullptr ? std::string(raw_error) : std::string();
++    if (raw_error != nullptr) sqlite3_free(raw_error);
++
++    if (rc != SQLITE_OK) {
++        throw_sqlite_exception(db, rc, label, detail);
++    }
++    // Success without observation means another callback accepted and
++    // executed the SQL after our ownership probe. The caller must update its
++    // stack model to match SQLite, then fail closed instead of pretending that
++    // the AnonSync bridge authorized the operation.
++    return observed;
++}
++
++std::uint64_t allocate_unfenced_savepoint_generation_or_throw(
++    const std::string& label) {
++    static std::atomic<std::uint64_t> next{1};
++    std::uint64_t current = next.load(std::memory_order_relaxed);
++    for (;;) {
++        if (current == std::numeric_limits<std::uint64_t>::max()) {
++            throw std::overflow_error(
++                label + " exhausted process-local unfenced savepoint generations");
++        }
++        if (next.compare_exchange_weak(current,
++                                       current + 1,
++                                       std::memory_order_relaxed,
++                                       std::memory_order_relaxed)) {
++            return current;
++        }
++    }
++}
++
++std::string fenced_savepoint_name(
++    const ConnectionAuthorityState& state,
++    std::uint64_t savepoint_generation) {
++    return "anonsync_sp_" + std::to_string(state.connection_incarnation) + "_" +
++           std::to_string(state.active_transaction_generation) + "_" +
++           std::to_string(savepoint_generation);
++}
++
++std::string unfenced_savepoint_name(std::uint64_t generation) {
++    return "anonsync_unfenced_sp_" + std::to_string(generation);
++}
++
++void validate_savepoint_proof_common_or_throw(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof,
++    const std::string& label) {
++    if (proof.db == nullptr || proof.db != db || proof.process_id == 0 ||
++        proof.savepoint_generation == 0 || proof.owner_thread_incarnation == 0 ||
++        proof.retained_capability_state == nullptr ||
++        proof.savepoint_name.empty()) {
++        throw std::logic_error(
++            label + " savepoint boundary proof is empty or targets another handle");
++    }
++    require_sync_sqlite_process_id_or_fail_stop(
++        proof.process_id, label + " savepoint boundary");
++    require_sync_sqlite_thread_incarnation_or_throw(
++        proof.owner_thread_incarnation, label + " savepoint boundary");
++    if (!sync_sqlite_mutex_capability_is_live_noexcept(
++            proof.retained_capability_state)) {
++        throw std::logic_error(
++            label + " retained SQLite savepoint mutex capability is no longer live");
++    }
++}
++
++std::size_t find_fenced_savepoint_index_or_throw(
++    const ConnectionAuthorityState& state,
++    const SyncSqliteSavepointBoundaryProof& proof,
++    const std::string& label) {
++    for (std::size_t index = 0; index < state.active_savepoints.size(); ++index) {
++        const ActiveSavepointFrame& frame = state.active_savepoints[index];
++        if (frame.generation == proof.savepoint_generation) {
++            if (frame.name != proof.savepoint_name) {
++                throw std::runtime_error(
++                    label + " typed SQLite savepoint name changed");
++            }
++            return index;
++        }
++    }
++    throw std::runtime_error(
++        label + " typed SQLite savepoint generation changed");
++}
++
++ConnectionAuthorityState& validate_fenced_savepoint_proof_or_throw(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof,
++    const std::string& label,
++    bool require_top) {
++    validate_savepoint_proof_common_or_throw(db, proof, label);
++    if (!proof.fenced || proof.process_salt == 0 ||
++        proof.connection_incarnation == 0 || proof.authorizer_generation == 0 ||
++        proof.transaction_generation == 0) {
++        throw std::logic_error(label + " fenced savepoint proof is incomplete");
++    }
++    ConnectionAuthorityState* state =
++        load_connection_authority_state_or_throw(db, false, label);
++    if (state->process_id != proof.process_id ||
++        state->process_salt != proof.process_salt ||
++        state->connection_incarnation != proof.connection_incarnation ||
++        state->authorizer_generation != proof.authorizer_generation) {
++        throw std::runtime_error(
++            label + " connection incarnation or authorizer generation changed");
++    }
++    if (state->active_transaction_generation != proof.transaction_generation ||
++        sqlite3_get_autocommit(db) != 0) {
++        throw std::runtime_error(
++            label + " typed SQLite outer transaction generation changed");
++    }
++    const std::size_t index =
++        find_fenced_savepoint_index_or_throw(*state, proof, label);
++    if (require_top && index + 1 != state->active_savepoints.size()) {
++        throw std::logic_error(
++            label + " savepoint must close in reverse construction order");
++    }
++    return *state;
++}
++
+ void rollback_newly_started_transaction_noexcept(
+     sqlite3* db,
+     ConnectionAuthorityState& state) noexcept {
+@@ -549,6 +792,7 @@ void clear_stale_transaction_generation_if_ended(
+     if (state.active_transaction_generation != 0 &&
+         sqlite3_get_autocommit(db) != 0) {
+         state.active_transaction_generation = 0;
++        state.active_savepoints.clear();
+     }
+ }
+ 
+@@ -672,11 +916,13 @@ install_sync_sqlite_connection_authority_or_throw(
+ 
+     if (state != nullptr) {
+         clear_stale_transaction_generation_if_ended(db, *state);
+-        if (state->transaction_permit_active) {
++        if (state->transaction_permit_active ||
++            state->savepoint_permit_active) {
+             throw std::logic_error(
+                 label + " cannot replace authority while a boundary permit is armed");
+         }
+         if (state->active_transaction_generation != 0 ||
++            !state->active_savepoints.empty() ||
+             sqlite3_get_autocommit(db) == 0) {
+             throw std::logic_error(
+                 label +
+@@ -825,7 +1071,8 @@ begin_sync_sqlite_transaction_boundary_or_throw(
+     }
+ 
+     clear_stale_transaction_generation_if_ended(db, *state);
+-    if (state->active_transaction_generation != 0) {
++    if (state->active_transaction_generation != 0 ||
++        !state->active_savepoints.empty()) {
+         throw std::logic_error(
+             label + " another typed transaction generation remains active");
+     }
+@@ -849,11 +1096,13 @@ begin_sync_sqlite_transaction_boundary_or_throw(
+         }
+         if (sqlite3_get_autocommit(db) != 0) {
+             state->active_transaction_generation = 0;
++            state->active_savepoints.clear();
+         }
+         throw;
+     }
+     if (sqlite3_get_autocommit(db) != 0) {
+         state->active_transaction_generation = 0;
++        state->active_savepoints.clear();
+         throw std::logic_error(
+             label + " begin returned success without retaining a transaction");
+     }
+@@ -873,6 +1122,223 @@ begin_sync_sqlite_transaction_boundary_or_throw(
+     return proof;
+ }
+ 
++SyncSqliteSavepointBoundaryProof
++begin_sync_sqlite_savepoint_boundary_or_throw(
++    sqlite3* db,
++    const SyncSqliteTransactionBoundaryProof* outer_transaction_proof,
++    const std::string& label) {
++    DbMutexGuard guard(db, label + " typed savepoint begin");
++    RetainedMutexCapabilityReservation retained_capability(
++        db, label + " typed savepoint");
++    ConnectionAuthorityState* state =
++        load_connection_authority_state_or_throw(db, true, label);
++
++    if (state == nullptr) {
++        if (outer_transaction_proof != nullptr) {
++            const SyncSqliteTransactionBoundaryProof& outer =
++                *outer_transaction_proof;
++            if (outer.fenced || outer.db != db || outer.process_id == 0 ||
++                outer.owner_thread_incarnation == 0 ||
++                outer.retained_capability_state == nullptr) {
++                throw std::logic_error(
++                    label + " unfenced outer transaction proof is invalid");
++            }
++            require_sync_sqlite_process_id_or_fail_stop(
++                outer.process_id, label + " unfenced outer transaction");
++            require_sync_sqlite_thread_incarnation_or_throw(
++                outer.owner_thread_incarnation,
++                label + " unfenced outer transaction");
++            if (!sync_sqlite_mutex_capability_is_live_noexcept(
++                    outer.retained_capability_state)) {
++                throw std::logic_error(
++                    label + " unfenced outer transaction is no longer live");
++            }
++            if (sqlite3_get_autocommit(db) != 0) {
++                throw std::logic_error(
++                    label + " unfenced outer transaction already ended");
++            }
++        }
++
++        const bool outermost = sqlite3_get_autocommit(db) != 0;
++        const std::uint64_t generation =
++            allocate_unfenced_savepoint_generation_or_throw(label);
++        SyncSqliteSavepointBoundaryProof proof;
++        proof.db = db;
++        proof.process_id = current_sync_sqlite_process_id_noexcept();
++        proof.savepoint_generation = generation;
++        proof.owner_thread_incarnation =
++            current_sync_sqlite_thread_incarnation_noexcept();
++        proof.savepoint_name = unfenced_savepoint_name(generation);
++        proof.outermost_unfenced = outermost;
++        const std::string sql = "SAVEPOINT " + proof.savepoint_name + ";";
++        try {
++            sqlite_exec_or_throw(db, sql, label);
++        } catch (...) {
++            if (outermost && sqlite3_get_autocommit(db) == 0) {
++                (void)sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
++            }
++            throw;
++        }
++        if (sqlite3_get_autocommit(db) != 0) {
++            throw std::logic_error(
++                label + " savepoint did not retain a SQLite transaction");
++        }
++        proof.retained_connection_mutex = guard.release();
++        proof.retained_capability_state = retained_capability.release();
++        return proof;
++    }
++
++    if (outer_transaction_proof == nullptr) {
++        throw std::logic_error(
++            label +
++            " requires the exact typed outer transaction authority on an "
++            "AnonSync-authorized connection");
++    }
++    ConnectionAuthorityState& validated = validate_boundary_proof_or_throw(
++        db, *outer_transaction_proof, label + " outer transaction");
++    if (&validated != state || sqlite3_get_autocommit(db) != 0) {
++        throw std::logic_error(
++            label + " outer typed transaction is no longer active");
++    }
++    run_authorizer_ownership_probe_or_throw(db, *state, label);
++
++    const std::uint64_t generation =
++        allocate_savepoint_generation_or_throw(*state, label);
++    SyncSqliteSavepointBoundaryProof proof;
++    proof.db = db;
++    proof.process_id = state->process_id;
++    proof.process_salt = state->process_salt;
++    proof.connection_incarnation = state->connection_incarnation;
++    proof.authorizer_generation = state->authorizer_generation;
++    proof.transaction_generation = state->active_transaction_generation;
++    proof.savepoint_generation = generation;
++    proof.owner_thread_incarnation =
++        current_sync_sqlite_thread_incarnation_noexcept();
++    proof.savepoint_name = fenced_savepoint_name(*state, generation);
++    proof.fenced = true;
++
++    // Complete every allocation before SQLite accepts the mark. Otherwise a
++    // post-SAVEPOINT allocation failure could leave a database mark with no
++    // matching C++ generation capable of closing it.
++    const std::string sql = "SAVEPOINT " + proof.savepoint_name + ";";
++    state->active_savepoints.push_back(
++        ActiveSavepointFrame{generation, proof.savepoint_name});
++    bool bridge_observed = false;
++    try {
++        bridge_observed = execute_permitted_savepoint_sql_or_throw(
++            db,
++            *state,
++            SavepointPermitOperation::Begin,
++            proof.savepoint_name,
++            sql,
++            label);
++    } catch (...) {
++        // A failing SAVEPOINT statement cannot publish the new mark.
++        if (!state->active_savepoints.empty() &&
++            state->active_savepoints.back().generation == generation) {
++            state->active_savepoints.pop_back();
++        }
++        throw;
++    }
++    if (!bridge_observed) {
++        // Another callback accepted the exact statement after the ownership
++        // probe. Try to erase the just-created unique mark while the recursive
++        // connection mutex is still held. If the alien callback refuses that
++        // cleanup, retain the frame so outer COMMIT remains fail-closed.
++        const std::string cleanup_sql =
++            "ROLLBACK TO SAVEPOINT " + proof.savepoint_name + ";"
++            "RELEASE SAVEPOINT " + proof.savepoint_name + ";";
++        if (sqlite3_exec(db, cleanup_sql.c_str(), nullptr, nullptr, nullptr) ==
++            SQLITE_OK) {
++            state->active_savepoints.pop_back();
++        }
++        throw std::runtime_error(
++            label +
++            " savepoint began without consuming the exact AnonSync authorizer permit");
++    }
++    if (sqlite3_get_autocommit(db) != 0) {
++        state->active_transaction_generation = 0;
++        state->active_savepoints.clear();
++        throw std::logic_error(
++            label + " savepoint unexpectedly ended its typed outer transaction");
++    }
++    proof.retained_connection_mutex = guard.release();
++    proof.retained_capability_state = retained_capability.release();
++    return proof;
++}
++
++void end_sync_sqlite_savepoint_boundary_or_throw(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof,
++    SyncSqliteSavepointBoundaryEnd operation,
++    const std::string& label) {
++    validate_savepoint_proof_common_or_throw(db, proof, label);
++    DbMutexGuard guard(db, label + " typed savepoint end");
++
++    if (!proof.fenced) {
++        if (load_connection_authority_state_or_throw(db, true, label) != nullptr) {
++            throw std::logic_error(
++                label + " unfenced savepoint cannot cross authority installation");
++        }
++        if (sqlite3_get_autocommit(db) != 0) {
++            throw std::logic_error(label + " unfenced savepoint is no longer active");
++        }
++        if (operation == SyncSqliteSavepointBoundaryEnd::Rollback) {
++            sqlite_exec_or_throw(
++                db,
++                "ROLLBACK TO SAVEPOINT " + proof.savepoint_name + ";",
++                label + " rollback to savepoint");
++        }
++        sqlite_exec_or_throw(
++            db,
++            "RELEASE SAVEPOINT " + proof.savepoint_name + ";",
++            label + " release savepoint");
++        const bool autocommit = sqlite3_get_autocommit(db) != 0;
++        if (autocommit != proof.outermost_unfenced) {
++            throw std::logic_error(
++                label + " savepoint closure changed the wrong transaction boundary");
++        }
++        return;
++    }
++
++    ConnectionAuthorityState& state =
++        validate_fenced_savepoint_proof_or_throw(db, proof, label, true);
++    run_authorizer_ownership_probe_or_throw(db, state, label);
++
++    bool bridge_observed = true;
++    if (operation == SyncSqliteSavepointBoundaryEnd::Rollback) {
++        bridge_observed = execute_permitted_savepoint_sql_or_throw(
++                              db,
++                              state,
++                              SavepointPermitOperation::Rollback,
++                              proof.savepoint_name,
++                              "ROLLBACK TO SAVEPOINT " + proof.savepoint_name + ";",
++                              label + " rollback to savepoint") &&
++                          bridge_observed;
++    }
++    bridge_observed = execute_permitted_savepoint_sql_or_throw(
++                          db,
++                          state,
++                          SavepointPermitOperation::Release,
++                          proof.savepoint_name,
++                          "RELEASE SAVEPOINT " + proof.savepoint_name + ";",
++                          label + " release savepoint") &&
++                      bridge_observed;
++
++    if (sqlite3_get_autocommit(db) != 0) {
++        state.active_transaction_generation = 0;
++        state.active_savepoints.clear();
++        throw std::logic_error(
++            label + " savepoint closure unexpectedly ended the typed transaction");
++    }
++    state.active_savepoints.pop_back();
++    if (!bridge_observed) {
++        throw std::runtime_error(
++            label +
++            " savepoint closed without consuming the exact AnonSync authorizer permit");
++    }
++}
++
+ void end_sync_sqlite_transaction_boundary_or_throw(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof,
+@@ -901,9 +1367,15 @@ void end_sync_sqlite_transaction_boundary_or_throw(
+         validate_boundary_proof_or_throw(db, proof, label);
+     if (sqlite3_get_autocommit(db) != 0) {
+         state.active_transaction_generation = 0;
++        state.active_savepoints.clear();
+         throw std::logic_error(
+             label + " exact typed transaction boundary is no longer active");
+     }
++    if (operation == SyncSqliteTransactionBoundaryEnd::Commit &&
++        !state.active_savepoints.empty()) {
++        throw std::logic_error(
++            label + " cannot commit while a typed savepoint remains active");
++    }
+     run_authorizer_ownership_probe_or_throw(db, state, label);
+ 
+     const TransactionPermitOperation permit_operation =
+@@ -923,6 +1395,7 @@ void end_sync_sqlite_transaction_boundary_or_throw(
+         // the explicit boundary remains active.
+         if (sqlite3_get_autocommit(db) != 0) {
+             state.active_transaction_generation = 0;
++            state.active_savepoints.clear();
+         }
+         throw;
+     }
+@@ -932,6 +1405,33 @@ void end_sync_sqlite_transaction_boundary_or_throw(
+             label + " returned success without restoring SQLite autocommit");
+     }
+     state.active_transaction_generation = 0;
++    state.active_savepoints.clear();
++}
++
++void release_sync_sqlite_savepoint_mutex_noexcept(
++    SyncSqliteSavepointBoundaryProof& proof) noexcept {
++    if (proof.retained_connection_mutex == nullptr) {
++        if (proof.retained_capability_state != nullptr) {
++            fail_stop_on_sync_sqlite_mutex_capability_violation_noexcept();
++        }
++        return;
++    }
++    if (!sync_sqlite_process_id_is_current(proof.process_id)) {
++        fail_stop_on_sync_sqlite_capability_violation_noexcept();
++    }
++    if (!sync_sqlite_thread_incarnation_is_current(
++            proof.owner_thread_incarnation)) {
++        fail_stop_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    if (!sync_sqlite_mutex_capability_is_live_noexcept(
++            proof.retained_capability_state)) {
++        fail_stop_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    sqlite3_mutex* mutex = proof.retained_connection_mutex;
++    proof.retained_connection_mutex = nullptr;
++    release_sync_sqlite_mutex_capability_noexcept(
++        proof.retained_capability_state);
++    sqlite3_mutex_leave(mutex);
+ }
+ 
+ void release_sync_sqlite_transaction_mutex_noexcept(
+@@ -960,6 +1460,43 @@ void release_sync_sqlite_transaction_mutex_noexcept(
+     sqlite3_mutex_leave(mutex);
+ }
+ 
++bool sync_sqlite_savepoint_boundary_authorizes_noexcept(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof) noexcept {
++    if (db == nullptr || proof.db != db ||
++        !sync_sqlite_process_id_is_current(proof.process_id) ||
++        !sync_sqlite_thread_incarnation_is_current(
++            proof.owner_thread_incarnation) ||
++        !sync_sqlite_mutex_capability_is_live_noexcept(
++            proof.retained_capability_state)) {
++        return false;
++    }
++
++    sqlite3_mutex* mutex = sqlite3_db_mutex(db);
++    if (mutex == nullptr) return false;
++    sqlite3_mutex_enter(mutex);
++    bool current = false;
++    try {
++        if (!proof.fenced) {
++            current =
++                load_connection_authority_state_or_throw(
++                    db, true, "validate unfenced typed savepoint") == nullptr &&
++                sqlite3_get_autocommit(db) == 0;
++        } else {
++            ConnectionAuthorityState& state =
++                validate_fenced_savepoint_proof_or_throw(
++                    db, proof, "validate typed savepoint authority", false);
++            run_authorizer_ownership_probe_or_throw(
++                db, state, "validate typed savepoint authority");
++            current = true;
++        }
++    } catch (...) {
++        current = false;
++    }
++    sqlite3_mutex_leave(mutex);
++    return current;
++}
++
+ bool sync_sqlite_transaction_boundary_authorizes_noexcept(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof) noexcept {
+@@ -987,6 +1524,7 @@ bool sync_sqlite_transaction_boundary_authorizes_noexcept(
+             current = true;
+         } else {
+             state.active_transaction_generation = 0;
++            state.active_savepoints.clear();
+         }
+     } catch (...) {
+         current = false;
+@@ -995,6 +1533,31 @@ bool sync_sqlite_transaction_boundary_authorizes_noexcept(
+     return current;
+ }
+ 
++void rollback_sync_sqlite_savepoint_boundary_noexcept(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof) noexcept {
++    if (db == nullptr || proof.db != db) return;
++    if (!sync_sqlite_process_id_is_current(proof.process_id)) {
++        fail_stop_on_sync_sqlite_capability_violation_noexcept();
++    }
++    if (!sync_sqlite_thread_incarnation_is_current(
++            proof.owner_thread_incarnation)) {
++        fail_stop_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    try {
++        end_sync_sqlite_savepoint_boundary_or_throw(
++            db,
++            proof,
++            SyncSqliteSavepointBoundaryEnd::Rollback,
++            "typed savepoint destructor rollback");
++    } catch (...) {
++        // Never issue an unfenced fallback for a fenced mark. An out-of-order
++        // destructor or replaced callback leaves the bridge generation live,
++        // which blocks outer COMMIT until connection close rather than
++        // rewinding across a newer mark or claiming authority over alien work.
++    }
++}
++
+ void rollback_sync_sqlite_transaction_boundary_noexcept(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof) noexcept {
+@@ -1053,6 +1616,7 @@ void abandon_sync_sqlite_transaction_boundary_noexcept(
+             state->active_transaction_generation == proof.transaction_generation &&
+             sqlite3_get_autocommit(db) != 0) {
+             state->active_transaction_generation = 0;
++            state->active_savepoints.clear();
+         }
+     } catch (...) {
+         // noexcept revocation is advisory; never cross a destructor boundary.
+diff --git a/src/sync_sqlite_connection_authority_internal.hpp b/src/sync_sqlite_connection_authority_internal.hpp
+index e5e5018..9e7f542 100644
+--- a/src/sync_sqlite_connection_authority_internal.hpp
++++ b/src/sync_sqlite_connection_authority_internal.hpp
+@@ -37,6 +37,32 @@ enum class SyncSqliteTransactionBoundaryEnd {
+     Rollback
+ };
+ 
++// Process-local proof for one exact named mark on the SQLite transaction
++// stack. Fenced marks are bound to the live typed outer transaction and to one
++// monotonically allocated savepoint generation. Unfenced marks exist only on
++// connections without AnonSync-owned authorizer state and retain the older
++// observation-based compatibility contract.
++struct SyncSqliteSavepointBoundaryProof final {
++    sqlite3* db = nullptr;
++    SyncSqliteProcessId process_id = 0;
++    std::uint64_t process_salt = 0;
++    std::uint64_t connection_incarnation = 0;
++    std::uint64_t authorizer_generation = 0;
++    std::uint64_t transaction_generation = 0;
++    std::uint64_t savepoint_generation = 0;
++    SyncSqliteThreadIncarnation owner_thread_incarnation = 0;
++    sqlite3_mutex* retained_connection_mutex = nullptr;
++    SyncSqliteRetainedMutexCapabilityState* retained_capability_state = nullptr;
++    std::string savepoint_name;
++    bool fenced = false;
++    bool outermost_unfenced = false;
++};
++
++enum class SyncSqliteSavepointBoundaryEnd {
++    Release,
++    Rollback
++};
++
+ // Reports whether this handle already carries AnonSync-owned client data. This
+ // does not claim that the callback is still installed; callers use it only to
+ // decide whether a restrictive policy must be reinstalled before typed SQL can
+@@ -55,14 +81,54 @@ begin_sync_sqlite_transaction_boundary_or_throw(
+     const std::string& begin_sql,
+     const std::string& label);
+ 
+-// Ends the exact transaction generation. Raw transaction SQL and every
+-// SQLITE_SAVEPOINT operation remain denied by the authorizer bridge.
++// Ends the exact transaction generation. Raw transaction SQL and unpermitted
++// SAVEPOINT operations remain denied by the authorizer bridge. Commit is
++// rejected while any typed nested mark remains live; rollback may erase the
++// complete stack as an abort boundary.
+ void end_sync_sqlite_transaction_boundary_or_throw(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof,
+     SyncSqliteTransactionBoundaryEnd operation,
+     const std::string& label);
+ 
++
++// Creates one internal, injection-proof savepoint name. A non-null outer proof
++// is required on an AnonSync-authorized connection. A null proof is accepted
++// only for an unfenced compatibility connection, where the mark may be either
++// nested or outermost.
++[[nodiscard]] SyncSqliteSavepointBoundaryProof
++begin_sync_sqlite_savepoint_boundary_or_throw(
++    sqlite3* db,
++    const SyncSqliteTransactionBoundaryProof* outer_transaction_proof,
++    const std::string& label);
++
++// RELEASE closes the exact top mark. Rollback executes ROLLBACK TO followed by
++// RELEASE so a caught exception cannot leave a reusable mark behind. Both
++// operations enforce LIFO ordering for fenced generations.
++void end_sync_sqlite_savepoint_boundary_or_throw(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof,
++    SyncSqliteSavepointBoundaryEnd operation,
++    const std::string& label);
++
++// Destructor path for the exact mark. It never rewinds across a newer fenced
++// mark and never falls back to raw SQL after authorizer replacement.
++void rollback_sync_sqlite_savepoint_boundary_noexcept(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof) noexcept;
++
++// Releases the recursive connection-mutex entry retained by a successful
++// SAVEPOINT. The typed owner calls this exactly once when its mark is revoked.
++void release_sync_sqlite_savepoint_mutex_noexcept(
++    SyncSqliteSavepointBoundaryProof& proof) noexcept;
++
++// True while the exact fenced generation remains anywhere in the current
++// stack, or (for explicitly unfenced compatibility) while the connection still
++// reports an explicit transaction.
++[[nodiscard]] bool sync_sqlite_savepoint_boundary_authorizes_noexcept(
++    sqlite3* db,
++    const SyncSqliteSavepointBoundaryProof& proof) noexcept;
++
+ // Best-effort destructor path. It attempts only the exact guarded ROLLBACK.
+ // After alien callback replacement it deliberately does not issue raw SQL:
+ // SQLite exposes no transaction-generation identifier, so a raw fallback
+diff --git a/src/sync_sqlite_support.hpp b/src/sync_sqlite_support.hpp
+index 575b55e..890bd0b 100644
+--- a/src/sync_sqlite_support.hpp
++++ b/src/sync_sqlite_support.hpp
+@@ -115,6 +115,7 @@ enum class SyncSqliteTransactionMode {
+ 
+ struct SyncSqliteTransactionAuthorityState;
+ struct SyncSqliteTransactionBoundaryProof;
++struct SyncSqliteSavepointBoundaryProof;
+ 
+ // A non-owning, guard-generation lease issued by SyncSqliteTransaction. It
+ // fails closed once that exact guard commits, rolls back, or leaves scope;
+@@ -145,6 +146,7 @@ private:
+         : process_id_(process_id), state_(state) {}
+ 
+     friend class SyncSqliteTransaction;
++    friend class SyncSqliteSavepoint;
+ };
+ 
+ // Scope-bound, thread-affine transaction guard. A live transaction is rolled
+@@ -198,6 +200,45 @@ private:
+     std::unique_ptr<SyncSqliteTransactionBoundaryProof> boundary_proof_;
+ };
+ 
++// Scope-bound nested rollback owner. On an AnonSync-authorized connection the
++// mark is constructible only from the exact live typed outer transaction. Raw
++// SAVEPOINT/RELEASE/ROLLBACK TO statements remain denied. The generated name is
++// internal and monotonically unique, closing SQL is LIFO-checked, destruction
++// rolls back to entry, and an outer commit is refused while any typed mark is
++// still live. The authority-free constructor is retained only for explicitly
++// unfenced compatibility connections and may own an outermost savepoint.
++class SyncSqliteSavepoint final {
++public:
++    SyncSqliteSavepoint(sqlite3* db, std::string label);
++    SyncSqliteSavepoint(
++        sqlite3* db,
++        const SyncSqliteTransactionAuthority& outer_transaction_authority,
++        std::string label);
++    ~SyncSqliteSavepoint();
++    SyncSqliteSavepoint(const SyncSqliteSavepoint&) = delete;
++    SyncSqliteSavepoint& operator=(const SyncSqliteSavepoint&) = delete;
++    SyncSqliteSavepoint(SyncSqliteSavepoint&&) = delete;
++    SyncSqliteSavepoint& operator=(SyncSqliteSavepoint&&) = delete;
++
++    // RELEASE merges this exact mark into its parent without committing the
++    // typed outer transaction. rollback() executes ROLLBACK TO followed by
++    // RELEASE, then revokes this guard generation.
++    void release();
++    void rollback();
++    [[nodiscard]] bool active() const noexcept;
++
++private:
++    void begin_or_throw(
++        const SyncSqliteTransactionAuthority* outer_transaction_authority);
++    void revoke_authority() noexcept;
++
++    sqlite3* db_ = nullptr;
++    SyncSqliteProcessId process_id_ = 0;
++    std::string label_;
++    bool active_ = false;
++    std::unique_ptr<SyncSqliteSavepointBoundaryProof> boundary_proof_;
++};
++
+ std::string sqlite_error_message(sqlite3* db, const std::string& prefix);
+ std::string sqlite_result_code_name(int result_code);
+ [[noreturn]] void throw_sqlite_exception(sqlite3* db,
+diff --git a/src/sync_sqlite_transaction.cpp b/src/sync_sqlite_transaction.cpp
+index 8814e4a..cae388d 100644
+--- a/src/sync_sqlite_transaction.cpp
++++ b/src/sync_sqlite_transaction.cpp
+@@ -218,4 +218,141 @@ void SyncSqliteTransaction::revoke_authority() noexcept {
+     owner_borrow_.reset();
+ }
+ 
++
++SyncSqliteSavepoint::SyncSqliteSavepoint(sqlite3* db, std::string label)
++    : db_(db),
++      process_id_(current_sync_sqlite_process_id_noexcept()),
++      label_(std::move(label)),
++      boundary_proof_(std::make_unique<SyncSqliteSavepointBoundaryProof>()) {
++    begin_or_throw(nullptr);
++}
++
++SyncSqliteSavepoint::SyncSqliteSavepoint(
++    sqlite3* db,
++    const SyncSqliteTransactionAuthority& outer_transaction_authority,
++    std::string label)
++    : db_(db),
++      process_id_(current_sync_sqlite_process_id_noexcept()),
++      label_(std::move(label)),
++      boundary_proof_(std::make_unique<SyncSqliteSavepointBoundaryProof>()) {
++    begin_or_throw(&outer_transaction_authority);
++}
++
++void SyncSqliteSavepoint::begin_or_throw(
++    const SyncSqliteTransactionAuthority* outer_transaction_authority) {
++    if (db_ == nullptr) {
++        throw std::invalid_argument(label_ + " database handle is null");
++    }
++
++    std::shared_ptr<SyncSqliteTransactionAuthorityState> retained_outer_state;
++    const SyncSqliteTransactionBoundaryProof* outer_boundary = nullptr;
++    if (outer_transaction_authority != nullptr) {
++        if (!sync_sqlite_process_id_is_current(
++                outer_transaction_authority->process_id_)) {
++            throw std::logic_error(
++                label_ + " outer transaction authority belongs to another process");
++        }
++        retained_outer_state = outer_transaction_authority->state_.lock();
++        if (retained_outer_state == nullptr ||
++            !retained_outer_state->active.load(std::memory_order_acquire) ||
++            retained_outer_state->db != db_ ||
++            !outer_transaction_authority->authorizes(db_)) {
++            throw std::logic_error(
++                label_ + " outer transaction authority is not live for this handle");
++        }
++        outer_boundary = &retained_outer_state->boundary;
++    }
++
++    *boundary_proof_ = begin_sync_sqlite_savepoint_boundary_or_throw(
++        db_, outer_boundary, label_ + " begin");
++    active_ = true;
++}
++
++SyncSqliteSavepoint::~SyncSqliteSavepoint() {
++    if (active_ && db_ != nullptr && boundary_proof_ != nullptr) {
++        if (!sync_sqlite_process_id_is_current(process_id_)) {
++            fail_stop_on_sync_sqlite_capability_violation_noexcept();
++        }
++        if (!sync_sqlite_thread_incarnation_is_current(
++                boundary_proof_->owner_thread_incarnation)) {
++            fail_stop_on_sync_sqlite_mutex_capability_violation_noexcept();
++        }
++        rollback_sync_sqlite_savepoint_boundary_noexcept(db_, *boundary_proof_);
++    }
++    revoke_authority();
++}
++
++void SyncSqliteSavepoint::release() {
++    if (!active_) throw std::logic_error(label_ + " savepoint is not active");
++    require_sync_sqlite_process_id_or_fail_stop(process_id_, label_ + " release");
++    require_sync_sqlite_thread_incarnation_or_throw(
++        boundary_proof_->owner_thread_incarnation, label_ + " release");
++    if (!sync_sqlite_savepoint_boundary_authorizes_noexcept(
++            db_, *boundary_proof_)) {
++        revoke_authority();
++        throw std::logic_error(
++            label_ + " savepoint boundary is no longer owned by this guard");
++    }
++    try {
++        end_sync_sqlite_savepoint_boundary_or_throw(
++            db_,
++            *boundary_proof_,
++            SyncSqliteSavepointBoundaryEnd::Release,
++            label_ + " release");
++    } catch (...) {
++        if (!sync_sqlite_savepoint_boundary_authorizes_noexcept(
++                db_, *boundary_proof_)) {
++            revoke_authority();
++        }
++        throw;
++    }
++    revoke_authority();
++}
++
++void SyncSqliteSavepoint::rollback() {
++    if (!active_) return;
++    require_sync_sqlite_process_id_or_fail_stop(process_id_, label_ + " rollback");
++    require_sync_sqlite_thread_incarnation_or_throw(
++        boundary_proof_->owner_thread_incarnation, label_ + " rollback");
++    if (!sync_sqlite_savepoint_boundary_authorizes_noexcept(
++            db_, *boundary_proof_)) {
++        const bool already_ended = sqlite3_get_autocommit(db_) != 0;
++        revoke_authority();
++        if (already_ended) return;
++        throw std::logic_error(
++            label_ +
++            " savepoint boundary is no longer owned; rollback was not executed");
++    }
++    try {
++        end_sync_sqlite_savepoint_boundary_or_throw(
++            db_,
++            *boundary_proof_,
++            SyncSqliteSavepointBoundaryEnd::Rollback,
++            label_ + " rollback");
++    } catch (...) {
++        if (!sync_sqlite_savepoint_boundary_authorizes_noexcept(
++                db_, *boundary_proof_)) {
++            revoke_authority();
++        }
++        throw;
++    }
++    revoke_authority();
++}
++
++bool SyncSqliteSavepoint::active() const noexcept {
++    return active_ && boundary_proof_ != nullptr &&
++           sync_sqlite_process_id_is_current(process_id_) &&
++           sync_sqlite_thread_incarnation_is_current(
++               boundary_proof_->owner_thread_incarnation) &&
++           sync_sqlite_savepoint_boundary_authorizes_noexcept(
++               db_, *boundary_proof_);
++}
++
++void SyncSqliteSavepoint::revoke_authority() noexcept {
++    active_ = false;
++    if (boundary_proof_ != nullptr) {
++        release_sync_sqlite_savepoint_mutex_noexcept(*boundary_proof_);
++    }
++}
++
+ }  // namespace anonsync
+diff --git a/tests/sqlite_connection_authority_test.cpp b/tests/sqlite_connection_authority_test.cpp
+index 13b30c8..06e491e 100644
+--- a/tests/sqlite_connection_authority_test.cpp
++++ b/tests/sqlite_connection_authority_test.cpp
+@@ -162,6 +162,32 @@ int ignore_transaction_policy(void*,
+     return action == SQLITE_TRANSACTION ? SQLITE_IGNORE : SQLITE_OK;
+ }
+ 
++
++int ignore_savepoint_policy(void*,
++                            int action,
++                            const char*,
++                            const char*,
++                            const char*,
++                            const char*) noexcept {
++    return action == SQLITE_SAVEPOINT ? SQLITE_IGNORE : SQLITE_OK;
++}
++
++std::int64_t scalar_i64(sqlite3* db,
++                        const std::string& sql,
++                        const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(db, sql, label);
++    const int row_rc = sqlite3_step(statement.stmt);
++    if (row_rc != SQLITE_ROW) {
++        throw_sqlite_exception(db, row_rc, label + " row");
++    }
++    const std::int64_t value = sqlite3_column_int64(statement.stmt, 0);
++    const int done_rc = sqlite3_step(statement.stmt);
++    if (done_rc != SQLITE_DONE) {
++        throw_sqlite_exception(db, done_rc, label + " completion");
++    }
++    return value;
++}
++
+ void test_install_probe_and_policy(std::uint64_t& checks) {
+     SqlitePtr db = open_memory_database();
+     const SyncSqliteConnectionAuthorityProof proof =
+@@ -565,6 +591,314 @@ void test_transaction_stack_is_typed_and_generation_bound(
+     }
+ }
+ 
++
++void test_typed_savepoint_stack_and_atomicity(std::uint64_t& checks) {
++    SqlitePtr db = open_memory_database();
++    sqlite_exec_or_throw(
++        db.get(),
++        "CREATE TABLE savepoint_probe(value INTEGER PRIMARY KEY);",
++        "typed savepoint schema");
++    (void)install_sync_sqlite_connection_authority_or_throw(
++        db.get(), deny_schema_policy, nullptr, "typed savepoint authority");
++
++    {
++        SyncSqliteTransaction transaction(
++            db.get(), "typed savepoint release parent",
++            SyncSqliteTransactionMode::Immediate);
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(1);",
++            "typed savepoint outer row");
++        SyncSqliteSavepoint savepoint(
++            db.get(), transaction.authority(), "typed savepoint release");
++        require(savepoint.active(),
++                "typed savepoint did not acquire an exact live generation",
++                checks);
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(2);",
++            "typed savepoint released row");
++        savepoint.release();
++        require(!savepoint.active() && transaction.active(),
++                "savepoint release revoked or committed its parent transaction",
++                checks);
++        transaction.commit();
++    }
++    require(scalar_i64(db.get(),
++                       "SELECT COUNT(*) FROM savepoint_probe;",
++                       "typed savepoint release count") == 2,
++            "released savepoint changes were not committed by the parent",
++            checks);
++
++    {
++        SyncSqliteTransaction transaction(
++            db.get(), "typed savepoint destructor parent",
++            SyncSqliteTransactionMode::Immediate);
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(3);",
++            "typed savepoint destructor parent row");
++        {
++            SyncSqliteSavepoint savepoint(
++                db.get(), transaction.authority(), "typed savepoint destructor");
++            sqlite_exec_or_throw(
++                db.get(), "INSERT INTO savepoint_probe(value) VALUES(4);",
++                "typed savepoint destructor discarded row");
++        }
++        require(transaction.active(),
++                "savepoint destructor ended its parent transaction",
++                checks);
++        transaction.commit();
++    }
++    require(scalar_i64(db.get(),
++                       "SELECT COUNT(*) FROM savepoint_probe WHERE value IN (3,4);",
++                       "typed savepoint destructor count") == 1 &&
++                scalar_i64(db.get(),
++                           "SELECT COUNT(*) FROM savepoint_probe WHERE value=3;",
++                           "typed savepoint destructor preserved parent") == 1,
++            "savepoint destructor did not discard only its nested mutation",
++            checks);
++
++    {
++        SyncSqliteTransaction transaction(
++            db.get(), "typed savepoint explicit rollback parent",
++            SyncSqliteTransactionMode::Immediate);
++        SyncSqliteSavepoint savepoint(
++            db.get(), transaction.authority(), "typed savepoint explicit rollback");
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(5);",
++            "typed savepoint explicit rollback row");
++        savepoint.rollback();
++        require(!savepoint.active() && transaction.active(),
++                "explicit savepoint rollback did not preserve the parent",
++                checks);
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(6);",
++            "typed savepoint post-rollback parent row");
++        transaction.commit();
++    }
++    require(scalar_i64(db.get(),
++                       "SELECT COUNT(*) FROM savepoint_probe WHERE value IN (5,6);",
++                       "typed savepoint explicit rollback count") == 1 &&
++                scalar_i64(db.get(),
++                           "SELECT COUNT(*) FROM savepoint_probe WHERE value=6;",
++                           "typed savepoint explicit rollback survivor") == 1,
++            "explicit savepoint rollback discarded or preserved the wrong rows",
++            checks);
++
++    {
++        SyncSqliteTransaction transaction(
++            db.get(), "typed nested savepoint parent",
++            SyncSqliteTransactionMode::Immediate);
++        SyncSqliteSavepoint outer(
++            db.get(), transaction.authority(), "typed nested savepoint outer");
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(7);",
++            "typed nested outer row");
++        SyncSqliteSavepoint inner(
++            db.get(), transaction.authority(), "typed nested savepoint inner");
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(8);",
++            "typed nested inner row");
++        require(outer.active() && inner.active(),
++                "a non-top typed savepoint lost its exact stack generation",
++                checks);
++        require_throws(
++            [&] { outer.release(); },
++            "reverse construction order",
++            "an outer savepoint closed across a newer inner frame",
++            checks);
++        require(outer.active() && inner.active() && transaction.active(),
++                "rejected out-of-order release damaged the live stack",
++                checks);
++        inner.rollback();
++        outer.release();
++        transaction.commit();
++    }
++    require(scalar_i64(db.get(),
++                       "SELECT COUNT(*) FROM savepoint_probe WHERE value IN (7,8);",
++                       "typed nested savepoint count") == 1 &&
++                scalar_i64(db.get(),
++                           "SELECT COUNT(*) FROM savepoint_probe WHERE value=7;",
++                           "typed nested outer survivor") == 1,
++            "nested LIFO rollback/release preserved the wrong frame",
++            checks);
++
++    {
++        SyncSqliteTransaction transaction(
++            db.get(), "typed savepoint commit fence parent",
++            SyncSqliteTransactionMode::Immediate);
++        SyncSqliteSavepoint savepoint(
++            db.get(), transaction.authority(), "typed savepoint commit fence");
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(9);",
++            "typed savepoint commit-fence row");
++        require_throws(
++            [&] { transaction.commit(); },
++            "typed savepoint remains active",
++            "outer COMMIT erased a live nested savepoint stack",
++            checks);
++        require(transaction.active() && savepoint.active(),
++                "rejected outer COMMIT revoked a retryable savepoint stack",
++                checks);
++        savepoint.release();
++        transaction.commit();
++    }
++    require(scalar_i64(db.get(),
++                       "SELECT COUNT(*) FROM savepoint_probe WHERE value=9;",
++                       "typed savepoint commit-fence count") == 1,
++            "savepoint could not be released after a rejected outer COMMIT",
++            checks);
++
++    {
++        SyncSqliteTransaction transaction(
++            db.get(), "typed savepoint parent rollback",
++            SyncSqliteTransactionMode::Immediate);
++        auto savepoint = std::make_unique<SyncSqliteSavepoint>(
++            db.get(), transaction.authority(), "typed savepoint parent rollback child");
++        sqlite_exec_or_throw(
++            db.get(), "INSERT INTO savepoint_probe(value) VALUES(10);",
++            "typed savepoint parent rollback row");
++        transaction.rollback();
++        require(!transaction.active() && !savepoint->active() &&
++                    sqlite3_get_autocommit(db.get()) != 0,
++                "outer ROLLBACK did not revoke the complete typed stack",
++                checks);
++        savepoint.reset();
++    }
++    require(scalar_i64(db.get(),
++                       "SELECT COUNT(*) FROM savepoint_probe WHERE value=10;",
++                       "typed savepoint parent rollback count") == 0,
++            "outer ROLLBACK preserved nested savepoint changes",
++            checks);
++
++    {
++        SyncSqliteTransaction transaction(
++            db.get(), "typed savepoint stale authority parent",
++            SyncSqliteTransactionMode::Immediate);
++        const SyncSqliteTransactionAuthority stale = transaction.authority();
++        transaction.commit();
++        require_throws(
++            [&] {
++                SyncSqliteSavepoint savepoint(
++                    db.get(), stale, "typed savepoint stale authority");
++            },
++            "not live",
++            "a stale transaction authority minted a later savepoint",
++            checks);
++    }
++
++    {
++        SqlitePtr denied = open_memory_database();
++        (void)install_sync_sqlite_connection_authority_or_throw(
++            denied.get(),
++            ignore_savepoint_policy,
++            nullptr,
++            "ignored savepoint policy");
++        SyncSqliteTransaction transaction(
++            denied.get(), "ignored savepoint policy parent",
++            SyncSqliteTransactionMode::Immediate);
++        require_throws(
++            [&] {
++                SyncSqliteSavepoint savepoint(
++                    denied.get(), transaction.authority(),
++                    "ignored savepoint policy child");
++            },
++            "not authorized",
++            "SQLITE_IGNORE acquired savepoint-boundary authority",
++            checks);
++        require(transaction.active() && sqlite3_get_autocommit(denied.get()) == 0,
++                "denied savepoint begin damaged its parent transaction",
++                checks);
++        transaction.rollback();
++    }
++
++    {
++        SyncSqliteTransaction compromised(
++            db.get(), "typed savepoint callback replacement parent",
++            SyncSqliteTransactionMode::Immediate);
++        SyncSqliteSavepoint savepoint(
++            db.get(), compromised.authority(),
++            "typed savepoint callback replacement child");
++        require(sqlite3_set_authorizer(
++                    db.get(), alien_allow_authorizer, nullptr) == SQLITE_OK,
++                "could not replace authorizer during a typed savepoint",
++                checks);
++        require_throws(
++            [&] { savepoint.release(); },
++            "no longer owned",
++            "typed savepoint claimed release after callback replacement",
++            checks);
++        require(!savepoint.active() && sqlite3_get_autocommit(db.get()) == 0,
++                "callback replacement silently ended the SQLite transaction",
++                checks);
++        require_throws(
++            [&] { compromised.commit(); },
++            "no longer owned",
++            "outer transaction claimed COMMIT after callback replacement",
++            checks);
++        sqlite_exec_or_throw(
++            db.get(), "ROLLBACK;", "typed savepoint callback replacement cleanup");
++        (void)install_sync_sqlite_connection_authority_or_throw(
++            db.get(), deny_schema_policy, nullptr,
++            "typed savepoint callback replacement recovery");
++    }
++
++    {
++        SqlitePtr unowned = open_memory_database();
++        sqlite_exec_or_throw(
++            unowned.get(),
++            "CREATE TABLE unowned_savepoint_probe(value INTEGER PRIMARY KEY);",
++            "unowned savepoint schema");
++        {
++            SyncSqliteSavepoint savepoint(
++                unowned.get(), "unowned outermost savepoint rollback");
++            sqlite_exec_or_throw(
++                unowned.get(),
++                "INSERT INTO unowned_savepoint_probe(value) VALUES(1);",
++                "unowned outermost rolled-back row");
++            savepoint.rollback();
++        }
++        require(sqlite3_get_autocommit(unowned.get()) != 0 &&
++                    scalar_i64(unowned.get(),
++                               "SELECT COUNT(*) FROM unowned_savepoint_probe;",
++                               "unowned outermost rollback count") == 0,
++                "unowned outermost savepoint rollback did not restore autocommit",
++                checks);
++        {
++            SyncSqliteSavepoint savepoint(
++                unowned.get(), "unowned outermost savepoint release");
++            sqlite_exec_or_throw(
++                unowned.get(),
++                "INSERT INTO unowned_savepoint_probe(value) VALUES(2);",
++                "unowned outermost released row");
++            savepoint.release();
++        }
++        require(sqlite3_get_autocommit(unowned.get()) != 0 &&
++                    scalar_i64(unowned.get(),
++                               "SELECT COUNT(*) FROM unowned_savepoint_probe;",
++                               "unowned outermost release count") == 1,
++                "unowned outermost savepoint release did not commit its mark",
++                checks);
++        {
++            SyncSqliteTransaction transaction(
++                unowned.get(), "unowned typed transaction parent",
++                SyncSqliteTransactionMode::Immediate);
++            SyncSqliteSavepoint savepoint(
++                unowned.get(), "unowned nested compatibility savepoint");
++            sqlite_exec_or_throw(
++                unowned.get(),
++                "INSERT INTO unowned_savepoint_probe(value) VALUES(3);",
++                "unowned nested compatibility row");
++            savepoint.release();
++            transaction.rollback();
++        }
++        require(sqlite3_get_autocommit(unowned.get()) != 0 &&
++                    scalar_i64(unowned.get(),
++                               "SELECT COUNT(*) FROM unowned_savepoint_probe WHERE value=3;",
++                               "unowned nested compatibility count") == 0,
++                "nested compatibility savepoint escaped parent rollback",
++                checks);
++    }
++}
++
+ void test_transaction_policy_and_authorizer_replacement_fail_closed(
+     std::uint64_t& checks) {
+     {
+@@ -802,6 +1136,73 @@ void test_thread_incarnation_affinity(std::uint64_t& checks) {
+             "rejected foreign-thread ROLLBACK revoked the owner generation",
+             checks);
+ 
++    SyncSqliteSavepoint savepoint(
++        db.get(), authority, "thread-affine typed savepoint");
++    bool foreign_savepoint_active = true;
++    std::thread savepoint_observer(
++        [&] { foreign_savepoint_active = savepoint.active(); });
++    savepoint_observer.join();
++    require(!foreign_savepoint_active,
++            "typed savepoint appeared active on a foreign thread",
++            checks);
++    require(savepoint.active(),
++            "foreign-thread savepoint observation revoked the owner generation",
++            checks);
++
++    std::promise<std::string> savepoint_release_promise;
++    std::future<std::string> savepoint_release_result =
++        savepoint_release_promise.get_future();
++    std::thread foreign_savepoint_releaser([&] {
++        try {
++            savepoint.release();
++            savepoint_release_promise.set_value("unexpected success");
++        } catch (const std::exception& error) {
++            savepoint_release_promise.set_value(error.what());
++        }
++    });
++    if (savepoint_release_result.wait_for(2s) != std::future_status::ready) {
++        fail_without_unwinding_live_thread(
++            "foreign-thread typed savepoint RELEASE blocked on the owner-held mutex");
++    }
++    const std::string savepoint_release_reason = savepoint_release_result.get();
++    foreign_savepoint_releaser.join();
++    require(savepoint_release_reason.find("originating SQLite mutex thread") !=
++                std::string::npos,
++            "foreign-thread typed savepoint RELEASE did not fail at the affinity boundary: " +
++                savepoint_release_reason,
++            checks);
++    require(savepoint.active(),
++            "rejected foreign-thread savepoint RELEASE revoked the owner generation",
++            checks);
++
++    std::promise<std::string> savepoint_rollback_promise;
++    std::future<std::string> savepoint_rollback_result =
++        savepoint_rollback_promise.get_future();
++    std::thread foreign_savepoint_rollback([&] {
++        try {
++            savepoint.rollback();
++            savepoint_rollback_promise.set_value("unexpected success");
++        } catch (const std::exception& error) {
++            savepoint_rollback_promise.set_value(error.what());
++        }
++    });
++    if (savepoint_rollback_result.wait_for(2s) != std::future_status::ready) {
++        fail_without_unwinding_live_thread(
++            "foreign-thread typed savepoint ROLLBACK blocked on the owner-held mutex");
++    }
++    const std::string savepoint_rollback_reason =
++        savepoint_rollback_result.get();
++    foreign_savepoint_rollback.join();
++    require(savepoint_rollback_reason.find("originating SQLite mutex thread") !=
++                std::string::npos,
++            "foreign-thread typed savepoint ROLLBACK did not fail at the affinity boundary: " +
++                savepoint_rollback_reason,
++            checks);
++    require(savepoint.active(),
++            "rejected foreign-thread savepoint ROLLBACK revoked the owner generation",
++            checks);
++
++    savepoint.rollback();
+     transaction.rollback();
+     require(sqlite3_get_autocommit(db.get()) != 0,
+             "owner thread could not roll back after rejected foreign finalization",
+@@ -880,6 +1281,20 @@ void child_foreign_transaction_destruction() noexcept {
+     }
+ }
+ 
++void child_foreign_savepoint_destruction() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        auto* savepoint = new SyncSqliteSavepoint(
++            db.get(), "foreign savepoint destructor");
++        std::set_terminate(hostile_affinity_terminate_handler);
++        std::thread destroyer([savepoint] { delete savepoint; });
++        destroyer.join();
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
+ void child_foreign_lease_move() noexcept {
+     try {
+         SqlitePtr db = open_memory_database();
+@@ -946,6 +1361,19 @@ void child_close_with_live_fenced_transaction() noexcept {
+     }
+ }
+ 
++void child_close_with_live_unfenced_savepoint() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        SyncSqliteSavepoint savepoint(
++            db.get(), "live unfenced savepoint close fence");
++        std::set_terminate(hostile_affinity_terminate_handler);
++        (void)sqlite3_close_v2(db.get());
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
+ void child_replace_live_capability_sentinel() noexcept {
+     try {
+         SqlitePtr db = open_memory_database();
+@@ -1030,6 +1458,10 @@ void test_mutex_capability_violations_fail_stopped(std::uint64_t& checks) {
+         child_foreign_transaction_destruction,
+         "foreign-thread transaction destruction did not fail-stop",
+         checks);
++    require_affinity_fail_stop(
++        child_foreign_savepoint_destruction,
++        "foreign-thread savepoint destruction did not fail-stop",
++        checks);
+     require_affinity_fail_stop(
+         child_foreign_lease_move,
+         "foreign-thread connection lease move did not fail-stop",
+@@ -1046,6 +1478,10 @@ void test_mutex_capability_violations_fail_stopped(std::uint64_t& checks) {
+         child_close_with_live_fenced_transaction,
+         "same-thread close with a live fenced transaction did not fail-stop",
+         checks);
++    require_affinity_fail_stop(
++        child_close_with_live_unfenced_savepoint,
++        "same-thread close with a live unfenced savepoint did not fail-stop",
++        checks);
+     require_affinity_fail_stop(
+         child_replace_live_capability_sentinel,
+         "replacement of the live mutex-capability sentinel did not fail-stop",
+@@ -1113,6 +1549,17 @@ void test_close_waits_for_retained_mutex_capability(std::uint64_t& checks) {
+     require(sqlite3_close_v2(raw) == SQLITE_OK,
+             "connection could not close after typed capability revocation",
+             checks);
++
++    SqlitePtr savepoint_db = open_memory_database();
++    {
++        SyncSqliteSavepoint savepoint(
++            savepoint_db.get(), "normal close after typed savepoint rollback");
++        savepoint.rollback();
++    }
++    sqlite3* const savepoint_raw = savepoint_db.release();
++    require(sqlite3_close_v2(savepoint_raw) == SQLITE_OK,
++            "connection could not close after typed savepoint capability revocation",
++            checks);
+ }
+ 
+ void test_fullmutex_is_required(std::uint64_t& checks) {
+@@ -1140,6 +1587,7 @@ int main() {
+         test_lease_serializes_replacement(checks);
+         test_transaction_retains_same_handle_serialization(checks);
+         test_transaction_stack_is_typed_and_generation_bound(checks);
++        test_typed_savepoint_stack_and_atomicity(checks);
+         test_transaction_policy_and_authorizer_replacement_fail_closed(checks);
+         test_thread_incarnation_affinity(checks);
+         test_owner_thread_lease_moves(checks);
+diff --git a/tests/sqlite_process_authority_fork_test.cpp b/tests/sqlite_process_authority_fork_test.cpp
+index 0f1210e..739f039 100644
+--- a/tests/sqlite_process_authority_fork_test.cpp
++++ b/tests/sqlite_process_authority_fork_test.cpp
+@@ -431,6 +431,33 @@ void test_process_bound_authority_and_transaction(TestState& test) {
+     test.require(transaction->active() &&
+                      transaction_authority.authorizes(raw_database),
+                  "parent transaction remains authoritative after child probes");
++
++    auto savepoint = std::make_unique<SyncSqliteSavepoint>(
++        raw_database,
++        transaction_authority,
++        "fork savepoint fixture");
++    test.require(savepoint->active(),
++                 "parent savepoint generation is authoritative before fork");
++    require_child_success(
++        test,
++        [&] {
++            if (savepoint->active()) {
++                throw std::runtime_error(
++                    "inherited savepoint authority remained active");
++            }
++        },
++        "child observes inherited savepoint capability as inactive");
++    require_child_fail_stop(
++        test,
++        [&] { savepoint.reset(); },
++        "child cannot destruct an inherited live savepoint");
++    test.require(savepoint->active() && transaction->active(),
++                 "parent savepoint remains authoritative after child probes");
++    savepoint->rollback();
++    test.require(!savepoint->active() && transaction->active(),
++                 "savepoint rollback revokes only its exact parent-process generation");
++    savepoint.reset();
++
+     transaction->rollback();
+     test.require(!transaction->active() &&
+                      !transaction_authority.authorizes(raw_database),
+diff --git a/tests/sync_checkpoint_owner_fence_sqlite_test.cpp b/tests/sync_checkpoint_owner_fence_sqlite_test.cpp
+index dc8dc54..9ed1afc 100644
+--- a/tests/sync_checkpoint_owner_fence_sqlite_test.cpp
++++ b/tests/sync_checkpoint_owner_fence_sqlite_test.cpp
+@@ -147,6 +147,7 @@ void create_schema(SyncSqliteDb& db) {
+              "session-a",
+              "session-mint",
+              "session-reset",
++             "session-catch-commit",
+              "session-legacy",
+              "session-permit",
+              "session-disabled"}) {
+@@ -905,6 +906,74 @@ int main() {
+             transaction.commit();
+         }
+ 
++
++        MintedDaemonOwnerLockRecord catch_commit_owner;
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "caught reset failure owner generation",
++                SyncSqliteTransactionMode::Immediate);
++            catch_commit_owner = anonsync::sync_checkpoint_owner_fence_internal::
++                acquire_owner_generation_in_write_transaction_or_throw(
++                    db.db,
++                    "session-catch-commit",
++                    "daemon-catch-commit",
++                    "worker-catch-commit",
++                    500,
++                    100,
++                    "caught reset failure owner generation");
++            transaction.commit();
++        }
++        const auto catch_commit_capability = capability_from_minted(
++            "session-catch-commit", catch_commit_owner);
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "caught reset failure outer transaction",
++                SyncSqliteTransactionMode::Immediate);
++            auto permit = anonsync::sync_checkpoint_owner_fence_internal::
++                authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++                    db.db,
++                    transaction.authority(),
++                    "session-catch-commit",
++                    catch_commit_capability,
++                    520,
++                    "caught reset failure permit");
++
++            // Advance the sticky row after permit issuance. The reset DELETE
++            // will cascade the owner row, then its stale compare-and-replace
++            // must fail. A caller is allowed to catch that failure and commit
++            // unrelated earlier work in this outer transaction.
++            anonsync::sqlite_exec_or_throw(
++                db.db,
++                "UPDATE sync_session_checkpoint_owner_modes "
++                "SET mode_updated_at_epoch=501 "
++                "WHERE session_id='session-catch-commit';",
++                "caught reset failure stale permit fixture");
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
++                                db.db,
++                                permit,
++                                "caught reset failure compound transition");
++                    },
++                    "did not preserve and advance exact sticky owner mode evidence"),
++                "late reset failure is surfaced to a caller that may catch it");
++            transaction.commit();
++        }
++        const auto catch_commit_mode = mode_snapshot(
++            db, "session-catch-commit");
++        test.check(root_count(db, "session-catch-commit") == 1 &&
++                       owner_count(db, "session-catch-commit") == 1,
++                   "caught late reset failure cannot commit the destructive DELETE prefix");
++        test.check(catch_commit_mode.present &&
++                       catch_commit_mode.ownership_mode == "owner-required" &&
++                       catch_commit_mode.latest_owner_lock_epoch == 1 &&
++                       catch_commit_mode.mode_updated_at_epoch == 501,
++                   "nested reset rollback preserves unrelated earlier outer-transaction work");
++
+         {
+             SyncSqliteTransaction transaction(
+                 db.db,
+diff --git a/tools/audit_sqlite_process_authority.py b/tools/audit_sqlite_process_authority.py
+index 1404a80..eefb924 100644
+--- a/tools/audit_sqlite_process_authority.py
++++ b/tools/audit_sqlite_process_authority.py
+@@ -134,7 +134,7 @@ def main() -> int:
+     missing = [rel.as_posix() for rel in sensitive if not (root / rel).is_file()]
+     if missing:
+         report = {
+-            "format": "anonsync-sqlite-process-authority-audit-v4",
++            "format": "anonsync-sqlite-process-authority-audit-v5",
+             "passed": False,
+             "violations": [f"missing sensitive file: {path}" for path in missing],
+         }
+@@ -363,14 +363,28 @@ def main() -> int:
+     for text, marker, check_id, detail in (
+         (authority_hpp, "SyncSqliteProcessId process_id_", "proof_and_lease_carry_process", "connection proofs and leases must carry their minting process"),
+         (authority_internal, "SyncSqliteProcessId process_id", "transaction_boundary_carries_process", "transaction boundary proofs must carry process authority"),
+-        (transaction_cpp, "process_id_(current_sync_sqlite_process_id_noexcept())", "transaction_guard_is_process_stamped", "typed transactions must record their creation process"),
++        (transaction_cpp, "process_id_(current_sync_sqlite_process_id_noexcept())", "transaction_guard_is_process_stamped", "typed transaction and savepoint guards must record their creation process"),
+         (mutex_cpp, "SyncSqliteProcessId process_id", "retained_mutex_state_is_process_stamped", "SQLite-owned lifetime sentinels must reject child-side use"),
+-        (payload_schema_cpp, "process_id_(current_sync_sqlite_process_id_noexcept())", "payload_savepoint_is_process_stamped", "rollback cleanup must not execute SQLite in an inheriting child"),
++        (transaction_cpp, "SyncSqliteSavepoint::SyncSqliteSavepoint", "typed_savepoint_owner_is_process_stamped", "schema and compound-transition savepoints must share the process-bound owner"),
++        (authority_internal, "struct SyncSqliteSavepointBoundaryProof final", "savepoint_boundary_carries_process", "the exact savepoint generation must carry process authority"),
+         (replay_cpp, "class SqliteRestoreLock", "restore_lock_is_present", "restore serialization remains explicit"),
+         (replay_cpp, "class SqliteWriteGateLock", "write_gate_is_present", "writer serialization remains explicit"),
+     ):
+         require(marker in text, check_id, detail)
+ 
++    savepoint_destructor = function_body(
++        transaction_cpp, "SyncSqliteSavepoint::~SyncSqliteSavepoint()")
++    require(
++        ordered(
++            savepoint_destructor,
++            "sync_sqlite_process_id_is_current(process_id_)",
++            "sync_sqlite_thread_incarnation_is_current",
++            "rollback_sync_sqlite_savepoint_boundary_noexcept",
++        ),
++        "savepoint_destructor_checks_process_before_sqlite_cleanup",
++        "an inheriting child must fail-stop before an inherited savepoint can execute rollback SQL",
++    )
++
+     restore_destructor = function_body(replay_cpp, "~SqliteRestoreLock()")
+     write_gate_destructor = function_body(replay_cpp, "~SqliteWriteGateLock()")
+     require(ordered(restore_destructor, "sync_sqlite_process_id_is_current", "release_flocked_descriptor_noexcept"), "restore_lock_destructor_checks_before_close", "an inherited destructor must not mutate the parent's lock lifetime")
+@@ -392,6 +406,8 @@ def main() -> int:
+         "child cannot acquire authority from an inherited proof",
+         "child cannot destroy an inherited authority lease",
+         "child cannot destruct an inherited live transaction",
++        "child cannot destruct an inherited live savepoint",
++        "child observes inherited savepoint capability as inactive",
+         "child cannot inspect inherited materialized owner storage",
+         "child cannot move inherited materialized owner storage",
+         "child destructor cannot release an inherited empty shared-state owner",
+@@ -472,7 +488,7 @@ def main() -> int:
+ 
+     passed = all(check.passed for check in checks)
+     report = {
+-        "format": "anonsync-sqlite-process-authority-audit-v4",
++        "format": "anonsync-sqlite-process-authority-audit-v5",
+         "passed": passed,
+         "check_count": len(checks),
+         "passed_check_count": sum(check.passed for check in checks),
+diff --git a/tools/audit_sqlite_transaction_stack_authority.py b/tools/audit_sqlite_transaction_stack_authority.py
+old mode 100644
+new mode 100755
+index dff8c1b..6679d0a
+--- a/tools/audit_sqlite_transaction_stack_authority.py
++++ b/tools/audit_sqlite_transaction_stack_authority.py
+@@ -1,11 +1,11 @@
+ #!/usr/bin/env python3
+ """Deterministic source-shape audit for SQLite transaction-stack authority.
+ 
+-Compilation and adversarial tests prove runtime behavior. This conservative
+-inventory prevents the reviewed boundary from quietly regressing into raw SQL,
+-ambient transaction adoption, same-handle interleaving, or SAVEPOINT bypasses.
+-It intentionally reports legacy raw boundaries in unrelated domains without
+-pretending they were migrated by this revision.
++Runtime tests prove behavior for compiled paths. This audit proves that every
++production SAVEPOINT/RELEASE/ROLLBACK TO literal remains concentrated in the
++reviewed invariant owner, that the typed savepoint proof stays generation- and
++thread-bound, and that compound reset/schema users cannot quietly regress to
++ad hoc transaction-stack SQL.
+ """
+ 
+ from __future__ import annotations
+@@ -26,10 +26,15 @@ SENSITIVE_FILES = (
+     Path("src/sync_sqlite_connection_authority.hpp"),
+     Path("src/sync_sqlite_connection_authority.cpp"),
+     Path("src/sync_sqlite_connection_authority_internal.hpp"),
++    Path("src/sync_checkpoint_owner_fence.cpp"),
++    Path("src/sync_checkpoint_owner_schema.cpp"),
+     Path("src/sync_peer_ingress_schema.cpp"),
+     Path("src/sync_peer_ingress_lifecycle.cpp"),
+-    Path("src/sync_peer_ingress_payload_store.cpp"),
++    Path("src/sync_peer_ingress_payload_store_schema.cpp"),
+     Path("tests/sqlite_connection_authority_test.cpp"),
++    Path("tests/sync_checkpoint_owner_fence_sqlite_test.cpp"),
++    Path("tests/sync_checkpoint_owner_schema_test.cpp"),
++    Path("tests/sqlite_runtime_payload_store_test.cpp"),
+     Path("tests/peer_ingress_schema_attestation_test.cpp"),
+     Path("tests/sqlite_support_test.cpp"),
+ )
+@@ -43,6 +48,11 @@ RAW_BOUNDARY_LITERAL = re.compile(
+     r'SAVEPOINT|RELEASE(?:\s+SAVEPOINT)?)\b',
+     re.IGNORECASE,
+ )
++RAW_SAVEPOINT_LITERAL = re.compile(
++    r'"\s*(?:SAVEPOINT|'
++    r'ROLLBACK(?:\s+TRANSACTION)?\s+TO(?:\s+SAVEPOINT)?|'
++    r'RELEASE(?:\s+SAVEPOINT)?)\b'
++)
+ 
+ 
+ @dataclass(frozen=True)
+@@ -64,7 +74,7 @@ def require(checks: list[Check], condition: bool, check_id: str, detail: str) ->
+     checks.append(Check(check_id, condition, detail))
+ 
+ 
+-def locations(root: Path, text: str, path: Path, pattern: re.Pattern[str]) -> list[dict[str, object]]:
++def locations(text: str, path: Path, pattern: re.Pattern[str]) -> list[dict[str, object]]:
+     out: list[dict[str, object]] = []
+     for number, line in enumerate(text.splitlines(), 1):
+         if pattern.search(line):
+@@ -90,6 +100,15 @@ def source_files(root: Path) -> list[Path]:
+     return files
+ 
+ 
++def ordered(text: str, *needles: str) -> bool:
++    cursor = -1
++    for needle in needles:
++        cursor = text.find(needle, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
+ def main() -> int:
+     parser = argparse.ArgumentParser()
+     parser.add_argument(
+@@ -105,7 +124,7 @@ def main() -> int:
+     missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
+     if missing:
+         report = {
+-            "format": "anonsync-sqlite-transaction-stack-authority-audit-v1",
++            "format": "anonsync-sqlite-transaction-stack-authority-audit-v2",
+             "passed": False,
+             "violations": [f"missing sensitive file: {path}" for path in missing],
+         }
+@@ -127,11 +146,16 @@ def main() -> int:
+     transaction_cpp = texts[Path("src/sync_sqlite_transaction.cpp")]
+     authority_cpp = texts[Path("src/sync_sqlite_connection_authority.cpp")]
+     authority_internal = texts[Path("src/sync_sqlite_connection_authority_internal.hpp")]
+-    schema_cpp = texts[Path("src/sync_peer_ingress_schema.cpp")]
++    checkpoint_fence = texts[Path("src/sync_checkpoint_owner_fence.cpp")]
++    checkpoint_schema = texts[Path("src/sync_checkpoint_owner_schema.cpp")]
++    ingress_schema = texts[Path("src/sync_peer_ingress_schema.cpp")]
+     lifecycle_cpp = texts[Path("src/sync_peer_ingress_lifecycle.cpp")]
+-    payload_cpp = texts[Path("src/sync_peer_ingress_payload_store.cpp")]
++    payload_schema = texts[Path("src/sync_peer_ingress_payload_store_schema.cpp")]
+     authority_test = texts[Path("tests/sqlite_connection_authority_test.cpp")]
+-    schema_test = texts[Path("tests/peer_ingress_schema_attestation_test.cpp")]
++    checkpoint_fence_test = texts[Path("tests/sync_checkpoint_owner_fence_sqlite_test.cpp")]
++    checkpoint_schema_test = texts[Path("tests/sync_checkpoint_owner_schema_test.cpp")]
++    payload_test = texts[Path("tests/sqlite_runtime_payload_store_test.cpp")]
++    ingress_schema_test = texts[Path("tests/peer_ingress_schema_attestation_test.cpp")]
+     support_test = texts[Path("tests/sqlite_support_test.cpp")]
+ 
+     checks: list[Check] = []
+@@ -140,51 +164,79 @@ def main() -> int:
+         checks,
+         "src/sync_sqlite_transaction.cpp" in cmake,
+         "transaction_implementation_is_independent_target_source",
+-        "the typed transaction implementation must remain an invariant-owned translation unit",
++        "the typed transaction/savepoint implementation must remain an invariant-owned translation unit",
+     )
+     require(
+         checks,
+-        "SyncSqliteTransaction::" not in support_cpp,
+-        "generic_sqlite_support_has_no_transaction_implementation",
+-        "generic statement/codec helpers must not reacquire transaction ownership",
++        "anonsync_sqlite_transaction_stack_authority_source_audit" in cmake
++        and "tools/audit_sqlite_transaction_stack_authority.py" in cmake,
++        "audit_is_registered_in_ctest",
++        "transaction-stack source ownership must be a release-gate obligation",
+     )
++    require(
++        checks,
++        "SyncSqliteTransaction::" not in support_cpp
++        and "SyncSqliteSavepoint::" not in support_cpp,
++        "generic_sqlite_support_has_no_stack_owner_implementation",
++        "generic statement/codec helpers must not reacquire transaction-stack ownership",
++    )
++
+     for method in (
+         "SyncSqliteTransaction::SyncSqliteTransaction",
+         "SyncSqliteTransaction::~SyncSqliteTransaction",
+         "SyncSqliteTransaction::commit",
+         "SyncSqliteTransaction::rollback",
+         "SyncSqliteTransactionAuthority::authorizes",
++        "SyncSqliteSavepoint::SyncSqliteSavepoint",
++        "SyncSqliteSavepoint::~SyncSqliteSavepoint",
++        "SyncSqliteSavepoint::release",
++        "SyncSqliteSavepoint::rollback",
+     ):
+         require(
+             checks,
+             method in transaction_cpp,
+-            "transaction_owner_method_" + re.sub(r"[^a-z0-9]+", "_", method.lower()).strip("_"),
++            "typed_owner_method_" + re.sub(r"[^a-z0-9]+", "_", method.lower()).strip("_"),
+             f"typed owner method must remain in transaction implementation: {method}",
+         )
+ 
+     for needle, check_id in (
++        ("class SyncSqliteSavepoint final", "public_typed_savepoint_exists"),
++        ("friend class SyncSqliteSavepoint", "savepoint_consumes_private_outer_authority"),
++        ("SyncSqliteSavepointBoundaryProof", "savepoint_proof_is_private_boundary_type"),
++        ("savepoint_generation", "savepoint_proof_binds_generation"),
++        ("savepoint_name", "savepoint_proof_binds_generated_name"),
+         ("process_salt", "proof_binds_process_salt"),
+         ("connection_incarnation", "proof_binds_connection_incarnation"),
+         ("authorizer_generation", "proof_binds_authorizer_generation"),
+         ("transaction_generation", "proof_binds_transaction_generation"),
++        ("owner_thread_incarnation", "proof_binds_thread_incarnation"),
+         ("retained_connection_mutex", "proof_retains_connection_mutex"),
+-        ("begin_sync_sqlite_transaction_boundary_or_throw", "typed_begin_internal_api"),
+-        ("end_sync_sqlite_transaction_boundary_or_throw", "typed_end_internal_api"),
+-        ("release_sync_sqlite_transaction_mutex_noexcept", "typed_mutex_release_api"),
++        ("retained_capability_state", "proof_retains_close_fence_capability"),
++        ("begin_sync_sqlite_savepoint_boundary_or_throw", "typed_savepoint_begin_internal_api"),
++        ("end_sync_sqlite_savepoint_boundary_or_throw", "typed_savepoint_end_internal_api"),
++        ("rollback_sync_sqlite_savepoint_boundary_noexcept", "typed_savepoint_destructor_api"),
++        ("release_sync_sqlite_savepoint_mutex_noexcept", "typed_savepoint_mutex_release_api"),
++        ("sync_sqlite_savepoint_boundary_authorizes_noexcept", "typed_savepoint_authority_query_api"),
+     ):
+-        require(checks, needle in authority_internal, check_id, f"required boundary marker: {needle}")
++        haystack = support_hpp + "\n" + authority_internal
++        require(checks, needle in haystack, check_id, f"required savepoint boundary marker: {needle}")
+ 
+     for needle, check_id in (
+-        ("if (action == SQLITE_SAVEPOINT) return SQLITE_DENY", "savepoint_stack_is_denied"),
+-        ("if (action == SQLITE_TRANSACTION)", "transaction_action_is_intercepted"),
+-        ("transaction_permit_active", "single_use_permit_has_active_state"),
+-        ("transaction_permit_observed", "single_use_permit_is_consumed"),
+-        ("active_transaction_generation", "connection_tracks_exact_transaction_generation"),
+-        ("transaction_operation_matches", "permit_matches_exact_boundary_operation"),
+-        ("run_authorizer_ownership_probe_or_throw", "boundary_challenges_owned_callback"),
+-        ("cannot replace connection authority inside an active transaction", "reinstall_rejects_live_generation"),
+-        ("rollback_newly_started_transaction_noexcept", "failed_begin_has_exact_cleanup"),
+-        ("Do not issue an unfenced fallback", "destructor_rejects_ambiguous_raw_rollback"),
++        ("if (action == SQLITE_SAVEPOINT)", "savepoint_action_is_intercepted"),
++        ("savepoint_permit_active", "savepoint_permit_has_active_state"),
++        ("savepoint_permit_observed", "savepoint_permit_is_single_use"),
++        ("savepoint_permit_name", "savepoint_permit_binds_exact_name"),
++        ("savepoint_operation_matches", "savepoint_permit_binds_exact_operation"),
++        ("active_savepoints", "connection_tracks_typed_savepoint_stack"),
++        ("allocate_savepoint_generation_or_throw", "connection_allocates_monotonic_savepoint_generation"),
++        ("savepoint must close in reverse construction order", "fenced_savepoints_are_lifo"),
++        ("cannot commit while a typed savepoint remains active", "outer_commit_is_fenced"),
++        ("Complete every allocation before SQLite accepts the mark", "savepoint_publish_has_preallocation_rule"),
++        ("ROLLBACK TO SAVEPOINT ", "typed_rollback_rewinds_exact_mark"),
++        ("RELEASE SAVEPOINT ", "typed_close_erases_exact_mark"),
++        ("Never issue an unfenced fallback for a fenced mark", "destructor_has_no_ambiguous_fallback"),
++        ("cannot replace authority while a boundary permit is armed", "authority_reinstall_rejects_armed_permit"),
++        ("cannot replace connection authority inside an active transaction", "authority_reinstall_rejects_live_stack"),
+     ):
+         require(checks, needle in authority_cpp, check_id, f"required owner marker: {needle}")
+ 
+@@ -197,118 +249,204 @@ def main() -> int:
+     require(
+         checks,
+         "sqlite3_set_authorizer(" not in transaction_cpp,
+-        "transaction_owner_cannot_replace_authorizer",
+-        "typed transaction code must consume, not own, callback installation",
++        "typed_stack_owner_cannot_replace_authorizer",
++        "typed transaction/savepoint code must consume, not own, callback installation",
+     )
+     require(
+         checks,
+-        "release_sync_sqlite_transaction_mutex_noexcept(*boundary_proof_)" in transaction_cpp,
+-        "revocation_releases_retained_connection_mutex",
+-        "every typed generation revocation must release its exact recursive mutex entry",
++        "release_sync_sqlite_savepoint_mutex_noexcept(*boundary_proof_)" in transaction_cpp,
++        "savepoint_revocation_releases_retained_mutex",
++        "every typed savepoint generation must release its exact recursive mutex entry",
+     )
+     require(
+         checks,
+-        "authority_state_->boundary.retained_connection_mutex = nullptr" in transaction_cpp,
+-        "copied_authority_is_not_a_mutex_owner",
+-        "copied transaction capabilities must never duplicate mutex ownership",
++        "thread-affine transaction guard" in support_hpp
++        and "Scope-bound nested rollback owner" in support_hpp,
++        "thread_affinity_and_nested_ownership_are_documented",
++        "the public contract must explain thread and stack ownership",
++    )
++
++    begin_segment_start = authority_cpp.find("begin_sync_sqlite_savepoint_boundary_or_throw(")
++    begin_segment_end = authority_cpp.find("void end_sync_sqlite_savepoint_boundary_or_throw(")
++    begin_segment = (
++        authority_cpp[begin_segment_start:begin_segment_end]
++        if begin_segment_start >= 0 and begin_segment_end > begin_segment_start
++        else ""
++    )
++    require(
++        checks,
++        ordered(
++            begin_segment,
++            "proof.savepoint_name = fenced_savepoint_name",
++            "const std::string sql = \"SAVEPOINT \"",
++            "state->active_savepoints.push_back",
++            "execute_permitted_savepoint_sql_or_throw",
++        ),
++        "fenced_savepoint_allocations_precede_sql_publication",
++        "name, SQL, and stack-frame allocations must complete before SQLite accepts SAVEPOINT",
++    )
++
++    end_segment_start = authority_cpp.find("void end_sync_sqlite_savepoint_boundary_or_throw(")
++    end_segment_end = authority_cpp.find("void end_sync_sqlite_transaction_boundary_or_throw(")
++    end_segment = (
++        authority_cpp[end_segment_start:end_segment_end]
++        if end_segment_start >= 0 and end_segment_end > end_segment_start
++        else ""
+     )
+     require(
+         checks,
+-        "thread-affine transaction guard" in support_hpp,
+-        "thread_affinity_is_documented",
+-        "retaining SQLite's recursive mutex makes transaction ownership thread-affine",
++        ordered(
++            end_segment,
++            "validate_fenced_savepoint_proof_or_throw(db, proof, label, true)",
++            "SavepointPermitOperation::Rollback",
++            "SavepointPermitOperation::Release",
++            "state.active_savepoints.pop_back()",
++        ),
++        "fenced_rollback_then_release_then_revoke",
++        "rollback must rewind, release the mark, and only then remove the modeled frame",
+     )
+ 
+     require(
+         checks,
+-        "sync_sqlite_connection_authority_state_present_or_throw" in schema_cpp
+-        and "recover prior connection authority" in schema_cpp,
++        "sync_sqlite_connection_authority_state_present_or_throw" in ingress_schema
++        and "recover prior connection authority" in ingress_schema,
+         "schema_recovery_reinstalls_bridge_before_typed_begin",
+         "alien callback recovery must occur before a typed schema snapshot begins",
+     )
+     require(
+         checks,
+-        schema_cpp.find("recover prior connection authority")
+-        < schema_cpp.find("schema attestation read snapshot"),
++        ingress_schema.find("recover prior connection authority")
++        < ingress_schema.find("schema attestation read snapshot"),
+         "schema_recovery_precedes_snapshot",
+         "the restrictive policy must be current before schema BEGIN is compiled",
+     )
+ 
+     selftest_marker = "void run_sync_peer_ingress_lifecycle_selftests("
+     marker_index = lifecycle_cpp.find(selftest_marker)
+-    require(
+-        checks,
+-        marker_index >= 0,
+-        "peer_lifecycle_selftest_boundary_found",
+-        "production/selftest split marker must remain reviewable",
+-    )
+     production_lifecycle = lifecycle_cpp[:marker_index] if marker_index >= 0 else lifecycle_cpp
+     production_raw_lifecycle = locations(
+-        root,
+         production_lifecycle,
+         Path("src/sync_peer_ingress_lifecycle.cpp"),
+         RAW_BOUNDARY_LITERAL,
+     )
++    require(
++        checks,
++        marker_index >= 0,
++        "peer_lifecycle_selftest_boundary_found",
++        "production/selftest split marker must remain reviewable",
++    )
+     require(
+         checks,
+         not production_raw_lifecycle,
+         "peer_ingress_production_has_no_raw_transaction_sql",
+-        "peer-ingress production lifecycle must use only the typed transaction owner",
++        "peer-ingress production lifecycle must use only typed transaction owners",
+     )
+ 
+-    payload_savepoint_locations = locations(
+-        root,
+-        payload_cpp,
+-        Path("src/sync_peer_ingress_payload_store.cpp"),
+-        RAW_BOUNDARY_LITERAL,
+-    )
+-    payload_ensure_occurrences = sum(
+-        (root / path).read_text(encoding="utf-8", errors="replace").count(
+-            "ensure_peer_transport_ingress_payload_store_schema_or_throw("
++    for text, path, check_id in (
++        (checkpoint_schema, Path("src/sync_checkpoint_owner_schema.cpp"), "checkpoint_schema_has_no_raw_savepoint_sql"),
++        (payload_schema, Path("src/sync_peer_ingress_payload_store_schema.cpp"), "payload_schema_has_no_raw_savepoint_sql"),
++        (checkpoint_fence, Path("src/sync_checkpoint_owner_fence.cpp"), "checkpoint_reset_has_no_raw_savepoint_sql"),
++    ):
++        require(
++            checks,
++            not locations(text, path, RAW_SAVEPOINT_LITERAL),
++            check_id,
++            f"{path.as_posix()} must consume the typed savepoint owner",
+         )
+-        for path in source_files(root)
+-        if path.suffix.lower() in {".c", ".cc", ".cpp", ".cxx"}
++
++    require(
++        checks,
++        "SyncSqliteSavepoint migration(" in checkpoint_schema
++        and "migration.release();" in checkpoint_schema,
++        "checkpoint_schema_uses_typed_migration_savepoint",
++        "checkpoint owner schema migration must publish through the typed owner",
+     )
+     require(
+         checks,
+-        bool(payload_savepoint_locations),
+-        "legacy_payload_bootstrap_savepoint_is_inventoried",
+-        "the remaining bootstrap-only savepoint helper must stay visible until a typed savepoint API exists",
++        "SyncSqliteSavepoint savepoint(" in payload_schema
++        and "savepoint.release();" in payload_schema
++        and "class PayloadSchemaSavepoint" not in payload_schema,
++        "payload_schema_uses_shared_typed_savepoint",
++        "the ad hoc payload savepoint wrapper must not return",
+     )
+     require(
+         checks,
+-        payload_ensure_occurrences == 1,
+-        "legacy_payload_savepoint_has_no_production_caller",
+-        "the raw payload-schema savepoint helper may only exist as an isolated bootstrap definition",
++        ordered(
++            checkpoint_fence,
++            "SyncSqliteSavepoint reset(",
++            "DELETE FROM main.sync_session_checkpoints",
++            "reset.release();",
++            "permit.consumed_ = true;",
++        ),
++        "checkpoint_reset_compound_transition_is_atomic",
++        "DELETE, sticky evidence proof, release, and permit consumption must remain ordered",
++    )
++    require(
++        checks,
++        "permit.transaction_authority_" in checkpoint_fence[checkpoint_fence.find("SyncSqliteSavepoint reset("):],
++        "checkpoint_reset_savepoint_binds_exact_outer_transaction",
++        "the reset savepoint must consume the permit's exact transaction authority",
+     )
+ 
+     for needle, check_id in (
+-        ("SAVEPOINT raw_outer", "test_outer_savepoint_bypass"),
+-        ("ROLLBACK TO nested_raw", "test_nested_savepoint_bypass"),
+-        ("BEGIN prepared before authority installation", "test_prepared_begin_reauthorization"),
+-        ("SQLITE_IGNORE acquired transaction-boundary authority", "test_ignore_fails_closed"),
+-        ("stale typed destructor rolled back a later alien transaction", "test_no_ambiguous_destructor_rollback"),
+-        ("typed transaction released the connection mutex before rollback", "test_full_generation_mutex_retention"),
+-        ("inside an active transaction", "test_authorizer_reinstall_blocked"),
++        ("void test_typed_savepoint_stack_and_atomicity", "test_typed_savepoint_suite"),
++        ("reverse construction order", "test_out_of_order_close"),
++        ("typed savepoint remains active", "test_outer_commit_fence"),
++        ("SQLITE_IGNORE acquired savepoint-boundary authority", "test_savepoint_ignore_fails_closed"),
++        ("typed savepoint claimed release after callback replacement", "test_callback_replacement_fails_closed"),
++        ("unowned outermost savepoint rollback", "test_unfenced_outermost_rollback"),
++        ("unowned nested compatibility savepoint", "test_unfenced_nested_compatibility"),
++        ("a stale transaction authority minted a later savepoint", "test_stale_outer_authority"),
++        ("foreign-thread typed savepoint RELEASE", "test_savepoint_foreign_release_affinity"),
++        ("foreign-thread typed savepoint ROLLBACK", "test_savepoint_foreign_rollback_affinity"),
++        ("foreign-thread savepoint destruction did not fail-stop", "test_savepoint_foreign_destructor_fail_stop"),
++        ("live unfenced savepoint did not fail-stop", "test_savepoint_close_fence"),
+     ):
+-        require(checks, needle in authority_test, check_id, f"required adversarial test marker: {needle}")
++        require(checks, needle in authority_test, check_id, f"required adversarial marker: {needle}")
+     require(
+         checks,
+-        "sqlite_exec_or_throw(db.get(), \"BEGIN" not in schema_test[schema_test.find("void test_fresh_bootstrap"):],
+-        "post_attestation_schema_tests_use_typed_begin",
+-        "schema authority tests after bootstrap must not retain raw BEGIN call sites",
++        "caught late reset failure cannot commit the destructive DELETE prefix" in checkpoint_fence_test,
++        "test_caught_late_failure_cannot_publish_delete_prefix",
++        "the root-reset regression must keep the catch-and-commit adversary",
+     )
+     require(
+         checks,
+         "deliberate raw commit misuse" in support_test,
+         "unowned_compatibility_boundary_is_tested",
+-        "unowned utility connections retain an explicit, isolated compatibility test",
++        "unowned utility connections retain an explicit compatibility test",
++    )
++    require(
++        checks,
++        "ensure_checkpoint_owner_schema_or_throw(" in checkpoint_schema_test,
++        "checkpoint_schema_refactor_has_runtime_suite",
++        "the migrated checkpoint schema path must remain covered",
++    )
++    require(
++        checks,
++        "ensure_peer_transport_ingress_payload_store_schema_or_throw(" in payload_test
++        and "ensure_peer_transport_ingress_payload_store_schema_or_throw(" in ingress_schema_test,
++        "payload_schema_refactor_has_runtime_suites",
++        "both direct and ingress schema suites must exercise the migrated payload path",
+     )
+ 
+     raw_boundary_inventory: list[dict[str, object]] = []
++    raw_savepoint_inventory: list[dict[str, object]] = []
+     for rel in source_files(root):
+         text = (root / rel).read_text(encoding="utf-8", errors="replace")
+-        raw_boundary_inventory.extend(locations(root, text, rel, RAW_BOUNDARY_LITERAL))
++        raw_boundary_inventory.extend(locations(text, rel, RAW_BOUNDARY_LITERAL))
++        raw_savepoint_inventory.extend(locations(text, rel, RAW_SAVEPOINT_LITERAL))
++
++    non_owner_savepoint_inventory = [
++        item
++        for item in raw_savepoint_inventory
++        if item["path"] != "src/sync_sqlite_connection_authority.cpp"
++    ]
++    require(
++        checks,
++        not non_owner_savepoint_inventory,
++        "all_production_savepoint_sql_is_owned_by_authority_boundary",
++        "raw SAVEPOINT/ROLLBACK TO/RELEASE literals may exist only in the reviewed invariant owner",
++    )
+ 
+     owner_paths = {
+         "src/sync_sqlite_transaction.cpp",
+@@ -320,14 +458,15 @@ def main() -> int:
+ 
+     violations = [asdict(check) for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sqlite-transaction-stack-authority-audit-v1",
++        "format": "anonsync-sqlite-transaction-stack-authority-audit-v2",
+         "root": str(root),
+         "passed": not violations,
+         "check_count": len(checks),
+         "checks": [asdict(check) for check in checks],
+         "violations": violations,
+         "production_peer_ingress_raw_boundary_locations": production_raw_lifecycle,
+-        "payload_bootstrap_savepoint_locations": payload_savepoint_locations,
++        "raw_savepoint_boundary_inventory": raw_savepoint_inventory,
++        "non_owner_raw_savepoint_boundary_inventory": non_owner_savepoint_inventory,
+         "raw_transaction_boundary_inventory": raw_boundary_inventory,
+         "legacy_raw_transaction_boundary_inventory": legacy_raw_boundary_inventory,
+         "legacy_raw_transaction_boundary_count": len(legacy_raw_boundary_inventory),
+@@ -335,8 +474,8 @@ def main() -> int:
+             path.as_posix(): sha256_file(root / path) for path in SENSITIVE_FILES
+         },
+         "interpretation": (
+-            "Legacy raw boundaries outside peer-ingress are inventory, not proof of safety. "
+-            "They are migration candidates for later invariant-owned revisions."
++            "Raw savepoint-stack SQL is enforced to one invariant owner. Legacy raw BEGIN/COMMIT/ROLLBACK "
++            "outside this boundary remain an inventory and are migration candidates, not a safety claim."
+         ),
+     }
+     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+diff --git a/tools/audit_sync_checkpoint_owner_fence.py b/tools/audit_sync_checkpoint_owner_fence.py
+index 0afe152..df66ebe 100644
+--- a/tools/audit_sync_checkpoint_owner_fence.py
++++ b/tools/audit_sync_checkpoint_owner_fence.py
+@@ -348,32 +348,25 @@ def main() -> int:
+         "the verifier independently checks stored SQL, table geometry, exact columns, FK cascade, TEMP objects, indexes, and triggers",
+     )
+ 
+-    savepoint_pos = schema_ensure.find(
+-        "SAVEPOINT anonsync_checkpoint_owner_schema_migration"
+-    )
++    savepoint_pos = schema_ensure.find("SyncSqliteSavepoint migration(")
+     backfill_pos = schema_ensure.find(
+         "INSERT INTO main.sync_session_checkpoint_owner_modes"
+     )
+-    post_attest_pos = schema_ensure.find(
+-        "post-migration attestation"
+-    )
+-    release_pos = schema_ensure.find(
+-        "RELEASE anonsync_checkpoint_owner_schema_migration"
+-    )
+-    rollback_pos = schema_ensure.find(
+-        "ROLLBACK TO anonsync_checkpoint_owner_schema_migration"
+-    )
++    post_attest_pos = schema_ensure.find("post-migration attestation")
++    release_pos = schema_ensure.find("migration.release();")
+     check(
+         "owner_schema_migration_is_savepoint_atomic_and_attested_before_publish",
+         0 <= savepoint_pos < lock_attest_pos < mode_create_pos < backfill_pos
+-        < post_attest_pos < release_pos < rollback_pos
++        < post_attest_pos < release_pos
+         and "FROM main.sync_session_resume_transfer_daemon_owner_locks"
+-        in schema_ensure,
++        in schema_ensure
++        and "SAVEPOINT anonsync_checkpoint_owner_schema_migration" not in schema_ensure
++        and "ROLLBACK TO anonsync_checkpoint_owner_schema_migration" not in schema_ensure,
+         "positions "
+-        f"savepoint={savepoint_pos} owner_lock_attest={lock_attest_pos} "
++        f"typed_savepoint={savepoint_pos} owner_lock_attest={lock_attest_pos} "
+         f"mode_create={mode_create_pos} backfill={backfill_pos} "
+-        f"post_attest={post_attest_pos} release={release_pos} "
+-        f"rollback={rollback_pos}",
++        f"post_attest={post_attest_pos} release={release_pos}; "
++        "destructor rollback is owned by SyncSqliteSavepoint",
+     )
+ 
+     check(
+@@ -445,6 +438,23 @@ def main() -> int:
+         runtime,
+         "void delete_checkpoint_root_with_permit_in_write_transaction_or_throw(",
+     )
++    reset_savepoint_pos = reset_delete.find("SyncSqliteSavepoint reset(")
++    reset_sql_pos = reset_delete.find(
++        "DELETE FROM main.sync_session_checkpoints WHERE session_id=?;"
++    )
++    reset_release_pos = reset_delete.find("reset.release();")
++    reset_consume_pos = reset_delete.find("permit.consumed_ = true;")
++    check(
++        "root_reset_compound_transition_has_nested_rollback_owner",
++        0 <= reset_savepoint_pos < reset_sql_pos < reset_release_pos < reset_consume_pos
++        and "permit.transaction_authority_" in reset_delete
++        and "caught late reset failure cannot commit the destructive DELETE prefix"
++        in sqlite_test,
++        "positions "
++        f"savepoint={reset_savepoint_pos} delete={reset_sql_pos} "
++        f"release={reset_release_pos} consume={reset_consume_pos}",
++    )
++
+     check(
+         "root_reset_binds_recipient_evidence_to_exact_typed_transaction_generation",
+         "transaction_authority.authorizes_write(db)" in reset_authorize

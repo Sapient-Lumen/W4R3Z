@@ -1,0 +1,3274 @@
+--- /dev/null
++++ b/ABSOLUTE_COMMAND_DEADLINE_IDLE_CLOSE_PRECLAIM_AND_LEASE_HORIZON_AUDIT_rev0907.md
+@@ -0,0 +1,307 @@
++# Absolute command deadline, authenticated idle close, pre-claim cutpoint, and lease-horizon audit — rev0907
++
++## Executive conclusion
++
++AnonSync's heart remains **evidence-authorized, crash-consistent, bounded causal
++convergence**. Exact validated history and explicit live capabilities authorize
++state changes. Clocks, deadlines, leases, TLS sessions, close alerts, counters,
++indexes, and reports may restrict or describe execution, but they must not
++silently invent work, success, retry authority, or a newer durable cutpoint.
++
++Rev0906 made one invocation finite by session count. This audit found that the
++composition was still incomplete in four load-bearing ways:
++
++1. a batch had no one absolute whole-command time cutpoint;
++2. a sender's authenticated `no_ready_delivery` close became an erroneous
++   receiver failure;
++3. a client could finish authentication after its request budget and still
++   begin a durable outbox claim before observing the request deadline; and
++4. the former 30-second default claim lease could expire while the same
++   invocation's own valid staged receipt window was still open.
++
++Rev0907 corrects those contradictions in the shipping C++ path, extracts the
++policy from the 3,600-line CLI translation unit into a typed library owner, and
++adds deterministic plus real TLS/process proofs. It does **not** claim a hard
++real-time preemptive supervisor, a daemon, or a complete sync loop.
++
++## Scope and method
++
++The audit followed the production path from command-line admission through:
++
++`manifest/store/TLS preflight -> session admission -> peer authentication -> outbox claim -> request prefix -> request body -> receipt -> durable application -> shutdown`
++
++It compared the following authorities rather than treating all time-like values
++as interchangeable:
++
++- process-local `std::chrono::steady_clock` network cutpoints;
++- Linux `CLOCK_BOOTTIME` durable outbox observations;
++- the durable outbox clock policy's forward-step, realtime-lag, and uncertainty
++  envelope;
++- the claim lease's integer-second exclusive expiry;
++- TLS closure state; and
++- application-frame and durable receipt state.
++
++The audit also inspected CMake sanitizer topology. That found and corrected one
++release-proof omission: the new supervisor test was initially compiled with
++sanitizer instrumentation but was not linked to the sanitizer runtime.
++
++## Finding 1: a session-count bound was not a command bound
++
++Rev0906 required `--max-sessions`, but every session received a fresh set of
++relative staged deadlines. Preflight time was uncharged, and a large session
++count could keep an invocation alive far longer than an operator intended.
++Session count is a resource bound, not a time cutpoint.
++
++Rev0907 adds mandatory `--max-runtime-seconds` to `send-batch` and
++`serve-batch`, restricted to `[1, 86400]`. One absolute steady-clock deadline is
++created before deployment, database, payload, listener, membership, and TLS
++preflight. A later session cannot be admitted after it. Every stage deadline is
++the earlier of its natural staged deadline and that one command deadline.
++
++This is deliberately cooperative rather than preemptive. Poll-driven network
++work is bounded by the clamped deadlines, and elapsed synchronous work is
++charged at the next admission or deadline observation. A blocking filesystem,
++SQLite, crypto, scheduler, or kernel operation is not asynchronously cancelled.
++Calling the feature a hard wall-clock kill switch would be false.
++
++## Finding 2: a clean no-work sender session failed the receiver batch
++
++With a batch bound larger than ready work, the sender could authenticate, find
++no claimable delivery, send no application bytes, perform a one-way TLS
++`close_notify`, and exit successfully as `no_ready_delivery`. The receiver saw
++an authenticated peer close before a request prefix and classified the session
++as failure. Thus two individually reasonable one-session owners did not compose
++into a successful bounded drain.
++
++Rev0907 introduces the exact receiver terminal state
++`authenticated_peer_closed_idle`. It is accepted only when all of the following
++are true:
++
++- a socket was accepted and its policy was verified;
++- the TLS handshake completed;
++- peer actor and SPKI evidence are present;
++- the receive owner reports peer closure;
++- zero request-prefix, request-frame, and request-body bytes were observed;
++- no inbound delivery decision exists; and
++- no receipt write frontier or receipt bytes exist.
++
++The state means only: **this authenticated receiver session spent no durable
++file-delivery authority**. It is not evidence that the peer's queue was empty,
++that a catalog was synchronized, or that no work exists elsewhere. TLS closure
++is transport evidence; the zero-application-byte predicate is local protocol
++evidence. Neither becomes a durable catalog assertion.
++
++Stopping after the idle close is intentional. Continuing would let an
++otherwise authenticated peer consume the remaining session quota with empty
++connections. A future application-level signed `NO_READY` record could carry a
++stronger named protocol meaning, but it would still need an exact queue/catalog
++cutpoint and must not be inferred from TLS shutdown alone.
++
++## Finding 3: request admission could begin after its deadline
++
++The client previously checked connect and handshake deadlines, authenticated the
++expected peer, and then entered the durable claim path. It did not re-observe the
++absolute request deadline immediately before the first claim. Handshake and peer
++profile work could therefore consume the request budget while the client still
++minted a claim and potentially crossed the request-prefix frontier.
++
++Rev0907 adds `DispatchDeadlineExpired` and checks the request-admission cutpoint
++after authenticated-channel construction but before the first durable claim.
++The exact clean result requires:
++
++- socket creation, policy verification, connect, handshake, and authenticated
++  peer evidence;
++- no operation ID, claim ID, or request digest;
++- zero request-prefix, frame, and body bytes;
++- zero receipt-prefix, frame, and body bytes; and
++- no receipt-application result.
++
++Only when that clean result occurs under a command-clamped request stage and the
++outer command deadline is actually reached may the supervisor map it to
++`command_deadline_reached`. A claim-bearing, byte-bearing, unauthenticated, or
++otherwise ambiguous request timeout remains `session_failed`.
++
++The real TLS regression completes mutual authentication with an already expired
++request-admission deadline and proves that the client emits no operation ID,
++claim, prefix, frame, or body. The ready outbox row remains unleased with zero
++dispatch attempts. The receiver observes only an authenticated clean close.
++
++### Remaining frontier
++
++One cooperative gap remains explicit. If the synchronous claim, payload reproof,
++or dispatch-guard work starts before the request cutpoint but runs beyond it,
++the current path does not perform a second deadline check immediately before
++accepting the fixed request prefix. Closing that frontier safely requires a
++deadline-aware pre-prefix guard that can release the same fenced claim before
++any application byte is accepted. Merely adding a late clock check outside the
++transaction would risk converting an authorized claim into an ambiguous retry.
++
++## Finding 4: the default lease contradicted the valid receipt horizon
++
++The former default lease was 30 seconds. The default staged session timeout was
++10 seconds, producing these natural cutpoints from session admission:
++
++| Stage | Natural deadline |
++| --- | ---: |
++| connect | `T` |
++| handshake | `2T` |
++| request | `3T` |
++| receipt | `4T` |
++| shutdown | `5T` |
++
++A claim may be created before request transmission while a receipt remains valid
++until `4T`. With `T = 10`, transport policy alone therefore admits a 40-second
++claim-to-receipt horizon. A 30-second claim can expire while the sender is still
++correctly waiting under its own receipt deadline.
++
++The durable clock policy also admits bounded observation movement. For the
++current default owner limits:
++
++- maximum forward step `F = 300 s`;
++- maximum realtime lag/catch-up `L = 300 s`;
++- maximum uncertainty `U = 5 s` at each relevant anchor/endpoint observation;
++- four uncertainty allowances are combined; and
++- one second is added because durable epochs are floor-converted integer seconds
++  and expiry is exclusive.
++
++The necessary static lower bound is:
++
++`minimum lease = 4T + F + L + ceil(4U) + 1`
++
++Therefore:
++
++- `T = 5 s` requires at least `20 + 300 + 300 + 20 + 1 = 641 s`;
++- `T = 10 s` requires at least `40 + 300 + 300 + 20 + 1 = 661 s`; and
++- `T = 3600 s` requires `15021 s`, still below the durable 86400-second maximum.
++
++The CLI now derives the exact minimum from the same `SyncReplicaSqliteOwnerLimits`
++used to construct the sender owner. An absent `--lease-seconds` selects the
++minimum; an explicit shorter value is rejected before deployment, database,
++payload, or TLS authority opens. A process test snapshots the database family
++and payload directory and proves that rejection is mutation-free.
++
++This formula is a **necessary protocol-and-clock lower bound**, not a completion
++guarantee. It does not cover arbitrary process descheduling, SQLite writer
++waits, local decoding/application work, system suspension, or external resource
++starvation. Settlement remains fail-closed if the claim is expired.
++
++The large minimum is also architectural feedback. Long static leases reduce
++premature expiry but delay recovery after a dead sender. A mature product should
++prefer an exact renewable lease/heartbeat tied to the same fenced claim, or
++reduce the admitted clock envelope, rather than silently choosing an unsafe
++short default.
++
++## Refactor: one typed composition owner
++
++`sync_replica_session_supervisor.hpp/.cpp` now owns only process-local
++composition policy:
++
++- validation of session, stage-timeout, and command-runtime limits;
++- one optional absolute command deadline;
++- per-session five-stage deadline plans clamped to that command cutpoint;
++- typed sender and receiver terminal reasons;
++- exact clean dispatch-expiry and authenticated-idle predicates; and
++- derivation/validation of the necessary claim-lease horizon.
++
++It does not open a database, claim work, create a listener, authenticate a peer,
++write a file, sleep, retry, or persist scheduler state. `send-one` and
++`serve-one` use the same executors with one session and no command-wide runtime,
++while batch commands must supply both finite bounds.
++
++The library was added to the existing file-TLS product archive rather than
++creating another one-source static library. This reduces CLI policy duplication
++without growing the already excessive archive/target surface.
++
++## Terminal-policy matrix
++
++### Sender
++
++| Observation | Stop | Success |
++| --- | --- | --- |
++| session quota consumed | `max_sessions_reached` | yes |
++| absolute command cutpoint reached cleanly | `command_deadline_reached` | yes |
++| authenticated peer, no claimable delivery | `no_ready_delivery` | yes |
++| authenticated receiver pressure deferral | `receiver_deferred` | yes |
++| stale/missing/expired local receipt claim | `receipt_apply_conflict` | no |
++| transport, authentication, or ambiguous deadline result | `session_failed` | no |
++
++### Receiver
++
++| Observation | Stop | Success |
++| --- | --- | --- |
++| session quota consumed | `max_sessions_reached` | yes |
++| absolute command cutpoint reached at accept | `command_deadline_reached` | yes |
++| ordinary first-stage listener deadline | `accept_deadline_expired` | yes |
++| exact authenticated zero-application-byte close | `authenticated_peer_closed_idle` | yes |
++| partial prefix/frame/body, effect ambiguity, or transport failure | `session_failed` | no |
++
++## Validation
++
++Final release evidence includes:
++
++- GCC 14.2 Debug: **227/227** registered tests passed;
++- Clang 17.0 Debug: **227/227** registered tests passed;
++- Clang 17 ASan+UBSan focused product lane: **5/5** passed;
++- supervisor unit proof: **75 checks**;
++- deployment binding source audit: **27/27**;
++- database-open policy source audit: **38/38**;
++- bootstrap-authority source audit: **25/25**; and
++- real multi-process TCP/TLS proof covering two settled deliveries, a third
++  authenticated no-work session, receiver idle-close success, whole-command
++  accept cutpoint, and mutation-free short-lease rejection.
++
++## Research record and implications
++
++Primary sources reviewed on 2026-07-26:
++
++- TLS 1.3 closure and truncation semantics, RFC 8446:
++  https://www.rfc-editor.org/rfc/rfc8446.html
++- OpenSSL shutdown state and return semantics:
++  https://docs.openssl.org/3.5/man3/SSL_shutdown/
++- gRPC deadline model and explicit deadline guidance:
++  https://grpc.io/docs/guides/deadlines/
++- SQLite busy-timeout accumulated sleeping behavior:
++  https://www.sqlite.org/c3ref/busy_timeout.html
++- Linux `CLOCK_MONOTONIC` versus suspend-aware `CLOCK_BOOTTIME`:
++  https://man7.org/linux/man-pages/man3/clock_gettime.3.html
++
++The sources reinforce five design conclusions:
++
++1. `close_notify` establishes orderly TLS write closure, not application queue
++   emptiness. AnonSync must keep transport shutdown and application terminal
++   state separate.
++2. A timeout should become one absolute deadline at operation start and be
++   propagated by reducing remaining budget, not restarted at every layer.
++3. A server or local owner must cooperate with cancellation/deadline state;
++   merely returning a timeout from an outer layer does not stop inner work.
++4. SQLite busy handling can sleep repeatedly before returning `SQLITE_BUSY`, so
++   database wait policy must eventually consume the same command budget rather
++   than remain an uncharged nested timeout.
++5. Linux `steady_clock` commonly follows `CLOCK_MONOTONIC`, which excludes
++   suspend, while the durable outbox clock uses `CLOCK_BOOTTIME`, which includes
++   it. A suspended machine can therefore age the durable claim while the
++   transport deadline appears frozen. Production policy needs one explicit
++   suspend model.
++
++## What should change next
++
++The next C++ product slice should close the remaining claim-to-prefix frontier
++and begin a durable supervisor rather than adding another parallel assurance
++subsystem:
++
++1. propagate one named budget into SQLite busy handling, payload reproof, and
++   the dispatch guard;
++2. add a transactional pre-prefix deadline check that can release the exact
++   fenced claim before any TLS application byte;
++3. replace anonymous `First..Fifth` stages with named connect, handshake,
++   request, receipt, and shutdown cutpoints;
++4. persist typed terminal state so a crash can resume the larger
++   scan/reconcile/claim/transfer/apply lifecycle; and
++5. design renewable claims whose heartbeat authority is exact, fenced, bounded,
++   and revoked on ambiguity.
++
++Longer term, the product still needs complete filesystem semantics, explicit DAG
++readiness, indexed anti-entropy checked against full-history truth, quarantine
++and repair, retention/GC, cross-store cutpoints, key evolution, and a precise
++anonymity/privacy threat model. Rev0907 narrows one critical time-and-session
++boundary; it does not substitute for that continuous product spine.
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1383,7 +1383,8 @@
+ # existing product-spine library instead of creating another one-file archive.
+ set(ANONSYNC_SYNC_REPLICA_FILE_TLS_SERVER_SOURCE
+   src/sync_replica_file_tls_server.cpp
+-  src/sync_replica_file_tls_client.cpp)
++  src/sync_replica_file_tls_client.cpp
++  src/sync_replica_session_supervisor.cpp)
+ add_library(anonsync_sync_replica_file_tls_server STATIC
+   ${ANONSYNC_SYNC_REPLICA_FILE_TLS_SERVER_SOURCE})
+ target_include_directories(anonsync_sync_replica_file_tls_server PUBLIC
+@@ -1392,6 +1393,7 @@
+   anonsync_sync_replica_file_tls_dispatch
+   anonsync_sync_replica_file_tls_exchange
+   anonsync_sync_replica_tls_membership
++  anonsync_sync_replica_outbox_clock
+   PRIVATE anonsync_sync_stream_socket_deadline_poll
+           anonsync_thread_incarnation OpenSSL::SSL)
+ target_compile_options(anonsync_sync_replica_file_tls_server PRIVATE
+@@ -2227,6 +2229,15 @@
+ target_link_libraries(anonsync_sync_replica_tls_io_policy_test PRIVATE
+   anonsync_sync_replica_tls_io_policy)
+ target_compile_options(anonsync_sync_replica_tls_io_policy_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++
++add_executable(anonsync_sync_replica_session_supervisor_test
++  tests/sync_replica_session_supervisor_test.cpp)
++target_include_directories(anonsync_sync_replica_session_supervisor_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_session_supervisor_test PRIVATE
++  anonsync_sync_replica_file_tls_server)
++target_compile_options(anonsync_sync_replica_session_supervisor_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
+ add_executable(anonsync_sync_replica_tls_transport_test
+@@ -3147,6 +3158,7 @@
+     anonsync_sync_replica_file_tls_dispatch
+     anonsync_sync_replica_file_tls_exchange
+     anonsync_sync_replica_file_tls_server
++    anonsync_sync_replica_session_supervisor_test
+     anonsync_replica
+     anonsync_sync_socket_readiness_identity
+     anonsync_sync_replica_tls_transport
+@@ -3266,6 +3278,7 @@
+       anonsync_sync_replica_deployment_manifest_test
+       anonsync_sync_replica_bootstrap_record_test
+       anonsync_sync_replica_deployment_binding_test
++      anonsync_sync_replica_session_supervisor_test
+       anonsync_replica
+       anonsync_sync_socket_readiness_identity_test
+       anonsync_sync_replica_tls_transport_test
+@@ -3428,6 +3441,10 @@
+   COMMAND anonsync_sync_replica_tls_io_policy_test)
+ set_tests_properties(anonsync_sync_replica_tls_io_policy_test
+   PROPERTIES TIMEOUT 20)
++add_test(NAME anonsync_sync_replica_session_supervisor_test
++  COMMAND anonsync_sync_replica_session_supervisor_test)
++set_tests_properties(anonsync_sync_replica_session_supervisor_test
++  PROPERTIES TIMEOUT 20)
+ add_test(NAME anonsync_sync_replica_tls_transport_test
+   COMMAND anonsync_sync_replica_tls_transport_test)
+ set_tests_properties(anonsync_sync_replica_tls_transport_test
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# AnonSync rev0906
++# AnonSync rev0907
+ 
+ AnonSync is an **evidence-authorized, crash-consistent, bounded convergence
+ engine under construction**. Its mission is not ordinary file copying. It turns
+@@ -12,6 +12,56 @@
+ > filesystem names, and build reports may coordinate or verify work, but none may
+ > silently acquire more authority than the exact validated evidence and cutpoint
+ > that created it.
++
++## Rev0907: absolute command budgets, exact idle closure, and safe lease horizons
++
++`send-batch` and `serve-batch` now require both a finite session count and a
++finite whole-command runtime. One absolute steady-clock cutpoint begins before
++manifest, store, listener, membership, and TLS preflight; each new session's
++connect, handshake, request, receipt, and shutdown deadlines is clamped to it.
++The boundary is cooperative rather than a hard preemptive kill: poll-driven
++network work is bounded, while elapsed synchronous SQLite/filesystem/crypto work
++is charged at the next observation.
++
++The policy is no longer embedded only in the 3,600-line CLI translation unit. A
++new typed C++ session-supervisor owner validates bounds, creates deadline plans,
++classifies sender/receiver terminal states, and derives the necessary durable
++claim-lease horizon. Single-session commands use the same executors with one
++session; batch commands cannot become an implicit daemon, sleep loop, or retry
++engine.
++
++The real process spine exposed a composition defect: after all ready deliveries
++settled, the sender could authenticate, find no work, emit zero application
++bytes, and close cleanly, while the receiver treated that exact session as
++failure. The receiver now reports `authenticated_peer_closed_idle` only when
++peer identity is authenticated and every request, inbound, and receipt frontier
++remains untouched. This means no durable delivery authority was spent; it does
++not prove the peer queue or catalog was empty.
++
++A second deadline audit found that the client could authenticate after consuming
++its request budget and still begin a durable claim. The client now re-observes
++the request-admission deadline before the first claim. A real TLS regression
++proves clean expiry creates no operation ID, claim, prefix, frame, body, receipt,
++or dispatch attempt. A later transactional check immediately before prefix
++acceptance remains future work for synchronous claim work that starts before but
++finishes after the cutpoint.
++
++The former 30-second default claim lease also contradicted the protocol: the
++default 10-second staged session permits receipt waiting through 40 seconds, even
++before durable clock movement is considered. The sender now derives the minimum
++from the receipt horizon plus the exact outbox clock policy. Current defaults
++require 641 seconds for 5-second stages and 661 seconds for 10-second stages. An
++explicit shorter lease is rejected before deployment, database, payload, or TLS
++authority opens. These are necessary lower bounds, not completion guarantees;
++process descheduling, SQLite waits, local application work, and suspend remain
++explicit gaps.
++
++Clean GCC 14 and Clang 17 Debug registries each pass **227/227**. A focused
++Clang 17 ASan+UBSan lane passes the supervisor, real TLS transport, SQLite owner,
++file-delivery service, and multi-process CLI spine **5/5**. The next product
++frontier is a deadline-aware transactional claim-to-prefix guard followed by a
++durable typed supervisor across scan, reconcile, schedule, transfer, apply,
++repair, and retention.
+ 
+ ## Rev0906: bounded causal session supervision and oldest-ready dispatch
+ 
+--- /dev/null
++++ b/REVISION_NOTES_rev0907.md
+@@ -0,0 +1,125 @@
++# AnonSync rev0907 revision notes
++
++## Release identity
++
++- Revision: `rev0907`
++- Parent package: `rev0906`
++- Parent archive SHA-256:
++  `0a7ccd4ee7663cd68408654250b4873644ffd7a1df145153e47fe3d491cf9872`
++- Package filename: `AnonSync-rev0907-2026.07.26.23.37-commandbudget-idleclose-leasehorizon-opalwatch.zip`
++- Theme: absolute command budget, exact authenticated idle closure,
++  pre-claim request cutpoint, and claim-lease horizon
++- Source VCS metadata: unavailable in the imported cloudtainer archive; source
++  identity is the exact parent archive, changeset, and active projection
++
++## Mission
++
++AnonSync is an evidence-authorized, crash-consistent, bounded convergence engine.
++Exact validated history and explicit live capabilities are authority. A timeout,
++TLS close, lease, retry clock, counter, projection, path, or report may restrict
++or describe execution but must not invent work, success, or durable state.
++
++Rev0907 applies that rule to the composition above one TLS conversation. A
++session-count cap is not a whole-command deadline. A clean TLS close is not queue
++emptiness. A request deadline is not meaningful if a durable claim may begin
++after it. A lease is not safe if it can expire during the same protocol's valid
++receipt horizon.
++
++## C++ implementation and refactor
++
++1. Added `sync_replica_session_supervisor.hpp/.cpp`, a typed process-local owner
++   for finite session admission, one optional absolute command deadline, staged
++   deadline clamping, sender/receiver stop policy, exact idle/clean-expiry
++   predicates, and claim-lease horizon validation.
++2. `send-batch` and `serve-batch` now require
++   `--max-runtime-seconds` in `[1, 86400]` in addition to
++   `--max-sessions` in `[1, 256]`.
++3. The command cutpoint starts before manifest, store, listener, membership, and
++   TLS preflight. Poll-driven session stages are clamped to it. Synchronous local
++   work is cooperative and charged at the next observation; it is not forcibly
++   preempted.
++4. `send-one` and `serve-one` continue through the same executors with one
++   session and no command-wide runtime, avoiding a parallel authority path.
++5. A receiver now succeeds as `authenticated_peer_closed_idle` only after an
++   authenticated close with zero request/receipt application bytes and no
++   inbound or receipt frontier. This is not evidence that the peer had no work.
++6. The client now observes the request-admission deadline immediately after peer
++   authentication and before the first durable outbox claim. Clean expiry emits
++   no operation ID, claim, digest, prefix, frame, body, or receipt state.
++7. The former 30-second default lease was removed. The sender derives a necessary
++   minimum from the receipt horizon and the exact durable clock policy. With the
++   default clock envelope, a 5-second stage requires 641 seconds and the default
++   10-second stage requires 661 seconds.
++8. Explicit shorter leases fail before deployment, database, payload, or TLS
++   authority opens. The process test proves database-family and payload-directory
++   snapshots remain unchanged.
++9. Authenticated receiver deferral is successful bounded progress for both
++   one-shot and batch senders; it does not authorize sleep, immediate retry, or
++   causally later work.
++10. The new supervisor shares the existing file-TLS product library rather than
++    adding another one-file archive. Its deterministic test is present in native,
++    CTest, compile-sanitizer, and link-sanitizer inventories.
++
++## Corrected failures
++
++### Receiver rejected a valid bounded drain
++
++When the sender used a larger session bound than available work, its final
++mutually authenticated `no_ready_delivery` session sent no application bytes and
++closed cleanly. The receiver previously classified that exact close as failure.
++The new exact idle predicate makes the pair composable without treating TLS
++shutdown as catalog evidence.
++
++### Durable claim could start after the request cutpoint
++
++Handshake and peer-profile work could consume the request budget before the
++claim path began. The new `DispatchDeadlineExpired` frontier prevents claim and
++prefix authority after an already-expired request-admission deadline.
++
++### Default lease expired inside a valid protocol window
++
++With 10-second stages, the receipt deadline is 40 seconds from admission, already
++longer than the former 30-second lease. The durable clock movement envelope makes
++the necessary default lower bound 661 seconds. Rev0907 rejects contradictory
++time policy instead of hiding it.
++
++### Sanitizer proof topology was incomplete
++
++The new unit target was initially compiled with sanitizer flags but omitted from
++sanitizer runtime link targets. The audit caught and corrected that before final
++sanitizer evidence.
++
++## Validation summary
++
++- GCC 14.2 Debug full graph and registry: **227/227 passed**.
++- Clang 17.0 Debug full graph and registry: **227/227 passed**.
++- Clang 17 ASan+UBSan focused modified/product lane: **5/5 passed**.
++- Session-supervisor direct proof: **75 checks passed**.
++- Deployment binding source audit: **27/27 passed**.
++- Database-open policy source audit: **38/38 passed**.
++- Bootstrap-authority source audit: **25/25 passed**.
++- Real process spine covers two settled deliveries, authenticated no-work close,
++  receiver idle success, command accept cutpoint, request pre-claim cutpoint, and
++  mutation-free short-lease rejection.
++
++## Explicit nonclaims and next work
++
++- The command deadline is cooperative, not an asynchronous hard kill. SQLite
++  waits, filesystem calls, local receipt work, process descheduling, and suspend
++  can cross an outer wall-clock expectation.
++- A synchronous claim started before the request deadline can still complete
++  after it; a second transactional pre-prefix deadline guard remains necessary.
++- Transport deadlines use `steady_clock`, while durable lease observations use
++  suspend-aware Linux `CLOCK_BOOTTIME`; suspend policy is not unified.
++- `authenticated_peer_closed_idle` is not a signed no-work message, queue proof,
++  or catalog cutpoint.
++- The supervisor is process-local and not durably resumable.
++- This remains a bounded product spine, not a daemon, fairness scheduler,
++  continuous scanner, complete filesystem synchronizer, scalable anti-entropy
++  engine, retention/GC owner, key-evolution system, or anonymity proof.
++- Bundled SQLite remains verified 3.53.3.
++
++See
++`ABSOLUTE_COMMAND_DEADLINE_IDLE_CLOSE_PRECLAIM_AND_LEASE_HORIZON_AUDIT_rev0907.md`
++and `REVISION_EVIDENCE/rev0907/` for the detailed authority analysis, research,
++lineage, changeset, and machine-readable validation record.
+--- a/src/anonsync_replica.cpp
++++ b/src/anonsync_replica.cpp
+@@ -13,6 +13,7 @@
+ #include "sync_replica_file_tls_client.hpp"
+ #include "sync_replica_file_tls_server.hpp"
+ #include "sync_replica_outbox_clock.hpp"
++#include "sync_replica_session_supervisor.hpp"
+ #include "sync_replica_sqlite_owner.hpp"
+ #include "sync_replica_tls_membership_anchor_sqlite_owner.hpp"
+ #include "sync_replica_tls_membership_anchored_owner.hpp"
+@@ -68,8 +69,10 @@
+     64ULL * 1024ULL * 1024ULL;
+ constexpr std::uint64_t kDefaultTimeoutSeconds = 10U;
+ constexpr std::uint64_t kMaximumTimeoutSeconds = 3600U;
+-constexpr std::uint64_t kMaximumBatchSessions = 256U;
+-constexpr std::uint64_t kDefaultLeaseSeconds = 30U;
++constexpr std::uint64_t kMaximumBatchSessions =
++    anonsync::kSyncReplicaSessionSupervisorMaximumSessions;
++constexpr std::uint64_t kMaximumRuntimeSeconds =
++    anonsync::kSyncReplicaSessionSupervisorMaximumRuntimeSeconds;
+ constexpr std::uint64_t kMaximumBootstrapSqliteImageBytes =
+     64ULL * 1024ULL * 1024ULL;
+ constexpr std::uint64_t kMaximumBootstrapSqliteImagePages = 16384ULL;
+@@ -415,6 +418,17 @@
+     if (maximum == 0U || maximum > kMaximumBatchSessions) {
+         throw std::invalid_argument(
+             "--max-sessions must be in [1, 256]");
++    }
++    return maximum;
++}
++
++[[nodiscard]] std::uint64_t max_runtime_from_options(
++    const Options& options) {
++    const std::uint64_t maximum = parse_uint64(
++        options.one("max-runtime-seconds"), "--max-runtime-seconds");
++    if (maximum == 0U || maximum > kMaximumRuntimeSeconds) {
++        throw std::invalid_argument(
++            "--max-runtime-seconds must be in [1, 86400]");
+     }
+     return maximum;
+ }
+@@ -1268,26 +1282,6 @@
+     }
+     SSL_CTX_set_verify_depth(context.get(), 4);
+     return context;
+-}
+-
+-struct StagedDeadlines final {
+-    std::chrono::steady_clock::time_point first;
+-    std::chrono::steady_clock::time_point second;
+-    std::chrono::steady_clock::time_point third;
+-    std::chrono::steady_clock::time_point fourth;
+-    std::chrono::steady_clock::time_point fifth;
+-};
+-
+-[[nodiscard]] StagedDeadlines staged_deadlines(std::uint64_t seconds) {
+-    const auto now = std::chrono::steady_clock::now();
+-    const auto budget = std::chrono::seconds(seconds);
+-    return {
+-        now + budget,
+-        now + budget * 2,
+-        now + budget * 3,
+-        now + budget * 4,
+-        now + budget * 5,
+-    };
+ }
+ 
+ [[nodiscard]] const char* payload_put_name(
+@@ -2976,82 +2970,59 @@
+     return 0;
+ }
+ 
+-enum class SendSessionsStopReason {
+-    MaximumSessionsReached,
+-    NoReadyDelivery,
+-    ReceiverDeferred,
+-    ReceiptApplyConflict,
+-    SessionFailed,
+-};
+-
+-[[nodiscard]] const char* send_sessions_stop_reason_name(
+-    SendSessionsStopReason reason) noexcept {
+-    switch (reason) {
+-        case SendSessionsStopReason::MaximumSessionsReached:
+-            return "max_sessions_reached";
+-        case SendSessionsStopReason::NoReadyDelivery:
+-            return "no_ready_delivery";
+-        case SendSessionsStopReason::ReceiverDeferred:
+-            return "receiver_deferred";
+-        case SendSessionsStopReason::ReceiptApplyConflict:
+-            return "receipt_apply_conflict";
+-        case SendSessionsStopReason::SessionFailed:
+-            return "session_failed";
+-    }
+-    return "unknown";
+-}
+-
+-[[nodiscard]] bool send_session_effect_is_settled(
+-    const anonsync::SyncReplicaFileTlsClientResult& result) noexcept {
+-    return result.disposition ==
+-               anonsync::SyncReplicaFileTlsClientDisposition::ReceiptApplied &&
+-           result.receipt_apply_result == anonsync::
+-               SyncReplicaFileDeliveryReceiptApplyResult::EffectSettled;
+-}
+-
+-[[nodiscard]] bool send_session_receipt_is_receiver_deferred(
+-    const anonsync::SyncReplicaFileTlsClientResult& result) noexcept {
+-    using Result = anonsync::SyncReplicaFileDeliveryReceiptApplyResult;
+-    if (result.disposition !=
+-        anonsync::SyncReplicaFileTlsClientDisposition::ReceiptApplied) {
+-        return false;
+-    }
+-    return result.receipt_apply_result ==
+-               Result::ReceiverEffectCapacityBlocked ||
+-           result.receipt_apply_result == Result::ReceiverEffectPathBlocked ||
+-           result.receipt_apply_result ==
+-               Result::ReceiverEvidenceCapacityBlocked ||
+-           result.receipt_apply_result == Result::ReceiverEvidencePending ||
+-           result.receipt_apply_result ==
+-               Result::ReceiverEvidenceQuarantined ||
+-           result.receipt_apply_result == Result::ReceiverProjectionBlocked ||
+-           result.receipt_apply_result ==
+-               Result::ReceiverDestinationConflict;
+-}
+-
+ struct SendSessionsExecution final {
+     anonsync::SyncReplicaDeploymentManifest deployment;
+     bool operator_trusted_clock = false;
+     std::uint64_t maximum_sessions = 0U;
++    std::optional<std::uint64_t> maximum_runtime_seconds;
++    std::uint64_t session_timeout_seconds = 0U;
++    std::uint64_t claim_lease_seconds = 0U;
++    std::uint64_t minimum_claim_lease_seconds = 0U;
+     std::uint64_t receipts_applied = 0U;
+     std::uint64_t deliveries_settled = 0U;
+     std::uint64_t deliveries_deferred = 0U;
+-    SendSessionsStopReason stop_reason =
+-        SendSessionsStopReason::MaximumSessionsReached;
++    anonsync::SyncReplicaSendSupervisorStopReason stop_reason =
++        anonsync::SyncReplicaSendSupervisorStopReason::MaximumSessionsReached;
+     std::vector<anonsync::SyncReplicaFileTlsClientResult> sessions;
+ };
+ 
+ [[nodiscard]] SendSessionsExecution execute_send_sessions_or_throw(
+     const Options& options,
+     std::string_view command_name,
+-    std::uint64_t maximum_sessions) {
++    std::uint64_t maximum_sessions,
++    std::optional<std::uint64_t> maximum_runtime_seconds) {
+     if (maximum_sessions == 0U ||
+         maximum_sessions > kMaximumBatchSessions) {
+         throw std::logic_error("invalid internal send-session bound");
+     }
+ 
++    const std::uint64_t timeout_seconds = timeout_from_options(options);
++    const anonsync::SyncReplicaSqliteOwnerLimits sender_owner_limits{};
++    const anonsync::SyncReplicaOutboxClockPolicy sender_clock_policy{
++        sender_owner_limits.max_outbox_clock_uncertainty_ns,
++        sender_owner_limits.max_outbox_clock_forward_step_seconds,
++        sender_owner_limits.max_outbox_clock_realtime_lag_seconds,
++    };
++    const std::uint64_t minimum_lease_seconds = anonsync::
++        minimum_sync_replica_session_claim_lease_seconds_or_throw(
++            timeout_seconds, sender_clock_policy,
++            "anonsync_replica sender claim lease");
++    const std::uint64_t lease_seconds = option_uint64_or(
++        options, "lease-seconds", minimum_lease_seconds);
++    anonsync::validate_sync_replica_session_claim_lease_seconds_or_throw(
++        lease_seconds, timeout_seconds, sender_clock_policy,
++        "--lease-seconds");
++    anonsync::SyncReplicaSessionSupervisor supervisor(
++        {maximum_sessions, timeout_seconds, maximum_runtime_seconds},
++        std::chrono::steady_clock::now(),
++        "anonsync_replica " + std::string(command_name) + " supervisor");
++
+     SendSessionsExecution execution;
+     execution.maximum_sessions = maximum_sessions;
++    execution.maximum_runtime_seconds = maximum_runtime_seconds;
++    execution.session_timeout_seconds = timeout_seconds;
++    execution.claim_lease_seconds = lease_seconds;
++    execution.minimum_claim_lease_seconds = minimum_lease_seconds;
+     execution.sessions.reserve(static_cast<std::size_t>(maximum_sessions));
+     execution.deployment =
+         load_operational_deployment_manifest_or_throw(options, command_name);
+@@ -3074,9 +3045,6 @@
+         options.one("address"), parse_port(options.one("port"), "--port")};
+     const anonsync::SyncReplicaTlsPeerPolicy expected_peer{
+         remote_actor, remote_spki};
+-    const std::uint64_t lease_seconds = option_uint64_or(
+-        options, "lease-seconds", kDefaultLeaseSeconds);
+-    const std::uint64_t timeout_seconds = timeout_from_options(options);
+     const std::string worker =
+         options.one_or("worker", "anonsync-replica-worker");
+     execution.operator_trusted_clock =
+@@ -3090,7 +3058,7 @@
+             "anonsync_replica sender database");
+     anonsync::SyncReplicaSqliteOwner owner(
+         database.db, execution.deployment.folder_id,
+-        execution.deployment.local_actor, {},
++        execution.deployment.local_actor, sender_owner_limits,
+         "anonsync_replica sender owner", std::move(clock_source));
+     anonsync::SyncReplicaFileDeliveryService service(
+         owner, nullptr,
+@@ -3112,8 +3080,29 @@
+         certificate, private_key, ca_file, false,
+         "anonsync_replica client TLS context");
+ 
+-    for (std::uint64_t index = 0U; index < maximum_sessions; ++index) {
+-        const StagedDeadlines staged = staged_deadlines(timeout_seconds);
++    for (;;) {
++        const anonsync::SyncReplicaSessionAuthorization authorization =
++            supervisor.authorize_next_or_throw();
++        if (authorization.disposition == anonsync::
++                SyncReplicaSessionAuthorizationDisposition::
++                    MaximumSessionsReached) {
++            execution.stop_reason = anonsync::
++                SyncReplicaSendSupervisorStopReason::MaximumSessionsReached;
++            break;
++        }
++        if (authorization.disposition == anonsync::
++                SyncReplicaSessionAuthorizationDisposition::
++                    CommandDeadlineReached) {
++            execution.stop_reason = anonsync::
++                SyncReplicaSendSupervisorStopReason::CommandDeadlineReached;
++            break;
++        }
++        if (!authorization.plan.has_value()) {
++            throw std::logic_error(
++                "authorized send session omitted its deadline plan");
++        }
++        const anonsync::SyncReplicaSessionDeadlinePlan& plan =
++            *authorization.plan;
+         auto result =
+             anonsync::send_one_sync_replica_file_delivery_tls_session_or_throw(
+                 service, payload_snapshot,
+@@ -3122,43 +3111,41 @@
+                         context.get(),
+                         "anonsync_replica retained client context"),
+                 endpoint, expected_peer, worker, lease_seconds,
+-                {staged.first, staged.second, staged.third,
+-                 staged.fourth, staged.fifth},
++                plan.client_deadlines(),
+                 "anonsync_replica " + std::string(command_name) +
+-                    " session " + std::to_string(index + 1U));
+-        const bool no_ready = result.disposition ==
+-            anonsync::SyncReplicaFileTlsClientDisposition::NoReadyDelivery;
+-        const bool settled = send_session_effect_is_settled(result);
++                    " session " + std::to_string(plan.session_index));
++
+         const bool receipt_applied = result.disposition ==
+             anonsync::SyncReplicaFileTlsClientDisposition::ReceiptApplied;
++        const bool settled =
++            anonsync::sync_replica_send_session_effect_is_settled(result);
++        const bool deferred =
++            anonsync::sync_replica_send_session_receiver_deferred(result);
++        std::optional<anonsync::SyncReplicaSendSupervisorStopReason> stop =
++            anonsync::sync_replica_send_supervisor_stop_after(result);
++        if (stop == anonsync::SyncReplicaSendSupervisorStopReason::SessionFailed &&
++            anonsync::
++                sync_replica_send_session_is_authenticated_dispatch_deadline_clean(
++                    result) &&
++            plan.command_limits(anonsync::SyncReplicaSessionStage::Third) &&
++            supervisor.command_deadline_reached_at(
++                std::chrono::steady_clock::now())) {
++            stop = anonsync::
++                SyncReplicaSendSupervisorStopReason::CommandDeadlineReached;
++        }
+         execution.sessions.push_back(std::move(result));
+ 
+-        if (no_ready) {
+-            execution.stop_reason = SendSessionsStopReason::NoReadyDelivery;
+-            break;
+-        }
+-        if (!receipt_applied) {
+-            execution.stop_reason = SendSessionsStopReason::SessionFailed;
+-            break;
+-        }
+-        ++execution.receipts_applied;
+-        if (settled) {
+-            ++execution.deliveries_settled;
+-            continue;
+-        }
+-        if (send_session_receipt_is_receiver_deferred(
+-                execution.sessions.back())) {
+-            // The authenticated receiver has durably classified the attempt
+-            // and the delivery service has released its exact claim onto the
+-            // owned retry clock. This is bounded progress, not transport
+-            // ambiguity, but continuing into causally later work could amplify
+-            // receiver pressure. Stop successfully without sleeping or
+-            // manufacturing retry authority inside the command.
+-            ++execution.deliveries_deferred;
+-            execution.stop_reason = SendSessionsStopReason::ReceiverDeferred;
+-            break;
+-        }
+-        execution.stop_reason = SendSessionsStopReason::ReceiptApplyConflict;
++        if (receipt_applied) ++execution.receipts_applied;
++        if (settled) ++execution.deliveries_settled;
++        if (deferred) ++execution.deliveries_deferred;
++        if (!stop.has_value()) continue;
++
++        // An authenticated receiver deferral has already released the exact
++        // claim onto the owned retry clock. Stopping is bounded progress; the
++        // command does not sleep, immediately retry, or move into causally later
++        // work under pressure. Every other terminal decision is likewise typed
++        // outside the CLI presentation layer.
++        execution.stop_reason = *stop;
+         break;
+     }
+     return execution;
+@@ -3170,23 +3157,32 @@
+         "address", "port", "certificate", "private-key", "ca-file",
+         "worker", "lease-seconds", "timeout-seconds",
+         "operator-clock-authority-id", "operator-clock-uncertainty-ns"});
+-    const SendSessionsExecution execution =
+-        execute_send_sessions_or_throw(options, "send-one", 1U);
++    const SendSessionsExecution execution = execute_send_sessions_or_throw(
++        options, "send-one", 1U, std::nullopt);
+     const auto& result = execution.sessions.front();
+ 
+     std::cout << "{\"command\":\"send-one\"";
+     append_deployment_authority_json_fields(std::cout, execution.deployment);
+     std::cout << ",\"clock_profile\":"
+               << json_quote(clock_profile_name(
+-                     execution.operator_trusted_clock));
++                     execution.operator_trusted_clock))
++              << ",\"session_timeout_seconds\":"
++              << execution.session_timeout_seconds
++              << ",\"claim_lease_seconds\":"
++              << execution.claim_lease_seconds
++              << ",\"minimum_claim_lease_seconds\":"
++              << execution.minimum_claim_lease_seconds
++              << ",\"stop_reason\":"
++              << json_quote(anonsync::
++                     sync_replica_send_supervisor_stop_reason_name(
++                         execution.stop_reason));
+     append_client_session_json_fields(std::cout, result);
+     std::cout << "}\n";
+ 
+-    if (result.disposition ==
+-        anonsync::SyncReplicaFileTlsClientDisposition::NoReadyDelivery) {
+-        return 0;
+-    }
+-    return send_session_effect_is_settled(result) ? 0 : 2;
++    return anonsync::sync_replica_send_supervisor_stop_is_success(
++               execution.stop_reason)
++        ? 0
++        : 2;
+ }
+ 
+ int command_send_batch(const Options& options) {
+@@ -3194,10 +3190,13 @@
+         "manifest", "remote-device", "remote-epoch", "remote-spki",
+         "address", "port", "certificate", "private-key", "ca-file",
+         "worker", "lease-seconds", "timeout-seconds", "max-sessions",
+-        "operator-clock-authority-id", "operator-clock-uncertainty-ns"});
++        "max-runtime-seconds", "operator-clock-authority-id",
++        "operator-clock-uncertainty-ns"});
+     const std::uint64_t maximum_sessions = max_sessions_from_options(options);
++    const std::uint64_t maximum_runtime_seconds =
++        max_runtime_from_options(options);
+     const SendSessionsExecution execution = execute_send_sessions_or_throw(
+-        options, "send-batch", maximum_sessions);
++        options, "send-batch", maximum_sessions, maximum_runtime_seconds);
+ 
+     std::cout << "{\"command\":\"send-batch\"";
+     append_deployment_authority_json_fields(std::cout, execution.deployment);
+@@ -3205,12 +3204,22 @@
+         << ",\"clock_profile\":"
+         << json_quote(clock_profile_name(execution.operator_trusted_clock))
+         << ",\"max_sessions\":" << execution.maximum_sessions
++        << ",\"max_runtime_seconds\":"
++        << *execution.maximum_runtime_seconds
++        << ",\"session_timeout_seconds\":"
++        << execution.session_timeout_seconds
++        << ",\"claim_lease_seconds\":"
++        << execution.claim_lease_seconds
++        << ",\"minimum_claim_lease_seconds\":"
++        << execution.minimum_claim_lease_seconds
+         << ",\"sessions_attempted\":" << execution.sessions.size()
+         << ",\"receipts_applied\":" << execution.receipts_applied
+         << ",\"deliveries_settled\":" << execution.deliveries_settled
+         << ",\"deliveries_deferred\":" << execution.deliveries_deferred
+         << ",\"stop_reason\":"
+-        << json_quote(send_sessions_stop_reason_name(execution.stop_reason))
++        << json_quote(anonsync::
++               sync_replica_send_supervisor_stop_reason_name(
++                   execution.stop_reason))
+         << ",\"sessions\":[";
+     for (std::size_t index = 0U; index < execution.sessions.size(); ++index) {
+         if (index != 0U) std::cout << ',';
+@@ -3220,55 +3229,43 @@
+     }
+     std::cout << "]}\n";
+ 
+-    return execution.stop_reason ==
+-                   SendSessionsStopReason::MaximumSessionsReached ||
+-               execution.stop_reason ==
+-                   SendSessionsStopReason::NoReadyDelivery ||
+-               execution.stop_reason ==
+-                   SendSessionsStopReason::ReceiverDeferred
++    return anonsync::sync_replica_send_supervisor_stop_is_success(
++               execution.stop_reason)
+         ? 0
+         : 2;
+-}
+-
+-enum class ServeSessionsStopReason {
+-    MaximumSessionsReached,
+-    AcceptDeadlineExpired,
+-    SessionFailed,
+-};
+-
+-[[nodiscard]] const char* serve_sessions_stop_reason_name(
+-    ServeSessionsStopReason reason) noexcept {
+-    switch (reason) {
+-        case ServeSessionsStopReason::MaximumSessionsReached:
+-            return "max_sessions_reached";
+-        case ServeSessionsStopReason::AcceptDeadlineExpired:
+-            return "accept_deadline_expired";
+-        case ServeSessionsStopReason::SessionFailed:
+-            return "session_failed";
+-    }
+-    return "unknown";
+ }
+ 
+ struct ServeSessionsExecution final {
+     anonsync::SyncReplicaDeploymentManifest deployment;
+     std::uint64_t maximum_sessions = 0U;
++    std::optional<std::uint64_t> maximum_runtime_seconds;
++    std::uint64_t session_timeout_seconds = 0U;
+     std::uint64_t receipts_sent = 0U;
+-    ServeSessionsStopReason stop_reason =
+-        ServeSessionsStopReason::MaximumSessionsReached;
++    anonsync::SyncReplicaServeSupervisorStopReason stop_reason =
++        anonsync::SyncReplicaServeSupervisorStopReason::MaximumSessionsReached;
+     std::vector<anonsync::SyncReplicaFileTlsServerResult> sessions;
+ };
+ 
+ [[nodiscard]] ServeSessionsExecution execute_serve_sessions_or_throw(
+     const Options& options,
+     std::string_view command_name,
+-    std::uint64_t maximum_sessions) {
++    std::uint64_t maximum_sessions,
++    std::optional<std::uint64_t> maximum_runtime_seconds) {
+     if (maximum_sessions == 0U ||
+         maximum_sessions > kMaximumBatchSessions) {
+         throw std::logic_error("invalid internal serve-session bound");
+     }
+ 
++    const std::uint64_t timeout_seconds = timeout_from_options(options);
++    anonsync::SyncReplicaSessionSupervisor supervisor(
++        {maximum_sessions, timeout_seconds, maximum_runtime_seconds},
++        std::chrono::steady_clock::now(),
++        "anonsync_replica " + std::string(command_name) + " supervisor");
++
+     ServeSessionsExecution execution;
+     execution.maximum_sessions = maximum_sessions;
++    execution.maximum_runtime_seconds = maximum_runtime_seconds;
++    execution.session_timeout_seconds = timeout_seconds;
+     execution.sessions.reserve(static_cast<std::size_t>(maximum_sessions));
+     execution.deployment =
+         load_operational_deployment_manifest_or_throw(options, command_name);
+@@ -3281,14 +3278,13 @@
+     const fs::path ca_file = require_existing_regular_file(
+         options.one("ca-file"), "--ca-file");
+     const std::uint16_t port = parse_port(options.one("port"), "--port");
+-    const std::uint64_t timeout_seconds = timeout_from_options(options);
+ 
+ #ifndef __linux__
+     (void)certificate;
+     (void)private_key;
+     (void)ca_file;
+     (void)port;
+-    (void)timeout_seconds;
++    (void)supervisor;
+     throw std::runtime_error(
+         std::string(command_name) + " requires Linux");
+ #else
+@@ -3357,11 +3353,32 @@
+         file_service_limits(execution.deployment.max_payload_bytes),
+         "anonsync_replica receiver service");
+ 
+-    for (std::uint64_t index = 0U; index < maximum_sessions; ++index) {
+-        if (index != 0U) {
++    for (;;) {
++        const anonsync::SyncReplicaSessionAuthorization authorization =
++            supervisor.authorize_next_or_throw();
++        if (authorization.disposition == anonsync::
++                SyncReplicaSessionAuthorizationDisposition::
++                    MaximumSessionsReached) {
++            execution.stop_reason = anonsync::
++                SyncReplicaServeSupervisorStopReason::MaximumSessionsReached;
++            break;
++        }
++        if (authorization.disposition == anonsync::
++                SyncReplicaSessionAuthorizationDisposition::
++                    CommandDeadlineReached) {
++            execution.stop_reason = anonsync::
++                SyncReplicaServeSupervisorStopReason::CommandDeadlineReached;
++            break;
++        }
++        if (!authorization.plan.has_value()) {
++            throw std::logic_error(
++                "authorized serve session omitted its deadline plan");
++        }
++        const anonsync::SyncReplicaSessionDeadlinePlan& plan =
++            *authorization.plan;
++        if (plan.session_index != 1U) {
+             membership = coordinator.current_authority_or_throw();
+         }
+-        const StagedDeadlines staged = staged_deadlines(timeout_seconds);
+         auto result =
+             anonsync::serve_one_sync_replica_file_delivery_tls_session_or_throw(
+                 service, listener,
+@@ -3369,24 +3386,27 @@
+                     retain_sync_replica_file_tls_server_context_or_throw(
+                         context.get(),
+                         "anonsync_replica retained server context"),
+-                std::move(membership),
+-                {staged.first, staged.second, staged.third,
+-                 staged.fourth, staged.fifth},
++                std::move(membership), plan.server_deadlines(),
+                 "anonsync_replica " + std::string(command_name) +
+-                    " session " + std::to_string(index + 1U));
++                    " session " + std::to_string(plan.session_index));
++
+         const bool receipt_sent = result.disposition ==
+             anonsync::SyncReplicaFileTlsServerDisposition::ReceiptSent;
+-        const bool accept_expired = result.disposition == anonsync::
+-            SyncReplicaFileTlsServerDisposition::AcceptDeadlineExpired;
++        std::optional<anonsync::SyncReplicaServeSupervisorStopReason> stop =
++            anonsync::sync_replica_serve_supervisor_stop_after(result);
++        if (stop == anonsync::
++                SyncReplicaServeSupervisorStopReason::AcceptDeadlineExpired &&
++            plan.command_limits(anonsync::SyncReplicaSessionStage::First) &&
++            supervisor.command_deadline_reached_at(
++                std::chrono::steady_clock::now())) {
++            stop = anonsync::
++                SyncReplicaServeSupervisorStopReason::CommandDeadlineReached;
++        }
+         execution.sessions.push_back(std::move(result));
+ 
+-        if (receipt_sent) {
+-            ++execution.receipts_sent;
+-            continue;
+-        }
+-        execution.stop_reason = accept_expired
+-            ? ServeSessionsStopReason::AcceptDeadlineExpired
+-            : ServeSessionsStopReason::SessionFailed;
++        if (receipt_sent) ++execution.receipts_sent;
++        if (!stop.has_value()) continue;
++        execution.stop_reason = *stop;
+         break;
+     }
+     return execution;
+@@ -3397,19 +3417,23 @@
+     options.require_only({
+         "manifest", "bind-address", "port", "certificate", "private-key",
+         "ca-file", "timeout-seconds"});
+-    const ServeSessionsExecution execution =
+-        execute_serve_sessions_or_throw(options, "serve-one", 1U);
++    const ServeSessionsExecution execution = execute_serve_sessions_or_throw(
++        options, "serve-one", 1U, std::nullopt);
+     const auto& result = execution.sessions.front();
+ 
+     std::cout << "{\"command\":\"serve-one\"";
+     append_deployment_authority_json_fields(std::cout, execution.deployment);
++    std::cout << ",\"session_timeout_seconds\":"
++              << execution.session_timeout_seconds
++              << ",\"stop_reason\":"
++              << json_quote(anonsync::
++                     sync_replica_serve_supervisor_stop_reason_name(
++                         execution.stop_reason));
+     append_server_session_json_fields(std::cout, result);
+     std::cout << "}\n";
+ 
+-    return result.disposition ==
+-                   anonsync::SyncReplicaFileTlsServerDisposition::ReceiptSent ||
+-               result.disposition == anonsync::
+-                   SyncReplicaFileTlsServerDisposition::AcceptDeadlineExpired
++    return anonsync::sync_replica_serve_supervisor_stop_is_success(
++               execution.stop_reason)
+         ? 0
+         : 2;
+ }
+@@ -3417,19 +3441,28 @@
+ int command_serve_batch(const Options& options) {
+     options.require_only({
+         "manifest", "bind-address", "port", "certificate", "private-key",
+-        "ca-file", "timeout-seconds", "max-sessions"});
++        "ca-file", "timeout-seconds", "max-sessions",
++        "max-runtime-seconds"});
+     const std::uint64_t maximum_sessions = max_sessions_from_options(options);
++    const std::uint64_t maximum_runtime_seconds =
++        max_runtime_from_options(options);
+     const ServeSessionsExecution execution = execute_serve_sessions_or_throw(
+-        options, "serve-batch", maximum_sessions);
++        options, "serve-batch", maximum_sessions, maximum_runtime_seconds);
+ 
+     std::cout << "{\"command\":\"serve-batch\"";
+     append_deployment_authority_json_fields(std::cout, execution.deployment);
+     std::cout
+         << ",\"max_sessions\":" << execution.maximum_sessions
++        << ",\"max_runtime_seconds\":"
++        << *execution.maximum_runtime_seconds
++        << ",\"session_timeout_seconds\":"
++        << execution.session_timeout_seconds
+         << ",\"sessions_attempted\":" << execution.sessions.size()
+         << ",\"receipts_sent\":" << execution.receipts_sent
+         << ",\"stop_reason\":"
+-        << json_quote(serve_sessions_stop_reason_name(execution.stop_reason))
++        << json_quote(anonsync::
++               sync_replica_serve_supervisor_stop_reason_name(
++                   execution.stop_reason))
+         << ",\"sessions\":[";
+     for (std::size_t index = 0U; index < execution.sessions.size(); ++index) {
+         if (index != 0U) std::cout << ',';
+@@ -3439,10 +3472,8 @@
+     }
+     std::cout << "]}\n";
+ 
+-    return execution.stop_reason ==
+-                   ServeSessionsStopReason::MaximumSessionsReached ||
+-               execution.stop_reason ==
+-                   ServeSessionsStopReason::AcceptDeadlineExpired
++    return anonsync::sync_replica_serve_supervisor_stop_is_success(
++               execution.stop_reason)
+         ? 0
+         : 2;
+ }
+@@ -3481,7 +3512,7 @@
+ 
+ void print_usage(std::ostream& output) {
+     output <<
+-        "AnonSync bounded causal replica product spine\n\n"
++        "AnonSync command-bounded causal replica product spine\n\n"
+         "Commands:\n"
+         "  anonsync_replica init --manifest ABSOLUTE_JSON "
+         "--replica-db ABSOLUTE_DB --folder ID --local-device ID "
+@@ -3512,7 +3543,8 @@
+         "[--operator-clock-authority-id ID "
+         "--operator-clock-uncertainty-ns N]\n"
+         "  anonsync_replica send-batch --manifest ABSOLUTE_JSON "
+-        "--max-sessions N --remote-device ID --remote-epoch N "
++        "--max-sessions N --max-runtime-seconds N "
++        "--remote-device ID --remote-epoch N "
+         "--remote-spki SHA256 --address NUMERIC_IP --port N "
+         "--certificate ABSOLUTE_PEM --private-key ABSOLUTE_PEM "
+         "--ca-file ABSOLUTE_PEM [--worker ID] [--lease-seconds N] "
+@@ -3523,7 +3555,8 @@
+         "--certificate ABSOLUTE_PEM --private-key ABSOLUTE_PEM "
+         "--ca-file ABSOLUTE_PEM [--timeout-seconds N]\n"
+         "  anonsync_replica serve-batch --manifest ABSOLUTE_JSON "
+-        "--max-sessions N --bind-address NUMERIC_IP --port N "
++        "--max-sessions N --max-runtime-seconds N "
++        "--bind-address NUMERIC_IP --port N "
+         "--certificate ABSOLUTE_PEM --private-key ABSOLUTE_PEM "
+         "--ca-file ABSOLUTE_PEM [--timeout-seconds N]\n\n"
+         "All paths must be absolute. init is the sole fresh product-spine "
+@@ -3546,16 +3579,31 @@
+         "samples and publishes clock health without claiming work; "
+         "clock-recover requires the exact current quarantine generation. "
+         "send-one and serve-one each own exactly one bounded TLS conversation. "
+-        "send-batch and serve-batch retain one manifest/store/context cutpoint "
+-        "while owning at most --max-sessions conversations and mint fresh staged "
+-        "deadlines for every session. They stop on transport ambiguity, peer "
+-        "rejection, local receipt-apply conflict, or authenticated receiver "
+-        "deferral; receiver deferral is reported as nonfatal bounded progress "
+-        "rather than amplified into causally later work. They are bounded "
+-        "supervisors, not background daemons: they do not invent retry, "
+-        "backoff, routing, or scheduling "
+-        "authority. send-one and send-batch default to the fail-closed kernel "
+-        "clock source; paired operator-clock options are "
++        "send-batch and serve-batch require both --max-sessions and "
++        "--max-runtime-seconds, retain one manifest/store/context cutpoint, and "
++        "mint fresh staged deadlines clamped to one absolute command cutpoint "
++        "that begins before deployment/store/TLS preflight. Synchronous local "
++        "work is not asynchronously preempted, but its elapsed time is charged "
++        "at the next admission or I/O deadline. They stop on transport "
++        "ambiguity, peer rejection, local receipt-apply conflict, or "
++        "authenticated receiver deferral; receiver deferral is nonfatal bounded "
++        "progress rather than permission to amplify causally later work. An "
++        "authorized peer close is nonfatal idle only after a completed TLS "
++        "handshake with zero application prefix, frame, body, inbound decision, "
++        "or receipt write; that classification is not evidence that the peer had "
++        "no work. The commands are bounded supervisors, not background daemons: "
++        "they do not invent retry, backoff, routing, or scheduling authority. "
++        "send-one and send-batch derive the default durable claim lease "
++        "from the receipt horizon and exact durable clock policy; an explicit "
++        "shorter lease is rejected before manifest, store, payload, TLS, or "
++        "socket authority is opened. This is a necessary protocol/clock lower "
++        "bound, not a real-time completion guarantee: process descheduling, "
++        "SQLite writer waits, local receipt application, and arbitrary system "
++        "suspension remain outside the static proof; expiry still fails closed. "
++        "Transport deadlines and durable lease observations also use different "
++        "Linux clock domains. They default to the fail-closed kernel clock "
++        "source; paired "
++        "operator-clock options are "
+         "an explicit deployment assertion for externally owned synchronization "
+         "evidence. JSON is written to stdout and diagnostics to stderr.\n";
+ }
+--- a/src/sync_replica_file_tls_client.cpp
++++ b/src/sync_replica_file_tls_client.cpp
+@@ -565,6 +565,8 @@
+             return "handshake_rejected";
+         case SyncReplicaFileTlsClientDisposition::PeerUnauthorized:
+             return "peer_unauthorized";
++        case SyncReplicaFileTlsClientDisposition::DispatchDeadlineExpired:
++            return "dispatch_deadline_expired";
+         case SyncReplicaFileTlsClientDisposition::NoReadyDelivery:
+             return "no_ready_delivery";
+         case SyncReplicaFileTlsClientDisposition::RequestDeadlineExpired:
+@@ -733,95 +735,108 @@
+         result.peer_authenticated = true;
+         result.peer_actor = expected_peer.actor;
+ 
+-        std::optional<SyncReplicaFileTlsDispatchContinuation> dispatch;
+-        try {
+-            dispatch =
+-                claim_and_begin_next_file_delivery_over_tls_or_throw(
+-                    service, channel, std::move(worker_id), lease_seconds,
+-                    payload_snapshot, label + " request dispatch");
+-        } catch (...) {
+-            discard_sync_replica_tls_authenticated_channel_noexcept(channel);
+-            throw;
+-        }
+-
+-        if (!dispatch.has_value()) {
+-            result.disposition =
+-                SyncReplicaFileTlsClientDisposition::NoReadyDelivery;
++        // Handshake and peer-profile work can consume the request budget even
++        // after the handshake cutpoint itself was met. Re-observe the absolute
++        // request-admission deadline immediately before the first durable claim.
++        // Starting one synchronous claim before the cutpoint remains authorized;
++        // it is not asynchronously revoked if the clock advances during that
++        // transaction. Starting after the cutpoint is forbidden.
++        if (std::chrono::steady_clock::now() >= deadlines.request) {
++            result.disposition = SyncReplicaFileTlsClientDisposition::
++                DispatchDeadlineExpired;
+             discard_sync_replica_tls_authenticated_channel_noexcept(channel);
+             application_terminal = true;
+         } else {
+-            const SyncReplicaOutboundFileDelivery& outbound =
+-                dispatch->outbound_or_throw();
+-            result.operation_id =
+-                outbound.request.evidence_request.operation.operation_id;
+-            result.claim_id = outbound.claim.intent.lease.claim_id;
+-            result.request_digest = outbound.request_digest;
+-            result.request_prefix_bytes_written =
+-                kSyncReplicaTlsRecordPrefixBytes;
+-            result.request_frame_bytes = dispatch->frame_bytes();
+-            result.request_body_bytes_written =
+-                dispatch->body_bytes_written();
+-
+-            const bool request_complete = [&] {
+-                try {
+-                    return finish_request_until_or_throw(
+-                        *dispatch, channel, deadlines.request,
+-                        label + " request poll", result);
+-                } catch (...) {
+-                    discard_sync_replica_tls_authenticated_channel_noexcept(
+-                        channel);
+-                    throw;
+-                }
+-            }();
+-            if (!request_complete) {
+-                result.disposition = SyncReplicaFileTlsClientDisposition::
+-                    RequestDeadlineExpired;
++            std::optional<SyncReplicaFileTlsDispatchContinuation> dispatch;
++            try {
++                dispatch =
++                    claim_and_begin_next_file_delivery_over_tls_or_throw(
++                        service, channel, std::move(worker_id), lease_seconds,
++                        payload_snapshot, label + " request dispatch");
++            } catch (...) {
++                discard_sync_replica_tls_authenticated_channel_noexcept(channel);
++                throw;
++            }
++
++            if (!dispatch.has_value()) {
++                result.disposition =
++                    SyncReplicaFileTlsClientDisposition::NoReadyDelivery;
++                discard_sync_replica_tls_authenticated_channel_noexcept(channel);
++                application_terminal = true;
+             } else {
+-                ReceiptReadOutcome receipt = [&] {
++                const SyncReplicaOutboundFileDelivery& outbound =
++                    dispatch->outbound_or_throw();
++                result.operation_id =
++                    outbound.request.evidence_request.operation.operation_id;
++                result.claim_id = outbound.claim.intent.lease.claim_id;
++                result.request_digest = outbound.request_digest;
++                result.request_prefix_bytes_written =
++                    kSyncReplicaTlsRecordPrefixBytes;
++                result.request_frame_bytes = dispatch->frame_bytes();
++                result.request_body_bytes_written =
++                    dispatch->body_bytes_written();
++
++                const bool request_complete = [&] {
+                     try {
+-                        return read_receipt_until_or_throw(
+-                            channel, service.max_receipt_frame_bytes(),
+-                            deadlines.receipt, label + " receipt",
+-                            label + " receipt poll");
++                        return finish_request_until_or_throw(
++                            *dispatch, channel, deadlines.request,
++                            label + " request poll", result);
+                     } catch (...) {
+                         discard_sync_replica_tls_authenticated_channel_noexcept(
+                             channel);
+                         throw;
+                     }
+                 }();
+-                result.receipt_prefix_bytes_received =
+-                    receipt.prefix_bytes_received;
+-                result.receipt_frame_bytes = receipt.frame_bytes;
+-                result.receipt_body_bytes_received =
+-                    receipt.body_bytes_received;
+-                if (receipt.terminal ==
+-                    ReceiptReadOutcome::Terminal::PeerClosed) {
+-                    result.disposition =
+-                        SyncReplicaFileTlsClientDisposition::PeerClosed;
+-                    discard_sync_replica_tls_authenticated_channel_noexcept(
+-                        channel);
+-                } else if (receipt.terminal ==
+-                           ReceiptReadOutcome::Terminal::DeadlineExpired) {
++                if (!request_complete) {
+                     result.disposition = SyncReplicaFileTlsClientDisposition::
+-                        ReceiptDeadlineExpired;
+-                    discard_sync_replica_tls_authenticated_channel_noexcept(
+-                        channel);
++                        RequestDeadlineExpired;
+                 } else {
+-                    try {
+-                        result.receipt_apply_result =
+-                            service.apply_receipt_or_throw(
+-                                channel.delivery_authority(),
+-                                outbound.request, receipt.frame);
+-                    } catch (...) {
++                    ReceiptReadOutcome receipt = [&] {
++                        try {
++                            return read_receipt_until_or_throw(
++                                channel, service.max_receipt_frame_bytes(),
++                                deadlines.receipt, label + " receipt",
++                                label + " receipt poll");
++                        } catch (...) {
++                            discard_sync_replica_tls_authenticated_channel_noexcept(
++                                channel);
++                            throw;
++                        }
++                    }();
++                    result.receipt_prefix_bytes_received =
++                        receipt.prefix_bytes_received;
++                    result.receipt_frame_bytes = receipt.frame_bytes;
++                    result.receipt_body_bytes_received =
++                        receipt.body_bytes_received;
++                    if (receipt.terminal ==
++                        ReceiptReadOutcome::Terminal::PeerClosed) {
++                        result.disposition =
++                            SyncReplicaFileTlsClientDisposition::PeerClosed;
+                         discard_sync_replica_tls_authenticated_channel_noexcept(
+                             channel);
+-                        throw;
++                    } else if (receipt.terminal ==
++                               ReceiptReadOutcome::Terminal::DeadlineExpired) {
++                        result.disposition = SyncReplicaFileTlsClientDisposition::
++                            ReceiptDeadlineExpired;
++                        discard_sync_replica_tls_authenticated_channel_noexcept(
++                            channel);
++                    } else {
++                        try {
++                            result.receipt_apply_result =
++                                service.apply_receipt_or_throw(
++                                    channel.delivery_authority(),
++                                    outbound.request, receipt.frame);
++                        } catch (...) {
++                            discard_sync_replica_tls_authenticated_channel_noexcept(
++                                channel);
++                            throw;
++                        }
++                        result.disposition = SyncReplicaFileTlsClientDisposition::
++                            ReceiptApplied;
++                        discard_sync_replica_tls_authenticated_channel_noexcept(
++                            channel);
++                        application_terminal = true;
+                     }
+-                    result.disposition =
+-                        SyncReplicaFileTlsClientDisposition::ReceiptApplied;
+-                    discard_sync_replica_tls_authenticated_channel_noexcept(
+-                        channel);
+-                    application_terminal = true;
+                 }
+             }
+         }
+--- a/src/sync_replica_file_tls_client.hpp
++++ b/src/sync_replica_file_tls_client.hpp
+@@ -76,6 +76,7 @@
+     HandshakeDeadlineExpired,
+     HandshakeRejected,
+     PeerUnauthorized,
++    DispatchDeadlineExpired,
+     NoReadyDelivery,
+     RequestDeadlineExpired,
+     PeerClosed,
+@@ -151,14 +152,16 @@
+ //     -> optional one-shot close_notify
+ //     -> unconditional socket close
+ //
+-// No outbox claim is attempted before peer authentication and payload-store
+-// preflight. NoReadyDelivery therefore spends neither claim nor request bytes.
+-// Once the complete request prefix is accepted under the SQLite dispatch guard,
+-// request or receipt timeout leaves the exact claim live and ambiguous; this
+-// owner never converts transport uncertainty into a retry release. A complete
+-// authenticated receipt is applied before ReceiptApplied is returned. As on the
+-// receiver, TLS shutdown is subordinate to the application result and cannot
+-// downgrade a completed receipt application.
++// No outbox claim is attempted before peer authentication, payload-store
++// preflight, and one final observation that the request-admission cutpoint has
++// not expired. DispatchDeadlineExpired therefore spends neither claim nor
++// request bytes. NoReadyDelivery likewise spends neither. Once the complete
++// request prefix is accepted under the SQLite dispatch guard, request or receipt
++// timeout leaves the exact claim live and ambiguous; this owner never converts
++// transport uncertainty into a retry release. A complete authenticated receipt
++// is applied before ReceiptApplied is returned. As on the receiver, TLS shutdown
++// is subordinate to the application result and cannot downgrade a completed
++// receipt application.
+ //
+ // The endpoint is numeric-only and all deadlines are absolute steady-clock
+ // cutpoints. The function is process/thread-affine through the SQLite, payload,
+--- /dev/null
++++ b/src/sync_replica_session_supervisor.cpp
+@@ -0,0 +1,490 @@
++#include "sync_replica_session_supervisor.hpp"
++
++#include "sync_replica_outbox_lease.hpp"
++
++#include <chrono>
++#include <limits>
++#include <stdexcept>
++#include <utility>
++
++namespace anonsync {
++namespace {
++
++using Clock = std::chrono::steady_clock;
++using TimePoint = Clock::time_point;
++using Duration = Clock::duration;
++
++[[nodiscard]] Duration seconds_duration_or_throw(
++    std::uint64_t seconds,
++    const std::string& label) {
++    if (seconds > static_cast<std::uint64_t>(
++                      std::numeric_limits<std::int64_t>::max())) {
++        throw std::overflow_error(label + " seconds exceed int64_t");
++    }
++    const auto value = std::chrono::seconds(
++        static_cast<std::int64_t>(seconds));
++    const Duration converted =
++        std::chrono::duration_cast<Duration>(value);
++    if (converted <= Duration::zero()) {
++        throw std::overflow_error(
++            label + " cannot be represented by steady_clock");
++    }
++    return converted;
++}
++
++[[nodiscard]] TimePoint checked_add_or_throw(
++    TimePoint base,
++    Duration delta,
++    const std::string& label) {
++    if (delta < Duration::zero() ||
++        base > TimePoint::max() - delta) {
++        throw std::overflow_error(label + " deadline overflows steady_clock");
++    }
++    return base + delta;
++}
++
++[[nodiscard]] std::size_t stage_index(
++    SyncReplicaSessionStage stage) noexcept {
++    return static_cast<std::size_t>(stage);
++}
++
++[[nodiscard]] std::uint64_t checked_multiply_u64_or_throw(
++    std::uint64_t left,
++    std::uint64_t right,
++    const std::string& label) {
++    if (right != 0U &&
++        left > std::numeric_limits<std::uint64_t>::max() / right) {
++        throw std::overflow_error(label + " multiplication overflows");
++    }
++    return left * right;
++}
++
++[[nodiscard]] std::uint64_t checked_add_u64_or_throw(
++    std::uint64_t left,
++    std::uint64_t right,
++    const std::string& label) {
++    if (left > std::numeric_limits<std::uint64_t>::max() - right) {
++        throw std::overflow_error(label + " addition overflows");
++    }
++    return left + right;
++}
++
++[[nodiscard]] std::uint64_t ceiling_divide_u64_or_throw(
++    std::uint64_t numerator,
++    std::uint64_t denominator,
++    const std::string& label) {
++    if (denominator == 0U) {
++        throw std::logic_error(label + " divisor is zero");
++    }
++    return numerator == 0U ? 0U : 1U + ((numerator - 1U) / denominator);
++}
++
++void validate_stage_timeout_or_throw(
++    std::uint64_t stage_timeout_seconds,
++    const std::string& label) {
++    if (stage_timeout_seconds == 0U ||
++        stage_timeout_seconds >
++            kSyncReplicaSessionSupervisorMaximumStageTimeoutSeconds) {
++        throw std::invalid_argument(
++            label + " stage_timeout_seconds must be in 1..3600");
++    }
++}
++
++}  // namespace
++
++void validate_sync_replica_session_supervisor_limits_or_throw(
++    const SyncReplicaSessionSupervisorLimits& limits,
++    std::string_view label_view) {
++    const std::string label(label_view);
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "sync replica session supervisor limits label is empty");
++    }
++    if (limits.maximum_sessions == 0U ||
++        limits.maximum_sessions >
++            kSyncReplicaSessionSupervisorMaximumSessions) {
++        throw std::invalid_argument(
++            label + " maximum_sessions must be in 1..256");
++    }
++    validate_stage_timeout_or_throw(
++        limits.stage_timeout_seconds, label);
++    if (limits.maximum_runtime_seconds.has_value() &&
++        (*limits.maximum_runtime_seconds == 0U ||
++         *limits.maximum_runtime_seconds >
++             kSyncReplicaSessionSupervisorMaximumRuntimeSeconds)) {
++        throw std::invalid_argument(
++            label + " maximum_runtime_seconds must be in 1..86400");
++    }
++}
++
++std::uint64_t sync_replica_session_receipt_horizon_seconds_or_throw(
++    std::uint64_t stage_timeout_seconds,
++    std::string_view label_view) {
++    const std::string label(label_view);
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "sync replica session receipt horizon label is empty");
++    }
++    validate_stage_timeout_or_throw(stage_timeout_seconds, label);
++    return checked_multiply_u64_or_throw(
++        stage_timeout_seconds,
++        kSyncReplicaSessionSupervisorReceiptStageOrdinal,
++        label + " receipt horizon");
++}
++
++std::uint64_t minimum_sync_replica_session_claim_lease_seconds_or_throw(
++    std::uint64_t stage_timeout_seconds,
++    const SyncReplicaOutboxClockPolicy& clock_policy,
++    std::string_view label_view) {
++    const std::string label(label_view);
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "sync replica session claim lease label is empty");
++    }
++    validate_sync_replica_outbox_clock_policy_or_throw(
++        clock_policy, label + " clock policy");
++
++    std::uint64_t minimum =
++        sync_replica_session_receipt_horizon_seconds_or_throw(
++            stage_timeout_seconds, label);
++    minimum = checked_add_u64_or_throw(
++        minimum, clock_policy.max_forward_step_seconds,
++        label + " accepted forward step");
++    // Both claim and receipt observations are accepted against one older
++    // cumulative anchor. Combining the receipt-side forward bound with the
++    // claim-side realtime-lag bound permits legal catch-up of lag already
++    // present at claim and contributes two anchor plus two endpoint
++    // uncertainty allowances.
++    minimum = checked_add_u64_or_throw(
++        minimum, clock_policy.max_realtime_lag_seconds,
++        label + " accepted realtime catch-up");
++    const std::uint64_t uncertainty_fourfold_ns =
++        checked_multiply_u64_or_throw(
++            clock_policy.max_uncertainty_ns, 4U,
++            label + " anchor and endpoint uncertainty");
++    minimum = checked_add_u64_or_throw(
++        minimum,
++        ceiling_divide_u64_or_throw(
++            uncertainty_fourfold_ns, kSyncReplicaNanosecondsPerSecond,
++            label + " anchor and endpoint uncertainty"),
++        label + " anchor and endpoint uncertainty");
++    // Durable epochs are floor-converted integer seconds and expiry is
++    // exclusive. One final second keeps the latest permitted receipt strictly
++    // before the stored expiry even at an exact continuous-time boundary.
++    minimum = checked_add_u64_or_throw(
++        minimum, 1U, label + " exclusive expiry margin");
++    if (minimum > kSyncReplicaOutboxMaxLeaseSeconds) {
++        throw std::invalid_argument(
++            label + " minimum exceeds durable outbox lease maximum");
++    }
++    return minimum;
++}
++
++void validate_sync_replica_session_claim_lease_seconds_or_throw(
++    std::uint64_t lease_seconds,
++    std::uint64_t stage_timeout_seconds,
++    const SyncReplicaOutboxClockPolicy& clock_policy,
++    std::string_view label_view) {
++    const std::string label(label_view);
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "sync replica session claim lease label is empty");
++    }
++    if (lease_seconds == 0U ||
++        lease_seconds > kSyncReplicaOutboxMaxLeaseSeconds) {
++        throw std::invalid_argument(label + " must be in 1..86400");
++    }
++    const std::uint64_t minimum =
++        minimum_sync_replica_session_claim_lease_seconds_or_throw(
++            stage_timeout_seconds, clock_policy, label);
++    if (lease_seconds < minimum) {
++        throw std::invalid_argument(
++            label + " must be at least " + std::to_string(minimum) +
++            " seconds for the configured receipt and clock horizon");
++    }
++}
++
++std::chrono::steady_clock::time_point
++SyncReplicaSessionDeadlinePlan::deadline(
++    SyncReplicaSessionStage stage) const noexcept {
++    return stages[stage_index(stage)];
++}
++
++bool SyncReplicaSessionDeadlinePlan::command_limits(
++    SyncReplicaSessionStage stage) const noexcept {
++    return command_deadline.has_value() &&
++           deadline(stage) == *command_deadline;
++}
++
++SyncReplicaFileTlsClientDeadlines
++SyncReplicaSessionDeadlinePlan::client_deadlines() const noexcept {
++    return {
++        deadline(SyncReplicaSessionStage::First),
++        deadline(SyncReplicaSessionStage::Second),
++        deadline(SyncReplicaSessionStage::Third),
++        deadline(SyncReplicaSessionStage::Fourth),
++        deadline(SyncReplicaSessionStage::Fifth),
++    };
++}
++
++SyncReplicaFileTlsServerDeadlines
++SyncReplicaSessionDeadlinePlan::server_deadlines() const noexcept {
++    return {
++        deadline(SyncReplicaSessionStage::First),
++        deadline(SyncReplicaSessionStage::Second),
++        deadline(SyncReplicaSessionStage::Third),
++        deadline(SyncReplicaSessionStage::Fourth),
++        deadline(SyncReplicaSessionStage::Fifth),
++    };
++}
++
++SyncReplicaSessionSupervisor::SyncReplicaSessionSupervisor(
++    SyncReplicaSessionSupervisorLimits limits,
++    std::chrono::steady_clock::time_point started_at,
++    std::string label)
++    : limits_(std::move(limits)),
++      started_at_(started_at),
++      label_(std::move(label)) {
++    if (label_.empty()) {
++        throw std::invalid_argument(
++            "sync replica session supervisor label is empty");
++    }
++    validate_sync_replica_session_supervisor_limits_or_throw(
++        limits_, label_ + " limits");
++    if (limits_.maximum_runtime_seconds.has_value()) {
++        command_deadline_ = checked_add_or_throw(
++            started_at_,
++            seconds_duration_or_throw(
++                *limits_.maximum_runtime_seconds,
++                label_ + " command runtime"),
++            label_ + " command");
++    }
++}
++
++SyncReplicaSessionAuthorization
++SyncReplicaSessionSupervisor::authorize_next_or_throw() {
++    return authorize_next_at_or_throw(Clock::now());
++}
++
++SyncReplicaSessionAuthorization
++SyncReplicaSessionSupervisor::authorize_next_at_or_throw(
++    std::chrono::steady_clock::time_point observed_at) {
++    if (observed_at < started_at_) {
++        throw std::invalid_argument(
++            label_ + " observation precedes supervisor start");
++    }
++    if (sessions_authorized_ >= limits_.maximum_sessions) {
++        return {
++            SyncReplicaSessionAuthorizationDisposition::MaximumSessionsReached,
++            std::nullopt,
++        };
++    }
++    if (command_deadline_reached_at(observed_at)) {
++        return {
++            SyncReplicaSessionAuthorizationDisposition::CommandDeadlineReached,
++            std::nullopt,
++        };
++    }
++
++    const Duration stage = seconds_duration_or_throw(
++        limits_.stage_timeout_seconds, label_ + " stage timeout");
++    SyncReplicaSessionDeadlinePlan plan;
++    plan.session_index = sessions_authorized_ + 1U;
++    plan.command_deadline = command_deadline_;
++    for (std::size_t index = 0U; index < plan.stages.size(); ++index) {
++        const std::uint64_t multiplier =
++            static_cast<std::uint64_t>(index + 1U);
++        if (multiplier > static_cast<std::uint64_t>(
++                             std::numeric_limits<Duration::rep>::max()) ||
++            stage.count() >
++                std::numeric_limits<Duration::rep>::max() /
++                    static_cast<Duration::rep>(multiplier)) {
++            throw std::overflow_error(
++                label_ + " staged deadline duration overflows steady_clock");
++        }
++        const Duration staged = stage *
++            static_cast<Duration::rep>(multiplier);
++        const TimePoint natural = checked_add_or_throw(
++            observed_at, staged, label_ + " staged session");
++        plan.stages[index] = command_deadline_.has_value() &&
++                natural >= *command_deadline_
++            ? *command_deadline_
++            : natural;
++    }
++    ++sessions_authorized_;
++    return {
++        SyncReplicaSessionAuthorizationDisposition::Authorized,
++        std::move(plan),
++    };
++}
++
++bool SyncReplicaSessionSupervisor::command_deadline_reached_at(
++    std::chrono::steady_clock::time_point observed_at) const noexcept {
++    return command_deadline_.has_value() &&
++           observed_at >= *command_deadline_;
++}
++
++std::string_view sync_replica_send_supervisor_stop_reason_name(
++    SyncReplicaSendSupervisorStopReason reason) noexcept {
++    switch (reason) {
++        case SyncReplicaSendSupervisorStopReason::MaximumSessionsReached:
++            return "max_sessions_reached";
++        case SyncReplicaSendSupervisorStopReason::CommandDeadlineReached:
++            return "command_deadline_reached";
++        case SyncReplicaSendSupervisorStopReason::NoReadyDelivery:
++            return "no_ready_delivery";
++        case SyncReplicaSendSupervisorStopReason::ReceiverDeferred:
++            return "receiver_deferred";
++        case SyncReplicaSendSupervisorStopReason::ReceiptApplyConflict:
++            return "receipt_apply_conflict";
++        case SyncReplicaSendSupervisorStopReason::SessionFailed:
++            return "session_failed";
++    }
++    return "unknown";
++}
++
++bool sync_replica_send_supervisor_stop_is_success(
++    SyncReplicaSendSupervisorStopReason reason) noexcept {
++    return reason ==
++               SyncReplicaSendSupervisorStopReason::MaximumSessionsReached ||
++           reason ==
++               SyncReplicaSendSupervisorStopReason::CommandDeadlineReached ||
++           reason == SyncReplicaSendSupervisorStopReason::NoReadyDelivery ||
++           reason == SyncReplicaSendSupervisorStopReason::ReceiverDeferred;
++}
++
++bool sync_replica_send_session_effect_is_settled(
++    const SyncReplicaFileTlsClientResult& result) noexcept {
++    return result.disposition ==
++               SyncReplicaFileTlsClientDisposition::ReceiptApplied &&
++           result.receipt_apply_result ==
++               SyncReplicaFileDeliveryReceiptApplyResult::EffectSettled;
++}
++
++bool sync_replica_send_session_receiver_deferred(
++    const SyncReplicaFileTlsClientResult& result) noexcept {
++    using Result = SyncReplicaFileDeliveryReceiptApplyResult;
++    if (result.disposition !=
++        SyncReplicaFileTlsClientDisposition::ReceiptApplied) {
++        return false;
++    }
++    return result.receipt_apply_result ==
++               Result::ReceiverEffectCapacityBlocked ||
++           result.receipt_apply_result == Result::ReceiverEffectPathBlocked ||
++           result.receipt_apply_result ==
++               Result::ReceiverEvidenceCapacityBlocked ||
++           result.receipt_apply_result == Result::ReceiverEvidencePending ||
++           result.receipt_apply_result ==
++               Result::ReceiverEvidenceQuarantined ||
++           result.receipt_apply_result == Result::ReceiverProjectionBlocked ||
++           result.receipt_apply_result ==
++               Result::ReceiverDestinationConflict;
++}
++
++bool sync_replica_send_session_is_authenticated_dispatch_deadline_clean(
++    const SyncReplicaFileTlsClientResult& result) noexcept {
++    return result.disposition ==
++               SyncReplicaFileTlsClientDisposition::DispatchDeadlineExpired &&
++           result.socket_created && result.socket_policy_verified &&
++           result.connected && result.handshake_complete &&
++           result.peer_authenticated && result.peer_spki_sha256.has_value() &&
++           result.peer_actor.has_value() && !result.operation_id.has_value() &&
++           !result.claim_id.has_value() && !result.request_digest.has_value() &&
++           result.request_prefix_bytes_written == 0U &&
++           result.request_frame_bytes == 0U &&
++           result.request_body_bytes_written == 0U &&
++           result.receipt_prefix_bytes_received == 0U &&
++           result.receipt_frame_bytes == 0U &&
++           result.receipt_body_bytes_received == 0U &&
++           !result.receipt_apply_result.has_value();
++}
++
++std::optional<SyncReplicaSendSupervisorStopReason>
++sync_replica_send_supervisor_stop_after(
++    const SyncReplicaFileTlsClientResult& result) noexcept {
++    if (result.disposition ==
++        SyncReplicaFileTlsClientDisposition::NoReadyDelivery) {
++        return SyncReplicaSendSupervisorStopReason::NoReadyDelivery;
++    }
++    if (result.disposition !=
++        SyncReplicaFileTlsClientDisposition::ReceiptApplied) {
++        return SyncReplicaSendSupervisorStopReason::SessionFailed;
++    }
++    if (sync_replica_send_session_effect_is_settled(result)) {
++        return std::nullopt;
++    }
++    if (sync_replica_send_session_receiver_deferred(result)) {
++        return SyncReplicaSendSupervisorStopReason::ReceiverDeferred;
++    }
++    return SyncReplicaSendSupervisorStopReason::ReceiptApplyConflict;
++}
++
++std::string_view sync_replica_serve_supervisor_stop_reason_name(
++    SyncReplicaServeSupervisorStopReason reason) noexcept {
++    switch (reason) {
++        case SyncReplicaServeSupervisorStopReason::MaximumSessionsReached:
++            return "max_sessions_reached";
++        case SyncReplicaServeSupervisorStopReason::CommandDeadlineReached:
++            return "command_deadline_reached";
++        case SyncReplicaServeSupervisorStopReason::AcceptDeadlineExpired:
++            return "accept_deadline_expired";
++        case SyncReplicaServeSupervisorStopReason::AuthenticatedPeerClosedIdle:
++            return "authenticated_peer_closed_idle";
++        case SyncReplicaServeSupervisorStopReason::SessionFailed:
++            return "session_failed";
++    }
++    return "unknown";
++}
++
++bool sync_replica_serve_supervisor_stop_is_success(
++    SyncReplicaServeSupervisorStopReason reason) noexcept {
++    return reason ==
++               SyncReplicaServeSupervisorStopReason::MaximumSessionsReached ||
++           reason ==
++               SyncReplicaServeSupervisorStopReason::CommandDeadlineReached ||
++           reason ==
++               SyncReplicaServeSupervisorStopReason::AcceptDeadlineExpired ||
++           reason == SyncReplicaServeSupervisorStopReason::
++                         AuthenticatedPeerClosedIdle;
++}
++
++bool sync_replica_serve_session_is_authenticated_peer_closed_idle(
++    const SyncReplicaFileTlsServerResult& result) noexcept {
++    if (result.disposition != SyncReplicaFileTlsServerDisposition::PeerClosed ||
++        !result.accepted || !result.accepted_socket_policy_verified ||
++        !result.handshake_complete || !result.peer_actor.has_value() ||
++        !result.peer_spki_sha256.has_value() || !result.receive.has_value()) {
++        return false;
++    }
++    const SyncReplicaFileTlsReceiveResult& receive = *result.receive;
++    return receive.disposition ==
++               SyncReplicaFileTlsReceiveDisposition::PeerClosed &&
++           !receive.inbound.has_value() &&
++           receive.request_prefix_bytes_received == 0U &&
++           receive.request_frame_bytes == 0U &&
++           receive.request_body_bytes_received == 0U &&
++           !receive.receipt_write_started &&
++           receive.receipt_prefix_bytes_written == 0U &&
++           !receive.receipt_prefix_accepted &&
++           receive.receipt_frame_bytes == 0U &&
++           receive.receipt_body_bytes_written == 0U;
++}
++
++std::optional<SyncReplicaServeSupervisorStopReason>
++sync_replica_serve_supervisor_stop_after(
++    const SyncReplicaFileTlsServerResult& result) noexcept {
++    if (result.disposition ==
++        SyncReplicaFileTlsServerDisposition::ReceiptSent) {
++        return std::nullopt;
++    }
++    if (result.disposition ==
++        SyncReplicaFileTlsServerDisposition::AcceptDeadlineExpired) {
++        return SyncReplicaServeSupervisorStopReason::AcceptDeadlineExpired;
++    }
++    if (sync_replica_serve_session_is_authenticated_peer_closed_idle(result)) {
++        return SyncReplicaServeSupervisorStopReason::AuthenticatedPeerClosedIdle;
++    }
++    return SyncReplicaServeSupervisorStopReason::SessionFailed;
++}
++
++}  // namespace anonsync
+--- /dev/null
++++ b/src/sync_replica_session_supervisor.hpp
+@@ -0,0 +1,213 @@
++#pragma once
++
++#include "sync_replica_file_tls_client.hpp"
++#include "sync_replica_file_tls_server.hpp"
++#include "sync_replica_outbox_clock.hpp"
++
++#include <array>
++#include <chrono>
++#include <cstddef>
++#include <cstdint>
++#include <optional>
++#include <string>
++#include <string_view>
++
++namespace anonsync {
++
++inline constexpr std::uint64_t kSyncReplicaSessionSupervisorMaximumSessions =
++    256U;
++inline constexpr std::uint64_t
++    kSyncReplicaSessionSupervisorMaximumStageTimeoutSeconds = 3600U;
++inline constexpr std::uint64_t
++    kSyncReplicaSessionSupervisorMaximumRuntimeSeconds = 86400U;
++inline constexpr std::uint64_t
++    kSyncReplicaSessionSupervisorStageCount = 5U;
++inline constexpr std::uint64_t
++    kSyncReplicaSessionSupervisorReceiptStageOrdinal = 4U;
++
++enum class SyncReplicaSessionStage : std::size_t {
++    First = 0U,
++    Second = 1U,
++    Third = 2U,
++    Fourth = 3U,
++    Fifth = 4U,
++};
++
++struct SyncReplicaSessionSupervisorLimits final {
++    std::uint64_t maximum_sessions = 0U;
++    std::uint64_t stage_timeout_seconds = 0U;
++
++    // An absent value preserves one-session compatibility: only the five
++    // caller-owned stage cutpoints bound that conversation. Bounded batch
++    // commands supply this value explicitly so setup time is charged and no
++    // later session may begin after the one absolute command cutpoint.
++    std::optional<std::uint64_t> maximum_runtime_seconds;
++
++    bool operator==(const SyncReplicaSessionSupervisorLimits&) const = default;
++};
++
++void validate_sync_replica_session_supervisor_limits_or_throw(
++    const SyncReplicaSessionSupervisorLimits& limits,
++    std::string_view label = "sync replica session supervisor limits");
++
++// Reject a lease that can expire solely within the modeled sender receipt-read
++// horizon and the complete wall-clock movement/uncertainty envelope admitted by
++// the durable outbox clock policy. This is a necessary lower bound, not a
++// real-time completion guarantee: process descheduling, SQLite writer waits,
++// local decoding/application work, and Linux system suspension remain outside
++// this static proof. Expiry is still fail-closed at settlement. A future exact
++// renewable heartbeat may use shorter renewal periods only while it owns and
++// renews the same fenced claim before expiry. Transport currently uses
++// steady_clock while durable observations use CLOCK_BOOTTIME.
++[[nodiscard]] std::uint64_t
++sync_replica_session_receipt_horizon_seconds_or_throw(
++    std::uint64_t stage_timeout_seconds,
++    std::string_view label = "sync replica session receipt horizon");
++[[nodiscard]] std::uint64_t
++minimum_sync_replica_session_claim_lease_seconds_or_throw(
++    std::uint64_t stage_timeout_seconds,
++    const SyncReplicaOutboxClockPolicy& clock_policy = {},
++    std::string_view label = "sync replica session claim lease");
++void validate_sync_replica_session_claim_lease_seconds_or_throw(
++    std::uint64_t lease_seconds,
++    std::uint64_t stage_timeout_seconds,
++    const SyncReplicaOutboxClockPolicy& clock_policy = {},
++    std::string_view label = "sync replica session claim lease");
++
++struct SyncReplicaSessionDeadlinePlan final {
++    std::uint64_t session_index = 0U;
++    std::array<std::chrono::steady_clock::time_point, 5U> stages{};
++    std::optional<std::chrono::steady_clock::time_point> command_deadline;
++
++    [[nodiscard]] std::chrono::steady_clock::time_point deadline(
++        SyncReplicaSessionStage stage) const noexcept;
++    [[nodiscard]] bool command_limits(
++        SyncReplicaSessionStage stage) const noexcept;
++    [[nodiscard]] SyncReplicaFileTlsClientDeadlines
++    client_deadlines() const noexcept;
++    [[nodiscard]] SyncReplicaFileTlsServerDeadlines
++    server_deadlines() const noexcept;
++
++    bool operator==(const SyncReplicaSessionDeadlinePlan&) const = default;
++};
++
++enum class SyncReplicaSessionAuthorizationDisposition {
++    Authorized,
++    MaximumSessionsReached,
++    CommandDeadlineReached,
++};
++
++struct SyncReplicaSessionAuthorization final {
++    SyncReplicaSessionAuthorizationDisposition disposition =
++        SyncReplicaSessionAuthorizationDisposition::MaximumSessionsReached;
++    std::optional<SyncReplicaSessionDeadlinePlan> plan;
++};
++
++// Process-local bounded composition policy. This owner does not mint durable
++// work, lease, clock, transport, or retry authority. It only decides whether a
++// later one-session owner may begin and clamps that owner's five absolute
++// steady-clock cutpoints to one optional command deadline. The command deadline
++// starts before deployment/store/TLS preflight; synchronous local work is not
++// asynchronously interrupted, but its elapsed time is charged at the next
++// admission/deadline boundary.
++class SyncReplicaSessionSupervisor final {
++public:
++    SyncReplicaSessionSupervisor(
++        SyncReplicaSessionSupervisorLimits limits,
++        std::chrono::steady_clock::time_point started_at,
++        std::string label = "sync replica session supervisor");
++
++    SyncReplicaSessionSupervisor(const SyncReplicaSessionSupervisor&) = delete;
++    SyncReplicaSessionSupervisor& operator=(
++        const SyncReplicaSessionSupervisor&) = delete;
++    SyncReplicaSessionSupervisor(SyncReplicaSessionSupervisor&&) = delete;
++    SyncReplicaSessionSupervisor& operator=(
++        SyncReplicaSessionSupervisor&&) = delete;
++
++    [[nodiscard]] SyncReplicaSessionAuthorization
++    authorize_next_or_throw();
++    [[nodiscard]] SyncReplicaSessionAuthorization
++    authorize_next_at_or_throw(
++        std::chrono::steady_clock::time_point observed_at);
++
++    [[nodiscard]] const SyncReplicaSessionSupervisorLimits& limits()
++        const noexcept {
++        return limits_;
++    }
++    [[nodiscard]] std::uint64_t sessions_authorized() const noexcept {
++        return sessions_authorized_;
++    }
++    [[nodiscard]] std::chrono::steady_clock::time_point started_at()
++        const noexcept {
++        return started_at_;
++    }
++    [[nodiscard]] const std::optional<
++        std::chrono::steady_clock::time_point>& command_deadline()
++        const noexcept {
++        return command_deadline_;
++    }
++    [[nodiscard]] bool command_deadline_reached_at(
++        std::chrono::steady_clock::time_point observed_at) const noexcept;
++
++private:
++    SyncReplicaSessionSupervisorLimits limits_;
++    std::chrono::steady_clock::time_point started_at_;
++    std::optional<std::chrono::steady_clock::time_point> command_deadline_;
++    std::uint64_t sessions_authorized_ = 0U;
++    std::string label_;
++};
++
++enum class SyncReplicaSendSupervisorStopReason {
++    MaximumSessionsReached,
++    CommandDeadlineReached,
++    NoReadyDelivery,
++    ReceiverDeferred,
++    ReceiptApplyConflict,
++    SessionFailed,
++};
++
++[[nodiscard]] std::string_view sync_replica_send_supervisor_stop_reason_name(
++    SyncReplicaSendSupervisorStopReason reason) noexcept;
++[[nodiscard]] bool sync_replica_send_supervisor_stop_is_success(
++    SyncReplicaSendSupervisorStopReason reason) noexcept;
++[[nodiscard]] bool sync_replica_send_session_effect_is_settled(
++    const SyncReplicaFileTlsClientResult& result) noexcept;
++[[nodiscard]] bool sync_replica_send_session_receiver_deferred(
++    const SyncReplicaFileTlsClientResult& result) noexcept;
++
++// Exact no-claim terminal observation after mutual authentication. This is
++// suitable for mapping a command-clamped request-admission expiry to the outer
++// command deadline only when no operation identity, claim, application byte, or
++// receipt state exists. It is not evidence that the sender had no ready work.
++[[nodiscard]] bool
++sync_replica_send_session_is_authenticated_dispatch_deadline_clean(
++    const SyncReplicaFileTlsClientResult& result) noexcept;
++[[nodiscard]] std::optional<SyncReplicaSendSupervisorStopReason>
++sync_replica_send_supervisor_stop_after(
++    const SyncReplicaFileTlsClientResult& result) noexcept;
++
++enum class SyncReplicaServeSupervisorStopReason {
++    MaximumSessionsReached,
++    CommandDeadlineReached,
++    AcceptDeadlineExpired,
++    AuthenticatedPeerClosedIdle,
++    SessionFailed,
++};
++
++[[nodiscard]] std::string_view sync_replica_serve_supervisor_stop_reason_name(
++    SyncReplicaServeSupervisorStopReason reason) noexcept;
++[[nodiscard]] bool sync_replica_serve_supervisor_stop_is_success(
++    SyncReplicaServeSupervisorStopReason reason) noexcept;
++
++// A close is idle only when an authorized TLS peer completed the handshake and
++// no application-record prefix, frame, body, inbound decision, or receipt write
++// exists. It is not evidence that the peer had no work; it is merely proof that
++// this bounded receiver session spent no durable file-delivery authority.
++[[nodiscard]] bool
++sync_replica_serve_session_is_authenticated_peer_closed_idle(
++    const SyncReplicaFileTlsServerResult& result) noexcept;
++[[nodiscard]] std::optional<SyncReplicaServeSupervisorStopReason>
++sync_replica_serve_supervisor_stop_after(
++    const SyncReplicaFileTlsServerResult& result) noexcept;
++
++}  // namespace anonsync
+--- /dev/null
++++ b/tests/sync_replica_session_supervisor_test.cpp
+@@ -0,0 +1,568 @@
++#include "sync_replica_session_supervisor.hpp"
++
++#include <array>
++#include <chrono>
++#include <cstdint>
++#include <exception>
++#include <iostream>
++#include <optional>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <type_traits>
++#include <utility>
++
++namespace {
++
++using Clock = std::chrono::steady_clock;
++using TimePoint = Clock::time_point;
++using namespace std::chrono_literals;
++
++static_assert(!std::is_copy_constructible_v<
++              anonsync::SyncReplicaSessionSupervisor>);
++static_assert(!std::is_move_constructible_v<
++              anonsync::SyncReplicaSessionSupervisor>);
++
++std::size_t checks = 0U;
++
++void require(bool condition, std::string_view message) {
++    ++checks;
++    if (!condition) throw std::runtime_error(std::string(message));
++}
++
++template <typename Function>
++void require_throws(Function&& function, std::string_view message) {
++    ++checks;
++    try {
++        std::forward<Function>(function)();
++    } catch (const std::exception&) {
++        return;
++    }
++    throw std::runtime_error(std::string(message));
++}
++
++[[nodiscard]] TimePoint at(std::chrono::seconds offset) {
++    return TimePoint{} + offset;
++}
++
++void test_limit_validation() {
++    anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++        {1U, 1U, std::nullopt}, "minimum limits");
++    anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++        {anonsync::kSyncReplicaSessionSupervisorMaximumSessions,
++         anonsync::kSyncReplicaSessionSupervisorMaximumStageTimeoutSeconds,
++         anonsync::kSyncReplicaSessionSupervisorMaximumRuntimeSeconds},
++        "maximum limits");
++
++    require_throws(
++        [] {
++            anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++                {0U, 1U, std::nullopt}, "zero sessions");
++        },
++        "zero maximum session count must fail");
++    require_throws(
++        [] {
++            anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++                {anonsync::kSyncReplicaSessionSupervisorMaximumSessions + 1U,
++                 1U, std::nullopt},
++                "too many sessions");
++        },
++        "oversized maximum session count must fail");
++    require_throws(
++        [] {
++            anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++                {1U, 0U, std::nullopt}, "zero stage timeout");
++        },
++        "zero stage timeout must fail");
++    require_throws(
++        [] {
++            anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++                {1U,
++                 anonsync::
++                     kSyncReplicaSessionSupervisorMaximumStageTimeoutSeconds +
++                     1U,
++                 std::nullopt},
++                "oversized stage timeout");
++        },
++        "oversized stage timeout must fail");
++    require_throws(
++        [] {
++            anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++                {1U, 1U, 0U}, "zero runtime");
++        },
++        "zero command runtime must fail");
++    require_throws(
++        [] {
++            anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++                {1U, 1U,
++                 anonsync::
++                     kSyncReplicaSessionSupervisorMaximumRuntimeSeconds + 1U},
++                "oversized runtime");
++        },
++        "oversized command runtime must fail");
++    require_throws(
++        [] {
++            anonsync::validate_sync_replica_session_supervisor_limits_or_throw(
++                {1U, 1U, std::nullopt}, "");
++        },
++        "empty validation label must fail");
++    require_throws(
++        [] {
++            anonsync::SyncReplicaSessionSupervisor supervisor(
++                {1U, 1U, std::nullopt}, at(0s), "");
++            (void)supervisor;
++        },
++        "empty supervisor label must fail");
++}
++
++void test_claim_lease_covers_receipt_and_clock_authority() {
++    require(
++        anonsync::sync_replica_session_receipt_horizon_seconds_or_throw(10U) ==
++            40U,
++        "default receipt horizon must retain four staged timeout units");
++    require(
++        anonsync::minimum_sync_replica_session_claim_lease_seconds_or_throw(
++            10U) == 661U,
++        "default lease minimum omitted receipt, drift, uncertainty, or margin");
++    require(
++        anonsync::minimum_sync_replica_session_claim_lease_seconds_or_throw(
++            3600U) == 15021U,
++        "maximum timeout produced the wrong durable lease horizon");
++
++    anonsync::SyncReplicaOutboxClockPolicy narrow;
++    narrow.max_uncertainty_ns = 1500000000ULL;
++    narrow.max_forward_step_seconds = 7U;
++    narrow.max_realtime_lag_seconds = 9U;
++    require(
++        anonsync::minimum_sync_replica_session_claim_lease_seconds_or_throw(
++            2U, narrow) == 31U,
++        "custom lease minimum omitted lag catch-up or four uncertainties");
++
++    anonsync::SyncReplicaOutboxClockPolicy components;
++    components.max_uncertainty_ns = 1000000000ULL;
++    components.max_forward_step_seconds = 2U;
++    components.max_realtime_lag_seconds = 3U;
++    require(
++        anonsync::minimum_sync_replica_session_claim_lease_seconds_or_throw(
++            1U, components) == 14U,
++        "lease minimum did not bind every clock-policy component");
++    components.max_realtime_lag_seconds = 4U;
++    require(
++        anonsync::minimum_sync_replica_session_claim_lease_seconds_or_throw(
++            1U, components) == 15U,
++        "lease minimum ignored legal realtime catch-up");
++    components.max_realtime_lag_seconds = 3U;
++    components.max_uncertainty_ns = 1250000000ULL;
++    require(
++        anonsync::minimum_sync_replica_session_claim_lease_seconds_or_throw(
++            1U, components) == 15U,
++        "lease minimum did not ceil four uncertainty allowances together");
++
++    anonsync::validate_sync_replica_session_claim_lease_seconds_or_throw(
++        661U, 10U);
++    require_throws(
++        [] {
++            anonsync::
++                validate_sync_replica_session_claim_lease_seconds_or_throw(
++                    660U, 10U);
++        },
++        "one-second-short lease must fail closed");
++    require_throws(
++        [] {
++            anonsync::
++                validate_sync_replica_session_claim_lease_seconds_or_throw(
++                    0U, 10U);
++        },
++        "zero lease must fail closed");
++    require_throws(
++        [] {
++            anonsync::
++                validate_sync_replica_session_claim_lease_seconds_or_throw(
++                    86401U, 10U);
++        },
++        "lease beyond the durable lifetime budget must fail closed");
++    require_throws(
++        [] {
++            (void)anonsync::
++                sync_replica_session_receipt_horizon_seconds_or_throw(0U);
++        },
++        "zero timeout must not mint a receipt horizon");
++    require_throws(
++        [] {
++            anonsync::SyncReplicaOutboxClockPolicy invalid;
++            invalid.max_uncertainty_ns = 0U;
++            (void)anonsync::
++                minimum_sync_replica_session_claim_lease_seconds_or_throw(
++                    10U, invalid);
++        },
++        "invalid durable clock policy must not mint a lease minimum");
++}
++
++void test_uncapped_staged_deadlines_and_maximum_sessions() {
++    anonsync::SyncReplicaSessionSupervisor supervisor(
++        {2U, 3U, std::nullopt}, at(10s), "uncapped");
++    require(
++        !supervisor.command_deadline().has_value() &&
++            supervisor.sessions_authorized() == 0U,
++        "uncapped supervisor must begin without command cutpoint or sessions");
++
++    const auto first = supervisor.authorize_next_at_or_throw(at(11s));
++    require(
++        first.disposition == anonsync::
++            SyncReplicaSessionAuthorizationDisposition::Authorized &&
++            first.plan.has_value(),
++        "first uncapped session must be authorized");
++    const auto& plan = *first.plan;
++    require(plan.session_index == 1U, "first session index must be one");
++    require(
++        plan.deadline(anonsync::SyncReplicaSessionStage::First) == at(14s) &&
++            plan.deadline(anonsync::SyncReplicaSessionStage::Second) ==
++                at(17s) &&
++            plan.deadline(anonsync::SyncReplicaSessionStage::Third) == at(20s) &&
++            plan.deadline(anonsync::SyncReplicaSessionStage::Fourth) ==
++                at(23s) &&
++            plan.deadline(anonsync::SyncReplicaSessionStage::Fifth) == at(26s),
++        "uncapped session must receive five fresh staged deadlines");
++    require(
++        !plan.command_limits(anonsync::SyncReplicaSessionStage::First) &&
++            !plan.command_limits(anonsync::SyncReplicaSessionStage::Fifth),
++        "uncapped staged deadlines must not claim command limitation");
++    const auto client = plan.client_deadlines();
++    const auto server = plan.server_deadlines();
++    require(
++        client.connect == at(14s) && client.handshake == at(17s) &&
++            client.request == at(20s) && client.receipt == at(23s) &&
++            client.shutdown == at(26s),
++        "client deadline projection must preserve every stage");
++    require(
++        server.accept == at(14s) && server.handshake == at(17s) &&
++            server.request == at(20s) && server.receipt == at(23s) &&
++            server.shutdown == at(26s),
++        "server deadline projection must preserve every stage");
++
++    const auto second = supervisor.authorize_next_at_or_throw(at(30s));
++    require(
++        second.disposition == anonsync::
++            SyncReplicaSessionAuthorizationDisposition::Authorized &&
++            second.plan.has_value() && second.plan->session_index == 2U &&
++            second.plan->deadline(anonsync::SyncReplicaSessionStage::First) ==
++                at(33s),
++        "later session must receive deadlines anchored to its own admission");
++    const auto exhausted = supervisor.authorize_next_at_or_throw(at(31s));
++    require(
++        exhausted.disposition == anonsync::
++            SyncReplicaSessionAuthorizationDisposition::MaximumSessionsReached &&
++            !exhausted.plan.has_value() &&
++            supervisor.sessions_authorized() == 2U,
++        "session count bound must terminalize without another plan");
++}
++
++void test_command_deadline_clamping_and_admission() {
++    anonsync::SyncReplicaSessionSupervisor supervisor(
++        {5U, 2U, 7U}, at(100s), "capped");
++    require(
++        supervisor.command_deadline() == at(107s) &&
++            !supervisor.command_deadline_reached_at(at(106s)) &&
++            supervisor.command_deadline_reached_at(at(107s)),
++        "command cutpoint must be one absolute steady-clock deadline");
++
++    const auto first = supervisor.authorize_next_at_or_throw(at(101s));
++    require(first.plan.has_value(), "capped first session must have plan");
++    const auto& plan = *first.plan;
++    require(
++        plan.deadline(anonsync::SyncReplicaSessionStage::First) == at(103s) &&
++            plan.deadline(anonsync::SyncReplicaSessionStage::Second) ==
++                at(105s) &&
++            plan.deadline(anonsync::SyncReplicaSessionStage::Third) == at(107s) &&
++            plan.deadline(anonsync::SyncReplicaSessionStage::Fourth) ==
++                at(107s) &&
++            plan.deadline(anonsync::SyncReplicaSessionStage::Fifth) == at(107s),
++        "command cutpoint must clamp all naturally later stage deadlines");
++    require(
++        !plan.command_limits(anonsync::SyncReplicaSessionStage::First) &&
++            !plan.command_limits(anonsync::SyncReplicaSessionStage::Second) &&
++            plan.command_limits(anonsync::SyncReplicaSessionStage::Third) &&
++            plan.command_limits(anonsync::SyncReplicaSessionStage::Fifth),
++        "deadline plan must identify stages bounded by the command cutpoint");
++
++    const auto second = supervisor.authorize_next_at_or_throw(at(106s));
++    require(
++        second.disposition == anonsync::
++            SyncReplicaSessionAuthorizationDisposition::Authorized &&
++            second.plan.has_value() && second.plan->session_index == 2U,
++        "a session may begin strictly before the command cutpoint");
++    require(
++        second.plan->deadline(anonsync::SyncReplicaSessionStage::First) ==
++                at(107s) &&
++            second.plan->command_limits(
++                anonsync::SyncReplicaSessionStage::First),
++        "late session's first operation must still be clamped");
++
++    const auto expired = supervisor.authorize_next_at_or_throw(at(107s));
++    require(
++        expired.disposition == anonsync::
++            SyncReplicaSessionAuthorizationDisposition::CommandDeadlineReached &&
++            !expired.plan.has_value() && supervisor.sessions_authorized() == 2U,
++        "command cutpoint must deny a later session without consuming count");
++
++    require_throws(
++        [] {
++            anonsync::SyncReplicaSessionSupervisor invalid_observation(
++                {1U, 1U, 1U}, at(50s), "backward observation");
++            (void)invalid_observation.authorize_next_at_or_throw(at(49s));
++        },
++        "observation before supervisor start must fail");
++}
++
++[[nodiscard]] anonsync::SyncReplicaFileTlsClientResult client_result(
++    anonsync::SyncReplicaFileTlsClientDisposition disposition,
++    std::optional<anonsync::SyncReplicaFileDeliveryReceiptApplyResult> apply =
++        std::nullopt) {
++    anonsync::SyncReplicaFileTlsClientResult result;
++    result.disposition = disposition;
++    result.receipt_apply_result = apply;
++    return result;
++}
++
++void test_send_terminal_policy() {
++    using Apply = anonsync::SyncReplicaFileDeliveryReceiptApplyResult;
++    using Disposition = anonsync::SyncReplicaFileTlsClientDisposition;
++    using Stop = anonsync::SyncReplicaSendSupervisorStopReason;
++
++    const auto settled = client_result(Disposition::ReceiptApplied,
++                                       Apply::EffectSettled);
++    require(
++        anonsync::sync_replica_send_session_effect_is_settled(settled) &&
++            !anonsync::sync_replica_send_session_receiver_deferred(settled) &&
++            !anonsync::sync_replica_send_supervisor_stop_after(settled)
++                 .has_value(),
++        "settled receipt must authorize only the caller's next bounded session");
++
++    constexpr std::array receiver_deferrals{
++        Apply::ReceiverEffectCapacityBlocked,
++        Apply::ReceiverEffectPathBlocked,
++        Apply::ReceiverEvidenceCapacityBlocked,
++        Apply::ReceiverEvidencePending,
++        Apply::ReceiverEvidenceQuarantined,
++        Apply::ReceiverProjectionBlocked,
++        Apply::ReceiverDestinationConflict,
++    };
++    for (const Apply apply : receiver_deferrals) {
++        const auto deferred = client_result(Disposition::ReceiptApplied, apply);
++        require(
++            anonsync::sync_replica_send_session_receiver_deferred(deferred) &&
++                anonsync::sync_replica_send_supervisor_stop_after(deferred) ==
++                    Stop::ReceiverDeferred,
++            "every authenticated receiver deferral must stop as bounded progress");
++    }
++
++    constexpr std::array local_conflicts{
++        Apply::IntentMissing,
++        Apply::StaleClaim,
++        Apply::ExpiredClaim,
++    };
++    for (const Apply apply : local_conflicts) {
++        const auto conflict = client_result(Disposition::ReceiptApplied, apply);
++        require(
++            !anonsync::sync_replica_send_session_receiver_deferred(conflict) &&
++                anonsync::sync_replica_send_supervisor_stop_after(conflict) ==
++                    Stop::ReceiptApplyConflict,
++            "local receipt-apply conflicts must not be laundered into deferral");
++    }
++
++    require(
++        anonsync::sync_replica_send_supervisor_stop_after(
++            client_result(Disposition::NoReadyDelivery)) ==
++            Stop::NoReadyDelivery,
++        "authenticated no-ready session must stop without failure");
++    require(
++        anonsync::sync_replica_send_supervisor_stop_after(
++            client_result(Disposition::PeerClosed)) == Stop::SessionFailed,
++        "ambiguous peer close must remain a failed sender session");
++
++    auto dispatch_deadline =
++        client_result(Disposition::DispatchDeadlineExpired);
++    dispatch_deadline.socket_created = true;
++    dispatch_deadline.socket_policy_verified = true;
++    dispatch_deadline.connected = true;
++    dispatch_deadline.handshake_complete = true;
++    dispatch_deadline.peer_authenticated = true;
++    dispatch_deadline.peer_spki_sha256 = std::string(64U, 'b');
++    dispatch_deadline.peer_actor =
++        anonsync::SyncReplicaActor{"peer-device", 2U};
++    require(
++        anonsync::
++            sync_replica_send_session_is_authenticated_dispatch_deadline_clean(
++                dispatch_deadline) &&
++            anonsync::sync_replica_send_supervisor_stop_after(
++                dispatch_deadline) == Stop::SessionFailed,
++        "clean post-authentication dispatch expiry must be identifiable without "
++        "becoming success absent an outer command cutpoint");
++
++    auto dispatch_with_claim = dispatch_deadline;
++    dispatch_with_claim.claim_id = "claim-id";
++    require(
++        !anonsync::
++            sync_replica_send_session_is_authenticated_dispatch_deadline_clean(
++                dispatch_with_claim),
++        "dispatch expiry with claim identity must remain ambiguous");
++    auto dispatch_with_bytes = dispatch_deadline;
++    dispatch_with_bytes.request_prefix_bytes_written = 1U;
++    require(
++        !anonsync::
++            sync_replica_send_session_is_authenticated_dispatch_deadline_clean(
++                dispatch_with_bytes),
++        "dispatch expiry with application bytes must remain ambiguous");
++    auto dispatch_without_auth = dispatch_deadline;
++    dispatch_without_auth.peer_authenticated = false;
++    require(
++        !anonsync::
++            sync_replica_send_session_is_authenticated_dispatch_deadline_clean(
++                dispatch_without_auth),
++        "dispatch expiry without authenticated peer authority must not be clean");
++
++    constexpr std::array success_stops{
++        Stop::MaximumSessionsReached,
++        Stop::CommandDeadlineReached,
++        Stop::NoReadyDelivery,
++        Stop::ReceiverDeferred,
++    };
++    for (const Stop stop : success_stops) {
++        require(
++            anonsync::sync_replica_send_supervisor_stop_is_success(stop),
++            "bounded sender progress stop must be successful");
++    }
++    require(
++        !anonsync::sync_replica_send_supervisor_stop_is_success(
++            Stop::ReceiptApplyConflict) &&
++            !anonsync::sync_replica_send_supervisor_stop_is_success(
++                Stop::SessionFailed),
++        "sender conflicts and session failures must remain unsuccessful");
++    require(
++        anonsync::sync_replica_send_supervisor_stop_reason_name(
++            Stop::CommandDeadlineReached) == "command_deadline_reached" &&
++            anonsync::sync_replica_send_supervisor_stop_reason_name(
++                Stop::ReceiverDeferred) == "receiver_deferred",
++        "sender stop names must be stable presentation values");
++}
++
++[[nodiscard]] anonsync::SyncReplicaFileTlsServerResult idle_server_result() {
++    anonsync::SyncReplicaFileTlsServerResult result;
++    result.disposition = anonsync::SyncReplicaFileTlsServerDisposition::PeerClosed;
++    result.accepted = true;
++    result.accepted_socket_policy_verified = true;
++    result.handshake_complete = true;
++    result.peer_spki_sha256 = std::string(64U, 'a');
++    result.peer_actor = anonsync::SyncReplicaActor{"peer-device", 1U};
++    result.receive.emplace();
++    result.receive->disposition =
++        anonsync::SyncReplicaFileTlsReceiveDisposition::PeerClosed;
++    return result;
++}
++
++void test_serve_terminal_policy_and_exact_idle_predicate() {
++    using Disposition = anonsync::SyncReplicaFileTlsServerDisposition;
++    using Stop = anonsync::SyncReplicaServeSupervisorStopReason;
++
++    const auto idle = idle_server_result();
++    require(
++        anonsync::sync_replica_serve_session_is_authenticated_peer_closed_idle(
++            idle) &&
++            anonsync::sync_replica_serve_supervisor_stop_after(idle) ==
++                Stop::AuthenticatedPeerClosedIdle,
++        "exact zero-application-byte authenticated close must be bounded idle");
++
++    auto partial_prefix = idle;
++    partial_prefix.receive->request_prefix_bytes_received = 1U;
++    require(
++        !anonsync::sync_replica_serve_session_is_authenticated_peer_closed_idle(
++            partial_prefix) &&
++            anonsync::sync_replica_serve_supervisor_stop_after(partial_prefix) ==
++                Stop::SessionFailed,
++        "partial request prefix close must remain transport ambiguity");
++    auto complete_frame = idle;
++    complete_frame.receive->request_frame_bytes = 1U;
++    require(
++        !anonsync::sync_replica_serve_session_is_authenticated_peer_closed_idle(
++            complete_frame),
++        "observed request frame must not be called idle");
++    auto inbound = idle;
++    inbound.receive->inbound.emplace();
++    require(
++        !anonsync::sync_replica_serve_session_is_authenticated_peer_closed_idle(
++            inbound),
++        "durable inbound decision must not be called idle");
++    auto receipt_started = idle;
++    receipt_started.receive->receipt_write_started = true;
++    require(
++        !anonsync::sync_replica_serve_session_is_authenticated_peer_closed_idle(
++            receipt_started),
++        "receipt write frontier must not be called idle");
++    auto unauthenticated = idle;
++    unauthenticated.peer_actor.reset();
++    require(
++        !anonsync::sync_replica_serve_session_is_authenticated_peer_closed_idle(
++            unauthenticated),
++        "peer identity evidence is required for authenticated idle");
++
++    anonsync::SyncReplicaFileTlsServerResult receipt;
++    receipt.disposition = Disposition::ReceiptSent;
++    require(
++        !anonsync::sync_replica_serve_supervisor_stop_after(receipt).has_value(),
++        "completed receipt must permit only a later bounded receive session");
++    anonsync::SyncReplicaFileTlsServerResult accept_expired;
++    accept_expired.disposition = Disposition::AcceptDeadlineExpired;
++    require(
++        anonsync::sync_replica_serve_supervisor_stop_after(accept_expired) ==
++            Stop::AcceptDeadlineExpired,
++        "ordinary accept deadline must remain distinct from command cutpoint");
++    anonsync::SyncReplicaFileTlsServerResult request_expired;
++    request_expired.disposition = Disposition::RequestDeadlineExpired;
++    require(
++        anonsync::sync_replica_serve_supervisor_stop_after(request_expired) ==
++            Stop::SessionFailed,
++        "partial/ambiguous receiver session timeout must remain failure");
++
++    constexpr std::array success_stops{
++        Stop::MaximumSessionsReached,
++        Stop::CommandDeadlineReached,
++        Stop::AcceptDeadlineExpired,
++        Stop::AuthenticatedPeerClosedIdle,
++    };
++    for (const Stop stop : success_stops) {
++        require(
++            anonsync::sync_replica_serve_supervisor_stop_is_success(stop),
++            "bounded receiver progress stop must be successful");
++    }
++    require(
++        !anonsync::sync_replica_serve_supervisor_stop_is_success(
++            Stop::SessionFailed),
++        "receiver session failure must remain unsuccessful");
++    require(
++        anonsync::sync_replica_serve_supervisor_stop_reason_name(
++            Stop::AuthenticatedPeerClosedIdle) ==
++                "authenticated_peer_closed_idle" &&
++            anonsync::sync_replica_serve_supervisor_stop_reason_name(
++                Stop::CommandDeadlineReached) == "command_deadline_reached",
++        "receiver stop names must be stable presentation values");
++}
++
++}  // namespace
++
++int main() {
++    try {
++        test_limit_validation();
++        test_claim_lease_covers_receipt_and_clock_authority();
++        test_uncapped_staged_deadlines_and_maximum_sessions();
++        test_command_deadline_clamping_and_admission();
++        test_send_terminal_policy();
++        test_serve_terminal_policy_and_exact_idle_predicate();
++        std::cout << "sync replica session supervisor checks passed: "
++                  << checks << '\n';
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "sync replica session supervisor test failed after "
++                  << checks << " checks: " << error.what() << '\n';
++        return 1;
++    }
++}
+--- a/tests/sync_replica_tls_transport_test.cpp
++++ b/tests/sync_replica_tls_transport_test.cpp
+@@ -5812,8 +5812,10 @@
+             socket.descriptor.get(), "TLS client success listener");
+ 
+     anonsync::SyncReplicaFileTlsClientResult client_result;
++    anonsync::SyncReplicaFileTlsClientResult dispatch_expired_result;
+     anonsync::SyncReplicaFileTlsClientResult expired_result;
+     bool sender_settled = false;
++    bool dispatch_expired_ready_intent_remained_unclaimed = false;
+     std::string sender_operation_digest;
+     std::string sender_evidence_digest;
+     std::string sender_visible_digest;
+@@ -5873,6 +5875,39 @@
+                 client_result.operation_id == operation.operation_id,
+                 "TLS production client result lost exact operation identity");
+ 
++            const std::string dispatch_expired_path =
++                "product-spine-client-dispatch-deadline.bin";
++            const auto dispatch_expired_operation =
++                sender.create_local_file_or_throw(
++                    dispatch_expired_path, payload.size(),
++                    anonsync::sha256_hex(payload), destination);
++            const auto dispatch_expired_at =
++                std::chrono::steady_clock::now();
++            dispatch_expired_result = anonsync::
++                send_one_sync_replica_file_delivery_tls_session_or_throw(
++                    sender_service, payload_authority,
++                    retained_client_context(),
++                    {"127.0.0.1", socket.port},
++                    {receiver_actor, receiver_pin},
++                    "production-client-dispatch-expired", 30U,
++                    {
++                        dispatch_expired_at + std::chrono::seconds(5),
++                        dispatch_expired_at + std::chrono::seconds(5),
++                        dispatch_expired_at - std::chrono::milliseconds(1),
++                        dispatch_expired_at + std::chrono::seconds(5),
++                        dispatch_expired_at + std::chrono::seconds(5),
++                    },
++                    "TLS production client dispatch expiry");
++            const auto after_dispatch_expiry = sender.snapshot_or_throw();
++            dispatch_expired_ready_intent_remained_unclaimed =
++                after_dispatch_expiry.outbox.size() == 1U &&
++                after_dispatch_expiry.outbox.front().operation_id ==
++                    dispatch_expired_operation.operation_id &&
++                after_dispatch_expiry.outbox.front().lease.claim_id.empty() &&
++                after_dispatch_expiry.outbox.front().lease.worker_id.empty() &&
++                after_dispatch_expiry.outbox.front().lease.dispatch_attempts ==
++                    0U;
++
+             const auto expired =
+                 std::chrono::steady_clock::now() -
+                 std::chrono::milliseconds(1);
+@@ -5892,6 +5927,7 @@
+ 
+     const auto now = std::chrono::steady_clock::now();
+     anonsync::SyncReplicaFileTlsServerResult server_result;
++    anonsync::SyncReplicaFileTlsServerResult dispatch_expired_server_result;
+     std::exception_ptr server_failure;
+     try {
+         server_result = anonsync::
+@@ -5910,6 +5946,24 @@
+                     now + std::chrono::seconds(5),
+                 },
+                 "TLS production client server session");
++
++        const auto dispatch_server_now = std::chrono::steady_clock::now();
++        dispatch_expired_server_result = anonsync::
++            serve_one_sync_replica_file_delivery_tls_session_or_throw(
++                receiver_service, listener,
++                anonsync::
++                    retain_sync_replica_file_tls_server_context_or_throw(
++                        server_context,
++                        "TLS production client dispatch-expiry server context"),
++                anchored_membership_owner.current_authority_or_throw(),
++                {
++                    dispatch_server_now + std::chrono::seconds(5),
++                    dispatch_server_now + std::chrono::seconds(5),
++                    dispatch_server_now + std::chrono::seconds(5),
++                    dispatch_server_now + std::chrono::seconds(5),
++                    dispatch_server_now + std::chrono::seconds(5),
++                },
++                "TLS production client dispatch-expiry server session");
+     } catch (...) {
+         server_failure = std::current_exception();
+     }
+@@ -5961,6 +6015,50 @@
+         sender_settled &&
+             read_binary_file(workspace.files / relative_path) == payload,
+         "TLS production client receipt preceded effect publication or settlement");
++    require(
++        dispatch_expired_result.disposition == anonsync::
++                SyncReplicaFileTlsClientDisposition::
++                    DispatchDeadlineExpired &&
++            dispatch_expired_result.socket_created &&
++            dispatch_expired_result.socket_policy_verified &&
++            dispatch_expired_result.connected &&
++            dispatch_expired_result.handshake_complete &&
++            dispatch_expired_result.peer_authenticated &&
++            dispatch_expired_result.peer_spki_sha256 == receiver_pin &&
++            dispatch_expired_result.peer_actor == receiver_actor &&
++            !dispatch_expired_result.operation_id.has_value() &&
++            !dispatch_expired_result.claim_id.has_value() &&
++            !dispatch_expired_result.request_digest.has_value() &&
++            dispatch_expired_result.request_prefix_bytes_written == 0U &&
++            dispatch_expired_result.request_frame_bytes == 0U &&
++            dispatch_expired_result.request_body_bytes_written == 0U &&
++            dispatch_expired_result.receipt_prefix_bytes_received == 0U &&
++            dispatch_expired_result.receipt_frame_bytes == 0U &&
++            dispatch_expired_result.receipt_body_bytes_received == 0U &&
++            !dispatch_expired_result.receipt_apply_result.has_value() &&
++            dispatch_expired_ready_intent_remained_unclaimed,
++        "expired post-authentication request-admission cutpoint spent claim or "
++        "application-byte authority");
++    require(
++        dispatch_expired_server_result.disposition == anonsync::
++                SyncReplicaFileTlsServerDisposition::PeerClosed &&
++            dispatch_expired_server_result.accepted &&
++            dispatch_expired_server_result.accepted_socket_policy_verified &&
++            dispatch_expired_server_result.handshake_complete &&
++            dispatch_expired_server_result.peer_actor == sender_actor &&
++            dispatch_expired_server_result.peer_spki_sha256 == sender_pin &&
++            dispatch_expired_server_result.receive.has_value() &&
++            dispatch_expired_server_result.receive->disposition == anonsync::
++                SyncReplicaFileTlsReceiveDisposition::PeerClosed &&
++            !dispatch_expired_server_result.receive->inbound.has_value() &&
++            dispatch_expired_server_result.receive
++                    ->request_prefix_bytes_received == 0U &&
++            dispatch_expired_server_result.receive->request_frame_bytes == 0U &&
++            dispatch_expired_server_result.receive
++                    ->request_body_bytes_received == 0U &&
++            !dispatch_expired_server_result.receive->receipt_write_started,
++        "receiver did not observe the dispatch-expired authenticated client as "
++        "an exact zero-application-byte close");
+     const auto receiver_snapshot = receiver.snapshot_or_throw();
+     require(
+         receiver_snapshot.operation_set_digest == sender_operation_digest &&
+--- a/tools/audit_anonsync_replica_bootstrap_authority.py
++++ b/tools/audit_anonsync_replica_bootstrap_authority.py
+@@ -631,10 +631,13 @@
+         all(
+             token in product
+             for token in (
+-                'execute_send_sessions_or_throw(options, "send-one", 1U)',
+-                'execute_serve_sessions_or_throw(options, "serve-one", 1U)',
++                'sync_replica_session_supervisor.hpp',
++                'options, "send-one", 1U, std::nullopt',
++                'options, "serve-one", 1U, std::nullopt',
+                 'max_sessions_from_options(options)',
+-                'kMaximumBatchSessions = 256U',
++                'max_runtime_from_options(options)',
++                'kSyncReplicaSessionSupervisorMaximumSessions',
++                'kSyncReplicaSessionSupervisorMaximumRuntimeSeconds',
+             )
+         ),
+         "bounded_session_wrappers_delegate_to_manifest_owned_executors",
+--- a/tools/audit_anonsync_replica_database_open_policy.py
++++ b/tools/audit_anonsync_replica_database_open_policy.py
+@@ -1072,14 +1072,15 @@
+             and "open_database_or_throw" not in body
+             for body in (send_one, send_batch, serve_one, serve_batch)
+         )
+-        and 'execute_send_sessions_or_throw(options, "send-one", 1U)'
+-        in send_one
++        and 'options, "send-one", 1U, std::nullopt' in send_one
+         and "execute_send_sessions_or_throw(" in send_batch
+         and "max_sessions_from_options(options)" in send_batch
+-        and 'execute_serve_sessions_or_throw(options, "serve-one", 1U)'
+-        in serve_one
++        and "max_runtime_from_options(options)" in send_batch
++        and 'options, "serve-one", 1U, std::nullopt' in serve_one
+         and "execute_serve_sessions_or_throw(" in serve_batch
+-        and "max_sessions_from_options(options)" in serve_batch,
++        and "max_sessions_from_options(options)" in serve_batch
++        and "max_runtime_from_options(options)" in serve_batch
++        and "sync_replica_session_supervisor.hpp" in source,
+         "one_and_batch_commands_share_existing_only_session_owners",
+         "thin wrappers cannot drift around the reviewed manifest, database, TLS, listener, payload, or membership authority frontiers",
+     )
+--- a/tools/audit_anonsync_replica_deployment_binding.py
++++ b/tools/audit_anonsync_replica_deployment_binding.py
+@@ -464,12 +464,15 @@
+         all(
+             token in product
+             for token in (
+-                'execute_send_sessions_or_throw(options, "send-one", 1U)',
++                'sync_replica_session_supervisor.hpp',
++                'options, "send-one", 1U, std::nullopt',
+                 'execute_send_sessions_or_throw(',
+-                'execute_serve_sessions_or_throw(options, "serve-one", 1U)',
++                'options, "serve-one", 1U, std::nullopt',
+                 'execute_serve_sessions_or_throw(',
+                 'max_sessions_from_options(options)',
+-                'kMaximumBatchSessions = 256U',
++                'max_runtime_from_options(options)',
++                'kSyncReplicaSessionSupervisorMaximumSessions',
++                'kSyncReplicaSessionSupervisorMaximumRuntimeSeconds',
+             )
+         ),
+         "one_and_batch_network_commands_share_bounded_authority_owners",
+--- a/tools/test_anonsync_replica_cli.py
++++ b/tools/test_anonsync_replica_cli.py
+@@ -1196,6 +1196,36 @@
+             stderr_contains="clock is not quarantined",
+         )
+ 
++        # A durable sender claim must outlive every receipt and clock-policy
++        # allowance that the same invocation still treats as valid. For the
++        # selected five-second stage timeout the exact static minimum is 641
++        # seconds. One second less fails before manifest/store/payload/TLS/socket
++        # authority and leaves the deployment byte-for-byte unchanged.
++        short_lease_before = {
++            "replica": database_family_snapshot(sender_database),
++            "payload": directory_snapshot(payload_root),
++        }
++        run_failure([
++            str(replica), "send-one", "--manifest", str(sender_manifest),
++            "--remote-device", "receiver", "--remote-epoch", "1",
++            "--remote-spki", str(receiver_pin),
++            "--address", "127.0.0.1", "--port", str(reserve_port()),
++            "--certificate", str(certificates / "sender.pem"),
++            "--private-key", str(certificates / "sender.key"),
++            "--ca-file", str(certificates / "ca.pem"),
++            "--timeout-seconds", "5", "--lease-seconds", "640",
++            "--operator-clock-authority-id", "cloudtainer-process-test",
++            "--operator-clock-uncertainty-ns", "1000000",
++        ], stderr_contains=(
++            "--lease-seconds must be at least 641 seconds"
++        ))
++        short_lease_after = {
++            "replica": database_family_snapshot(sender_database),
++            "payload": directory_snapshot(payload_root),
++        }
++        if short_lease_after != short_lease_before:
++            fail("short sender lease reached durable or payload authority")
++
+         port = reserve_port()
+         server_command = [
+             str(replica), "serve-one", "--manifest", str(receiver_manifest),
+@@ -1254,6 +1284,10 @@
+         expect_fields(client, {
+             "command": "send-one", **sender_authority,
+             "clock_profile": "operator-trusted",
++            "session_timeout_seconds": 5,
++            "claim_lease_seconds": 641,
++            "minimum_claim_lease_seconds": 641,
++            "stop_reason": "max_sessions_reached",
+             "disposition": "receipt_applied", "peer_authenticated": True,
+             "receipt_apply_result": "effect_settled",
+             "operation_id": enqueue["operation_id"],
+@@ -1262,6 +1296,8 @@
+         expect_fields(server_result, {
+             "command": "serve-one",
+             **receiver_authority,
++            "session_timeout_seconds": 5,
++            "stop_reason": "max_sessions_reached",
+             "disposition": "receipt_sent", "handshake_complete": True,
+             "membership_state_generation": 2,
+             "membership_policy_epoch": 2, "peer_device_id": "sender",
+@@ -1282,10 +1318,9 @@
+         if published.read_bytes() != payload:
+             fail("receiver filesystem publication differs from source payload")
+ 
+-        # One bounded invocation can now settle multiple exact deliveries while
+-        # reusing only the manifest/store/TLS-context cutpoint. Each underlying
+-        # session remains the previously proven one-request owner with fresh
+-        # deadlines, authentication, claim, receipt, and membership authority.
++        # Batch supervisors require both a conversation-count budget and one
++        # absolute command-runtime budget. Invalid or omitted bounds fail before
++        # manifest, store, socket, or TLS authority can be opened.
+         for invalid_bound in ("0", "257"):
+             run_failure([
+                 str(replica), "send-batch", "--max-sessions", invalid_bound,
+@@ -1293,7 +1328,71 @@
+             run_failure([
+                 str(replica), "serve-batch", "--max-sessions", invalid_bound,
+             ], stderr_contains="--max-sessions must be in [1, 256]")
+-
++        for command in ("send-batch", "serve-batch"):
++            run_failure([
++                str(replica), command, "--max-sessions", "1",
++            ], stderr_contains="required option --max-runtime-seconds is missing")
++            for invalid_runtime in ("0", "86401"):
++                run_failure([
++                    str(replica), command, "--max-sessions", "1",
++                    "--max-runtime-seconds", invalid_runtime,
++                ], stderr_contains=(
++                    "--max-runtime-seconds must be in [1, 86400]"
++                ))
++
++        # The whole-command cutpoint begins before receiver preflight and clamps
++        # the first accept deadline. No peer arrives; the invocation exits at the
++        # command cutpoint without durable delivery or filesystem mutation.
++        runtime_before = {
++            "replica": database_family_snapshot(receiver_database),
++            "effect": database_family_snapshot(effect_database),
++            "membership": database_family_snapshot(membership_database),
++            "anchor": database_family_snapshot(membership_anchor_database),
++            "files": directory_snapshot(files_root),
++        }
++        runtime_port = reserve_port()
++        runtime_result = run_json([
++            str(replica), "serve-batch", "--manifest", str(receiver_manifest),
++            "--max-sessions", "5", "--max-runtime-seconds", "3",
++            "--bind-address", "127.0.0.1", "--port", str(runtime_port),
++            "--certificate", str(certificates / "receiver.pem"),
++            "--private-key", str(certificates / "receiver.key"),
++            "--ca-file", str(certificates / "ca.pem"),
++            "--timeout-seconds", "5",
++        ], timeout=8.0)
++        expect_fields(runtime_result, {
++            "command": "serve-batch", **receiver_authority,
++            "max_sessions": 5, "max_runtime_seconds": 3,
++            "session_timeout_seconds": 5,
++            "sessions_attempted": 1, "receipts_sent": 0,
++            "stop_reason": "command_deadline_reached",
++        }, "whole-command receiver runtime budget")
++        runtime_sessions = runtime_result.get("sessions")
++        if not isinstance(runtime_sessions, list) or len(runtime_sessions) != 1:
++            fail("runtime-bounded receiver omitted its one accept session")
++        expect_fields(runtime_sessions[0], {
++            "session_index": 1,
++            "disposition": "accept_deadline_expired",
++            "accepted": False,
++            "handshake_complete": False,
++        }, "whole-command receiver deadline session")
++        runtime_after = {
++            "replica": database_family_snapshot(receiver_database),
++            "effect": database_family_snapshot(effect_database),
++            "membership": database_family_snapshot(membership_database),
++            "anchor": database_family_snapshot(membership_anchor_database),
++            "files": directory_snapshot(files_root),
++        }
++        if runtime_after != runtime_before:
++            fail("runtime-only receiver session mutated durable authority")
++
++        # One bounded invocation can settle multiple exact deliveries while
++        # reusing only the manifest/store/TLS-context cutpoint. A deliberately
++        # larger session bound proves compositional termination: after two exact
++        # receipts, the sender authenticates once more, discovers no ready work,
++        # emits no application bytes, and closes. The receiver recognizes only
++        # that exact zero-application-byte authenticated close as nonfatal idle;
++        # it does not claim evidence that the sender had no work.
+         batch_enqueues: list[dict[str, Any]] = []
+         batch_names = ("batch-alpha.bin", "batch-beta.bin")
+         for batch_source, batch_payload, batch_name in zip(
+@@ -1317,7 +1416,7 @@
+         batch_port = reserve_port()
+         batch_server_command = [
+             str(replica), "serve-batch", "--manifest", str(receiver_manifest),
+-            "--max-sessions", "2",
++            "--max-sessions", "3", "--max-runtime-seconds", "30",
+             "--bind-address", "127.0.0.1", "--port", str(batch_port),
+             "--certificate", str(certificates / "receiver.pem"),
+             "--private-key", str(certificates / "receiver.key"),
+@@ -1336,7 +1435,7 @@
+             wait_until_listening(batch_server, batch_port)
+             batch_client = run_json([
+                 str(replica), "send-batch", "--manifest", str(sender_manifest),
+-                "--max-sessions", "2",
++                "--max-sessions", "3", "--max-runtime-seconds", "30",
+                 "--remote-device", "receiver", "--remote-epoch", "1",
+                 "--remote-spki", str(receiver_pin),
+                 "--address", "127.0.0.1", "--port", str(batch_port),
+@@ -1382,16 +1481,21 @@
+         expect_fields(batch_client, {
+             "command": "send-batch", **sender_authority,
+             "clock_profile": "operator-trusted",
+-            "max_sessions": 2, "sessions_attempted": 2,
++            "max_sessions": 3, "max_runtime_seconds": 30,
++            "session_timeout_seconds": 5,
++            "claim_lease_seconds": 641,
++            "minimum_claim_lease_seconds": 641,
++            "sessions_attempted": 3,
+             "receipts_applied": 2, "deliveries_settled": 2,
+             "deliveries_deferred": 0,
+-            "stop_reason": "max_sessions_reached",
++            "stop_reason": "no_ready_delivery",
+         }, "bounded sender supervisor")
+         expect_fields(batch_server_result, {
+             "command": "serve-batch", **receiver_authority,
+-            "max_sessions": 2, "sessions_attempted": 2,
+-            "receipts_sent": 2,
+-            "stop_reason": "max_sessions_reached",
++            "max_sessions": 3, "max_runtime_seconds": 30,
++            "session_timeout_seconds": 5,
++            "sessions_attempted": 3, "receipts_sent": 2,
++            "stop_reason": "authenticated_peer_closed_idle",
+         }, "bounded receiver supervisor")
+ 
+         client_sessions = batch_client.get("sessions")
+@@ -1399,16 +1503,21 @@
+         if (
+             not isinstance(client_sessions, list)
+             or not isinstance(server_sessions, list)
+-            or len(client_sessions) != 2
+-            or len(server_sessions) != 2
++            or len(client_sessions) != 3
++            or len(server_sessions) != 3
+         ):
+-            fail("bounded supervisors did not return exactly two session records")
++            fail("bounded supervisors did not return exactly three session records")
++        operation_client_sessions = client_sessions[:2]
++        operation_server_sessions = server_sessions[:2]
++        idle_client_session = client_sessions[2]
++        idle_server_session = server_sessions[2]
++
+         expected_operation_ids = {
+             enqueued["operation_id"] for enqueued in batch_enqueues
+         }
+         client_by_operation: dict[str, dict[str, Any]] = {}
+         server_by_operation: dict[str, dict[str, Any]] = {}
+-        for index, session in enumerate(client_sessions, start=1):
++        for index, session in enumerate(operation_client_sessions, start=1):
+             if not isinstance(session, dict):
+                 fail("bounded sender session is not a JSON object")
+             expect_fields(session, {
+@@ -1422,7 +1531,7 @@
+             if not isinstance(operation_id, str):
+                 fail("bounded sender session omitted operation_id")
+             client_by_operation[operation_id] = session
+-        for index, session in enumerate(server_sessions, start=1):
++        for index, session in enumerate(operation_server_sessions, start=1):
+             if not isinstance(session, dict):
+                 fail("bounded receiver session is not a JSON object")
+             expect_fields(session, {
+@@ -1440,14 +1549,53 @@
+             if not isinstance(operation_id, str):
+                 fail("bounded receiver session omitted operation_id")
+             server_by_operation[operation_id] = session
++        if not isinstance(idle_client_session, dict):
++            fail("bounded sender idle session is not a JSON object")
++        expect_fields(idle_client_session, {
++            "session_index": 3,
++            "disposition": "no_ready_delivery",
++            "shutdown_disposition": "close_notify_sent",
++            "connected": True,
++            "handshake_complete": True,
++            "peer_authenticated": True,
++            "request_frame_bytes": 0,
++            "request_body_bytes_written": 0,
++            "receipt_frame_bytes": 0,
++            "peer_spki_sha256": receiver_pin,
++        }, "bounded sender authenticated no-ready session")
++        if "operation_id" in idle_client_session or "claim_id" in idle_client_session:
++            fail("sender no-ready session invented durable claim identity")
++        if not isinstance(idle_server_session, dict):
++            fail("bounded receiver idle session is not a JSON object")
++        expect_fields(idle_server_session, {
++            "session_index": 3,
++            "disposition": "peer_closed",
++            "shutdown_disposition": "not_attempted",
++            "accepted": True,
++            "handshake_complete": True,
++            "membership_state_generation": 2,
++            "membership_policy_epoch": 2,
++            "peer_device_id": "sender", "peer_epoch": 1,
++            "peer_spki_sha256": sender_pin,
++            "receive_disposition": "peer_closed",
++            "request_frame_bytes": 0,
++            "receipt_frame_bytes": 0,
++        }, "bounded receiver authenticated idle close")
++        if "operation_id" in idle_server_session or "receipt_disposition" in idle_server_session:
++            fail("receiver idle session invented delivery evidence")
++
+         if set(client_by_operation) != expected_operation_ids:
+             fail("bounded sender settled a different operation set")
+         if set(server_by_operation) != expected_operation_ids:
+             fail("bounded receiver published a different operation set")
+         enqueue_order = [item["operation_id"] for item in batch_enqueues]
+-        if [session.get("operation_id") for session in client_sessions] != enqueue_order:
++        if [
++            session.get("operation_id") for session in operation_client_sessions
++        ] != enqueue_order:
+             fail("bounded sender did not preserve durable enqueue chronology")
+-        if [session.get("operation_id") for session in server_sessions] != enqueue_order:
++        if [
++            session.get("operation_id") for session in operation_server_sessions
++        ] != enqueue_order:
+             fail("bounded receiver observed a different causal session order")
+         for operation_id in expected_operation_ids:
+             if client_by_operation[operation_id].get(
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -948,6 +948,14 @@
+             "FORENSIC_STATUS_AND_SQLITE_FILENAME_FAMILY_AUTHORITY_AUDIT_rev0905.md",
+             "REVISION_NOTES_rev0905.md",
+         })
++    if revision_number is not None and revision_number >= 907:
++        revision_scoped_required.update({
++            "src/sync_replica_session_supervisor.hpp",
++            "src/sync_replica_session_supervisor.cpp",
++            "tests/sync_replica_session_supervisor_test.cpp",
++            "ABSOLUTE_COMMAND_DEADLINE_IDLE_CLOSE_PRECLAIM_AND_LEASE_HORIZON_AUDIT_rev0907.md",
++            "REVISION_NOTES_rev0907.md",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

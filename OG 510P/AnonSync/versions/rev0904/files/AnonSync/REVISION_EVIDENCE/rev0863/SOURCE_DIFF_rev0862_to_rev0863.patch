@@ -1,0 +1,1528 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1bca150..5d850f1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -580,6 +580,7 @@ target_include_directories(anonsync_sync_sqlite_sidecar_claimed_path_snapshot PU
+   ${CMAKE_CURRENT_SOURCE_DIR}/include
+   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+ target_link_libraries(anonsync_sync_sqlite_sidecar_claimed_path_snapshot PUBLIC
++  anonsync_sqlite_busy_handler_owner
+   anonsync_sqlite_verification_budget
+   anonsync_sync_manifest_validation
+   anonsync_sqlite_support)
+@@ -2172,6 +2173,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_thread_incarnation
+     anonsync_process_identity_observation
+     anonsync_peer_ingress_connection_profile
++    anonsync_sqlite_database_mutex_guard
+     anonsync_sqlite_retained_callback_claim
+     anonsync_sqlite_busy_handler_owner
+     anonsync_sqlite_busy_handler_owner_test
+diff --git a/include/anonsync_core.hpp b/include/anonsync_core.hpp
+index 129fa38..045ad83 100644
+--- a/include/anonsync_core.hpp
++++ b/include/anonsync_core.hpp
+@@ -1182,11 +1182,16 @@ struct SyncSessionCheckpointBoundPeerChunkSidecarRecoveryCheckpointEvidenceLimit
+     std::uint64_t max_manifest_chunks = 1000000;
+     std::uint64_t max_manifest_lineage_rows = 500000;
+     std::uint64_t max_metadata_bytes = 256ULL * 1024ULL * 1024ULL;
+-    // These execution limits may be tightened by callers, but cannot widen the
+-    // reviewed generic hostile-SQLite ceilings enforced by the implementation.
++    // Cooperative VM execution and lock waiting are independent dimensions.
++    // Callers may tighten either, but cannot widen the reviewed generic
++    // hostile-SQLite ceilings enforced by the implementation. The lock value
++    // is cumulative sqlite3_sleep() request authority, not a hard wall-clock
++    // deadline: scheduler delay may make observed sleep larger. Zero is valid
++    // and means fail fast on the first lock conflict.
+     std::uint64_t max_sqlite_progress_callbacks = 1000000;
+     std::uint32_t sqlite_progress_opcode_interval = 1000;
+     std::uint64_t max_sqlite_elapsed_milliseconds = 60000;
++    std::uint64_t max_sqlite_lock_wait_milliseconds = 60000;
+ };
+ 
+ struct SyncSessionCheckpointBoundPeerChunkSidecarRecoverySweepOptions {
+@@ -1312,6 +1317,10 @@ struct SyncSessionCheckpointBoundPeerChunkSidecarRecoverySessionSweepResult {
+     std::uint64_t files_ambiguous_remote_file_evidence = 0;
+     std::uint64_t files_remote_apply_evidence_mismatch = 0;
+     std::uint64_t claimed_workorder_paths_considered = 0;
++    bool sqlite_lock_contention_observed = false;
++    std::uint64_t sqlite_lock_wait_invocations = 0;
++    std::uint64_t sqlite_lock_wait_authorized_sleep_milliseconds = 0;
++    std::uint64_t sqlite_lock_wait_observed_sleep_milliseconds = 0;
+     std::uint64_t claimed_workorder_paths_missing_apply_input = 0;
+     std::uint64_t files_attempted = 0;
+     std::uint64_t files_completed = 0;
+@@ -1370,6 +1379,10 @@ struct SyncSessionCheckpointBoundPeerChunkSidecarRecoveryCheckpointEvidenceResul
+     std::string archived_checkpoint_migration_backfill_reason;
+     bool main_read_snapshot_established = false;
+     std::uint64_t database_owner_generation = 0;
++    bool sqlite_lock_contention_observed = false;
++    std::uint64_t sqlite_lock_wait_invocations = 0;
++    std::uint64_t sqlite_lock_wait_authorized_sleep_milliseconds = 0;
++    std::uint64_t sqlite_lock_wait_observed_sleep_milliseconds = 0;
+     std::uint64_t claimed_workorder_paths_considered = 0;
+     std::uint64_t claimed_workorder_path_bytes = 0;
+     std::uint64_t evidence_metadata_bytes = 0;
+diff --git a/src/persistence/sqlite_busy_handler_owner.cpp b/src/persistence/sqlite_busy_handler_owner.cpp
+index 9302404..c719349 100644
+--- a/src/persistence/sqlite_busy_handler_owner.cpp
++++ b/src/persistence/sqlite_busy_handler_owner.cpp
+@@ -39,14 +39,6 @@ void saturating_atomic_add(std::atomic<std::uint64_t>& value,
+     }
+ }
+ 
+-std::uint64_t elapsed_milliseconds_since(
+-    std::chrono::steady_clock::time_point started) noexcept {
+-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+-        std::chrono::steady_clock::now() - started);
+-    if (elapsed.count() <= 0) return 0;
+-    return static_cast<std::uint64_t>(elapsed.count());
+-}
+-
+ [[noreturn]] void fail_stop_on_busy_context_lifetime_violation_noexcept()
+     noexcept {
+     // The stable process-capability exit is also used when a retained callback
+@@ -96,8 +88,7 @@ SqliteBusyHandlerOwner::SqliteBusyHandlerOwner(
+     const std::string& label)
+     : process_id_(current_sync_process_incarnation_noexcept()),
+       database_borrow_(std::move(database_borrow)),
+-      maximum_wait_milliseconds_(maximum_wait_milliseconds),
+-      installed_at_(std::chrono::steady_clock::now()) {
++      maximum_wait_milliseconds_(maximum_wait_milliseconds) {
+     sqlite3* const database = database_borrow_.get();
+     if (database == nullptr) {
+         throw std::invalid_argument(
+@@ -152,6 +143,8 @@ SqliteBusyHandlerSnapshot SqliteBusyHandlerOwner::snapshot() const noexcept {
+     result.contention_observed =
+         contention_observed_.load(std::memory_order_acquire);
+     result.invocations = invocations_.load(std::memory_order_acquire);
++    result.authorized_sleep_milliseconds =
++        authorized_sleep_milliseconds_.load(std::memory_order_acquire);
+     result.sleep_milliseconds =
+         sleep_milliseconds_.load(std::memory_order_acquire);
+     result.timeout_exhausted =
+@@ -209,46 +202,29 @@ int SqliteBusyHandlerOwner::on_busy(int prior_invocations) noexcept {
+     CallbackActivityScope activity(callbacks_active_);
+ 
+     saturating_atomic_add(invocations_, 1U);
+-    const std::uint64_t now_elapsed =
+-        elapsed_milliseconds_since(installed_at_);
+-    if (prior_invocations <= 0) {
+-        event_started_elapsed_milliseconds_.store(now_elapsed,
+-                                                  std::memory_order_release);
+-    } else {
+-        std::uint64_t absent = std::numeric_limits<std::uint64_t>::max();
+-        (void)event_started_elapsed_milliseconds_.compare_exchange_strong(
+-            absent,
+-            now_elapsed,
+-            std::memory_order_release,
+-            std::memory_order_relaxed);
+-    }
+-
+     contention_observed_.store(true, std::memory_order_release);
+ 
+-    if (maximum_wait_milliseconds_ == 0U) {
++    const std::uint64_t authorized_sleep =
++        authorized_sleep_milliseconds_.load(std::memory_order_acquire);
++    if (authorized_sleep >= maximum_wait_milliseconds_) {
+         timeout_exhausted_.store(true, std::memory_order_release);
+         return 0;
+     }
+ 
+-    const std::uint64_t event_started =
+-        event_started_elapsed_milliseconds_.load(std::memory_order_acquire);
+-    const std::uint64_t waited =
+-        event_started == std::numeric_limits<std::uint64_t>::max() ||
+-                now_elapsed < event_started
+-            ? 0U
+-            : now_elapsed - event_started;
+-    if (waited >= maximum_wait_milliseconds_) {
+-        timeout_exhausted_.store(true, std::memory_order_release);
+-        return 0;
+-    }
+-
+-    const std::uint64_t remaining = maximum_wait_milliseconds_ - waited;
++    const std::uint64_t remaining =
++        maximum_wait_milliseconds_ - authorized_sleep;
+     const int normalized_prior = std::max(prior_invocations, 0);
+     const int progressive = normalized_prior >= 9 ? 10 : normalized_prior + 1;
+     const std::uint64_t progressive_sleep =
+         static_cast<std::uint64_t>(progressive);
+     const std::uint64_t requested_sleep =
+         std::min(progressive_sleep, remaining);
++
++    // Callback overlap is fail-stop, so this is the only writer. Consume the
++    // exact authority before sleeping: a later locking event cannot reuse it,
++    // and scheduler latency cannot silently enlarge the budget.
++    authorized_sleep_milliseconds_.store(
++        authorized_sleep + requested_sleep, std::memory_order_release);
+     const int slept = sqlite3_sleep(static_cast<int>(requested_sleep));
+     if (slept > 0) {
+         saturating_atomic_add(sleep_milliseconds_,
+diff --git a/src/persistence/sqlite_busy_handler_owner.hpp b/src/persistence/sqlite_busy_handler_owner.hpp
+index e0db79b..4521a1b 100644
+--- a/src/persistence/sqlite_busy_handler_owner.hpp
++++ b/src/persistence/sqlite_busy_handler_owner.hpp
+@@ -5,9 +5,7 @@
+ #include "sync_sqlite_handle_slot.hpp"
+ 
+ #include <atomic>
+-#include <chrono>
+ #include <cstdint>
+-#include <limits>
+ #include <string>
+ 
+ namespace anonsync::persistence {
+@@ -24,6 +22,10 @@ inline constexpr std::uint64_t kMaximumSqliteBusyHandlerWaitMilliseconds =
+ // quiesced, this value is exact for the owner lifetime.
+ struct SqliteBusyHandlerSnapshot final {
+     std::uint64_t invocations = 0;
++    // Exact cumulative sleep authority consumed by this owner. Scheduler
++    // latency can make the observed sqlite3_sleep() duration larger.
++    std::uint64_t authorized_sleep_milliseconds = 0;
++    // Diagnostic duration reported by sqlite3_sleep(), never authority.
+     std::uint64_t sleep_milliseconds = 0;
+     bool contention_observed = false;
+     bool timeout_exhausted = false;
+@@ -42,6 +44,8 @@ struct SqliteBusyHandlerSnapshot final {
+ // retained borrow prevents typed close/replacement until both the callback and
+ // the named client-data claim are revoked. The class is nonmovable so SQLite's
+ // raw context address cannot change.
++// maximum_wait_milliseconds is one cumulative budget for the complete owner
++// lifetime, not a fresh allowance for each SQLite locking event.
+ //
+ // The named client-data claim prevents two AnonSync owners from silently
+ // replacing one another. Construction holds the connection's recursive mutex
+@@ -87,10 +91,8 @@ private:
+     SyncSqliteSerializedDbBorrow database_borrow_;
+     SqliteRetainedCallbackClaim callback_claim_;
+     std::uint64_t maximum_wait_milliseconds_ = 0;
+-    std::chrono::steady_clock::time_point installed_at_;
+-    std::atomic<std::uint64_t> event_started_elapsed_milliseconds_{
+-        std::numeric_limits<std::uint64_t>::max()};
+     std::atomic<std::uint64_t> invocations_{0};
++    std::atomic<std::uint64_t> authorized_sleep_milliseconds_{0};
+     std::atomic<std::uint64_t> sleep_milliseconds_{0};
+     std::atomic<std::uint32_t> callbacks_active_{0};
+     std::atomic<bool> contention_observed_{false};
+diff --git a/src/sync_domain_selftests.cpp b/src/sync_domain_selftests.cpp
+index 563c3b9..874c473 100644
+--- a/src/sync_domain_selftests.cpp
++++ b/src/sync_domain_selftests.cpp
+@@ -4800,6 +4800,10 @@ int run_sync_domain_model_selftest() {
+                             !hydrated_evidence_result.archived_checkpoint_migration_backfill_blocked_missing_lineage &&
+                             hydrated_evidence_result.main_read_snapshot_established &&
+                             hydrated_evidence_result.database_owner_generation != 0 &&
++                            !hydrated_evidence_result.sqlite_lock_contention_observed &&
++                            hydrated_evidence_result.sqlite_lock_wait_invocations == 0 &&
++                            hydrated_evidence_result.sqlite_lock_wait_authorized_sleep_milliseconds == 0 &&
++                            hydrated_evidence_result.sqlite_lock_wait_observed_sleep_milliseconds == 0 &&
+                             hydrated_evidence_result.claimed_workorder_paths_considered == 1 &&
+                             hydrated_evidence_result.claimed_workorder_path_bytes ==
+                                 pending_materialize_entry->path.value.size() &&
+@@ -4815,6 +4819,25 @@ int run_sync_domain_model_selftest() {
+                             sync_manifest_entry_digest(hydrated_evidence_result.remote_file_entries[0]) == sync_manifest_entry_digest(*pending_materialize_entry) &&
+                             hydrated_evidence_result.apply_entries[0].idempotency_key == pending_materialize_apply->idempotency_key,
+                             "sync session checkpoint sidecar recovery hydrates remote/apply evidence from SQLite checkpoint lineage rows");
++                    {
++                        SyncSessionCheckpointBoundPeerChunkSidecarRecoverySweepOptions
++                            fail_fast_lock_evidence_options = hydrated_evidence_options;
++                        fail_fast_lock_evidence_options.checkpoint_evidence_limits
++                            .max_sqlite_lock_wait_milliseconds = 0U;
++                        SyncSessionCheckpointBoundPeerChunkSidecarRecoveryCheckpointEvidenceResult
++                            fail_fast_lock_evidence_result;
++                        const SyncValidationResult fail_fast_lock_evidence_run =
++                            load_sync_session_checkpoint_bound_peer_chunk_sidecar_recovery_checkpoint_evidence(
++                                fail_fast_lock_evidence_options,
++                                fail_fast_lock_evidence_result);
++                        require(fail_fast_lock_evidence_run.ok &&
++                                fail_fast_lock_evidence_result.checkpoint_evidence_loaded &&
++                                !fail_fast_lock_evidence_result.sqlite_lock_contention_observed &&
++                                fail_fast_lock_evidence_result.sqlite_lock_wait_invocations == 0 &&
++                                fail_fast_lock_evidence_result.sqlite_lock_wait_authorized_sleep_milliseconds == 0 &&
++                                fail_fast_lock_evidence_result.sqlite_lock_wait_observed_sleep_milliseconds == 0,
++                                "checkpoint evidence admits a zero lock-wait policy and succeeds when uncontended");
++                    }
+                     {
+                         SyncSessionCheckpointBoundPeerChunkSidecarRecoverySweepOptions
+                             execution_limited_evidence_options = hydrated_evidence_options;
+@@ -4862,6 +4885,24 @@ int run_sync_domain_model_selftest() {
+                                     std::string::npos,
+                                 "checkpoint evidence callers may tighten but cannot widen reviewed SQLite execution ceilings");
+                     }
++                    {
++                        SyncSessionCheckpointBoundPeerChunkSidecarRecoverySweepOptions
++                            widened_lock_wait_evidence_options = hydrated_evidence_options;
++                        widened_lock_wait_evidence_options.checkpoint_evidence_limits
++                            .max_sqlite_lock_wait_milliseconds = 60001U;
++                        SyncSessionCheckpointBoundPeerChunkSidecarRecoveryCheckpointEvidenceResult
++                            widened_lock_wait_evidence_result;
++                        const SyncValidationResult widened_lock_wait_evidence_run =
++                            load_sync_session_checkpoint_bound_peer_chunk_sidecar_recovery_checkpoint_evidence(
++                                widened_lock_wait_evidence_options,
++                                widened_lock_wait_evidence_result);
++                        require(!widened_lock_wait_evidence_run.ok &&
++                                !widened_lock_wait_evidence_result.checkpoint_evidence_loaded &&
++                                widened_lock_wait_evidence_run.reason.find(
++                                    "lock-wait limit cannot widen the reviewed ceiling") !=
++                                    std::string::npos,
++                                "checkpoint evidence callers may tighten but cannot widen the reviewed SQLite lock-wait ceiling");
++                    }
+                     {
+                         SyncSessionCheckpointBoundPeerChunkSidecarRecoverySweepOptions
+                             path_limited_evidence_options = hydrated_evidence_options;
+@@ -4914,6 +4955,10 @@ int run_sync_domain_model_selftest() {
+                                 !metadata_limited_evidence_result.checkpoint_evidence_loaded &&
+                                 !metadata_limited_evidence_result.main_read_snapshot_established &&
+                                 metadata_limited_evidence_result.database_owner_generation == 0 &&
++                                !metadata_limited_evidence_result.sqlite_lock_contention_observed &&
++                                metadata_limited_evidence_result.sqlite_lock_wait_invocations == 0 &&
++                                metadata_limited_evidence_result.sqlite_lock_wait_authorized_sleep_milliseconds == 0 &&
++                                metadata_limited_evidence_result.sqlite_lock_wait_observed_sleep_milliseconds == 0 &&
+                                 metadata_limited_evidence_result.claimed_workorder_paths_considered == 0 &&
+                                 metadata_limited_evidence_result.claimed_workorder_path_bytes == 0 &&
+                                 metadata_limited_evidence_result.evidence_metadata_bytes == 0 &&
+diff --git a/src/sync_peer_ingestion.cpp b/src/sync_peer_ingestion.cpp
+index d0f64ab..0175e1d 100644
+--- a/src/sync_peer_ingestion.cpp
++++ b/src/sync_peer_ingestion.cpp
+@@ -436,6 +436,12 @@ SyncValidationResult validate_peer_sidecar_recovery_sweep_options(
+             label +
+             " checkpoint SQLite execution limits cannot widen reviewed ceilings");
+     }
++    if (limits.max_sqlite_lock_wait_milliseconds >
++        persistence::kMaximumSqliteBusyHandlerWaitMilliseconds) {
++        return peer_ingestion_fail(
++            label +
++            " checkpoint SQLite lock-wait limit cannot widen the reviewed ceiling");
++    }
+     constexpr std::uint64_t sqlite_i64_max =
+         static_cast<std::uint64_t>(
+             std::numeric_limits<sqlite3_int64>::max());
+@@ -514,6 +520,15 @@ peer_sidecar_snapshot_execution_limits(
+     };
+ }
+ 
++SyncSqliteSidecarLockWaitLimits peer_sidecar_lock_wait_limits(
++    const SyncSessionCheckpointBoundPeerChunkSidecarRecoverySweepOptions& options) {
++    return {
++        .maximum_lock_wait_milliseconds =
++            options.checkpoint_evidence_limits
++                .max_sqlite_lock_wait_milliseconds,
++    };
++}
++
+ SyncSqliteSidecarClaimedPathSnapshot
+ peer_sidecar_claimed_workorder_path_snapshot_or_throw(
+     SyncSqliteDbHandleSlot& db,
+@@ -550,37 +565,69 @@ peer_sidecar_claimed_workorder_path_snapshot_for_session_or_throw(
+             db.db,
+             label + " could not open sqlite database for claimed path coverage"));
+     }
+-    SyncSqliteTransaction snapshot_transaction(
++    // Lock waiting and VM execution are separate resource dimensions. The
++    // lock-wait owner is older than the transaction so it remains callable
++    // through begin, commit, and failure-path rollback. The younger progress
++    // owner still revokes its callback before transaction cleanup.
++    SyncSqliteSidecarLockWaitBudget lock_wait_budget(
+         db.db,
+-        label + " claimed-path read snapshot",
+-        SyncSqliteTransactionMode::Deferred);
+-    // Declare callback ownership after the transaction. On failure it detaches
+-    // first, so an exhausted handler cannot interrupt rollback cleanup.
+-    SyncSqliteSidecarSnapshotExecutionBudget execution_budget(
+-        db.db,
+-        peer_sidecar_snapshot_execution_limits(options),
+-        label + " claimed-path execution budget");
++        peer_sidecar_lock_wait_limits(options),
++        label + " claimed-path lock-wait budget");
+     try {
+-        SyncSqliteSidecarClaimedPathSnapshot snapshot =
+-            peer_sidecar_claimed_workorder_path_snapshot_or_throw(
++        SyncSqliteTransaction snapshot_transaction(
++            db.db,
++            label + " claimed-path read snapshot",
++            SyncSqliteTransactionMode::Deferred);
++        SyncSqliteSidecarSnapshotExecutionBudget execution_budget(
++            db.db,
++            peer_sidecar_snapshot_execution_limits(options),
++            label + " claimed-path execution budget");
++        try {
++            SyncSqliteSidecarClaimedPathSnapshot snapshot =
++                peer_sidecar_claimed_workorder_path_snapshot_or_throw(
++                    db.db,
++                    snapshot_transaction.authority(),
++                    execution_budget,
++                    options,
++                    label);
++            lock_wait_budget.require_authorizes_or_throw(
+                 db.db,
+-                snapshot_transaction.authority(),
+-                execution_budget,
+-                options,
+-                label);
+-        if (!snapshot_transaction.authorizes_snapshot(db.db)) {
+-            throw std::runtime_error(
+-                label + " claimed-path read snapshot was not established");
++                snapshot.database_owner_generation,
++                label + " claimed-path lock-wait authority");
++            if (!snapshot_transaction.authorizes_snapshot(db.db)) {
++                throw std::runtime_error(
++                    label + " claimed-path read snapshot was not established");
++            }
++            execution_budget.checkpoint();
++            execution_budget.detach();
++            snapshot_transaction.commit();
++
++            lock_wait_budget.require_authorizes_or_throw(
++                db.db,
++                snapshot.database_owner_generation,
++                label + " committed lock-wait authority");
++            const persistence::SqliteBusyHandlerSnapshot lock_snapshot =
++                lock_wait_budget.snapshot();
++            snapshot.sqlite_lock_contention_observed =
++                lock_snapshot.contention_observed;
++            snapshot.sqlite_lock_wait_invocations = lock_snapshot.invocations;
++            snapshot.sqlite_lock_wait_authorized_sleep_milliseconds =
++                lock_snapshot.authorized_sleep_milliseconds;
++            snapshot.sqlite_lock_wait_observed_sleep_milliseconds =
++                lock_snapshot.sleep_milliseconds;
++            lock_wait_budget.detach();
++            return snapshot;
++        } catch (...) {
++            // Recover a typed VM execution failure before its exact owner is
++            // destroyed. Unwinding then detaches that callback and rolls back
++            // while the older lock-wait owner remains live.
++            execution_budget.throw_if_exhausted();
++            throw;
+         }
+-        execution_budget.checkpoint();
+-        execution_budget.detach();
+-        snapshot_transaction.commit();
+-        return snapshot;
+     } catch (...) {
+-        // sqlite3_step reports progress-handler exhaustion as SQLITE_INTERRUPT.
+-        // Recover the typed, value-free resource reason while the owner and
+-        // exact generation are still alive, before rollback destruction.
+-        execution_budget.throw_if_exhausted();
++        // Translate SQLITE_BUSY only after transaction destruction has had the
++        // same bounded handler available for cleanup.
++        lock_wait_budget.throw_if_exhausted();
+         throw;
+     }
+ }
+@@ -2118,145 +2165,175 @@ SyncValidationResult load_sync_session_checkpoint_bound_peer_chunk_sidecar_recov
+                 db.db, label + " could not open sqlite database"));
+         }
+ 
+-        // One result may not splice claimed-path, schema, apply, manifest,
+-        // chunk, or lineage rows from different commits. The claimed frontier
+-        // is deliberately the first SELECT and therefore establishes the one
+-        // exact main-database snapshot used by every later evidence read.
+-        SyncSqliteTransaction snapshot_transaction(
+-            db.db,
+-            label + " main read snapshot",
+-            SyncSqliteTransactionMode::Deferred);
+-        // The callback owner is younger than the transaction so every failure
+-        // detaches it before rollback. One budget spans the frontier and every
+-        // schema/apply/manifest/chunk/lineage SELECT in this exact snapshot.
+-        SyncSqliteSidecarSnapshotExecutionBudget execution_budget(
++        // Lock waiting is not progress-callback execution. Keep one older,
++        // exact-generation busy owner alive across the complete read
++        // transaction, including commit and failure-path rollback.
++        SyncSqliteSidecarLockWaitBudget lock_wait_budget(
+             db.db,
+-            peer_sidecar_snapshot_execution_limits(options),
+-            label + " execution budget");
++            peer_sidecar_lock_wait_limits(options),
++            label + " lock-wait budget");
+         try {
+-            const SyncSqliteTransactionAuthority snapshot_authority =
+-                snapshot_transaction.authority();
+-            const SyncSqliteSidecarClaimedPathSnapshot claimed_snapshot =
+-                peer_sidecar_claimed_workorder_path_snapshot_or_throw(
+-                    db.db,
+-                    snapshot_authority,
+-                    execution_budget,
+-                    options,
+-                    label);
+-            require_peer_sidecar_snapshot_authority_or_throw(
+-                db.db, snapshot_authority, label);
+-
+-            pending.main_read_snapshot_established = true;
+-            pending.database_owner_generation =
+-                claimed_snapshot.database_owner_generation;
+-            pending.claimed_workorder_paths_considered = claimed_snapshot.path_count;
+-            pending.claimed_workorder_path_bytes =
+-                claimed_snapshot.total_path_bytes;
+-
+-            SyncManifestResourceLimits evidence_limits =
+-                sync_manifest_default_resource_limits();
+-            evidence_limits.max_entries =
+-                options.checkpoint_evidence_limits.max_claimed_paths;
+-            evidence_limits.max_total_chunks =
+-                options.checkpoint_evidence_limits.max_manifest_chunks;
+-            evidence_limits.max_total_lineage_entries =
+-                options.checkpoint_evidence_limits.max_manifest_lineage_rows;
+-            evidence_limits.max_total_path_bytes =
+-                options.checkpoint_evidence_limits.max_claimed_path_bytes;
+-            evidence_limits.max_total_metadata_bytes =
+-                options.checkpoint_evidence_limits.max_metadata_bytes;
+-            SyncManifestResourceBudget evidence_budget(evidence_limits);
+-            const SyncValidationResult entry_count_result =
+-                evidence_budget.admit_entry_count(claimed_snapshot.path_count);
+-            if (!entry_count_result.ok) {
+-                throw std::runtime_error(
+-                    label + " entry-count budget: " +
+-                    entry_count_result.reason);
+-            }
+-
+-            const PeerSidecarCheckpointTableInventory table_inventory =
+-                classify_archived_checkpoint_sidecar_hydration_backfill_or_throw(
+-                    db.db,
+-                    snapshot_authority,
+-                    evidence_budget,
+-                    pending);
+-
+-            for (const auto& path : claimed_snapshot.paths) {
+-                SyncLocalApplyPlanEntry apply_entry;
+-                const bool apply_loaded =
+-                    load_peer_sidecar_apply_entry_for_path_or_throw(
++            // One result may not splice claimed-path, schema, apply, manifest,
++            // chunk, or lineage rows from different commits. The claimed frontier
++            // is deliberately the first SELECT and therefore establishes the one
++            // exact main-database snapshot used by every later evidence read.
++            SyncSqliteTransaction snapshot_transaction(
++                db.db,
++                label + " main read snapshot",
++                SyncSqliteTransactionMode::Deferred);
++            // The callback owner is younger than the transaction so every failure
++            // detaches it before rollback. One budget spans the frontier and every
++            // schema/apply/manifest/chunk/lineage SELECT in this exact snapshot.
++            SyncSqliteSidecarSnapshotExecutionBudget execution_budget(
++                db.db,
++                peer_sidecar_snapshot_execution_limits(options),
++                label + " execution budget");
++            try {
++                const SyncSqliteTransactionAuthority snapshot_authority =
++                    snapshot_transaction.authority();
++                const SyncSqliteSidecarClaimedPathSnapshot claimed_snapshot =
++                    peer_sidecar_claimed_workorder_path_snapshot_or_throw(
+                         db.db,
+                         snapshot_authority,
++                        execution_budget,
+                         options,
+-                        path,
+-                        evidence_budget,
+-                        apply_entry);
+-
+-                SyncManifestEntry remote_entry;
+-                std::uint64_t chunks_loaded_for_entry = 0;
+-                std::uint64_t lineage_rows_loaded_for_entry = 0;
+-                bool missing_lineage_rows = false;
+-                const bool remote_loaded =
+-                    load_peer_sidecar_remote_file_entry_for_path_or_throw(
++                        label);
++                require_peer_sidecar_snapshot_authority_or_throw(
++                    db.db, snapshot_authority, label);
++
++                pending.main_read_snapshot_established = true;
++                pending.database_owner_generation =
++                    claimed_snapshot.database_owner_generation;
++                pending.claimed_workorder_paths_considered = claimed_snapshot.path_count;
++                pending.claimed_workorder_path_bytes =
++                    claimed_snapshot.total_path_bytes;
++
++                SyncManifestResourceLimits evidence_limits =
++                    sync_manifest_default_resource_limits();
++                evidence_limits.max_entries =
++                    options.checkpoint_evidence_limits.max_claimed_paths;
++                evidence_limits.max_total_chunks =
++                    options.checkpoint_evidence_limits.max_manifest_chunks;
++                evidence_limits.max_total_lineage_entries =
++                    options.checkpoint_evidence_limits.max_manifest_lineage_rows;
++                evidence_limits.max_total_path_bytes =
++                    options.checkpoint_evidence_limits.max_claimed_path_bytes;
++                evidence_limits.max_total_metadata_bytes =
++                    options.checkpoint_evidence_limits.max_metadata_bytes;
++                SyncManifestResourceBudget evidence_budget(evidence_limits);
++                const SyncValidationResult entry_count_result =
++                    evidence_budget.admit_entry_count(claimed_snapshot.path_count);
++                if (!entry_count_result.ok) {
++                    throw std::runtime_error(
++                        label + " entry-count budget: " +
++                        entry_count_result.reason);
++                }
++
++                const PeerSidecarCheckpointTableInventory table_inventory =
++                    classify_archived_checkpoint_sidecar_hydration_backfill_or_throw(
+                         db.db,
+                         snapshot_authority,
+-                        options,
+-                        path,
+-                        table_inventory.manifest_lineage,
+                         evidence_budget,
+-                        remote_entry,
+-                        chunks_loaded_for_entry,
+-                        lineage_rows_loaded_for_entry,
+-                        missing_lineage_rows);
+-                if (apply_loaded && remote_loaded) {
+-                    SyncValidationResult hydrated_evidence_result =
+-                        validate_peer_sidecar_remote_apply_recovery_evidence(
+-                            remote_entry, apply_entry);
+-                    if (!hydrated_evidence_result.ok) {
+-                        ++pending.remote_apply_evidence_mismatch_paths;
+-                        pending.checkpoint_evidence_mismatch_detected = true;
++                        pending);
++
++                for (const auto& path : claimed_snapshot.paths) {
++                    SyncLocalApplyPlanEntry apply_entry;
++                    const bool apply_loaded =
++                        load_peer_sidecar_apply_entry_for_path_or_throw(
++                            db.db,
++                            snapshot_authority,
++                            options,
++                            path,
++                            evidence_budget,
++                            apply_entry);
++
++                    SyncManifestEntry remote_entry;
++                    std::uint64_t chunks_loaded_for_entry = 0;
++                    std::uint64_t lineage_rows_loaded_for_entry = 0;
++                    bool missing_lineage_rows = false;
++                    const bool remote_loaded =
++                        load_peer_sidecar_remote_file_entry_for_path_or_throw(
++                            db.db,
++                            snapshot_authority,
++                            options,
++                            path,
++                            table_inventory.manifest_lineage,
++                            evidence_budget,
++                            remote_entry,
++                            chunks_loaded_for_entry,
++                            lineage_rows_loaded_for_entry,
++                            missing_lineage_rows);
++                    if (apply_loaded && remote_loaded) {
++                        SyncValidationResult hydrated_evidence_result =
++                            validate_peer_sidecar_remote_apply_recovery_evidence(
++                                remote_entry, apply_entry);
++                        if (!hydrated_evidence_result.ok) {
++                            ++pending.remote_apply_evidence_mismatch_paths;
++                            pending.checkpoint_evidence_mismatch_detected = true;
++                        }
+                     }
+-                }
+-                if (apply_loaded) {
+-                    pending.apply_entries.push_back(std::move(apply_entry));
+-                    ++pending.apply_entries_loaded;
+-                }
+-                if (remote_loaded) {
+-                    if (remote_entry.kind == SyncManifestEntryKind::File) {
+-                        pending.remote_file_entries.push_back(std::move(remote_entry));
+-                        ++pending.remote_file_entries_loaded;
++                    if (apply_loaded) {
++                        pending.apply_entries.push_back(std::move(apply_entry));
++                        ++pending.apply_entries_loaded;
+                     }
+-                } else if (missing_lineage_rows) {
+-                    ++pending.remote_file_entries_missing_lineage_rows;
+-                    ++pending.archived_checkpoint_claimed_paths_blocked_by_missing_lineage;
+-                    pending.archived_checkpoint_migration_backfill_blocked_missing_lineage =
+-                        true;
+-                    if (pending.archived_checkpoint_migration_backfill_reason.empty() ||
+-                        pending.archived_checkpoint_exact_startup_hydration_supported) {
+-                        pending.archived_checkpoint_migration_backfill_reason =
+-                            "claimed sidecar recovery path lacks exact manifest lineage rows";
++                    if (remote_loaded) {
++                        if (remote_entry.kind == SyncManifestEntryKind::File) {
++                            pending.remote_file_entries.push_back(std::move(remote_entry));
++                            ++pending.remote_file_entries_loaded;
++                        }
++                    } else if (missing_lineage_rows) {
++                        ++pending.remote_file_entries_missing_lineage_rows;
++                        ++pending.archived_checkpoint_claimed_paths_blocked_by_missing_lineage;
++                        pending.archived_checkpoint_migration_backfill_blocked_missing_lineage =
++                            true;
++                        if (pending.archived_checkpoint_migration_backfill_reason.empty() ||
++                            pending.archived_checkpoint_exact_startup_hydration_supported) {
++                            pending.archived_checkpoint_migration_backfill_reason =
++                                "claimed sidecar recovery path lacks exact manifest lineage rows";
++                        }
+                     }
++                    pending.manifest_chunks_loaded += chunks_loaded_for_entry;
++                    pending.manifest_lineage_rows_loaded +=
++                        lineage_rows_loaded_for_entry;
+                 }
+-                pending.manifest_chunks_loaded += chunks_loaded_for_entry;
+-                pending.manifest_lineage_rows_loaded +=
+-                    lineage_rows_loaded_for_entry;
+-            }
+-            if (pending.remote_file_entries_missing_lineage_rows != 0) {
+-                pending.archived_checkpoint_migration_backfill_required = true;
+-                pending.archived_checkpoint_exact_startup_hydration_supported = false;
++                if (pending.remote_file_entries_missing_lineage_rows != 0) {
++                    pending.archived_checkpoint_migration_backfill_required = true;
++                    pending.archived_checkpoint_exact_startup_hydration_supported = false;
++                }
++                require_peer_sidecar_snapshot_authority_or_throw(
++                    db.db, snapshot_authority, label);
++                pending.evidence_metadata_bytes =
++                    evidence_budget.usage().metadata_bytes;
++                execution_budget.checkpoint();
++                execution_budget.detach();
++                snapshot_transaction.commit();
++            } catch (...) {
++                // Recover a typed progress/deadline failure while the exact owner
++                // still exists. Destruction then revokes the callback before the
++                // transaction guard attempts rollback.
++                execution_budget.throw_if_exhausted();
++                throw;
+             }
+-            require_peer_sidecar_snapshot_authority_or_throw(
+-                db.db, snapshot_authority, label);
+-            pending.evidence_metadata_bytes =
+-                evidence_budget.usage().metadata_bytes;
+-            execution_budget.checkpoint();
+-            execution_budget.detach();
+-            snapshot_transaction.commit();
++            lock_wait_budget.require_authorizes_or_throw(
++                db.db,
++                pending.database_owner_generation,
++                label + " committed lock-wait authority");
++            const persistence::SqliteBusyHandlerSnapshot lock_snapshot =
++                lock_wait_budget.snapshot();
++            pending.sqlite_lock_contention_observed =
++                lock_snapshot.contention_observed;
++            pending.sqlite_lock_wait_invocations = lock_snapshot.invocations;
++            pending.sqlite_lock_wait_authorized_sleep_milliseconds =
++                lock_snapshot.authorized_sleep_milliseconds;
++            pending.sqlite_lock_wait_observed_sleep_milliseconds =
++                lock_snapshot.sleep_milliseconds;
++            lock_wait_budget.detach();
+         } catch (...) {
+-            // Recover a typed progress/deadline failure while the exact owner
+-            // still exists. Destruction then revokes the callback before the
+-            // transaction guard attempts rollback.
+-            execution_budget.throw_if_exhausted();
++            // Rollback has already run with the bounded callback still live.
++            // Convert only sticky exhaustion; SQLite may legitimately bypass a
++            // busy handler for deadlock avoidance, in which case its native
++            // error remains the correct evidence.
++            lock_wait_budget.throw_if_exhausted();
+             throw;
+         }
+         pending.checkpoint_evidence_loaded = true;
+@@ -2296,6 +2373,16 @@ SyncValidationResult recover_sync_session_checkpoint_bound_peer_chunk_sidecars_f
+             claimed_path_snapshot.paths;
+         out.claimed_workorder_paths_considered =
+             claimed_path_snapshot.path_count;
++        out.sqlite_lock_contention_observed =
++            claimed_path_snapshot.sqlite_lock_contention_observed;
++        out.sqlite_lock_wait_invocations =
++            claimed_path_snapshot.sqlite_lock_wait_invocations;
++        out.sqlite_lock_wait_authorized_sleep_milliseconds =
++            claimed_path_snapshot
++                .sqlite_lock_wait_authorized_sleep_milliseconds;
++        out.sqlite_lock_wait_observed_sleep_milliseconds =
++            claimed_path_snapshot
++                .sqlite_lock_wait_observed_sleep_milliseconds;
+         const std::map<std::string, std::uint64_t> apply_path_counts =
+             peer_sidecar_remote_byte_apply_path_counts(apply_entries);
+         const std::map<std::string, std::uint64_t> remote_file_path_counts =
+diff --git a/src/sync_sqlite_sidecar_claimed_path_snapshot.cpp b/src/sync_sqlite_sidecar_claimed_path_snapshot.cpp
+index 495f1e6..9b70d5d 100644
+--- a/src/sync_sqlite_sidecar_claimed_path_snapshot.cpp
++++ b/src/sync_sqlite_sidecar_claimed_path_snapshot.cpp
+@@ -73,6 +73,119 @@ void validate_limits_or_throw(
+ 
+ }  // namespace
+ 
++SyncSqliteSidecarLockWaitBudgetException::
++SyncSqliteSidecarLockWaitBudgetException(
++    const std::string& label,
++    const persistence::SqliteBusyHandlerSnapshot& snapshot,
++    std::uint64_t limit)
++    : std::runtime_error(
++          label +
++          " sqlite_sidecar_lock_wait_budget[lock_wait_limit] exhausted: " +
++          std::to_string(snapshot.invocations) + " busy callbacks, " +
++          std::to_string(snapshot.authorized_sleep_milliseconds) +
++          " authorized sleep milliseconds, " +
++          std::to_string(snapshot.sleep_milliseconds) +
++          " observed sleep milliseconds, limit " + std::to_string(limit)),
++      invocations_(snapshot.invocations),
++      authorized_sleep_milliseconds_(
++          snapshot.authorized_sleep_milliseconds),
++      observed_sleep_milliseconds_(snapshot.sleep_milliseconds),
++      limit_(limit) {}
++
++std::uint64_t SyncSqliteSidecarLockWaitBudgetException::invocations() const
++    noexcept {
++    return invocations_;
++}
++
++std::uint64_t
++SyncSqliteSidecarLockWaitBudgetException::authorized_sleep_milliseconds() const
++    noexcept {
++    return authorized_sleep_milliseconds_;
++}
++
++std::uint64_t
++SyncSqliteSidecarLockWaitBudgetException::observed_sleep_milliseconds() const
++    noexcept {
++    return observed_sleep_milliseconds_;
++}
++
++std::uint64_t SyncSqliteSidecarLockWaitBudgetException::limit() const noexcept {
++    return limit_;
++}
++
++SyncSqliteSidecarLockWaitBudget::SyncSqliteSidecarLockWaitBudget(
++    SyncSqliteDbHandleSlot& db,
++    const SyncSqliteSidecarLockWaitLimits& limits,
++    const std::string& label)
++    : SyncSqliteSidecarLockWaitBudget(
++          borrow_sync_sqlite_serialized_db_or_throw(
++              db, label + " exact lock-wait database generation"),
++          limits,
++          label,
++          FrozenBorrowTag{}) {}
++
++SyncSqliteSidecarLockWaitBudget::SyncSqliteSidecarLockWaitBudget(
++    SyncSqliteSerializedDbBorrow database_borrow,
++    const SyncSqliteSidecarLockWaitLimits& limits,
++    const std::string& label,
++    FrozenBorrowTag)
++    : database_(database_borrow.get()),
++      database_owner_generation_(database_borrow.generation()),
++      maximum_lock_wait_milliseconds_(
++          limits.maximum_lock_wait_milliseconds),
++      label_(label),
++      budget_(std::move(database_borrow),
++              limits.maximum_lock_wait_milliseconds,
++              label) {
++    if (database_ == nullptr || database_owner_generation_ == 0) {
++        throw std::logic_error(
++            label + " could not freeze an exact SQLite lock-wait generation");
++    }
++}
++
++void SyncSqliteSidecarLockWaitBudget::require_authorizes_or_throw(
++    sqlite3* database,
++    std::uint64_t database_owner_generation,
++    const std::string& label) {
++    // snapshot() is also the process-incarnation fence before ordinary adapter
++    // state is observed.
++    (void)budget_.snapshot();
++    if (!attached_) {
++        throw std::runtime_error(
++            label + " sidecar lock-wait budget is detached");
++    }
++    if (database == nullptr || database != database_ ||
++        database_owner_generation == 0 ||
++        database_owner_generation != database_owner_generation_) {
++        throw std::runtime_error(
++            label + " requires the exact sidecar lock-wait generation");
++    }
++}
++
++void SyncSqliteSidecarLockWaitBudget::throw_if_exhausted() const {
++    const persistence::SqliteBusyHandlerSnapshot observed = budget_.snapshot();
++    if (observed.timeout_exhausted) {
++        throw SyncSqliteSidecarLockWaitBudgetException(
++            label_, observed, maximum_lock_wait_milliseconds_);
++    }
++}
++
++void SyncSqliteSidecarLockWaitBudget::detach() noexcept {
++    budget_.detach();
++    attached_ = false;
++}
++
++std::uint64_t SyncSqliteSidecarLockWaitBudget::owner_generation() const
++    noexcept {
++    (void)budget_.snapshot();
++    return database_owner_generation_;
++}
++
++persistence::SqliteBusyHandlerSnapshot
++SyncSqliteSidecarLockWaitBudget::snapshot() const noexcept {
++    return budget_.snapshot();
++}
++
+ SyncSqliteSidecarSnapshotExecutionBudget::
+ SyncSqliteSidecarSnapshotExecutionBudget(
+     SyncSqliteDbHandleSlot& db,
+diff --git a/src/sync_sqlite_sidecar_claimed_path_snapshot.hpp b/src/sync_sqlite_sidecar_claimed_path_snapshot.hpp
+index 9fa0317..713e015 100644
+--- a/src/sync_sqlite_sidecar_claimed_path_snapshot.hpp
++++ b/src/sync_sqlite_sidecar_claimed_path_snapshot.hpp
+@@ -1,10 +1,12 @@
+ #pragma once
+ 
+ #include "anonsync_core.hpp"
++#include "persistence/sqlite_busy_handler_owner.hpp"
+ #include "sqlite_verification_budget.hpp"
+ #include "sync_sqlite_support.hpp"
+ 
+ #include <cstdint>
++#include <stdexcept>
+ #include <string>
+ #include <vector>
+ 
+@@ -26,6 +28,84 @@ struct SyncSqliteSidecarSnapshotExecutionLimits final {
+     std::uint64_t maximum_elapsed_milliseconds = 0;
+ };
+ 
++// Lock waiting is deliberately separate from cooperative SQLite VM execution:
++// a blocked connection does not invoke the progress handler. This value caps
++// cumulative sqlite3_sleep() requests rather than wall-clock scheduler delay.
++// Zero is valid and means fail fast on the first lock conflict.
++struct SyncSqliteSidecarLockWaitLimits final {
++    std::uint64_t maximum_lock_wait_milliseconds = 0;
++};
++
++class SyncSqliteSidecarLockWaitBudgetException final
++    : public std::runtime_error {
++public:
++    SyncSqliteSidecarLockWaitBudgetException(
++        const std::string& label,
++        const persistence::SqliteBusyHandlerSnapshot& snapshot,
++        std::uint64_t limit);
++
++    [[nodiscard]] std::uint64_t invocations() const noexcept;
++    [[nodiscard]] std::uint64_t authorized_sleep_milliseconds() const noexcept;
++    [[nodiscard]] std::uint64_t observed_sleep_milliseconds() const noexcept;
++    [[nodiscard]] std::uint64_t limit() const noexcept;
++
++private:
++    std::uint64_t invocations_ = 0;
++    std::uint64_t authorized_sleep_milliseconds_ = 0;
++    std::uint64_t observed_sleep_milliseconds_ = 0;
++    std::uint64_t limit_ = 0;
++};
++
++// Purpose-specific exact-generation owner for one complete sidecar read
++// transaction. It must be declared before the transaction guard so its busy
++// callback remains live through begin, every statement, commit, and any
++// failure-path rollback. The younger progress owner still detaches before
++// transaction cleanup. Every locking event consumes the same lifetime budget.
++class SyncSqliteSidecarLockWaitBudget final {
++public:
++    SyncSqliteSidecarLockWaitBudget(
++        SyncSqliteDbHandleSlot& db,
++        const SyncSqliteSidecarLockWaitLimits& limits,
++        const std::string& label);
++    ~SyncSqliteSidecarLockWaitBudget() = default;
++
++    SyncSqliteSidecarLockWaitBudget(
++        const SyncSqliteSidecarLockWaitBudget&) = delete;
++    SyncSqliteSidecarLockWaitBudget& operator=(
++        const SyncSqliteSidecarLockWaitBudget&) = delete;
++    SyncSqliteSidecarLockWaitBudget(
++        SyncSqliteSidecarLockWaitBudget&&) = delete;
++    SyncSqliteSidecarLockWaitBudget& operator=(
++        SyncSqliteSidecarLockWaitBudget&&) = delete;
++
++    void require_authorizes_or_throw(
++        sqlite3* database,
++        std::uint64_t database_owner_generation,
++        const std::string& label);
++    void throw_if_exhausted() const;
++    void detach() noexcept;
++
++    [[nodiscard]] std::uint64_t owner_generation() const noexcept;
++    [[nodiscard]] persistence::SqliteBusyHandlerSnapshot snapshot() const
++        noexcept;
++
++private:
++    struct FrozenBorrowTag final {};
++
++    SyncSqliteSidecarLockWaitBudget(
++        SyncSqliteSerializedDbBorrow database_borrow,
++        const SyncSqliteSidecarLockWaitLimits& limits,
++        const std::string& label,
++        FrozenBorrowTag);
++
++    sqlite3* database_ = nullptr;
++    std::uint64_t database_owner_generation_ = 0;
++    std::uint64_t maximum_lock_wait_milliseconds_ = 0;
++    std::string label_;
++    persistence::SqliteBusyHandlerOwner budget_;
++    bool attached_ = true;
++};
++
+ // Purpose-specific adapter around the shared retained progress-handler owner.
+ // It freezes one exact serialized database generation, exposes only the
+ // execution operations required by sidecar hydration, and must be declared
+@@ -81,6 +161,10 @@ struct SyncSqliteSidecarClaimedPathSnapshot final {
+     std::uint64_t path_count = 0;
+     std::uint64_t total_path_bytes = 0;
+     std::uint64_t database_owner_generation = 0;
++    bool sqlite_lock_contention_observed = false;
++    std::uint64_t sqlite_lock_wait_invocations = 0;
++    std::uint64_t sqlite_lock_wait_authorized_sleep_milliseconds = 0;
++    std::uint64_t sqlite_lock_wait_observed_sleep_milliseconds = 0;
+ };
+ 
+ // Exact-generation reader for the claimed-path frontier used by sidecar
+diff --git a/tests/persistence/sqlite_busy_handler_owner_tests.cpp b/tests/persistence/sqlite_busy_handler_owner_tests.cpp
+index 7a8dea0..9f82155 100644
+--- a/tests/persistence/sqlite_busy_handler_owner_tests.cpp
++++ b/tests/persistence/sqlite_busy_handler_owner_tests.cpp
+@@ -203,6 +203,7 @@ void test_type_and_constructor_contract(int& checks) {
+                checks);
+         const SqliteBusyHandlerSnapshot snapshot = owner.snapshot();
+         expect(snapshot.invocations == 0U &&
++                   snapshot.authorized_sleep_milliseconds == 0U &&
+                    snapshot.sleep_milliseconds == 0U &&
+                    !snapshot.contention_observed &&
+                    !snapshot.timeout_exhausted,
+@@ -394,6 +395,9 @@ void test_zero_timeout_fail_fast(int& checks) {
+         expect(snapshot.timeout_exhausted,
+                "zero-timeout callback records exhausted authority",
+                checks);
++        expect(snapshot.authorized_sleep_milliseconds == 0U,
++               "zero-timeout callback consumes no sleep authority",
++               checks);
+         expect(snapshot.sleep_milliseconds == 0U,
+                "zero-timeout callback does not sleep",
+                checks);
+@@ -402,6 +406,52 @@ void test_zero_timeout_fail_fast(int& checks) {
+     execute_or_throw(writer.get(), "ROLLBACK;", "writer unlock");
+ }
+ 
++void test_owner_lifetime_sleep_authority_does_not_reset(int& checks) {
++    TemporaryDatabasePath temporary;
++    Database writer(temporary.get());
++    Database contender(temporary.get());
++    configure_lock_fixture(writer.get());
++    execute_or_throw(
++        writer.get(), "BEGIN IMMEDIATE;", "lifetime-budget writer lock");
++
++    SqliteBusyHandlerOwner owner(
++        contender.busy_borrow("lifetime-budget generation"),
++        3U,
++        "lifetime-budget contender");
++    const int first_result =
++        execute_result(contender.get(), "BEGIN IMMEDIATE;");
++    const SqliteBusyHandlerSnapshot first = owner.snapshot();
++    expect(first_result == SQLITE_BUSY && first.timeout_exhausted,
++           "first locking event exhausts its finite owner-lifetime authority",
++           checks);
++    expect(first.authorized_sleep_milliseconds == 3U,
++           "first locking event consumes the exact cumulative sleep authority",
++           checks);
++    expect(first.invocations >= 2U && first.sleep_milliseconds >= 3U,
++           "first locking event records progressive callback and sleep evidence",
++           checks);
++
++    const int second_result =
++        execute_result(contender.get(), "BEGIN IMMEDIATE;");
++    const SqliteBusyHandlerSnapshot second = owner.snapshot();
++    expect(second_result == SQLITE_BUSY &&
++               second.invocations == first.invocations + 1U &&
++               second.timeout_exhausted,
++           "later locking event receives only one fail-fast callback",
++           checks);
++    expect(second.authorized_sleep_milliseconds ==
++                   first.authorized_sleep_milliseconds &&
++               second.sleep_milliseconds == first.sleep_milliseconds,
++           "later locking event cannot renew consumed sleep authority",
++           checks);
++    expect(second.contention_observed && second.timeout_exhausted,
++           "lifetime exhaustion remains sticky across locking events",
++           checks);
++
++    execute_or_throw(
++        writer.get(), "ROLLBACK;", "lifetime-budget writer unlock");
++}
++
+ void test_alternate_timeout_setter_is_fenced(int& checks) {
+     TemporaryDatabasePath temporary;
+     Database writer(temporary.get());
+@@ -588,6 +638,8 @@ void test_cross_thread_handoff_and_atomic_snapshot(int& checks) {
+ 
+     const SqliteBusyHandlerSnapshot final_snapshot = owner.snapshot();
+     expect(final_snapshot.invocations >= concurrent_snapshot.invocations &&
++               final_snapshot.authorized_sleep_milliseconds >=
++                   concurrent_snapshot.authorized_sleep_milliseconds &&
+                final_snapshot.sleep_milliseconds >=
+                    concurrent_snapshot.sleep_milliseconds &&
+                final_snapshot.contention_observed &&
+@@ -673,6 +725,7 @@ int main() {
+         test_singleton_claim_and_explicit_reuse(checks);
+         test_concurrent_duplicate_owners_reject_without_fail_stop(checks);
+         test_zero_timeout_fail_fast(checks);
++        test_owner_lifetime_sleep_authority_does_not_reset(checks);
+         test_alternate_timeout_setter_is_fenced(checks);
+         test_concurrent_alternate_setter_cannot_supersede_claim(checks);
+         test_cross_thread_handoff_and_atomic_snapshot(checks);
+diff --git a/tests/sync_sqlite_sidecar_claimed_path_snapshot_test.cpp b/tests/sync_sqlite_sidecar_claimed_path_snapshot_test.cpp
+index 97517d2..38fe0fe 100644
+--- a/tests/sync_sqlite_sidecar_claimed_path_snapshot_test.cpp
++++ b/tests/sync_sqlite_sidecar_claimed_path_snapshot_test.cpp
+@@ -23,6 +23,9 @@ using anonsync::SyncSqliteDb;
+ using anonsync::SyncSqliteSidecarClaimedPathLimits;
+ using anonsync::SyncSqliteSidecarClaimedPathSnapshot;
+ using anonsync::SyncSqliteSidecarClaimedPathSnapshotReader;
++using anonsync::SyncSqliteSidecarLockWaitBudget;
++using anonsync::SyncSqliteSidecarLockWaitBudgetException;
++using anonsync::SyncSqliteSidecarLockWaitLimits;
+ using anonsync::SyncSqliteSidecarSnapshotExecutionBudget;
+ using anonsync::SyncSqliteSidecarSnapshotExecutionLimits;
+ using anonsync::SyncSqliteTransaction;
+@@ -47,6 +50,14 @@ static_assert(!std::is_move_constructible_v<
+               SyncSqliteSidecarSnapshotExecutionBudget>);
+ static_assert(!std::is_move_assignable_v<
+               SyncSqliteSidecarSnapshotExecutionBudget>);
++static_assert(!std::is_copy_constructible_v<
++              SyncSqliteSidecarLockWaitBudget>);
++static_assert(!std::is_copy_assignable_v<
++              SyncSqliteSidecarLockWaitBudget>);
++static_assert(!std::is_move_constructible_v<
++              SyncSqliteSidecarLockWaitBudget>);
++static_assert(!std::is_move_assignable_v<
++              SyncSqliteSidecarLockWaitBudget>);
+ 
+ std::uint64_t checks = 0;
+ 
+@@ -122,6 +133,10 @@ SyncSqliteSidecarSnapshotExecutionLimits generous_execution_limits() {
+     };
+ }
+ 
++SyncSqliteSidecarLockWaitLimits lock_wait_limits(std::uint64_t milliseconds) {
++    return {.maximum_lock_wait_milliseconds = milliseconds};
++}
++
+ SyncSqliteSidecarClaimedPathSnapshot load(
+     SyncSqliteSidecarClaimedPathSnapshotReader& reader,
+     const SyncSqliteTransactionAuthority& authority,
+@@ -157,7 +172,10 @@ int main() {
+         ("anonsync-sidecar-claimed-path-" +
+          std::to_string(static_cast<unsigned long long>(::getpid())) +
+          ".sqlite");
++    const fs::path lock_database_path =
++        fs::path(database_path.string() + "-lock-budget.sqlite");
+     cleanup_sqlite_family(database_path);
++    cleanup_sqlite_family(lock_database_path);
+ 
+     try {
+         {
+@@ -525,11 +543,146 @@ int main() {
+             transaction.commit();
+         }
+ 
++        {
++            SyncSqliteDb blocker = open_database(
++                lock_database_path,
++                SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
++                    SQLITE_OPEN_FULLMUTEX);
++            exec(blocker,
++                 "PRAGMA journal_mode=DELETE;"
++                 "CREATE TABLE main.sync_session_resume_transfer_workorders("
++                 "session_id, worker_id, worker_lease_id, work_state, path);"
++                 "INSERT INTO main.sync_session_resume_transfer_workorders VALUES"
++                 "('session-a','worker-a','lease-a','claimed','locked');");
++            SyncSqliteDb contender = open_database(
++                lock_database_path,
++                SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX);
++            SyncSqliteSidecarClaimedPathSnapshotReader reader(
++                contender.db, "claimed-path lock-wait owner");
++
++            require_error(
++                [&] {
++                    SyncSqliteSidecarLockWaitBudget widened(
++                        contender.db,
++                        lock_wait_limits(
++                            anonsync::persistence::
++                                kMaximumSqliteBusyHandlerWaitMilliseconds +
++                            1U),
++                        "claimed-path widened lock-wait budget");
++                },
++                "reviewed ceiling",
++                "sidecar lock-wait authority cannot widen the generic ceiling");
++
++            SyncSqliteSidecarLockWaitBudget identity_budget(
++                contender.db,
++                lock_wait_limits(1U),
++                "claimed-path identity lock-wait budget");
++            require(identity_budget.owner_generation() ==
++                        contender.db.generation(),
++                    "lock-wait owner freezes the exact database generation");
++            require_error(
++                [&] {
++                    identity_budget.require_authorizes_or_throw(
++                        contender.db.get(),
++                        contender.db.generation() + 1U,
++                        "claimed-path foreign lock-wait generation");
++                },
++                "exact sidecar lock-wait generation",
++                "lock-wait owner rejects a foreign database generation");
++            identity_budget.detach();
++            require_error(
++                [&] {
++                    identity_budget.require_authorizes_or_throw(
++                        contender.db.get(),
++                        contender.db.generation(),
++                        "claimed-path detached lock-wait generation");
++                },
++                "detached",
++                "detachment is one-way lock-wait authority revocation");
++
++            exec(blocker, "BEGIN EXCLUSIVE;");
++            SyncSqliteSidecarLockWaitBudget exhausted_budget(
++                contender.db,
++                lock_wait_limits(0U),
++                "claimed-path zero lock-wait budget");
++            bool sqlite_busy_observed = false;
++            try {
++                SyncSqliteTransaction transaction(
++                    contender.db,
++                    "claimed-path locked transaction",
++                    SyncSqliteTransactionMode::Deferred);
++                SyncSqliteSidecarSnapshotExecutionBudget execution_budget(
++                    contender.db,
++                    generous_execution_limits(),
++                    "claimed-path locked execution budget");
++                try {
++                    (void)load(
++                        reader, transaction.authority(), execution_budget);
++                    fail("zero lock-wait budget admitted a blocked SELECT");
++                } catch (...) {
++                    execution_budget.throw_if_exhausted();
++                    throw;
++                }
++            } catch (const std::exception&) {
++                sqlite_busy_observed = true;
++            }
++            require(sqlite_busy_observed,
++                    "blocked transaction reports a native SQLite failure before typed translation");
++            try {
++                exhausted_budget.throw_if_exhausted();
++                fail("exhausted lock-wait owner did not publish typed evidence");
++            } catch (const SyncSqliteSidecarLockWaitBudgetException& error) {
++                require(error.limit() == 0U && error.invocations() >= 1U &&
++                            std::string_view(error.what()).find(
++                                "sqlite_sidecar_lock_wait_budget[lock_wait_limit]") !=
++                                std::string_view::npos,
++                        "zero lock wait converts SQLITE_BUSY into stable typed evidence");
++                require(error.authorized_sleep_milliseconds() == 0U &&
++                            error.observed_sleep_milliseconds() == 0U,
++                        "zero lock wait authorizes and observes no sleep");
++            }
++            const auto exhausted_snapshot = exhausted_budget.snapshot();
++            require(exhausted_snapshot.timeout_exhausted &&
++                        exhausted_snapshot.contention_observed &&
++                        exhausted_snapshot.authorized_sleep_milliseconds == 0U,
++                    "sticky lock-wait evidence survives transaction cleanup");
++            require(contender.db.active_borrows() == 2U,
++                    "transaction and execution cleanup leave only the reader and older lock-wait generations pinned");
++            exhausted_budget.detach();
++            exec(blocker, "ROLLBACK;");
++
++            SyncSqliteSidecarLockWaitBudget reuse_lock_budget(
++                contender.db,
++                lock_wait_limits(10U),
++                "claimed-path lock-wait reuse budget");
++            SyncSqliteTransaction reuse_transaction(
++                contender.db,
++                "claimed-path lock-wait reuse transaction",
++                SyncSqliteTransactionMode::Deferred);
++            SyncSqliteSidecarSnapshotExecutionBudget reuse_execution_budget(
++                contender.db,
++                generous_execution_limits(),
++                "claimed-path lock-wait reuse execution budget");
++            const auto reused = load(
++                reader,
++                reuse_transaction.authority(),
++                reuse_execution_budget);
++            reuse_execution_budget.detach();
++            reuse_transaction.commit();
++            require(reused.path_count == 1 &&
++                        reused.paths.front().value == "locked" &&
++                        !reuse_lock_budget.snapshot().contention_observed,
++                    "fresh lock, transaction, and execution owners succeed after exhaustion cleanup");
++            reuse_lock_budget.detach();
++        }
++
++        cleanup_sqlite_family(lock_database_path);
+         cleanup_sqlite_family(database_path);
+         std::cout << "sync sqlite sidecar claimed path snapshot test passed="
+                   << checks << " failed=0\n";
+         return 0;
+     } catch (const std::exception& error) {
++        cleanup_sqlite_family(lock_database_path);
+         cleanup_sqlite_family(database_path);
+         fail(std::string("unexpected exception: ") + error.what());
+     }
+diff --git a/tools/audit_sqlite_busy_handler_owner.py b/tools/audit_sqlite_busy_handler_owner.py
+index c4ce3ff..8418948 100755
+--- a/tools/audit_sqlite_busy_handler_owner.py
++++ b/tools/audit_sqlite_busy_handler_owner.py
+@@ -96,7 +96,7 @@ def main() -> int:
+     missing = [path.as_posix() for path in required if not (root / path).is_file()]
+     if missing:
+         payload = {
+-            "format": "anonsync-sqlite-busy-handler-owner-audit-v5",
++            "format": "anonsync-sqlite-busy-handler-owner-audit-v7",
+             "passed": False,
+             "missing": missing,
+         }
+@@ -178,6 +178,7 @@ def main() -> int:
+         all(
+             target in sanitizer_compile_targets
+             for target in (
++                "anonsync_sqlite_database_mutex_guard",
+                 "anonsync_sqlite_busy_handler_owner",
+                 "anonsync_sqlite_busy_handler_owner_test",
+                 "anonsync_sync_peer_ingress_lifecycle_selftest",
+@@ -191,7 +192,7 @@ def main() -> int:
+             )
+         ),
+         "owner_and_focused_consumers_are_in_sanitizer_graph",
+-        "ASan+UBSan instrument the retained context, its focused test, and peer-ingress consumer",
++        "ASan+UBSan instrument the mutex/affinity dependency, retained context, focused test, and peer-ingress consumer",
+     )
+     add(
+         checks,
+@@ -282,8 +283,8 @@ def main() -> int:
+             "SqliteBusyHandlerOwner(const SqliteBusyHandlerOwner&) = delete",
+             "SqliteBusyHandlerOwner(SqliteBusyHandlerOwner&&) = delete",
+             "std::atomic<std::uint64_t> invocations_",
++            "std::atomic<std::uint64_t> authorized_sleep_milliseconds_",
+             "std::atomic<std::uint64_t> sleep_milliseconds_",
+-            "std::atomic<std::uint64_t> event_started_elapsed_milliseconds_",
+             "std::atomic<std::uint32_t> callbacks_active_",
+             "std::atomic<bool> contention_observed_",
+             "std::atomic<bool> timeout_exhausted_",
+@@ -303,6 +304,42 @@ def main() -> int:
+         "owner_ceiling_matches_public_peer_ingress_policy",
+         "the callback cannot silently widen the public timeout ceiling",
+     )
++    add(
++        checks,
++        all(token in header for token in (
++            "authorized_sleep_milliseconds",
++            "one cumulative budget for the complete owner",
++            "not a fresh allowance for each SQLite locking event",
++        ))
++        and "event_started_elapsed_milliseconds_" not in header
++        and "std::chrono" not in header
++        and "elapsed_milliseconds_since" not in owner
++        and "steady_clock" not in owner
++        and "prior_invocations <= 0" not in owner
++        and all(token in owner for token in (
++            "authorized_sleep_milliseconds_.load(",
++            "maximum_wait_milliseconds_ - authorized_sleep",
++            "result.authorized_sleep_milliseconds",
++        )),
++        "wait_authority_is_cumulative_and_scheduler_independent",
++        "one owner lifetime has one exact requested-sleep budget rather than per-event or scheduler-derived renewal",
++    )
++    add(
++        checks,
++        ordered(
++            owner,
++            "authorized_sleep_milliseconds_.store(",
++            "sqlite3_sleep(static_cast<int>(requested_sleep))",
++        )
++        and all(token in test for token in (
++            "test_owner_lifetime_sleep_authority_does_not_reset",
++            "first.authorized_sleep_milliseconds == 3U",
++            "second.invocations == first.invocations + 1U",
++            "second.sleep_milliseconds == first.sleep_milliseconds",
++        )),
++        "sleep_authority_is_consumed_before_call_and_proven_across_events",
++        "the callback consumes authority before sleeping and a later SQLite locking event cannot reset it",
++    )
+     add(
+         checks,
+         "current_sync_process_incarnation_noexcept()" in owner
+@@ -596,7 +633,7 @@ def main() -> int:
+ 
+     passed = all(check.passed for check in checks)
+     payload = {
+-        "format": "anonsync-sqlite-busy-handler-owner-audit-v5",
++        "format": "anonsync-sqlite-busy-handler-owner-audit-v7",
+         "passed": passed,
+         "check_count": len(checks),
+         "passed_check_count": sum(check.passed for check in checks),
+diff --git a/tools/audit_sync_sqlite_sidecar_snapshot.py b/tools/audit_sync_sqlite_sidecar_snapshot.py
+index 93b6bc4..9ddcd7b 100755
+--- a/tools/audit_sync_sqlite_sidecar_snapshot.py
++++ b/tools/audit_sync_sqlite_sidecar_snapshot.py
+@@ -13,6 +13,8 @@ from pathlib import Path
+ REQUIRED = (
+     Path("CMakeLists.txt"),
+     Path("include/anonsync_core.hpp"),
++    Path("src/persistence/sqlite_busy_handler_owner.hpp"),
++    Path("src/persistence/sqlite_busy_handler_owner.cpp"),
+     Path("src/persistence/sqlite_verification_budget.hpp"),
+     Path("src/persistence/sqlite_verification_budget.cpp"),
+     Path("src/sync_peer_ingestion.cpp"),
+@@ -68,7 +70,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check], metrics: dict) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sqlite-sidecar-snapshot-audit-v1",
++        "format": "anonsync-sqlite-sidecar-snapshot-audit-v2",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -109,6 +111,8 @@ def main() -> int:
+     texts = {path: (root / path).read_text(encoding="utf-8") for path in REQUIRED}
+     cmake = texts[Path("CMakeLists.txt")]
+     public = texts[Path("include/anonsync_core.hpp")]
++    generic_busy_header = texts[Path("src/persistence/sqlite_busy_handler_owner.hpp")]
++    generic_busy_owner = texts[Path("src/persistence/sqlite_busy_handler_owner.cpp")]
+     generic_budget_header = texts[Path("src/persistence/sqlite_verification_budget.hpp")]
+     generic_budget_owner = texts[Path("src/persistence/sqlite_verification_budget.cpp")]
+     ingestion = texts[Path("src/sync_peer_ingestion.cpp")]
+@@ -129,12 +133,21 @@ def main() -> int:
+         owner, "void SyncSqliteSidecarSnapshotExecutionBudget::detach()")
+     budget_policy = function_body(
+         owner, "persistence::SqliteVerificationBudgetPolicy execution_policy_or_throw(")
++    lock_authorize = function_body(
++        owner,
++        "void SyncSqliteSidecarLockWaitBudget::require_authorizes_or_throw(")
++    lock_throw = function_body(
++        owner, "void SyncSqliteSidecarLockWaitBudget::throw_if_exhausted() const")
++    lock_detach = function_body(
++        owner, "void SyncSqliteSidecarLockWaitBudget::detach() noexcept")
+     generic_budget_progress = function_body(
+         generic_budget_owner, "int SqliteVerificationBudget::on_progress()")
+     options_validation = function_body(
+         ingestion, "SyncValidationResult validate_peer_sidecar_recovery_sweep_options(")
+     execution_limit_mapper = function_body(
+         ingestion, "peer_sidecar_snapshot_execution_limits(")
++    lock_wait_limit_mapper = function_body(
++        ingestion, "peer_sidecar_lock_wait_limits(")
+     session_wrapper = function_body(
+         ingestion,
+         "peer_sidecar_claimed_workorder_path_snapshot_for_session_or_throw(")
+@@ -205,6 +218,102 @@ def main() -> int:
+                 "budget_.checkpoint();") and
+             ordered(budget_detach, "budget_.detach();", "attached_ = false;"),
+             "detachment_is_one_way_revocation", "the retained identity remains diagnostic only and cannot authorize callback-free work")
++
++    require(all(token in generic_busy_header for token in (
++                "authorized_sleep_milliseconds",
++                "one cumulative budget for the complete owner",
++                "not a fresh allowance for each SQLite locking event")) and
++            "event_started_elapsed_milliseconds_" not in generic_busy_header and
++            "steady_clock" not in generic_busy_owner and
++            ordered(generic_busy_owner,
++                    "authorized_sleep_milliseconds_.store(",
++                    "sqlite3_sleep(static_cast<int>(requested_sleep))"),
++            "generic_busy_authority_is_cumulative", "lock waits consume one exact requested-sleep allowance across the complete owner lifetime")
++    require("struct SyncSqliteSidecarLockWaitLimits final" in header and
++            "class SyncSqliteSidecarLockWaitBudgetException final" in header and
++            "class SyncSqliteSidecarLockWaitBudget final" in header and
++            header.count("SyncSqliteSidecarLockWaitBudget") >= 14 and
++            "persistence::SqliteBusyHandlerOwner budget_;" in header,
++            "lock_wait_is_a_distinct_typed_dimension", "blocked-lock authority is not conflated with cooperative VM execution authority")
++    require(all(token in header for token in (
++                "SyncSqliteSerializedDbBorrow database_borrow",
++                "sqlite3* database_ = nullptr",
++                "database_owner_generation_",
++                "bool attached_ = true")) and
++            "borrow_sync_sqlite_serialized_db_or_throw" in owner and
++            "exact lock-wait database generation" in owner and
++            ordered(lock_authorize,
++                    "budget_.snapshot();",
++                    "if (!attached_)",
++                    "database != database_",
++                    "database_owner_generation != database_owner_generation_"),
++            "lock_wait_owner_freezes_exact_generation", "process fencing and one-way revocation precede exact pointer-plus-generation authorization")
++    require("sqlite_sidecar_lock_wait_budget[lock_wait_limit]" in owner and
++            "observed.timeout_exhausted" in lock_throw and
++            "throw SyncSqliteSidecarLockWaitBudgetException" in lock_throw and
++            ordered(lock_detach, "budget_.detach();", "attached_ = false;"),
++            "lock_wait_exhaustion_is_sticky_and_typed", "native SQLITE_BUSY is translated only when the retained callback recorded exact exhaustion evidence")
++    require("max_sqlite_lock_wait_milliseconds = 60000" in public and
++            "Zero is valid" in public and
++            "fail fast on the first lock conflict" in public and
++            "limits.max_sqlite_lock_wait_milliseconds == 0" not in options_validation and
++            "kMaximumSqliteBusyHandlerWaitMilliseconds" in options_validation and
++            "lock-wait limit cannot widen the reviewed ceiling" in options_validation,
++            "public_lock_policy_admits_zero_and_cannot_widen", "callers may fail fast or tighten the generic 60-second ceiling but cannot renew or enlarge it")
++    require(".maximum_lock_wait_milliseconds" in lock_wait_limit_mapper and
++            "max_sqlite_lock_wait_milliseconds" in lock_wait_limit_mapper and
++            "maximum_progress_callbacks" not in lock_wait_limit_mapper and
++            "maximum_elapsed_milliseconds" not in lock_wait_limit_mapper,
++            "lock_wait_mapper_is_dimension_exact", "public lock policy cannot rewrite progress or elapsed execution dimensions")
++    require(ordered(session_wrapper,
++                    "SyncSqliteSidecarLockWaitBudget lock_wait_budget",
++                    "SyncSqliteTransaction snapshot_transaction",
++                    "SyncSqliteSidecarSnapshotExecutionBudget execution_budget",
++                    "execution_budget.detach();",
++                    "snapshot_transaction.commit();",
++                    "lock_wait_budget.snapshot();",
++                    "lock_wait_budget.detach();",
++                    "lock_wait_budget.throw_if_exhausted();"),
++            "session_snapshot_has_complementary_callback_lifetimes", "the progress callback revokes before cleanup while one older busy callback spans begin, statements, commit, and rollback")
++    require(ordered(checkpoint_loader,
++                    "SyncSqliteSidecarLockWaitBudget lock_wait_budget",
++                    "SyncSqliteTransaction snapshot_transaction",
++                    "SyncSqliteSidecarSnapshotExecutionBudget execution_budget",
++                    "execution_budget.detach();",
++                    "snapshot_transaction.commit();",
++                    "lock_wait_budget.snapshot();",
++                    "lock_wait_budget.detach();",
++                    "lock_wait_budget.throw_if_exhausted();"),
++            "checkpoint_hydration_has_complementary_callback_lifetimes", "one cumulative busy owner covers the complete multi-query snapshot without surviving publication")
++    require(public.count("sqlite_lock_contention_observed") == 2 and
++            public.count("sqlite_lock_wait_invocations") == 2 and
++            public.count("sqlite_lock_wait_authorized_sleep_milliseconds") == 2 and
++            public.count("sqlite_lock_wait_observed_sleep_milliseconds") == 2 and
++            all(token in ingestion for token in (
++                "pending.sqlite_lock_wait_authorized_sleep_milliseconds",
++                "pending.sqlite_lock_wait_observed_sleep_milliseconds",
++                "out.sqlite_lock_wait_authorized_sleep_milliseconds",
++                "out.sqlite_lock_wait_observed_sleep_milliseconds")),
++            "success_publication_exposes_bounded_lock_evidence", "authorized sleep remains distinct from scheduler-sensitive observed sleep in both public result paths")
++    require(all(token in focused for token in (
++                "SyncSqliteSidecarLockWaitBudgetException",
++                "sidecar lock-wait authority cannot widen the generic ceiling",
++                "zero lock wait converts SQLITE_BUSY into stable typed evidence",
++                "sticky lock-wait evidence survives transaction cleanup",
++                "fresh lock, transaction, and execution owners succeed after exhaustion cleanup")) and
++            all(token in domain_tests for token in (
++                "admits a zero lock-wait policy and succeeds when uncontended",
++                "cannot widen the reviewed SQLite lock-wait ceiling",
++                "sqlite_lock_wait_authorized_sleep_milliseconds == 0")),
++            "focused_and_integrated_lock_wait_proofs_exist", "exact generation, zero-wait contention, cleanup, reuse, public monotonicity, and sticky-output behavior are executable")
++    require("anonsync_sqlite_busy_handler_owner\n  anonsync_sqlite_verification_budget" in cmake and
++            "revision_number >= 863" in verifier and
++            all(path in verifier for path in (
++                "src/persistence/sqlite_busy_handler_owner.hpp",
++                "src/persistence/sqlite_busy_handler_owner.cpp",
++                "tests/persistence/sqlite_busy_handler_owner_tests.cpp",
++                "tools/audit_sqlite_busy_handler_owner.py")),
++            "build_and_release_gate_bind_the_lock_owner", "the extracted sidecar target links the generic busy owner and rev0863+ packages must retain both proof sets")
+     require(all(token in generic_budget_header for token in (
+                 "kMaximumSqliteVerificationProgressCallbacks",
+                 "kMaximumSqliteVerificationProgressOpcodeInterval",
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 6b6c63a..70b8eee 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -386,6 +386,17 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "src/persistence/sqlite_verification_budget.cpp",
+             "tools/audit_sqlite_verification_budget.py",
+         })
++    if revision_number is not None and revision_number >= 863:
++        revision_scoped_required.update({
++            "src/persistence/sqlite_busy_handler_owner.hpp",
++            "src/persistence/sqlite_busy_handler_owner.cpp",
++            "src/sync_sqlite_sidecar_claimed_path_snapshot.hpp",
++            "src/sync_sqlite_sidecar_claimed_path_snapshot.cpp",
++            "tests/persistence/sqlite_busy_handler_owner_tests.cpp",
++            "tests/sync_sqlite_sidecar_claimed_path_snapshot_test.cpp",
++            "tools/audit_sqlite_busy_handler_owner.py",
++            "tools/audit_sync_sqlite_sidecar_snapshot.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

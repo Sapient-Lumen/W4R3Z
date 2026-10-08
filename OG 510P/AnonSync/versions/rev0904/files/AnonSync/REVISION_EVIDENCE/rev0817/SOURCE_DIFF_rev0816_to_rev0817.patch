@@ -1,0 +1,1669 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ff64185..63c2736 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -386,6 +386,20 @@ target_link_libraries(anonsync_sync_checkpoint_owner_fence
+ target_compile_options(anonsync_sync_checkpoint_owner_fence PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++# Report and heartbeat publication is a filesystem authority boundary: each
++# writer owns a unique temp inode under one pinned directory descriptor, never
++# deletes a guessed stale path, atomically replaces the final entry, and fsyncs
++# both the payload and its directory entry. Keep this proof independent of the
++# 15k-line sync domain and the operator CLI.
++set(ANONSYNC_SYNC_ATOMIC_FILE_PUBLICATION_SOURCE
++  src/sync_atomic_file_publication.cpp)
++add_library(anonsync_sync_atomic_file_publication STATIC
++  ${ANONSYNC_SYNC_ATOMIC_FILE_PUBLICATION_SOURCE})
++target_include_directories(anonsync_sync_atomic_file_publication PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_compile_options(anonsync_sync_atomic_file_publication PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ set(ANONSYNC_CORE_SOURCES
+   src/sync_domain.cpp
+   src/sync_checkpoint_scheduler.cpp
+@@ -426,6 +440,7 @@ foreach(ANONSYNC_INVARIANT_OWNED_SOURCE
+     "${ANONSYNC_SYNC_CHECKPOINT_OWNER_FENCE_POLICY_SOURCE}"
+     "${ANONSYNC_SYNC_CHECKPOINT_OWNER_SCHEMA_SOURCE}"
+     "${ANONSYNC_SYNC_CHECKPOINT_OWNER_FENCE_SOURCE}"
++    "${ANONSYNC_SYNC_ATOMIC_FILE_PUBLICATION_SOURCE}"
+     ${ANONSYNC_PEER_INGRESS_SCHEMA_SOURCES})
+   list(FIND ANONSYNC_CORE_SOURCES "${ANONSYNC_INVARIANT_OWNED_SOURCE}"
+     ANONSYNC_INVARIANT_SOURCE_IN_CORE_INDEX)
+@@ -451,6 +466,7 @@ target_link_libraries(anonsync_core_lib
+     anonsync_peer_ingress_schema
+     anonsync_sync_checkpoint_scheduler_policy
+     anonsync_sync_checkpoint_owner_fence
++    anonsync_sync_atomic_file_publication
+     anonsync_canonical_projection_verifier
+     anonsync_sqlite_projection_decoder)
+ if(ANONSYNC_USE_BUNDLED_SQLITE)
+@@ -515,6 +531,16 @@ add_executable(anonsync_core src/anonsync_core.cpp)
+ target_link_libraries(anonsync_core PRIVATE anonsync_selftests_lib)
+ target_compile_options(anonsync_core PRIVATE -Wall -Wextra -Wpedantic)
+ 
++add_executable(anonsync_sync_atomic_file_publication_test
++  tests/sync_atomic_file_publication_test.cpp)
++target_include_directories(anonsync_sync_atomic_file_publication_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_atomic_file_publication_test PRIVATE
++  anonsync_sync_atomic_file_publication
++  Threads::Threads)
++target_compile_options(anonsync_sync_atomic_file_publication_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ add_executable(anonsync_sync_checkpoint_scheduler_policy_test
+   tests/sync_checkpoint_scheduler_policy_test.cpp)
+ target_include_directories(anonsync_sync_checkpoint_scheduler_policy_test PRIVATE
+@@ -885,6 +911,8 @@ if(NOT ANONSYNC_PROFILE_LIBRARY_CORE_LINK_INDEX EQUAL -1)
+ endif()
+ 
+ foreach(ANONSYNC_FOCUSED_BOUNDARY_TARGET
++    anonsync_sync_atomic_file_publication
++    anonsync_sync_atomic_file_publication_test
+     anonsync_sync_checkpoint_owner_fence_policy
+     anonsync_sync_checkpoint_owner_fence_policy_test
+     anonsync_sync_checkpoint_owner_schema
+@@ -931,6 +959,8 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_core_lib
+     anonsync_reporting_selftests_lib
+     anonsync_sync_domain_selftests_lib
++    anonsync_sync_atomic_file_publication
++    anonsync_sync_atomic_file_publication_test
+     anonsync_sync_checkpoint_scheduler_policy
+     anonsync_sync_checkpoint_scheduler_policy_test
+     anonsync_sync_checkpoint_owner_fence_policy
+@@ -1007,6 +1037,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_fuzz_json_codec
+       anonsync_fuzz_jwt_codec
+       anonsync_fuzz_route_event_ledger
++      anonsync_sync_atomic_file_publication_test
+       anonsync_sync_checkpoint_scheduler_policy_test
+       anonsync_sync_checkpoint_owner_fence_policy_test
+       anonsync_sync_checkpoint_owner_schema_test
+@@ -1059,6 +1090,10 @@ if(ANONSYNC_ENABLE_LIBFUZZER)
+       -print_funcs=0 -print_final_stats=1)
+ endif()
+ add_test(NAME anonsync_core_help COMMAND anonsync_core --help)
++add_test(NAME anonsync_sync_atomic_file_publication_test
++  COMMAND anonsync_sync_atomic_file_publication_test)
++set_tests_properties(anonsync_sync_atomic_file_publication_test
++  PROPERTIES TIMEOUT 90)
+ add_test(NAME anonsync_sync_checkpoint_scheduler_policy_test
+   COMMAND anonsync_sync_checkpoint_scheduler_policy_test)
+ add_test(NAME anonsync_sync_checkpoint_owner_fence_policy_test
+@@ -1169,6 +1204,10 @@ if(Python3_Interpreter_FOUND)
+     COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_checkpoint_owner_fence.py
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
++  add_test(NAME anonsync_sync_atomic_file_publication_source_audit
++    COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_atomic_file_publication.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
+ endif()
+ set_tests_properties(
+   anonsync_core_sync_domain_model_selftest
+diff --git a/src/sync_atomic_file_publication.cpp b/src/sync_atomic_file_publication.cpp
+new file mode 100644
+index 0000000..cf19a14
+--- /dev/null
++++ b/src/sync_atomic_file_publication.cpp
+@@ -0,0 +1,592 @@
++#include "sync_atomic_file_publication.hpp"
++
++#include <algorithm>
++#include <atomic>
++#include <cerrno>
++#include <cstdint>
++#include <filesystem>
++#include <iomanip>
++#include <limits>
++#include <sstream>
++#include <stdexcept>
++#include <string>
++#include <system_error>
++#include <utility>
++
++#if defined(_WIN32)
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#else
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <unistd.h>
++#endif
++
++namespace anonsync {
++namespace {
++
++namespace fs = std::filesystem;
++
++constexpr std::size_t kMaximumTempCreateAttempts = 4096;
++constexpr std::uint64_t kFnvOffsetBasis = UINT64_C(14695981039346656037);
++constexpr std::uint64_t kFnvPrime = UINT64_C(1099511628211);
++
++std::atomic<std::uint64_t> g_publication_nonce{1};
++
++std::string system_error_text(int error) {
++    return std::error_code(error, std::generic_category()).message();
++}
++
++std::uint64_t fnv1a_64(const std::string& value) noexcept {
++    std::uint64_t digest = kFnvOffsetBasis;
++    for (unsigned char byte : value) {
++        digest ^= static_cast<std::uint64_t>(byte);
++        digest *= kFnvPrime;
++    }
++    return digest;
++}
++
++std::string hex_u64(std::uint64_t value) {
++    std::ostringstream out;
++    out << std::hex << std::setfill('0') << std::setw(16) << value;
++    return out.str();
++}
++
++std::uint64_t current_process_id() noexcept {
++#if defined(_WIN32)
++    return static_cast<std::uint64_t>(::GetCurrentProcessId());
++#else
++    return static_cast<std::uint64_t>(::getpid());
++#endif
++}
++
++std::string next_temp_basename(const std::string& final_basename) {
++    const std::uint64_t nonce =
++        g_publication_nonce.fetch_add(1, std::memory_order_relaxed);
++    return ".anonsync-publish-v1-" + hex_u64(fnv1a_64(final_basename)) +
++           "-" + hex_u64(current_process_id()) + "-" + hex_u64(nonce) +
++           ".tmp";
++}
++
++fs::path absolute_lexically_normal_path_or_throw(
++    const std::string& raw_path,
++    const std::string& label) {
++    if (raw_path.empty()) throw std::invalid_argument(label + " is empty");
++    std::error_code ec;
++    fs::path absolute = fs::absolute(fs::path(raw_path), ec);
++    if (ec) {
++        throw std::invalid_argument(label + " could not be resolved: " +
++                                    ec.message());
++    }
++    return absolute.lexically_normal();
++}
++
++std::string final_basename_or_throw(const fs::path& final_path,
++                                    const std::string& label) {
++    const fs::path filename = final_path.filename();
++    const std::string basename = filename.string();
++    if (basename.empty() || basename == "." || basename == "..") {
++        throw std::runtime_error(label + " must name a file");
++    }
++    if (basename.find('\0') != std::string::npos ||
++        basename.find('/') != std::string::npos ||
++        basename.find('\\') != std::string::npos) {
++        throw std::runtime_error(label + " filename is not one path component");
++    }
++    return basename;
++}
++
++#if defined(_WIN32)
++
++std::string windows_error_text(DWORD error) {
++    char* message = nullptr;
++    const DWORD length = ::FormatMessageA(
++        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
++            FORMAT_MESSAGE_IGNORE_INSERTS,
++        nullptr,
++        error,
++        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
++        reinterpret_cast<char*>(&message),
++        0,
++        nullptr);
++    std::string out = length != 0 && message != nullptr
++                          ? std::string(message, length)
++                          : "Windows error " + std::to_string(error);
++    if (message != nullptr) ::LocalFree(message);
++    while (!out.empty() && (out.back() == '\r' || out.back() == '\n')) {
++        out.pop_back();
++    }
++    return out;
++}
++
++class OwnedHandle final {
++public:
++    OwnedHandle() = default;
++    explicit OwnedHandle(HANDLE handle) noexcept : handle_(handle) {}
++    OwnedHandle(const OwnedHandle&) = delete;
++    OwnedHandle& operator=(const OwnedHandle&) = delete;
++    OwnedHandle(OwnedHandle&& other) noexcept
++        : handle_(std::exchange(other.handle_, INVALID_HANDLE_VALUE)) {}
++    OwnedHandle& operator=(OwnedHandle&& other) noexcept {
++        if (this != &other) {
++            reset();
++            handle_ = std::exchange(other.handle_, INVALID_HANDLE_VALUE);
++        }
++        return *this;
++    }
++    ~OwnedHandle() { reset(); }
++
++    [[nodiscard]] HANDLE get() const noexcept { return handle_; }
++    [[nodiscard]] bool valid() const noexcept {
++        return handle_ != INVALID_HANDLE_VALUE;
++    }
++
++    void close_or_throw(const std::string& label) {
++        if (!valid()) return;
++        const HANDLE handle = std::exchange(handle_, INVALID_HANDLE_VALUE);
++        if (::CloseHandle(handle) == 0) {
++            const DWORD error = ::GetLastError();
++            throw std::runtime_error(label + " close failed: " +
++                                     windows_error_text(error));
++        }
++    }
++
++private:
++    void reset() noexcept {
++        if (valid()) {
++            ::CloseHandle(handle_);
++            handle_ = INVALID_HANDLE_VALUE;
++        }
++    }
++
++    HANDLE handle_ = INVALID_HANDLE_VALUE;
++};
++
++void inspect_final_path_or_throw(const fs::path& final_path,
++                                 const std::string& label) {
++    std::error_code ec;
++    const fs::file_status status = fs::symlink_status(final_path, ec);
++    if (ec) {
++        if (ec == std::errc::no_such_file_or_directory) return;
++        throw std::runtime_error(label +
++                                 " final path could not be inspected: " +
++                                 ec.message());
++    }
++    if (!fs::exists(status)) return;
++    if (fs::is_symlink(status)) {
++        throw std::runtime_error(label +
++                                 " final path must not be a symlink");
++    }
++    if (!fs::is_regular_file(status)) {
++        throw std::runtime_error(
++            label + " final path must be absent or a regular file");
++    }
++}
++
++void write_windows_handle_all_or_throw(HANDLE handle,
++                                       const std::string& payload,
++                                       const std::string& label) {
++    const char* cursor = payload.data();
++    std::size_t remaining = payload.size();
++    while (remaining != 0) {
++        const DWORD requested = static_cast<DWORD>(
++            std::min<std::size_t>(remaining,
++                                  std::numeric_limits<DWORD>::max()));
++        DWORD written = 0;
++        if (::WriteFile(handle, cursor, requested, &written, nullptr) == 0) {
++            const DWORD error = ::GetLastError();
++            throw std::runtime_error(label + " write failed: " +
++                                     windows_error_text(error));
++        }
++        if (written == 0) {
++            throw std::runtime_error(label + " write made no progress");
++        }
++        cursor += written;
++        remaining -= written;
++    }
++}
++
++void publish_windows_or_throw(const fs::path& final_path,
++                              const std::string& payload,
++                              const std::string& label) {
++    const fs::path parent = final_path.parent_path();
++    const std::string final_basename =
++        final_basename_or_throw(final_path, label + " path");
++    if (parent.empty()) {
++        throw std::runtime_error(label + " parent directory is empty");
++    }
++    std::error_code parent_ec;
++    const fs::file_status parent_status = fs::symlink_status(parent, parent_ec);
++    if (parent_ec || !fs::is_directory(parent_status) ||
++        fs::is_symlink(parent_status)) {
++        throw std::runtime_error(label +
++                                 " parent must be an existing non-symlink directory");
++    }
++    inspect_final_path_or_throw(final_path, label);
++
++    fs::path temp_path;
++    OwnedHandle temp;
++    for (std::size_t attempt = 0; attempt < kMaximumTempCreateAttempts;
++         ++attempt) {
++        temp_path = parent / next_temp_basename(final_basename);
++        HANDLE handle = ::CreateFileW(
++            temp_path.c_str(),
++            GENERIC_WRITE,
++            0,
++            nullptr,
++            CREATE_NEW,
++            FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH |
++                FILE_FLAG_OPEN_REPARSE_POINT,
++            nullptr);
++        if (handle != INVALID_HANDLE_VALUE) {
++            temp = OwnedHandle(handle);
++            break;
++        }
++        const DWORD error = ::GetLastError();
++        if (error != ERROR_FILE_EXISTS && error != ERROR_ALREADY_EXISTS) {
++            throw std::runtime_error(label + " temp create failed: " +
++                                     windows_error_text(error));
++        }
++    }
++    if (!temp.valid()) {
++        throw std::runtime_error(label +
++                                 " could not reserve a unique temp file");
++    }
++
++    bool published = false;
++    try {
++        write_windows_handle_all_or_throw(temp.get(), payload,
++                                          label + " temp file");
++        if (::FlushFileBuffers(temp.get()) == 0) {
++            const DWORD error = ::GetLastError();
++            throw std::runtime_error(label + " temp file flush failed: " +
++                                     windows_error_text(error));
++        }
++        temp.close_or_throw(label + " temp file");
++        inspect_final_path_or_throw(final_path, label);
++        if (::MoveFileExW(temp_path.c_str(), final_path.c_str(),
++                          MOVEFILE_REPLACE_EXISTING |
++                              MOVEFILE_WRITE_THROUGH) == 0) {
++            const DWORD error = ::GetLastError();
++            throw std::runtime_error(label + " atomic replace failed: " +
++                                     windows_error_text(error));
++        }
++        published = true;
++    } catch (...) {
++        // Windows pathname identity cannot be re-proven after the handle is
++        // closed for MoveFileExW. Leaving a writer-owned residue is safer than
++        // deleting a path that another principal may have replaced.
++        (void)published;
++        throw;
++    }
++}
++
++#else
++
++class OwnedFd final {
++public:
++    OwnedFd() = default;
++    explicit OwnedFd(int fd) noexcept : fd_(fd) {}
++    OwnedFd(const OwnedFd&) = delete;
++    OwnedFd& operator=(const OwnedFd&) = delete;
++    OwnedFd(OwnedFd&& other) noexcept
++        : fd_(std::exchange(other.fd_, -1)) {}
++    OwnedFd& operator=(OwnedFd&& other) noexcept {
++        if (this != &other) {
++            reset();
++            fd_ = std::exchange(other.fd_, -1);
++        }
++        return *this;
++    }
++    ~OwnedFd() { reset(); }
++
++    [[nodiscard]] int get() const noexcept { return fd_; }
++    [[nodiscard]] bool valid() const noexcept { return fd_ >= 0; }
++
++    void close_or_throw(const std::string& label) {
++        if (!valid()) return;
++        const int fd = std::exchange(fd_, -1);
++        if (::close(fd) != 0) {
++            const int error = errno;
++            throw std::runtime_error(label + " close failed: " +
++                                     system_error_text(error));
++        }
++    }
++
++private:
++    void reset() noexcept {
++        if (valid()) {
++            const int fd = std::exchange(fd_, -1);
++            (void)::close(fd);
++        }
++    }
++
++    int fd_ = -1;
++};
++
++bool same_inode(const struct stat& left, const struct stat& right) noexcept {
++    return left.st_dev == right.st_dev && left.st_ino == right.st_ino;
++}
++
++void inspect_final_entry_at_or_throw(int directory_fd,
++                                     const std::string& final_basename,
++                                     const std::string& label) {
++    struct stat status {};
++    if (::fstatat(directory_fd, final_basename.c_str(), &status,
++                  AT_SYMLINK_NOFOLLOW) == 0) {
++        if (S_ISLNK(status.st_mode)) {
++            throw std::runtime_error(label +
++                                     " final path must not be a symlink");
++        }
++        if (!S_ISREG(status.st_mode)) {
++            throw std::runtime_error(
++                label + " final path must be absent or a regular file");
++        }
++        return;
++    }
++    const int error = errno;
++    if (error == ENOENT) return;
++    throw std::runtime_error(label +
++                             " final path could not be inspected: " +
++                             system_error_text(error));
++}
++
++void write_fd_all_or_throw(int fd,
++                           const std::string& payload,
++                           const std::string& label) {
++    const char* cursor = payload.data();
++    std::size_t remaining = payload.size();
++    while (remaining != 0) {
++        const ssize_t written = ::write(fd, cursor, remaining);
++        if (written < 0) {
++            const int error = errno;
++            if (error == EINTR) continue;
++            throw std::runtime_error(label + " write failed: " +
++                                     system_error_text(error));
++        }
++        if (written == 0) {
++            throw std::runtime_error(label + " write made no progress");
++        }
++        cursor += written;
++        remaining -= static_cast<std::size_t>(written);
++    }
++}
++
++void fsync_fd_or_throw(int fd, const std::string& label) {
++    for (;;) {
++        if (::fsync(fd) == 0) return;
++        const int error = errno;
++        if (error == EINTR) continue;
++        throw std::runtime_error(label + " fsync failed: " +
++                                 system_error_text(error));
++    }
++}
++
++bool temp_name_still_owns_inode(int directory_fd,
++                                const std::string& temp_basename,
++                                const struct stat& expected) noexcept {
++    struct stat observed {};
++    if (::fstatat(directory_fd, temp_basename.c_str(), &observed,
++                  AT_SYMLINK_NOFOLLOW) != 0) {
++        return false;
++    }
++    return S_ISREG(observed.st_mode) && same_inode(observed, expected);
++}
++
++void cleanup_owned_temp_noexcept(int directory_fd,
++                                 const std::string& temp_basename,
++                                 const struct stat& expected) noexcept {
++    if (!temp_name_still_owns_inode(directory_fd, temp_basename, expected)) {
++        return;
++    }
++    (void)::unlinkat(directory_fd, temp_basename.c_str(), 0);
++}
++
++OwnedFd open_parent_directory_or_throw(const fs::path& parent,
++                                       const std::string& label) {
++    const std::string native = parent.string();
++    struct stat path_identity {};
++    if (::lstat(native.c_str(), &path_identity) != 0) {
++        const int error = errno;
++        throw std::runtime_error(label + " lstat failed: " +
++                                 system_error_text(error));
++    }
++    if (S_ISLNK(path_identity.st_mode)) {
++        throw std::runtime_error(label + " must not be a symlink");
++    }
++    if (!S_ISDIR(path_identity.st_mode)) {
++        throw std::runtime_error(label + " is not a directory");
++    }
++
++    int flags = O_RDONLY;
++#ifdef O_CLOEXEC
++    flags |= O_CLOEXEC;
++#endif
++#ifdef O_DIRECTORY
++    flags |= O_DIRECTORY;
++#endif
++#ifdef O_NOFOLLOW
++    flags |= O_NOFOLLOW;
++#endif
++    int fd;
++    do {
++        fd = ::open(native.c_str(), flags);
++    } while (fd < 0 && errno == EINTR);
++    if (fd < 0) {
++        const int error = errno;
++        throw std::runtime_error(label + " open failed: " +
++                                 system_error_text(error));
++    }
++    struct stat status {};
++    if (::fstat(fd, &status) != 0) {
++        const int error = errno;
++        ::close(fd);
++        throw std::runtime_error(label + " fstat failed: " +
++                                 system_error_text(error));
++    }
++    if (!S_ISDIR(status.st_mode)) {
++        ::close(fd);
++        throw std::runtime_error(label + " is not a directory");
++    }
++    if (!same_inode(path_identity, status)) {
++        ::close(fd);
++        throw std::runtime_error(
++            label + " changed identity while it was being opened");
++    }
++    return OwnedFd(fd);
++}
++
++std::pair<OwnedFd, std::string> create_unique_temp_at_or_throw(
++    int directory_fd,
++    const std::string& final_basename,
++    const std::string& label) {
++    for (std::size_t attempt = 0; attempt < kMaximumTempCreateAttempts;
++         ++attempt) {
++        std::string temp_basename = next_temp_basename(final_basename);
++        int flags = O_WRONLY | O_CREAT | O_EXCL;
++#ifdef O_CLOEXEC
++        flags |= O_CLOEXEC;
++#endif
++#ifdef O_NOFOLLOW
++        flags |= O_NOFOLLOW;
++#endif
++        int fd;
++        do {
++            fd = ::openat(directory_fd, temp_basename.c_str(), flags, 0600);
++        } while (fd < 0 && errno == EINTR);
++        if (fd >= 0) {
++            return {OwnedFd(fd), std::move(temp_basename)};
++        }
++        const int error = errno;
++        if (error != EEXIST) {
++            throw std::runtime_error(label + " temp create failed: " +
++                                     system_error_text(error));
++        }
++    }
++    throw std::runtime_error(label +
++                             " could not reserve a unique temp file");
++}
++
++void publish_posix_or_throw(const fs::path& final_path,
++                            const std::string& payload,
++                            const std::string& label) {
++    const fs::path parent = final_path.parent_path();
++    if (parent.empty()) {
++        throw std::runtime_error(label + " parent directory is empty");
++    }
++    const std::string final_basename =
++        final_basename_or_throw(final_path, label + " path");
++    OwnedFd directory = open_parent_directory_or_throw(
++        parent, label + " parent directory");
++    inspect_final_entry_at_or_throw(directory.get(), final_basename, label);
++
++    auto [temp, temp_basename] = create_unique_temp_at_or_throw(
++        directory.get(), final_basename, label);
++    struct stat temp_identity {};
++    bool temp_identity_known = false;
++    bool published = false;
++    try {
++        if (::fstat(temp.get(), &temp_identity) != 0) {
++            const int error = errno;
++            throw std::runtime_error(label + " temp file fstat failed: " +
++                                     system_error_text(error));
++        }
++        temp_identity_known = true;
++        if (!S_ISREG(temp_identity.st_mode) || temp_identity.st_nlink != 1) {
++            throw std::runtime_error(
++                label + " newly created temp object is not a singly linked regular file");
++        }
++        write_fd_all_or_throw(temp.get(), payload, label + " temp file");
++        fsync_fd_or_throw(temp.get(), label + " temp file");
++        if (!temp_name_still_owns_inode(directory.get(), temp_basename,
++                                        temp_identity)) {
++            throw std::runtime_error(
++                label + " temp pathname no longer names the writer-owned inode");
++        }
++        inspect_final_entry_at_or_throw(directory.get(), final_basename, label);
++        if (::renameat(directory.get(), temp_basename.c_str(), directory.get(),
++                       final_basename.c_str()) != 0) {
++            const int error = errno;
++            throw std::runtime_error(label + " atomic replace failed: " +
++                                     system_error_text(error));
++        }
++        published = true;
++        try {
++            fsync_fd_or_throw(directory.get(),
++                              label + " parent directory after publication");
++        } catch (const std::exception& error) {
++            throw std::runtime_error(
++                label +
++                " was atomically published but directory durability is indeterminate: " +
++                error.what());
++        }
++        try {
++            temp.close_or_throw(label + " published file descriptor");
++            directory.close_or_throw(label + " parent directory");
++        } catch (const std::exception& error) {
++            throw std::runtime_error(
++                label + " was atomically published and synced but descriptor close failed: " +
++                error.what());
++        }
++    } catch (...) {
++        if (!published && temp_identity_known && directory.valid()) {
++            cleanup_owned_temp_noexcept(directory.get(), temp_basename,
++                                        temp_identity);
++        }
++        throw;
++    }
++}
++
++#endif
++
++}  // namespace
++
++void write_sync_json_file_atomically_no_symlink_or_throw(
++    const fs::path& final_path,
++    const std::string& payload,
++    const std::string& label) {
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "atomic file publication label must not be empty");
++    }
++    if (final_path.empty()) {
++        throw std::runtime_error(label + " path is empty");
++    }
++#if defined(_WIN32)
++    publish_windows_or_throw(final_path, payload, label);
++#else
++    publish_posix_or_throw(final_path, payload, label);
++#endif
++}
++
++void write_sync_cli_report_json_or_throw(const std::string& report_path,
++                                         const std::string& payload,
++                                         const std::string& label) {
++    const fs::path path = absolute_lexically_normal_path_or_throw(
++        report_path, label + " path");
++    write_sync_json_file_atomically_no_symlink_or_throw(path, payload, label);
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_atomic_file_publication.hpp b/src/sync_atomic_file_publication.hpp
+new file mode 100644
+index 0000000..9564372
+--- /dev/null
++++ b/src/sync_atomic_file_publication.hpp
+@@ -0,0 +1,24 @@
++#pragma once
++
++#include <filesystem>
++#include <string>
++
++namespace anonsync {
++
++// Publishes one complete payload by creating a writer-owned file in the
++// destination directory, syncing it, atomically replacing the final directory
++// entry, and then syncing the directory. Existing symbolic links and
++// non-regular final entries are rejected before publication.
++void write_sync_json_file_atomically_no_symlink_or_throw(
++    const std::filesystem::path& final_path,
++    const std::string& payload,
++    const std::string& label);
++
++// Resolves the operator-supplied path to an absolute lexically-normal path and
++// delegates to the same directory-bound publication owner used by heartbeats.
++void write_sync_cli_report_json_or_throw(
++    const std::string& report_path,
++    const std::string& payload,
++    const std::string& label);
++
++}  // namespace anonsync
+diff --git a/src/sync_domain.cpp b/src/sync_domain.cpp
+index f41f92e..a023cef 100644
+--- a/src/sync_domain.cpp
++++ b/src/sync_domain.cpp
+@@ -6,6 +6,7 @@
+ #include "sync_domain_test_access.hpp"
+ #include "sync_checkpoint_resume_internal.hpp"
+ #include "sync_checkpoint_owner_fence.hpp"
++#include "sync_atomic_file_publication.hpp"
+ 
+ #include <algorithm>
+ #include <array>
+@@ -11218,121 +11219,6 @@ std::string sync_bool_json(bool value) {
+     return value ? "true" : "false";
+ }
+ 
+-void write_fd_all_or_throw(int fd, const std::string& payload, const std::string& label) {
+-#if defined(_WIN32)
+-    (void)fd;
+-    (void)payload;
+-    (void)label;
+-#else
+-    const char* data = payload.data();
+-    std::size_t remaining = payload.size();
+-    while (remaining > 0) {
+-        const ssize_t wrote = ::write(fd, data, remaining);
+-        if (wrote < 0) {
+-            if (errno == EINTR) continue;
+-            throw std::runtime_error(label + " write failed: " + std::strerror(errno));
+-        }
+-        if (wrote == 0) throw std::runtime_error(label + " write made no progress");
+-        data += wrote;
+-        remaining -= static_cast<std::size_t>(wrote);
+-    }
+-#endif
+-}
+-
+-void write_payload_to_new_regular_file_no_symlink_or_throw(const fs::path& tmp_path,
+-                                                           const std::string& payload,
+-                                                           const std::string& label) {
+-#if defined(_WIN32)
+-    std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
+-    if (!out) throw std::runtime_error(label + " could not create temp file: " + tmp_path.string());
+-    out.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+-    if (!out) throw std::runtime_error(label + " could not write temp file: " + tmp_path.string());
+-    out.flush();
+-    if (!out) throw std::runtime_error(label + " could not flush temp file: " + tmp_path.string());
+-#else
+-    int flags = O_WRONLY | O_CREAT | O_EXCL;
+-#ifdef O_CLOEXEC
+-    flags |= O_CLOEXEC;
+-#endif
+-#ifdef O_NOFOLLOW
+-    flags |= O_NOFOLLOW;
+-#endif
+-    const std::string native = tmp_path.string();
+-    int fd = ::open(native.c_str(), flags, 0600);
+-    if (fd < 0) throw std::runtime_error(label + " open temp file failed: " + std::strerror(errno));
+-    int saved_errno = 0;
+-    try {
+-        write_fd_all_or_throw(fd, payload, label + " temp file");
+-        if (::fsync(fd) != 0) saved_errno = errno;
+-    } catch (...) {
+-        if (::close(fd) != 0 && saved_errno == 0) saved_errno = errno;
+-        throw;
+-    }
+-    if (::close(fd) != 0 && saved_errno == 0) saved_errno = errno;
+-    if (saved_errno != 0) throw std::runtime_error(label + " temp file fsync failed: " + std::strerror(saved_errno));
+-#endif
+-}
+-
+-void write_sync_json_file_atomically_no_symlink_or_throw(const fs::path& final_path,
+-                                                         const std::string& payload,
+-                                                         const std::string& label) {
+-    if (final_path.empty()) throw std::runtime_error(label + " path is empty");
+-    const fs::path parent = final_path.parent_path();
+-    if (parent.empty()) throw std::runtime_error(label + " parent directory is empty");
+-    require_existing_directory_not_symlink_or_throw(parent, label + " parent directory");
+-    {
+-        std::error_code ec;
+-        const fs::file_status status = fs::symlink_status(final_path, ec);
+-        if (ec) {
+-            if (ec != std::errc::no_such_file_or_directory) {
+-                throw std::runtime_error(label + " final path could not be inspected: " + ec.message());
+-            }
+-        } else if (fs::exists(status)) {
+-            if (fs::is_symlink(status)) throw std::runtime_error(label + " final path must not be a symlink");
+-            if (!fs::is_regular_file(status)) throw std::runtime_error(label + " final path must be absent or a regular file");
+-        }
+-    }
+-    const std::string tmp_suffix = ".tmp-" + u64_string(sync_current_process_id_or_zero()) + "-" + sha256_hex(payload).substr(0, 16);
+-    const fs::path tmp_path = final_path.string() + tmp_suffix;
+-    {
+-        std::error_code ec;
+-        const fs::file_status status = fs::symlink_status(tmp_path, ec);
+-        if (ec) {
+-            if (ec != std::errc::no_such_file_or_directory) {
+-                throw std::runtime_error(label + " temp path could not be inspected: " + ec.message());
+-            }
+-        } else if (fs::exists(status)) {
+-            if (fs::is_symlink(status)) throw std::runtime_error(label + " temp path must not be a symlink");
+-            if (!fs::is_regular_file(status)) throw std::runtime_error(label + " temp path must be absent or a regular file");
+-            std::error_code remove_ec;
+-            fs::remove(tmp_path, remove_ec);
+-            if (remove_ec) throw std::runtime_error(label + " could not remove stale temp path: " + remove_ec.message());
+-        }
+-    }
+-    try {
+-        write_payload_to_new_regular_file_no_symlink_or_throw(tmp_path, payload, label);
+-        std::error_code rename_ec;
+-        fs::rename(tmp_path, final_path, rename_ec);
+-        if (rename_ec) {
+-            std::error_code cleanup_ec;
+-            fs::remove(tmp_path, cleanup_ec);
+-            throw std::runtime_error(label + " atomic rename failed: " + rename_ec.message());
+-        }
+-        fsync_directory_if_supported_or_throw(parent, label + " parent directory");
+-    } catch (...) {
+-        std::error_code cleanup_ec;
+-        fs::remove(tmp_path, cleanup_ec);
+-        throw;
+-    }
+-}
+-
+-void write_sync_cli_report_json_or_throw(const std::string& report_path,
+-                                         const std::string& payload,
+-                                         const std::string& label) {
+-    const fs::path path = absolute_lexically_normal_path_or_throw(report_path, label + " path");
+-    write_sync_json_file_atomically_no_symlink_or_throw(path, payload, label);
+-}
+-
+ std::string read_regular_file_bounded_no_symlink_or_throw(const fs::path& path,
+                                                           std::uint64_t maximum_bytes,
+                                                           const std::string& label) {
+diff --git a/src/sync_operator_cli.cpp b/src/sync_operator_cli.cpp
+index d9b1e06..22c52cc 100644
+--- a/src/sync_operator_cli.cpp
++++ b/src/sync_operator_cli.cpp
+@@ -1,5 +1,6 @@
+ #include "anonsync_core.hpp"
+ #include "anonsync_core_internal.hpp"
++#include "sync_atomic_file_publication.hpp"
+ 
+ #include <cstdint>
+ #include <filesystem>
+@@ -12,10 +13,6 @@
+ namespace anonsync {
+ namespace fs = std::filesystem;
+ 
+-
+-void write_sync_cli_report_json_or_throw(const std::string& report_path,
+-                                         const std::string& payload,
+-                                         const std::string& label);
+ std::string read_regular_file_bounded_no_symlink_or_throw(const fs::path& path,
+                                                           std::uint64_t maximum_bytes,
+                                                           const std::string& label);
+diff --git a/tests/sync_atomic_file_publication_test.cpp b/tests/sync_atomic_file_publication_test.cpp
+new file mode 100644
+index 0000000..26de0f8
+--- /dev/null
++++ b/tests/sync_atomic_file_publication_test.cpp
+@@ -0,0 +1,414 @@
++#include "sync_atomic_file_publication.hpp"
++
++#include <algorithm>
++#include <barrier>
++#include <chrono>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <mutex>
++#include <stdexcept>
++#include <string>
++#include <thread>
++#include <utility>
++#include <vector>
++
++#if !defined(_WIN32)
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <sys/wait.h>
++#include <unistd.h>
++#endif
++
++namespace {
++
++namespace fs = std::filesystem;
++
++class TestState final {
++public:
++    void check(bool condition, const std::string& label) {
++        ++total_;
++        if (condition) {
++            ++passed_;
++            return;
++        }
++        std::cerr << "FAIL: " << label << '\n';
++    }
++
++    [[nodiscard]] int finish() const {
++        std::cout << "sync atomic file publication: " << passed_ << "/"
++                  << total_ << " checks passed\n";
++        return passed_ == total_ ? 0 : 1;
++    }
++
++private:
++    int total_ = 0;
++    int passed_ = 0;
++};
++
++class TemporaryDirectory final {
++public:
++    TemporaryDirectory() {
++        const fs::path base = fs::temp_directory_path();
++        const auto seed = static_cast<std::uint64_t>(
++            std::chrono::steady_clock::now().time_since_epoch().count());
++        for (std::uint64_t attempt = 0; attempt != 4096; ++attempt) {
++            path_ = base / ("anonsync-atomic-publication-test-" +
++                            std::to_string(process_id()) + "-" +
++                            std::to_string(seed) + "-" +
++                            std::to_string(attempt));
++            std::error_code ec;
++            if (fs::create_directory(path_, ec)) return;
++            if (ec && ec != std::errc::file_exists) {
++                throw std::runtime_error("temporary directory create failed: " +
++                                         ec.message());
++            }
++        }
++        throw std::runtime_error("could not reserve a test directory");
++    }
++
++    TemporaryDirectory(const TemporaryDirectory&) = delete;
++    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
++
++    ~TemporaryDirectory() {
++        std::error_code ignored;
++        fs::remove_all(path_, ignored);
++    }
++
++    [[nodiscard]] const fs::path& path() const noexcept { return path_; }
++
++private:
++    static std::uint64_t process_id() noexcept {
++#if defined(_WIN32)
++        return 0;
++#else
++        return static_cast<std::uint64_t>(::getpid());
++#endif
++    }
++
++    fs::path path_;
++};
++
++std::string read_binary(const fs::path& path) {
++    std::ifstream in(path, std::ios::binary);
++    if (!in) throw std::runtime_error("could not open " + path.string());
++    return std::string(std::istreambuf_iterator<char>(in),
++                       std::istreambuf_iterator<char>());
++}
++
++void write_binary(const fs::path& path, const std::string& payload) {
++    std::ofstream out(path, std::ios::binary | std::ios::trunc);
++    if (!out) throw std::runtime_error("could not create " + path.string());
++    out.write(payload.data(), static_cast<std::streamsize>(payload.size()));
++    if (!out) throw std::runtime_error("could not write " + path.string());
++}
++
++std::size_t publication_temp_count(const fs::path& root) {
++    std::size_t count = 0;
++    for (const auto& entry : fs::directory_iterator(root)) {
++        const std::string name = entry.path().filename().string();
++        if (name.starts_with(".anonsync-publish-v1-") &&
++            name.ends_with(".tmp")) {
++            ++count;
++        }
++    }
++    return count;
++}
++
++template <typename Function>
++bool throws_with(Function&& function, const std::string& needle) {
++    try {
++        std::forward<Function>(function)();
++    } catch (const std::exception& error) {
++        return std::string(error.what()).find(needle) != std::string::npos;
++    }
++    return false;
++}
++
++std::string patterned_payload(std::size_t bytes, char seed) {
++    std::string out(bytes, '\0');
++    for (std::size_t index = 0; index != out.size(); ++index) {
++        out[index] = static_cast<char>(seed + static_cast<char>(index % 17));
++    }
++    return out;
++}
++
++void exercise_same_payload_threads(TestState& state, const fs::path& root) {
++    constexpr std::size_t kThreadCount = 10;
++    constexpr std::size_t kRounds = 10;
++    const fs::path final_path = root / "same-payload.json";
++    const std::string payload = patterned_payload(1024 * 1024, 'A');
++    std::barrier start(static_cast<std::ptrdiff_t>(kThreadCount));
++    std::mutex error_mutex;
++    std::vector<std::string> errors;
++    std::vector<std::thread> threads;
++    threads.reserve(kThreadCount);
++    for (std::size_t thread_index = 0; thread_index != kThreadCount;
++         ++thread_index) {
++        threads.emplace_back([&, thread_index] {
++            start.arrive_and_wait();
++            for (std::size_t round = 0; round != kRounds; ++round) {
++                try {
++                    anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++                        final_path, payload,
++                        "same-payload thread " +
++                            std::to_string(thread_index));
++                } catch (const std::exception& error) {
++                    std::lock_guard lock(error_mutex);
++                    errors.emplace_back(error.what());
++                }
++            }
++        });
++    }
++    for (auto& thread : threads) thread.join();
++    if (!errors.empty()) {
++        std::cerr << "first same-payload publication error: " << errors.front()
++                  << '\n';
++    }
++    state.check(errors.empty(),
++                "all same-process same-payload writers succeed");
++    state.check(read_binary(final_path) == payload,
++                "same-payload final bytes are exact");
++    state.check(publication_temp_count(root) == 0,
++                "same-payload campaign leaves no owned temp residue");
++}
++
++void exercise_distinct_payload_threads(TestState& state,
++                                       const fs::path& root) {
++    constexpr std::size_t kThreadCount = 8;
++    constexpr std::size_t kRounds = 6;
++    const fs::path final_path = root / "distinct-payload.json";
++    std::vector<std::string> candidates;
++    for (std::size_t index = 0; index != kThreadCount; ++index) {
++        std::string payload = patterned_payload(256 * 1024 + index * 97,
++                                                static_cast<char>('a' + index));
++        payload.replace(0, 16, "writer-" + std::to_string(index) + "-begin");
++        payload += "-writer-" + std::to_string(index) + "-end";
++        candidates.push_back(std::move(payload));
++    }
++
++    std::barrier start(static_cast<std::ptrdiff_t>(kThreadCount));
++    std::mutex error_mutex;
++    std::vector<std::string> errors;
++    std::vector<std::thread> threads;
++    threads.reserve(kThreadCount);
++    for (std::size_t index = 0; index != kThreadCount; ++index) {
++        threads.emplace_back([&, index] {
++            start.arrive_and_wait();
++            for (std::size_t round = 0; round != kRounds; ++round) {
++                try {
++                    anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++                        final_path, candidates[index],
++                        "distinct-payload thread " + std::to_string(index));
++                } catch (const std::exception& error) {
++                    std::lock_guard lock(error_mutex);
++                    errors.emplace_back(error.what());
++                }
++            }
++        });
++    }
++    for (auto& thread : threads) thread.join();
++    const std::string observed = read_binary(final_path);
++    const bool is_complete_candidate =
++        std::find(candidates.begin(), candidates.end(), observed) !=
++        candidates.end();
++    if (!errors.empty()) {
++        std::cerr << "first distinct-payload publication error: "
++                  << errors.front() << '\n';
++    }
++    state.check(errors.empty(),
++                "all same-process distinct-payload writers succeed");
++    state.check(is_complete_candidate,
++                "distinct-payload final bytes equal one complete writer");
++    state.check(publication_temp_count(root) == 0,
++                "distinct-payload campaign leaves no owned temp residue");
++}
++
++#if !defined(_WIN32)
++void exercise_same_payload_processes(TestState& state, const fs::path& root) {
++    constexpr int kChildCount = 8;
++    const fs::path final_path = root / "process-payload.json";
++    const std::string payload = patterned_payload(512 * 1024, 'K');
++    int start_pipe[2] = {-1, -1};
++    if (::pipe(start_pipe) != 0) {
++        throw std::runtime_error("process test pipe failed");
++    }
++
++    std::vector<pid_t> children;
++    for (int index = 0; index != kChildCount; ++index) {
++        const pid_t child = ::fork();
++        if (child < 0) throw std::runtime_error("process test fork failed");
++        if (child == 0) {
++            ::close(start_pipe[1]);
++            char token = 0;
++            ssize_t got;
++            do {
++                got = ::read(start_pipe[0], &token, 1);
++            } while (got < 0 && errno == EINTR);
++            ::close(start_pipe[0]);
++            if (got != 1) _exit(91);
++            try {
++                anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++                    final_path, payload,
++                    "same-payload child " + std::to_string(index));
++            } catch (...) {
++                _exit(92);
++            }
++            _exit(0);
++        }
++        children.push_back(child);
++    }
++    ::close(start_pipe[0]);
++    std::string tokens(kChildCount, 'x');
++    std::size_t offset = 0;
++    while (offset != tokens.size()) {
++        const ssize_t wrote =
++            ::write(start_pipe[1], tokens.data() + offset,
++                    tokens.size() - offset);
++        if (wrote < 0 && errno == EINTR) continue;
++        if (wrote <= 0) throw std::runtime_error("process barrier write failed");
++        offset += static_cast<std::size_t>(wrote);
++    }
++    ::close(start_pipe[1]);
++
++    bool all_children_ok = true;
++    for (pid_t child : children) {
++        int status = 0;
++        pid_t waited;
++        do {
++            waited = ::waitpid(child, &status, 0);
++        } while (waited < 0 && errno == EINTR);
++        if (waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
++            all_children_ok = false;
++        }
++    }
++    state.check(all_children_ok,
++                "all cross-process same-payload writers succeed");
++    state.check(read_binary(final_path) == payload,
++                "cross-process final bytes are exact");
++    state.check(publication_temp_count(root) == 0,
++                "cross-process campaign leaves no owned temp residue");
++}
++#endif
++
++}  // namespace
++
++int main() {
++    try {
++        TestState state;
++        TemporaryDirectory root;
++
++        const fs::path basic = root.path() / "basic.json";
++        anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++            basic, "{\"revision\":1}\n", "basic report");
++        state.check(read_binary(basic) == "{\"revision\":1}\n",
++                    "new publication preserves exact bytes");
++        anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++            basic, "{\"revision\":2}\n", "basic report");
++        state.check(read_binary(basic) == "{\"revision\":2}\n",
++                    "replacement preserves exact bytes");
++#if !defined(_WIN32)
++        struct stat basic_status {};
++        state.check(::stat(basic.c_str(), &basic_status) == 0 &&
++                        (basic_status.st_mode & 0077) == 0,
++                    "published file grants no group or other access");
++#endif
++        state.check(publication_temp_count(root.path()) == 0,
++                    "basic publication leaves no owned temp residue");
++
++        const fs::path symlink_target = root.path() / "symlink-target.txt";
++        const fs::path symlink_final = root.path() / "symlink-final.json";
++        write_binary(symlink_target, "do-not-touch");
++        std::error_code symlink_ec;
++        fs::create_symlink(symlink_target.filename(), symlink_final,
++                           symlink_ec);
++        if (!symlink_ec) {
++            state.check(
++                throws_with(
++                    [&] {
++                        anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++                            symlink_final, "attacker-controlled",
++                            "symlink rejection");
++                    },
++                    "must not be a symlink"),
++                "existing final symlink is rejected");
++            state.check(read_binary(symlink_target) == "do-not-touch",
++                        "symlink target is not modified");
++        } else {
++            state.check(true, "symlink creation unavailable; rejection skipped");
++            state.check(true, "symlink creation unavailable; target check skipped");
++        }
++
++        const fs::path directory_final = root.path() / "directory-final.json";
++        fs::create_directory(directory_final);
++        state.check(
++            throws_with(
++                [&] {
++                    anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++                        directory_final, "not-a-directory",
++                        "directory rejection");
++                },
++                "absent or a regular file"),
++            "existing final directory is rejected");
++        state.check(fs::is_directory(directory_final),
++                    "rejected final directory remains intact");
++
++#if !defined(_WIN32)
++        const fs::path parent_real = root.path() / "parent-real";
++        const fs::path parent_link = root.path() / "parent-link";
++        fs::create_directory(parent_real);
++        fs::create_directory_symlink(parent_real.filename(), parent_link,
++                                     symlink_ec);
++        if (!symlink_ec) {
++            state.check(
++                throws_with(
++                    [&] {
++                        anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++                            parent_link / "through-link.json", "blocked",
++                            "parent symlink rejection");
++                    },
++                    "must not be a symlink"),
++                "terminal parent-directory symlink is rejected");
++            state.check(!fs::exists(parent_real / "through-link.json"),
++                        "rejected parent symlink publishes nothing");
++        } else {
++            state.check(true,
++                        "directory symlink creation unavailable; rejection skipped");
++            state.check(true,
++                        "directory symlink creation unavailable; residue skipped");
++        }
++
++        const std::string legacy_payload = "stale-payload";
++        const fs::path legacy_final = root.path() / "legacy-owner.json";
++        const fs::path legacy_temp = fs::path(
++            legacy_final.string() + ".tmp-" + std::to_string(::getpid()) +
++            "-3d09516ea03936d4");
++        write_binary(legacy_temp, "unrelated-active-owner");
++        anonsync::write_sync_json_file_atomically_no_symlink_or_throw(
++            legacy_final, legacy_payload, "legacy temp ownership");
++        state.check(read_binary(legacy_final) == legacy_payload,
++                    "legacy predictable temp does not block publication");
++        state.check(read_binary(legacy_temp) == "unrelated-active-owner",
++                    "legacy predictable temp is not deleted or overwritten");
++#endif
++
++        exercise_same_payload_threads(state, root.path());
++        exercise_distinct_payload_threads(state, root.path());
++#if !defined(_WIN32)
++        exercise_same_payload_processes(state, root.path());
++#endif
++
++        const fs::path cli_report = root.path() / "cli-report.json";
++        anonsync::write_sync_cli_report_json_or_throw(
++            cli_report.string(), "{\"cli\":true}\n", "CLI report");
++        state.check(read_binary(cli_report) == "{\"cli\":true}\n",
++                    "CLI wrapper delegates exact publication");
++        state.check(publication_temp_count(root.path()) == 0,
++                    "all campaigns leave no module-owned temp residue");
++        return state.finish();
++    } catch (const std::exception& error) {
++        std::cerr << "FATAL: " << error.what() << '\n';
++        return 2;
++    }
++}
+diff --git a/tools/audit_sync_atomic_file_publication.py b/tools/audit_sync_atomic_file_publication.py
+new file mode 100755
+index 0000000..0d61291
+--- /dev/null
++++ b/tools/audit_sync_atomic_file_publication.py
+@@ -0,0 +1,324 @@
++#!/usr/bin/env python3
++"""Audit the invariant-owned report/heartbeat publication boundary."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import re
++from pathlib import Path
++
++
++def source_list_block(cmake: str, variable: str) -> str:
++    match = re.search(
++        rf"set\({re.escape(variable)}\s+(.*?)\)", cmake, re.DOTALL
++    )
++    return match.group(1) if match else ""
++
++
++def target_block(cmake: str, command: str, target: str) -> str:
++    match = re.search(
++        rf"{re.escape(command)}\({re.escape(target)}\s+(.*?)\)",
++        cmake,
++        re.DOTALL,
++    )
++    return match.group(1) if match else ""
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", required=True, type=Path)
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    paths = {
++        "header": root / "src/sync_atomic_file_publication.hpp",
++        "source": root / "src/sync_atomic_file_publication.cpp",
++        "test": root / "tests/sync_atomic_file_publication_test.cpp",
++        "audit": root / "tools/audit_sync_atomic_file_publication.py",
++        "cmake": root / "CMakeLists.txt",
++        "domain": root / "src/sync_domain.cpp",
++        "cli": root / "src/sync_operator_cli.cpp",
++        "verifier": root / "tools/verify_release_package.py",
++    }
++    missing = [name for name, path in paths.items() if not path.is_file()]
++    if missing:
++        result = {
++            "audit": "sync_atomic_file_publication",
++            "passed": 0,
++            "total": 1,
++            "checks": [
++                {
++                    "check_id": "required_files_exist",
++                    "passed": False,
++                    "detail": f"missing={missing}",
++                }
++            ],
++        }
++        rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
++        print(rendered, end="")
++        if args.json:
++            args.json.parent.mkdir(parents=True, exist_ok=True)
++            args.json.write_text(rendered)
++        return 1
++
++    header = paths["header"].read_text()
++    source = paths["source"].read_text()
++    test = paths["test"].read_text()
++    audit_source = paths["audit"].read_text()
++    cmake = paths["cmake"].read_text()
++    domain = paths["domain"].read_text()
++    cli = paths["cli"].read_text()
++    verifier = paths["verifier"].read_text()
++
++    checks: list[dict[str, object]] = []
++
++    def check(check_id: str, passed: bool, detail: str) -> None:
++        checks.append(
++            {"check_id": check_id, "passed": bool(passed), "detail": detail}
++        )
++
++    check(
++        "required_files_exist",
++        not missing,
++        "focused header, implementation, regression test, audit, callers, and verifier are present",
++    )
++
++    declarations = [
++        "write_sync_json_file_atomically_no_symlink_or_throw(",
++        "write_sync_cli_report_json_or_throw(",
++    ]
++    check(
++        "header_owns_the_two_publication_entry_points",
++        all(token in header for token in declarations)
++        and "namespace anonsync" in header,
++        "one focused header declares heartbeat/file and CLI-report publication",
++    )
++
++    core_sources = source_list_block(cmake, "ANONSYNC_CORE_SOURCES")
++    invariant_sources_match = re.search(
++        r"foreach\(ANONSYNC_INVARIANT_OWNED_SOURCE\s+(.*?)\)\s*\n\s*list\(FIND",
++        cmake,
++        re.DOTALL,
++    )
++    invariant_sources = (
++        invariant_sources_match.group(1) if invariant_sources_match else ""
++    )
++    check(
++        "implementation_is_outside_the_core_monolith",
++        "src/sync_atomic_file_publication.cpp" not in core_sources
++        and "${ANONSYNC_SYNC_ATOMIC_FILE_PUBLICATION_SOURCE}"
++        in invariant_sources,
++        "the source-ownership guard prevents accidental reabsorption into anonsync_core_lib",
++    )
++
++    publication_links = target_block(
++        cmake, "target_link_libraries", "anonsync_sync_atomic_file_publication"
++    )
++    core_links = target_block(cmake, "target_link_libraries", "anonsync_core_lib")
++    check(
++        "dependency_direction_is_core_to_focused_owner",
++        "add_library(anonsync_sync_atomic_file_publication STATIC" in cmake
++        and "anonsync_core_lib" not in publication_links
++        and "anonsync_sync_atomic_file_publication" in core_links,
++        "focused owner has no reverse core dependency and core consumes it privately",
++    )
++
++    check(
++        "both_production_callers_use_the_focused_header",
++        '#include "sync_atomic_file_publication.hpp"' in domain
++        and '#include "sync_atomic_file_publication.hpp"' in cli
++        and "void write_sync_cli_report_json_or_throw(" not in cli
++        and "void write_sync_json_file_atomically_no_symlink_or_throw(" not in domain
++        and "void write_sync_cli_report_json_or_throw(" not in domain,
++        "heartbeat and operator CLI call the same separately owned implementation",
++    )
++
++    check(
++        "temp_names_are_unique_per_call_and_not_payload_derived",
++        "std::atomic<std::uint64_t> g_publication_nonce" in source
++        and "fetch_add(1, std::memory_order_relaxed)" in source
++        and "current_process_id()" in source
++        and "fnv1a_64(final_basename)" in source
++        and "sha256" not in source.lower()
++        and '".tmp-" + ' not in source,
++        "temp basename binds destination, process, and monotone call nonce rather than shared payload bytes",
++    )
++
++    check(
++        "parent_directory_identity_is_bound_before_use",
++        "::lstat(native.c_str(), &path_identity)" in source
++        and "S_ISLNK(path_identity.st_mode)" in source
++        and "::open(native.c_str(), flags)" in source
++        and "::fstat(fd, &status)" in source
++        and "same_inode(path_identity, status)" in source
++        and "O_DIRECTORY" in source
++        and "O_NOFOLLOW" in source,
++        "terminal symlink rejection and lstat/fstat identity comparison do not trust open flags alone",
++    )
++
++    check(
++        "temp_creation_is_exclusive_directory_relative_and_private",
++        "::openat(directory_fd, temp_basename.c_str(), flags, 0600)" in source
++        and "O_CREAT | O_EXCL" in source
++        and "O_NOFOLLOW" in source
++        and "error != EEXIST" in source,
++        "each writer reserves its own 0600 entry with openat(O_EXCL) and retries only collisions",
++    )
++
++    check(
++        "final_entry_type_is_interpreted_without_following_links",
++        "::fstatat(directory_fd, final_basename.c_str(), &status" in source
++        and "AT_SYMLINK_NOFOLLOW" in source
++        and "S_ISLNK(status.st_mode)" in source
++        and "S_ISREG(status.st_mode)" in source,
++        "existing symlinks and non-regular final entries are rejected relative to the pinned directory",
++    )
++
++    check(
++        "payload_is_fully_written_and_file_synced_before_publish",
++        "write_fd_all_or_throw(temp.get(), payload" in source
++        and "fsync_fd_or_throw(temp.get(), label + \" temp file\")" in source
++        and "write made no progress" in source
++        and "error == EINTR" in source,
++        "short writes and EINTR are handled and the temp inode is synced before rename",
++    )
++
++    check(
++        "temp_path_ownership_is_inode_bound",
++        "temp_name_still_owns_inode" in source
++        and "same_inode(observed, expected)" in source
++        and "temp pathname no longer names the writer-owned inode" in source,
++        "device/inode equality is re-proven before publication",
++    )
++
++    check(
++        "replacement_is_atomic_and_directory_relative",
++        "::renameat(directory.get(), temp_basename.c_str(), directory.get(),"
++        in source
++        and "final_basename.c_str()" in source,
++        "source and destination names are resolved under the same pinned directory descriptor",
++    )
++
++    check(
++        "directory_entry_is_synced_after_linearization",
++        "published = true;" in source
++        and "parent directory after publication" in source
++        and "directory durability is indeterminate" in source,
++        "rename is the linearization point and post-rename fsync failure is reported as indeterminate durability",
++    )
++
++    cleanup_slice_match = re.search(
++        r"void cleanup_owned_temp_noexcept\((.*?)\n\}", source, re.DOTALL
++    )
++    cleanup_slice = cleanup_slice_match.group(0) if cleanup_slice_match else ""
++    check(
++        "cleanup_never_deletes_a_guessed_or_foreign_temp",
++        "temp_name_still_owns_inode" in cleanup_slice
++        and "::unlinkat" in cleanup_slice
++        and "if (!published && temp_identity_known && directory.valid())"
++        in source
++        and "could not remove stale temp" not in source
++        and "fs::remove(tmp_path" not in source,
++        "failure cleanup is pre-publication only and requires exact inode ownership",
++    )
++
++    required_test_tokens = [
++        "kThreadCount = 10",
++        "kRounds = 10",
++        "same-process same-payload writers succeed",
++        "distinct-payload final bytes equal one complete writer",
++        "same-payload child",
++        "legacy predictable temp is not deleted or overwritten",
++        "existing final symlink is rejected",
++        "existing final directory is rejected",
++        "terminal parent-directory symlink is rejected",
++        "publication_temp_count(root.path()) == 0",
++        "published file grants no group or other access",
++    ]
++    check(
++        "focused_runtime_test_covers_race_and_path_adversaries",
++        all(token in test for token in required_test_tokens),
++        "threads, forked processes, complete-payload linearization, legacy-owner preservation, path types, mode, and residue are covered",
++    )
++
++    focused_loop_match = re.search(
++        r"foreach\(ANONSYNC_FOCUSED_BOUNDARY_TARGET\s+(.*?)\)\s*\n\s*get_target_property",
++        cmake,
++        re.DOTALL,
++    )
++    focused_loop = focused_loop_match.group(1) if focused_loop_match else ""
++    check(
++        "focused_library_and_test_are_guarded_from_core_linkage",
++        "anonsync_sync_atomic_file_publication" in focused_loop
++        and "anonsync_sync_atomic_file_publication_test" in focused_loop,
++        "configure-time no-core dependency guard covers both targets",
++    )
++
++    sanitizer_compile = source_list_block(
++        cmake, "ANONSYNC_SANITIZER_COMPILE_TARGETS"
++    )
++    sanitizer_link_match = re.search(
++        r"foreach\(tgt\s+(.*?)\)\s*\n\s*target_link_options",
++        cmake,
++        re.DOTALL,
++    )
++    sanitizer_link = (
++        sanitizer_link_match.group(1) if sanitizer_link_match else ""
++    )
++    check(
++        "focused_owner_is_in_sanitizer_lanes",
++        "anonsync_sync_atomic_file_publication" in sanitizer_compile
++        and "anonsync_sync_atomic_file_publication_test" in sanitizer_compile
++        and "anonsync_sync_atomic_file_publication_test" in sanitizer_link,
++        "implementation and regression executable receive ASan/UBSan instrumentation and link flags",
++    )
++
++    check(
++        "runtime_and_source_audits_are_release_tests",
++        "add_test(NAME anonsync_sync_atomic_file_publication_test" in cmake
++        and "TIMEOUT 90" in cmake
++        and "add_test(NAME anonsync_sync_atomic_file_publication_source_audit"
++        in cmake
++        and "audit_sync_atomic_file_publication.py" in cmake,
++        "CTest registers both executable proof and structural audit",
++    )
++
++    verifier_required = [
++        "src/sync_atomic_file_publication.hpp",
++        "src/sync_atomic_file_publication.cpp",
++        "tests/sync_atomic_file_publication_test.cpp",
++        "tools/audit_sync_atomic_file_publication.py",
++    ]
++    check(
++        "release_verifier_requires_the_new_proof_surface",
++        all(token in verifier for token in verifier_required),
++        "package verification cannot silently omit the owner, test, or audit",
++    )
++
++    check(
++        "audit_is_not_self_satisfied_by_missing_logic",
++        len(audit_source.splitlines()) > 150
++        and "required_test_tokens" in audit_source
++        and "cleanup_never_deletes_a_guessed_or_foreign_temp" in audit_source,
++        "the audit itself contains substantive architecture and adversarial checks",
++    )
++
++    passed = sum(1 for item in checks if item["passed"])
++    result = {
++        "audit": "sync_atomic_file_publication",
++        "passed": passed,
++        "total": len(checks),
++        "checks": checks,
++    }
++    rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
++    print(rendered, end="")
++    if args.json:
++        args.json.parent.mkdir(parents=True, exist_ok=True)
++        args.json.write_text(rendered)
++    return 0 if passed == len(checks) else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 1e5bd0b..a11780f 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -106,6 +106,8 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         "src/sync_sqlite_process_incarnation.cpp",
+         "src/sha256_digest.hpp",
+         "src/sha256_digest.cpp",
++        "src/sync_atomic_file_publication.hpp",
++        "src/sync_atomic_file_publication.cpp",
+         "src/sync_peer_ingress_schema.hpp",
+         "src/sync_peer_ingress_schema.cpp",
+         "src/sync_peer_ingress_payload_store_schema.cpp",
+@@ -127,6 +129,7 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         "tests/sqlite_transaction_exception_composition_test.cpp",
+         "tests/sqlite_transaction_allocator_fault_test.cpp",
+         "tests/sqlite_source_first_move_test.cpp",
++        "tests/sync_atomic_file_publication_test.cpp",
+         "tests/peer_ingress_schema_attestation_test.cpp",
+         "tests/persistence/sqlite_persistence_process_authority_fork_test.cpp",
+         "tools/audit_sqlite_process_authority.py",
+@@ -134,6 +137,7 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         "tools/audit_sqlite_transaction_exception_composition.py",
+         "tools/audit_sqlite_transaction_allocator_fault.py",
+         "tools/audit_sqlite_source_first_move.py",
++        "tools/audit_sync_atomic_file_publication.py",
+         "tools/audit_peer_ingress_schema_owner_generation.py",
+         "tools/verify_release_package.py",
+     }

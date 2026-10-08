@@ -1,0 +1,2169 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1649,9 +1649,9 @@ target_link_libraries(anonsync_core PRIVATE anonsync_selftests_lib)
+ target_compile_options(anonsync_core PRIVATE -Wall -Wextra -Wpedantic)
+ 
+ # Product-spine executable. Unlike anonsync_core, this binary links no selftest
+-# implementation libraries: it exposes only bounded enqueue, membership,
+-# numeric-address sender, and one-shot receiver composition over the exact
+-# SQLite + durable payload + TLS + filesystem-effect authorities.
++# implementation libraries: it exposes bounded status/clock operations,
++# enqueue, membership, numeric-address sender, and one-shot receiver composition
++# over the exact SQLite + durable payload + TLS + filesystem-effect authorities.
+ add_executable(anonsync_replica src/anonsync_replica.cpp)
+ target_include_directories(anonsync_replica PRIVATE
+   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+@@ -3424,6 +3424,12 @@ if(Python3_Interpreter_FOUND)
+     set_tests_properties(anonsync_replica_cli_process_test
+       PROPERTIES TIMEOUT 60)
+   endif()
++  add_test(NAME anonsync_replica_database_open_policy_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_anonsync_replica_database_open_policy.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_replica_database_open_policy_source_audit
++    PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_release_package_path_policy_test
+     COMMAND ${Python3_EXECUTABLE} -B -S
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_release_package_path_policy.py
+--- a/PRODUCT_CLOCK_RECOVERY_AND_DATABASE_TARGET_AUDIT_rev0897.md
++++ b/PRODUCT_CLOCK_RECOVERY_AND_DATABASE_TARGET_AUDIT_rev0897.md
+@@ -0,0 +1,440 @@
++# Product clock recovery and database-target audit, rev0897
++
++**Assessment date:** 2026-07-25  
++**Scope:** C++ owner and CLI implementation, process-level behavior, SQLite
++connection ownership, product bootstrap ordering, registered source audits,
++current primary-source research, and clearly labeled speculation.
++
++## Executive judgment
++
++AnonSync's heart remains **authority-preserving convergence**. Exact authorized
++history and live owned capabilities decide what may exist, move, retry, settle,
++or become visible. A clock, path string, database handle, status field, retry
++counter, or process exit is useful only while it remains subordinate to the
++exact authority that created it.
++
++Rev0896 exposed durable condition but left one central operational contradiction:
++the product could report that its outbox clock was quarantined, while the exact
++recovery primitive existed only in the C++ owner. A deployed process could
++therefore diagnose the block but could not repair it without private code or
++manual database intervention. Rev0897 closes that gap with an explicit
++writer-serialized probe and generation-fenced recovery command.
++
++The audit then found a more severe product-boundary defect. Every CLI database
++open inherited `SQLITE_OPEN_CREATE`, including status, send, and clock paths. A
++mistyped filename could manufacture an empty authority store and make the error
++look like valid genesis. Merely removing `CREATE` was not sufficient: a
++pre-existing zero-byte placeholder could still be initialized by an owner, and
++the unconditional `PRAGMA journal_mode=WAL` could persistently rewrite an
++unrelated SQLite database before exact schema attestation rejected it.
++
++Correcting those paths exposed another defect: SQLite usually returns a
++diagnostic `sqlite3*` even when opening fails, but the product immediately
++adopted it into AnonSync's strict connection-owner slot. In the cloudtainer
++failure case, destruction interpreted the unadopted failed handle as an
++apparently live transaction and used the owner fail-stop exit instead of the
++normal command diagnostic. The revised frontier keeps every candidate in a
++distinct exception-safe acquisition owner, closes failed or read-only handles
++before adoption, refuses empty existing targets, observes rather than rewrites
++their persistent journal mode, and only transfers a proved writable connection
++into the strict owner.
++
++This revision is therefore both a product increment and an authority audit:
++clock recovery becomes invokable, observation stops creating truth, failed
++handles stop acquiring ownership, and receiver bootstrap moves behind all
++non-creating prerequisites.
++
++## The mission invariant
++
++The relevant invariant is narrower than “the database is durable” or “the
++clock is monotonic”:
++
++> A liveness or storage observation may change authority only inside the exact
++> owner transaction that proves the current durable cutpoint, and a resource
++> handle may enter an owner only after the acquisition result proves the
++> capability the owner claims to possess.
++
++For the outbox clock, this means:
++
++1. sample only after `BEGIN IMMEDIATE` owns the SQLite writer serialization
++   point;
++2. restore and attest the exact current replica/clock state before deciding;
++3. publish an accepted or quarantined observation by exact comparison against
++   the previous durable clock row;
++4. re-read the staged complete cutpoint before commit;
++5. keep quarantine sticky during ordinary observations;
++6. require recovery to name the exact current observation generation; and
++7. never let a probe claim, renew, release, settle, or otherwise spend outbox
++   attempt authority.
++
++For database acquisition, this means:
++
++1. every call site declares whether missing-file creation is authorized;
++2. observational and dispatch commands require an existing, nonempty target
++   already carrying the reviewed persistent WAL profile;
++3. a failed `sqlite3_open_v2` result remains an unowned diagnostic handle;
++4. a successful `SQLITE_OPEN_READWRITE` call is not enough, because SQLite may
++   fall back to read-only;
++5. only a non-null, writable `main` connection may cross into
++   `SyncSqliteDbHandleSlot`; and
++6. rejected candidates remain owned across diagnostic/allocation exceptions;
++7. existing-only opens never change journal mode before exact owner
++   attestation; and
++8. commands that may create state must prove all non-creating prerequisites
++   first wherever ordering can reduce orphan bootstrap.
++
++## What changed in C++
++
++### One clock-only owner transaction
++
++`SyncReplicaSqliteOwner::observe_outbox_clock_or_throw()` is now public. It:
++
++1. opens a typed `BEGIN IMMEDIATE` transaction;
++2. re-proves writer authority;
++3. restores the complete durable replica and clock state;
++4. asks the injected clock source for one observation;
++5. invokes the shared clock publication helper;
++6. re-attests the complete staged cutpoint through the independent restore path;
++   and
++7. commits and returns the exact observation result.
++
++The return value distinguishes `Accepted`, `Quarantined`, and
++`AlreadyQuarantined`, includes the complete durable clock state, reports whether
++the clock row changed, and carries a usable epoch only for an accepted
++observation. Quarantine is a successful observation result, not a successful
++clock. That distinction lets an operator or future supervisor learn the exact
++block without weakening the normal work paths, which still commit the
++quarantine and then reject the attempted lease transition.
++
++The previous lease-specific publication code was refactored into
++`publish_outbox_clock_observation_or_throw`. Both the probe and work paths now
++share the pure state-machine decision, exact row update, and writer-authority
++reproof. This matters more than reducing duplication: it prevents the CLI from
++becoming a second implementation of clock acceptance or quarantine semantics.
++
++### Product commands
++
++`anonsync_replica clock-observe` accepts the same replica identity and optional
++paired operator-trusted clock profile as `send-one`. It writes one flat JSON
++record containing:
++
++- selected clock profile;
++- observation outcome and changed bit;
++- health and anomaly;
++- durable high-water epoch;
++- observation and recovery generations; and
++- presence of accepted and rejected observations.
++
++A newly published quarantine returns command status zero because the command
++successfully performed and reported an observation. Automation must inspect the
++JSON health/outcome instead of treating “could sample” as “clock is healthy.”
++
++`anonsync_replica clock-recover` requires a nonzero
++`--expected-observation-generation`. It invokes the existing owner recovery,
++which rejects healthy state, stale generations, unsynchronized observations,
++excessive uncertainty, and any observation below the durable high-water epoch.
++A successful recovery increments both the observation generation and recovery
++generation, clears rejected/anomaly state, and binds the current observation as
++a fresh cumulative-drift anchor.
++
++The process proof executes the full sequence in separate product invocations:
++
++1. publish an initial healthy observation under one named operator authority;
++2. publish a second observation under a different authority ID;
++3. verify durable `source-changed` quarantine;
++4. confirm status reports the same generation and anomaly;
++5. recover using exactly that generation and the final authority ID;
++6. reject a repeated recovery because the clock is no longer quarantined; and
++7. proceed through the existing mutual-TLS send/receive/receipt path.
++
++### Explicit database-open disposition
++
++Every product call to `open_database_or_throw` now supplies one of:
++
++- `ExistingOnly`; or
++- `CreateIfMissing`.
++
++There is no default. The open helper adds `SQLITE_OPEN_CREATE` only for the
++second disposition. Current call-site policy is:
++
++| Command/surface | Store | Disposition |
++|---|---|---|
++| `status` | replica, optional effect, membership, anchor | existing only |
++| `clock-observe` | replica | existing only |
++| `clock-recover` | replica | existing only |
++| `send-one` | replica | existing only |
++| `enqueue-file` | replica | create if missing |
++| `membership-publish` | membership, anchor | create if missing |
++| `serve-one` | membership, anchor | existing only |
++| `serve-one` | receiver replica, effect | create if missing |
++
++The last three creation cases are state-minting/genesis paths, not observation
++paths. They remain residual bootstrap authority and are discussed below.
++
++`ExistingOnly` means more than “the pathname exists.” Before any owner can
++initialize or migrate state, the shared open frontier requires a persistent
++non-internal schema object and reads `PRAGMA main.journal_mode`. Empty files are
++rejected as requiring explicit bootstrap, and any existing target not already
++in WAL mode is rejected without executing the persistent journal-mode setter.
++Creation-capable opens execute `PRAGMA journal_mode=WAL` only when the target
++has no persistent schema, then read the mode back because assignment success
++alone does not prove that SQLite selected WAL. A nonempty target must already
++carry WAL even when the command has bootstrap authority; `CreateIfMissing` is
++not permission to rewrite an arbitrary existing database.
++
++### Failed handle and writable-capability fence
++
++SQLite's official C API documentation states that a database connection handle
++is usually returned even when an open error occurs, that the handle should be
++closed whether or not open succeeded, and that `SQLITE_OPEN_READWRITE` can fall
++back to read-only. Those details are directly relevant to an owner type whose
++destructor treats an apparently active transaction as a process-integrity
++failure.
++
++Rev0897 therefore keeps the raw candidate inside a distinct
++`UnadoptedSqliteConnection` acquisition owner, outside `SyncSqliteDb`, until all
++of these are true:
++
++1. `sqlite3_open_v2` returned `SQLITE_OK`;
++2. the candidate is non-null; and
++3. `sqlite3_db_readonly(candidate, "main")` proves writable main-database
++   authority.
++
++The candidate owner also covers exceptions while building diagnostics or
++allocating the strict owner's generation state; no raw handle is temporarily
++unowned between `sqlite3_open_v2` and transfer. Every explicit rejection path
++closes first and then throws the command diagnostic. Only the proved candidate
++is released through the strict slot's `out()` frontier. The process test
++requires the normal exit code 1, no stdout, the expected SQLite diagnostic, and
++absence of main/WAL/SHM files. This would fail if the old exit-86 owner fail-stop
++reappeared.
++
++Two additional negative process cases pin the distinction between pathname and
++authority. A zero-byte existing file remains zero bytes and gains no WAL/SHM
++sidecars. A real unrelated SQLite database begins in DELETE journal mode; after
++`status` rejects it for the wrong persistent profile, the complete database
++file SHA-256 remains identical and no WAL/SHM sidecars exist. The same database
++is then supplied to creation-capable `membership-publish`: it remains
++byte-identical and the paired anchor path is not created. Bootstrap authority
++therefore applies only to a missing/schema-empty target, not to an arbitrary
++nonempty SQLite store.
++
++### Receiver bootstrap ordering
++
++Before this audit, `serve-one` created receiver replica and effect databases
++before loading TLS credentials, binding the listener, or opening the existing
++membership and anchor stores. A wrong membership path or invalid TLS input could
++therefore leave empty authority files behind.
++
++The command now orders work as follows:
++
++1. load and validate the server TLS context;
++2. bind/listen and derive the listener capability;
++3. open existing membership and anchor stores;
++4. derive current anchored membership authority;
++5. only then create/open receiver replica and effect stores; and
++6. enter the one-session server owner.
++
++A negative process proof supplies valid TLS/listener inputs but missing
++membership paths, then verifies that none of the membership, anchor, receiver,
++or effect database families exists after failure.
++
++## Audit and proof added
++
++`tools/audit_anonsync_replica_database_open_policy.py` pins the reviewed source
++shape:
++
++- one centralized `sqlite3_open_v2` call;
++- explicit disposition at every call site;
++- conditional and narrow `SQLITE_OPEN_CREATE` use;
++- exception-safe failed/read-only closure before strict adoption;
++- nonempty-schema and pre-existing-WAL requirements for existing-only opens;
++- WAL assignment/readback only for schema-empty bootstrap targets;
++- no-create status, clock, and sender paths;
++- explicit creation only in state-minting paths;
++- receiver preflight ordering; and
++- corresponding process-level negative tests.
++
++It is intentionally labeled lexical hygiene, not semantic proof. The runtime
++proofs establish concrete behavior for missing paths, zero-byte placeholders,
++one wrong-profile SQLite database, and receiver preflight; the owner test
++establishes clock-only state transitions. They do not prove every
++filesystem/VFS behavior, arbitrary valid-looking wrong databases, or malicious
++same-UID interference.
++
++The focused owner test now proves that explicit observation and recovery leave
++replica evidence, policy, operations, projection, and outbox authority
++unchanged. It covers:
++
++- first accepted observation;
++- idempotent identical observation;
++- durable boottime-rollback quarantine;
++- sticky already-quarantined behavior;
++- stale recovery-generation rejection with exact rollback;
++- successful exact-generation recovery; and
++- repeated-recovery rejection.
++
++## What had gone severely wrong
++
++### 1. Observation could manufacture authority
++
++The most serious conceptual error was not a missing flag; it was a wrong
++capability default. A helper used by every command always included
++`SQLITE_OPEN_CREATE`. Status, send, and clock operations thereby held genesis
++authority even though their command semantics did not. A typo could turn
++“observe the intended store” into “create a different empty store and observe
++that.” In a system built around exact identity, that is an authority inversion.
++
++The fix is explicit call-site disposition plus post-open capability proof, not
++an `exists()` check followed by open. A separate `exists()` check would be
++race-prone, would still treat a zero-byte placeholder as authority, and would
++leave creation hidden inside the helper.
++
++### 2. Failed acquisition crossed the ownership frontier
++
++The old code passed the strict owner's output slot directly to
++`sqlite3_open_v2`. That is conventional RAII for APIs that either return a valid
++object or leave null. SQLite's contract is different: it usually returns a
++handle even on error so callers can read diagnostics, and that handle must be
++closed. The result was a diagnostic resource being mislabeled as an adopted
++connection. Strict destruction then did exactly what it was designed to do for
++owned transaction corruption, but at the wrong frontier.
++
++This is a useful general lesson for the cube: **strict RAII types cannot repair
++an acquisition API whose failure product has different semantics from the
++owned success type.** Keep the candidate in a distinct acquisition type until
++all success capabilities are proved, then transfer once. Leaving it as a naked
++raw pointer is still insufficient because diagnostic string construction or
++owner-state allocation can throw before the explicit close/transfer point.
++
++### 3. Bootstrap happened before prerequisites
++
++`serve-one` was optimized for straightforward construction order, not for
++failure economics. Creating durable state first made later configuration errors
++persistent litter. Reordering cannot make multiple independent SQLite stores
++atomic, but it eliminates the avoidable class where no receiver state was ever
++needed because TLS, binding, or trust inputs were invalid.
++
++## Waste that remains
++
++### Implicit product bootstrap
++
++`enqueue-file`, `membership-publish`, and receiver genesis still authorize
++creation based on command choice alone. That is better than every command
++creating, but a typo in one of these state-minting commands can still create a
++new store. `membership-publish` and receiver bootstrap also span two independent
++SQLite files, so one successful creation followed by a second failure can leave
++a partial store set.
++
++**Recommended correction:** add an explicit `init`/`bootstrap` command that
++creates all related stores, writes a deployment/store-set manifest binding
++folder ID, local actor, store role, database identity, and initial cutpoint, and
++refuses existing or partially initialized paths unless an exact recovery mode is
++selected. Normal enqueue, membership publication, and serve commands should
++then become existing-only. This is the highest-value database-target follow-up.
++
++### Status is not a read-only contract
++
++`status` does not create missing files or initialize an empty existing file,
++but it still opens writable owners and may exercise exact legacy-schema
++migration behavior on an existing nonempty database. That preserves one schema
++authority, yet it means “status” is not guaranteed to be a byte-for-byte
++read-only operation.
++
++**Recommended correction:** first add an immutable exported snapshot API from
++each owner; then consider a versioned read-only status path that refuses any
++migration and reports `upgrade-required`. Do not implement raw read-only SQL in
++the CLI, because that would duplicate private schema authority.
++
++### No durable supervisor policy
++
++The commands now expose enough state to distinguish no work, clock quarantine,
++and recoverable clock state, but there is no durable loop deciding when to
++observe, when to ask an operator for recovery, how to back off, or how to shut
++down. Automatic recovery would be unsafe without a policy source: a source/boot
++change may be normal deployment churn or evidence of an invalid time domain.
++
++**Recommended correction:** build a bounded supervisor state machine with an
++append-only operational intent/receipt log. It should never recover merely
++because time passed. Recovery should require an explicit policy capability that
++names the current quarantine generation, acceptable clock profile, and reason.
++
++### Build and evidence overhead
++
++This source increment touches a small product boundary, but a full release still
++pays for hundreds of targets and a large historical evidence corpus. Lexical
++audits are valuable as tripwires but add maintenance cost and can confuse source
++shape with semantics.
++
++**Recommended correction:** keep runtime/process proofs as the primary claim,
++consolidate overlapping source audits, move large historical raw logs outside
++the distributable archive by digest, and restructure CMake around cohesive
++components rather than both giant translation units and one-file micro-libraries.
++
++### Privacy remains a name, not a property
++
++Clock recovery and database targeting improve integrity and operability. They do
++not hide endpoints, peer graph, folder interest, path names, payload sizes,
++timing, or traffic shape. Mutual TLS with SPKI/actor authorization is not
++anonymity.
++
++**Recommended correction:** define the privacy threat model before choosing a
++mechanism. Keep private-interest negotiation and routing outside the causal
++kernel, then admit only an immutable capability-derived projection into the
++existing authority paths.
++
++## Current research observations
++
++Primary sources checked during this revision:
++
++- SQLite C API, opening a connection:
++  `https://www.sqlite.org/c3ref/open.html`
++- SQLite download page:
++  `https://sqlite.org/download.html`
++- SQLite project home/latest release:
++  `https://sqlite.org/`
++
++The API documentation directly supports the failed-handle correction: a handle
++is usually returned on open error and must be closed, and read-write open may
++fall back to read-only. The official project pages reported SQLite 3.53.4 as the
++latest release, dated 2026-07-24. The download page listed
++`sqlite-amalgamation-3530400.zip` with SHA3-256
++`628a44cfe82c66aed1ccbbe85a562d2e33ebe64b3288981ed76285612227934e`.
++
++This cloudtainer could inspect the official metadata but could not acquire and
++independently verify the ZIP bytes through the available download paths. The
++source tree therefore remains pinned to its verified bundled SQLite 3.53.3.
++Rev0897 does not claim a 3.53.4 migration. Substituting unverified bytes merely
++to report a newer version would contradict the mission.
++
++## Recommended next sequence
++
++1. **Explicit store-set bootstrap.** Remove remaining implicit creation from
++   normal product commands and bind all store roles in a deployment manifest.
++2. **Bounded supervisor.** Use status, clock observation, exact recovery,
++   payload availability, and membership condition to drive one restart-safe
++   transition at a time.
++3. **Read-only/versioned condition API.** Separate observation from migration
++   while preserving owners as the only schema authority.
++4. **Causal directory/tombstone/rename semantics.** The current file-only leaf
++   path is insufficient for a synchronization product and still requires parent
++   directories to preexist.
++5. **Reachability and garbage collection.** Retained payloads and evidence need
++   exact liveness roots before any deletion is authorized.
++6. **Indexed acceleration with oracle comparison.** Add scalable lookup only
++   behind retained full-scan equivalence proofs.
++7. **Verified SQLite 3.53.4 acquisition.** Upgrade only after exact official
++   source bytes and hashes can be sealed in the same release process.
++8. **Privacy threat model and capability overlap.** Do not attach anonymity
++   claims to authenticated transport alone.
++
++## Nonclaims
++
++Rev0897 does not claim automatic trustworthy time recovery, clock attestation,
++multi-store atomic bootstrap, a daemon, discovery, NAT traversal, directory or
++tombstone convergence, chunking/resume, reachability/GC, at-rest encryption,
++malicious same-UID resistance, a read-only status contract, anonymity,
++unlinkability, endpoint hiding, or traffic-analysis resistance. It claims a
++smaller and testable improvement: exact clock health and recovery are now
++product operations, and database acquisition no longer silently gains creation
++or ownership authority on observational and failure paths.
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# AnonSync rev0896
++# AnonSync rev0897
+ 
+ AnonSync is an **evidence-authorized, crash-consistent, bounded convergence
+ engine under construction**. Its mission is not ordinary file copying. It turns
+@@ -13,6 +13,53 @@ state.
+ > silently acquire more authority than the exact validated evidence and cutpoint
+ > that created it.
+ 
++## Rev0897: explicit clock recovery and fail-closed database targeting
++
++The product spine can now inspect and recover its owned outbox clock without
++claiming delivery work. `clock-observe` samples under the replica SQLite
++writer lock and publishes only the exact clock cutpoint; a newly detected
++rollback, source change, boot change, namespace change, synchronization gap, or
++drift violation is returned as durable quarantine state rather than being
++hidden behind a work-path exception. `clock-recover` requires the exact current
++observation generation and binds one fresh owned observation as the new anchor.
++The same exact-CAS update and staged re-attestation path is shared with lease
++operations, so the CLI does not mint a second recovery authority.
++
++The database-open boundary was also corrected. Observation, recovery, status,
++and send operations no longer carry implicit `SQLITE_OPEN_CREATE`; a mistyped
++path fails without creating a main file, WAL, or shared-memory sidecar. File
++existence is not treated as authority either: an existing zero-byte placeholder
++is refused instead of being initialized, and an existing-only open verifies
++that the persistent journal profile is already WAL rather than silently
++rewriting a wrong SQLite target before exact schema attestation. SQLite usually
++returns a diagnostic connection handle even when open fails, so the product now
++keeps that handle in a distinct exception-safe candidate owner, closes it on
++every rejection path, proves the successful connection is writable, and only
++then adopts it. This removes a severe unwind path in which a failed open could
++be misread as a live owned transaction and trigger the process fail-stop
++instead of the intended diagnostic exit.
++
++`serve-one` now proves its TLS identity, listener, and both existing membership
++authorities before it may create receiver replica or effect stores. The process
++proof covers typo/no-create behavior, refusal of pre-existing empty genesis,
++byte-preserving rejection of an unrelated DELETE-mode SQLite target through
++both observation and bootstrap-capable paths, prevention of the paired-store
++creation on that failure, normal failed-open exit, preflight without orphan
++bootstrap, healthy clock publication, durable source-change quarantine,
++generation-fenced recovery, repeated-recovery rejection, real mutual TLS
++delivery, exact receiver publication, and terminal sender settlement. A new
++source audit pins every product database call site's explicit creation and
++persistent-profile policy.
++
++The largest remaining product gap is still a bounded durable supervisor loop,
++but rev0897 changes what that loop can safely build upon: it can distinguish a
++clock block from empty work and can invoke an exact recovery transition instead
++of relying on manual SQL or process replacement. Bootstrap is not yet a single
++atomic store-set operation; `enqueue-file`, `membership-publish`, and receiver
++genesis still retain explicit-in-code creation capability. A future `init`
++command should make that authority operator-explicit and bind the related store
++identities in one durable deployment manifest.
++
+ ## Rev0896: attested product status surface
+ 
+ The bounded product executable now has a `status` command. It opens the same
+--- a/REVISION_NOTES_rev0897.md
++++ b/REVISION_NOTES_rev0897.md
+@@ -0,0 +1,119 @@
++# AnonSync rev0897 revision notes
++
++## Mission increment
++
++Rev0897 keeps the project centered on authority-preserving convergence. It
++closes the operational gap between durable outbox-clock quarantine and the
++product executable: the shipped process can now publish a clock-only
++observation and perform exact generation-fenced recovery without claiming work
++or inventing a parallel clock authority.
++
++The audit also corrects database targeting. Commands that observe, recover, or
++send now require an existing replica store. A path typo can no longer become a
++new empty authority database merely because all opens inherited
++`SQLITE_OPEN_CREATE`.
++
++## C++ implementation
++
++`SyncReplicaSqliteOwner` now exposes
++`observe_outbox_clock_or_throw()`. The method owns `BEGIN IMMEDIATE`, restores
++the complete state, samples the injected clock under writer authority, publishes
++through the same exact-CAS helper used by lease transitions, independently
++re-attests the staged cutpoint, and returns accepted/quarantined/sticky state.
++
++The internal clock path was refactored so probe and work operations share
++`publish_outbox_clock_observation_or_throw`. Work paths retain their previous
++behavior: a quarantine cutpoint commits and the attempted lease transition
++throws. The explicit probe instead returns the exact quarantine result and
++spends no dispatch authority.
++
++`anonsync_replica` adds:
++
++- `clock-observe`, with system or explicitly paired operator-trusted clock
++  profile options; and
++- `clock-recover --expected-observation-generation N`, which invokes the
++  existing sticky-quarantine recovery primitive.
++
++Both commands emit bounded flat JSON naming health, anomaly, high-water epoch,
++observation/recovery generations, and accepted/rejected evidence presence.
++
++## Database-open audit/refactor
++
++`open_database_or_throw` now requires an explicit `DatabaseOpenDisposition`.
++Status, clock observation/recovery, and send use `ExistingOnly`. Enqueue and
++membership publication retain deliberate creation; `serve-one` requires
++existing membership/anchor stores and may create receiver/effect stores.
++
++The SQLite acquisition frontier now keeps the candidate `sqlite3*` in a
++distinct exception-safe acquisition owner until open succeeded, the handle is
++non-null, and `sqlite3_db_readonly(..., "main")` proves writability. Failed or
++read-only candidates are closed before an exception is raised, including when
++diagnostic construction or strict-owner allocation itself throws. This follows
++SQLite's published contract that a handle is usually returned even on open
++error and must be closed.
++
++Existing-only opens additionally require at least one persistent non-internal
++schema object and an already-WAL journal profile. A pre-existing empty file
++therefore cannot be promoted to genesis by status/send/clock commands, and a
++wrong DELETE-mode SQLite database is rejected without first changing its
++persistent journal mode. Creation-capable commands enable WAL only for a
++schema-empty bootstrap target and then verify that SQLite actually selected it;
++nonempty targets must already carry WAL regardless of command.
++
++`serve-one` now validates TLS credentials, binds the listener, restores existing
++anchored membership, and only then opens creation-capable receiver/effect
++stores. This prevents invalid preflight inputs from leaving empty authority
++files.
++
++## Proof and audits
++
++The product process test now proves:
++
++- missing status and clock targets return exit 1 with no stdout;
++- no main/WAL/SHM database family is created for a typo;
++- a pre-existing zero-byte database remains byte-empty and gains no sidecars;
++- an unrelated DELETE-mode SQLite database remains byte-identical;
++- a creation-capable membership open also leaves that nonempty wrong-role
++  database byte-identical and does not create its paired anchor;
++- failed-open diagnostic handles do not trigger the strict owner exit-86 path;
++- missing membership during `serve-one` preflight creates no receiver/effect
++  stores;
++- healthy clock publication, source-change quarantine, status visibility,
++  exact recovery, and repeated-recovery rejection;
++- real mutual TLS delivery, exact receiver bytes, and terminal settlement after
++  recovery.
++
++The SQLite owner test adds a focused clock-only lifecycle and verifies that
++observation/quarantine/recovery do not change replica evidence, policy,
++operations, projection, or outbox authority.
++
++`tools/audit_anonsync_replica_database_open_policy.py` pins explicit creation
++policy, failed/read-only closure before adoption, and receiver preflight order.
++The existing outbox-clock audit now pins the public probe, CLI recovery surface,
++owner proof, and process lifecycle.
++
++## Research and dependency status
++
++SQLite's official documentation confirms the failed-open handle and read-only
++fallback behavior addressed here. Official pages reported SQLite 3.53.4,
++released 2026-07-24, and published SHA3-256
++`628a44cfe82c66aed1ccbbe85a562d2e33ebe64b3288981ed76285612227934e`
++for the 3.53.4 amalgamation ZIP. The cloudtainer could not acquire and verify the
++archive bytes, so AnonSync remains exactly pinned to the bundled, configure-time
++verified SQLite 3.53.3. No 3.53.4 upgrade is claimed.
++
++## Remaining gaps
++
++The next database-boundary correction should be an explicit store-set `init`
++command and durable deployment manifest. Normal commands should eventually
++require existing stores, eliminating implicit bootstrap and partial creation
++across membership/anchor or receiver/effect pairs.
++
++The largest product gap remains a bounded durable supervisor with explicit
++operator/policy authority for clock recovery. Directory/tombstone/rename
++semantics, reachability/GC, indexed scale, at-rest encryption, and a real privacy
++threat model remain absent. TLS authentication still does not provide
++anonymity, unlinkability, endpoint hiding, or traffic-analysis resistance.
++
++Detailed findings and the recommended sequence are in
++`PRODUCT_CLOCK_RECOVERY_AND_DATABASE_TARGET_AUDIT_rev0897.md`.
+--- a/src/anonsync_replica.cpp
++++ b/src/anonsync_replica.cpp
+@@ -379,26 +379,199 @@ effect_owner_limits(std::uint64_t max_payload_bytes) {
+     return limits;
+ }
+ 
++enum class DatabaseOpenDisposition : std::uint8_t {
++    ExistingOnly = 1U,
++    CreateIfMissing = 2U,
++};
++
++class UnadoptedSqliteConnection final {
++public:
++    UnadoptedSqliteConnection() = default;
++    ~UnadoptedSqliteConnection() noexcept {
++        if (handle_ == nullptr) return;
++        if (sqlite3_close(handle_) != SQLITE_OK) {
++            // A fresh open candidate cannot legitimately own statements or
++            // backups. close_v2 is only the no-throw last resort for an
++            // exceptional SQLite implementation path during stack unwind.
++            (void)sqlite3_close_v2(handle_);
++        }
++        handle_ = nullptr;
++    }
++
++    UnadoptedSqliteConnection(const UnadoptedSqliteConnection&) = delete;
++    UnadoptedSqliteConnection& operator=(
++        const UnadoptedSqliteConnection&) = delete;
++    UnadoptedSqliteConnection(UnadoptedSqliteConnection&&) = delete;
++    UnadoptedSqliteConnection& operator=(
++        UnadoptedSqliteConnection&&) = delete;
++
++    [[nodiscard]] sqlite3** out() noexcept { return &handle_; }
++    [[nodiscard]] sqlite3* get() const noexcept { return handle_; }
++
++    [[nodiscard]] sqlite3* release() noexcept {
++        sqlite3* released = handle_;
++        handle_ = nullptr;
++        return released;
++    }
++
++    [[nodiscard]] int close_noexcept() noexcept {
++        if (handle_ == nullptr) return SQLITE_OK;
++        const int result = sqlite3_close(handle_);
++        if (result == SQLITE_OK) handle_ = nullptr;
++        return result;
++    }
++
++private:
++    sqlite3* handle_ = nullptr;
++};
++
++[[noreturn]] void reject_unadopted_database_handle_or_throw(
++    UnadoptedSqliteConnection& candidate,
++    std::string message) {
++    // sqlite3_open_v2 usually returns a diagnostic handle even on failure.
++    // Until writability has been proved, that handle has not crossed the
++    // product's connection-authority frontier and must never enter the strict
++    // SyncSqliteDbHandleSlot.
++    if (candidate.close_noexcept() != SQLITE_OK) {
++        message += "; unadopted SQLite handle could not be closed";
++    }
++    throw std::runtime_error(std::move(message));
++}
++
++[[nodiscard]] bool database_has_persistent_schema_or_throw(
++    anonsync::SyncSqliteDbHandleSlot& database,
++    const std::string& label) {
++    anonsync::SyncSqliteStmt statement = anonsync::sqlite_prepare_or_throw(
++        database,
++        "SELECT 1 FROM main.sqlite_schema "
++        "WHERE name NOT LIKE 'sqlite_%' LIMIT 1;",
++        label + " persistent-schema probe");
++    const int row = sqlite3_step(statement.stmt);
++    if (row == SQLITE_DONE) return false;
++    if (row != SQLITE_ROW) {
++        anonsync::throw_sqlite_exception(
++            sqlite3_db_handle(statement.stmt), row,
++            label + " persistent-schema probe");
++    }
++    const int trailing = sqlite3_step(statement.stmt);
++    if (trailing != SQLITE_DONE) {
++        if (trailing == SQLITE_ROW) {
++            throw std::runtime_error(
++                label + " persistent-schema probe returned excess rows");
++        }
++        anonsync::throw_sqlite_exception(
++            sqlite3_db_handle(statement.stmt), trailing,
++            label + " persistent-schema trailing-row probe");
++    }
++    return true;
++}
++
++[[nodiscard]] std::string database_journal_mode_or_throw(
++    anonsync::SyncSqliteDbHandleSlot& database,
++    const std::string& label) {
++    anonsync::SyncSqliteStmt statement = anonsync::sqlite_prepare_or_throw(
++        database, "PRAGMA main.journal_mode;",
++        label + " journal-mode probe");
++    const int row = sqlite3_step(statement.stmt);
++    if (row == SQLITE_DONE) {
++        throw std::runtime_error(
++            label + " journal-mode probe returned no row");
++    }
++    if (row != SQLITE_ROW) {
++        anonsync::throw_sqlite_exception(
++            sqlite3_db_handle(statement.stmt), row,
++            label + " journal-mode probe");
++    }
++    const std::string mode = anonsync::sqlite_column_text_or_throw(
++        statement.stmt, 0, label + " journal-mode value");
++    const int trailing = sqlite3_step(statement.stmt);
++    if (trailing != SQLITE_DONE) {
++        if (trailing == SQLITE_ROW) {
++            throw std::runtime_error(
++                label + " journal-mode probe returned excess rows");
++        }
++        anonsync::throw_sqlite_exception(
++            sqlite3_db_handle(statement.stmt), trailing,
++            label + " journal-mode trailing-row probe");
++    }
++    return mode;
++}
++
++void require_wal_journal_mode_or_throw(
++    anonsync::SyncSqliteDbHandleSlot& database,
++    const std::string& label) {
++    const std::string mode = database_journal_mode_or_throw(database, label);
++    if (mode != "wal") {
++        throw std::runtime_error(
++            label + " journal mode is " + mode + ", expected wal");
++    }
++}
++
+ [[nodiscard]] anonsync::SyncSqliteDb open_database_or_throw(
+     const fs::path& path,
+-    const std::string& label) {
+-    anonsync::SyncSqliteDb database;
+-    int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
+-                SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_PRIVATECACHE;
++    const std::string& label,
++    DatabaseOpenDisposition disposition) {
++    int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX |
++                SQLITE_OPEN_PRIVATECACHE;
++    if (disposition == DatabaseOpenDisposition::CreateIfMissing) {
++        flags |= SQLITE_OPEN_CREATE;
++    }
+ #ifdef SQLITE_OPEN_NOFOLLOW
+     flags |= SQLITE_OPEN_NOFOLLOW;
+ #endif
++    UnadoptedSqliteConnection candidate;
+     const int opened = sqlite3_open_v2(
+-        path.string().c_str(), database.db.out(), flags, nullptr);
++        path.string().c_str(), candidate.out(), flags, nullptr);
+     if (opened != SQLITE_OK) {
+-        throw std::runtime_error(anonsync::sqlite_error_message(
+-            database.db, label + " open"));
++        reject_unadopted_database_handle_or_throw(
++            candidate,
++            anonsync::sqlite_error_message(candidate.get(), label + " open"));
++    }
++    if (candidate.get() == nullptr) {
++        throw std::runtime_error(label + " open returned no SQLite handle");
++    }
++    const int read_only = sqlite3_db_readonly(candidate.get(), "main");
++    if (read_only != 0) {
++        reject_unadopted_database_handle_or_throw(
++            candidate,
++            label + (read_only > 0
++                ? " open fell back to a read-only main database"
++                : " open could not prove main-database writability"));
++    }
++
++    anonsync::SyncSqliteDb database;
++    {
++        auto output = database.db.out();
++        sqlite3** destination = output.get();
++        *destination = candidate.release();
+     }
+     anonsync::sqlite_set_busy_timeout_or_throw(
+         database.db, 5000, label + " busy timeout");
++    const bool has_persistent_schema =
++        database_has_persistent_schema_or_throw(database.db, label);
++    if (disposition == DatabaseOpenDisposition::ExistingOnly) {
++        if (!has_persistent_schema) {
++            throw std::runtime_error(
++                label + " has no persistent schema and requires explicit "
++                "bootstrap");
++        }
++        // journal_mode is persistent. Existing-only commands must observe the
++        // reviewed profile instead of silently rewriting an unrelated or
++        // incompletely initialized target before its exact owner attests it.
++        require_wal_journal_mode_or_throw(database.db, label);
++    } else if (!has_persistent_schema) {
++        anonsync::sqlite_exec_or_throw(
++            database.db, "PRAGMA journal_mode=WAL;",
++            label + " WAL enablement");
++        require_wal_journal_mode_or_throw(database.db, label);
++    } else {
++        // CreateIfMissing is bootstrap authority, not permission to mutate an
++        // arbitrary existing SQLite store before its exact owner proves role
++        // and schema. Existing nonempty stores must already carry WAL.
++        require_wal_journal_mode_or_throw(database.db, label);
++    }
+     anonsync::sqlite_exec_or_throw(
+         database.db,
+-        "PRAGMA journal_mode=WAL;"
+         "PRAGMA synchronous=FULL;"
+         "PRAGMA wal_autocheckpoint=1;"
+         "PRAGMA foreign_keys=ON;"
+@@ -587,6 +760,41 @@ struct StagedDeadlines final {
+     return "unknown";
+ }
+ 
++[[nodiscard]] const char* outbox_clock_observation_outcome_name(
++    anonsync::SyncReplicaOutboxClockObservationOutcome outcome) noexcept {
++    using Outcome = anonsync::SyncReplicaOutboxClockObservationOutcome;
++    switch (outcome) {
++        case Outcome::Accepted: return "accepted";
++        case Outcome::Quarantined: return "quarantined";
++        case Outcome::AlreadyQuarantined: return "already_quarantined";
++    }
++    return "unknown";
++}
++
++[[nodiscard]] const char* clock_profile_name(bool operator_trusted) noexcept {
++    return operator_trusted ? "operator-trusted" : "system";
++}
++
++void append_outbox_clock_state_json_fields(
++    std::ostream& output,
++    const anonsync::SyncReplicaOutboxClockState& state) {
++    output
++        << ",\"clock_health\":"
++        << json_quote(outbox_clock_health_name(state.health))
++        << ",\"clock_anomaly\":"
++        << json_quote(anonsync::sync_replica_outbox_clock_anomaly_name(
++               state.anomaly))
++        << ",\"clock_high_water_epoch\":" << state.high_water_epoch
++        << ",\"clock_observation_generation\":"
++        << state.observation_generation
++        << ",\"clock_recovery_generation\":"
++        << state.recovery_generation
++        << ",\"clock_accepted_observation_present\":"
++        << json_bool(state.accepted.has_value())
++        << ",\"clock_rejected_observation_present\":"
++        << json_bool(state.rejected.has_value());
++}
++
+ struct ProductStatusOutboxCounts final {
+     std::uint64_t intents = 0U;
+     std::uint64_t unclaimed = 0U;
+@@ -823,7 +1031,8 @@ int command_status(const Options& options) {
+     const std::uint64_t max_payload = max_payload_from_options(options);
+ 
+     anonsync::SyncSqliteDb replica_database = open_database_or_throw(
+-        replica_db, "anonsync_replica status replica database");
++        replica_db, "anonsync_replica status replica database",
++        DatabaseOpenDisposition::ExistingOnly);
+     anonsync::SyncReplicaSqliteOwner replica_owner(
+         replica_database.db, folder, local_actor, {},
+         "anonsync_replica status replica owner");
+@@ -871,7 +1080,8 @@ int command_status(const Options& options) {
+     std::string effect_cutpoint_digest;
+     if (effect_db.has_value()) {
+         anonsync::SyncSqliteDb effect_database = open_database_or_throw(
+-            *effect_db, "anonsync_replica status effect database");
++            *effect_db, "anonsync_replica status effect database",
++            DatabaseOpenDisposition::ExistingOnly);
+         anonsync::SyncReplicaFileEffectSqliteOwner effect_owner(
+             effect_database.db, folder, *files_root,
+             effect_owner_limits(max_payload),
+@@ -899,9 +1109,11 @@ int command_status(const Options& options) {
+     bool membership_anchor_matches_current = false;
+     if (membership_db.has_value()) {
+         anonsync::SyncSqliteDb membership_database = open_database_or_throw(
+-            *membership_db, "anonsync_replica status membership database");
++            *membership_db, "anonsync_replica status membership database",
++            DatabaseOpenDisposition::ExistingOnly);
+         anonsync::SyncSqliteDb anchor_database = open_database_or_throw(
+-            *anchor_db, "anonsync_replica status membership anchor database");
++            *anchor_db, "anonsync_replica status membership anchor database",
++            DatabaseOpenDisposition::ExistingOnly);
+         anonsync::SyncReplicaTlsMembershipSqliteOwner membership_owner(
+             membership_database.db, folder, local_actor,
+             "anonsync_replica status membership owner");
+@@ -1007,6 +1219,79 @@ int command_status(const Options& options) {
+     return 0;
+ }
+ 
++int command_clock_observe(const Options& options) {
++    options.require_only({
++        "replica-db", "folder", "local-device", "local-epoch",
++        "operator-clock-authority-id", "operator-clock-uncertainty-ns"});
++    const fs::path replica_db = require_database_path(
++        options.one("replica-db"), "--replica-db");
++    const std::string folder = options.one("folder");
++    const anonsync::SyncReplicaActor local_actor = actor_from_options(
++        options, "local-device", "local-epoch", "local");
++    const bool operator_trusted_clock =
++        options.has("operator-clock-authority-id");
++    auto clock_source = outbox_clock_source_from_options(options);
++
++    anonsync::SyncSqliteDb database = open_database_or_throw(
++        replica_db, "anonsync_replica clock observation database",
++        DatabaseOpenDisposition::ExistingOnly);
++    anonsync::SyncReplicaSqliteOwner owner(
++        database.db, folder, local_actor, {},
++        "anonsync_replica clock observation owner", std::move(clock_source));
++    const anonsync::SyncReplicaOutboxClockObservationResult observed =
++        owner.observe_outbox_clock_or_throw();
++
++    std::cout
++        << "{\"command\":\"clock-observe\",\"clock_profile\":"
++        << json_quote(clock_profile_name(operator_trusted_clock))
++        << ",\"outcome\":"
++        << json_quote(outbox_clock_observation_outcome_name(observed.outcome))
++        << ",\"changed\":" << json_bool(observed.changed);
++    append_outbox_clock_state_json_fields(std::cout, observed.state);
++    std::cout << "}\n";
++    return 0;
++}
++
++int command_clock_recover(const Options& options) {
++    options.require_only({
++        "replica-db", "folder", "local-device", "local-epoch",
++        "expected-observation-generation", "operator-clock-authority-id",
++        "operator-clock-uncertainty-ns"});
++    const fs::path replica_db = require_database_path(
++        options.one("replica-db"), "--replica-db");
++    const std::string folder = options.one("folder");
++    const anonsync::SyncReplicaActor local_actor = actor_from_options(
++        options, "local-device", "local-epoch", "local");
++    const std::uint64_t expected_generation = parse_uint64(
++        options.one("expected-observation-generation"),
++        "--expected-observation-generation");
++    if (expected_generation == 0U) {
++        throw std::invalid_argument(
++            "--expected-observation-generation must be nonzero");
++    }
++    const bool operator_trusted_clock =
++        options.has("operator-clock-authority-id");
++    auto clock_source = outbox_clock_source_from_options(options);
++
++    anonsync::SyncSqliteDb database = open_database_or_throw(
++        replica_db, "anonsync_replica clock recovery database",
++        DatabaseOpenDisposition::ExistingOnly);
++    anonsync::SyncReplicaSqliteOwner owner(
++        database.db, folder, local_actor, {},
++        "anonsync_replica clock recovery owner", std::move(clock_source));
++    const anonsync::SyncReplicaOutboxClockState recovered =
++        owner.recover_outbox_clock_or_throw(expected_generation);
++
++    std::cout
++        << "{\"command\":\"clock-recover\",\"clock_profile\":"
++        << json_quote(clock_profile_name(operator_trusted_clock))
++        << ",\"expected_observation_generation\":"
++        << expected_generation;
++    append_outbox_clock_state_json_fields(std::cout, recovered);
++    std::cout << "}\n";
++    return 0;
++}
++
+ int command_enqueue_file(const Options& options) {
+     options.require_only({
+         "replica-db", "payload-root", "folder", "local-device",
+@@ -1045,7 +1330,8 @@ int command_enqueue_file(const Options& options) {
+     const auto put = payload_store.put_payload_or_throw(std::move(payload));
+ 
+     anonsync::SyncSqliteDb database = open_database_or_throw(
+-        replica_db, "anonsync_replica replica database");
++        replica_db, "anonsync_replica replica database",
++        DatabaseOpenDisposition::CreateIfMissing);
+     anonsync::SyncReplicaSqliteOwner owner(
+         database.db, folder, local_actor, {},
+         "anonsync_replica SQLite owner");
+@@ -1090,9 +1376,11 @@ int command_membership_publish(const Options& options) {
+     }
+ 
+     anonsync::SyncSqliteDb membership_database = open_database_or_throw(
+-        membership_db, "anonsync_replica membership database");
++        membership_db, "anonsync_replica membership database",
++        DatabaseOpenDisposition::CreateIfMissing);
+     anonsync::SyncSqliteDb anchor_database = open_database_or_throw(
+-        anchor_db, "anonsync_replica membership anchor database");
++        anchor_db, "anonsync_replica membership anchor database",
++        DatabaseOpenDisposition::CreateIfMissing);
+     anonsync::SyncReplicaTlsMembershipSqliteOwner membership_owner(
+         membership_database.db, folder, local_actor,
+         "anonsync_replica membership owner");
+@@ -1165,7 +1453,8 @@ int command_send_one(const Options& options) {
+     auto clock_source = outbox_clock_source_from_options(options);
+ 
+     anonsync::SyncSqliteDb database = open_database_or_throw(
+-        replica_db, "anonsync_replica sender database");
++        replica_db, "anonsync_replica sender database",
++        DatabaseOpenDisposition::ExistingOnly);
+     anonsync::SyncReplicaSqliteOwner owner(
+         database.db, folder, local_actor, {},
+         "anonsync_replica sender owner", std::move(clock_source));
+@@ -1193,9 +1482,7 @@ int command_send_one(const Options& options) {
+ 
+     std::cout
+         << "{\"command\":\"send-one\",\"clock_profile\":"
+-        << json_quote(operator_trusted_clock
+-               ? "operator-trusted"
+-               : "system")
++        << json_quote(clock_profile_name(operator_trusted_clock))
+         << ",\"disposition\":"
+         << json_quote(anonsync::sync_replica_file_tls_client_disposition_name(
+                result.disposition))
+@@ -1294,25 +1581,26 @@ int command_serve_one(const Options& options) {
+     (void)max_payload;
+     throw std::runtime_error("serve-one requires Linux");
+ #else
+-    anonsync::SyncSqliteDb replica_database = open_database_or_throw(
+-        replica_db, "anonsync_replica receiver database");
+-    anonsync::SyncSqliteDb effect_database = open_database_or_throw(
+-        effect_db, "anonsync_replica effect database");
++    // Prove every non-creating prerequisite before bootstrapping receiver
++    // state. A bad TLS identity, occupied listener, or membership-path typo
++    // must not leave an empty replica/effect authority pair behind.
++    SslContextOwner context = load_tls_context_or_throw(
++        certificate, private_key, ca_file, true,
++        "anonsync_replica server TLS context");
++    ListenerSocket listener_socket = make_listener_or_throw(
++        options.one("bind-address"), port,
++        "anonsync_replica listener");
++    auto listener =
++        anonsync::observe_sync_replica_file_tls_server_listener_or_throw(
++            listener_socket.descriptor.get(),
++            "anonsync_replica listener capability");
+     anonsync::SyncSqliteDb membership_database = open_database_or_throw(
+-        membership_db, "anonsync_replica membership database");
++        membership_db, "anonsync_replica membership database",
++        DatabaseOpenDisposition::ExistingOnly);
+     anonsync::SyncSqliteDb anchor_database = open_database_or_throw(
+-        anchor_db, "anonsync_replica membership anchor database");
++        anchor_db, "anonsync_replica membership anchor database",
++        DatabaseOpenDisposition::ExistingOnly);
+ 
+-    anonsync::SyncReplicaSqliteOwner owner(
+-        replica_database.db, folder, local_actor, {},
+-        "anonsync_replica receiver owner");
+-    anonsync::SyncReplicaFileEffectSqliteOwner effect_owner(
+-        effect_database.db, folder, files_root,
+-        effect_owner_limits(max_payload),
+-        "anonsync_replica receiver effect owner");
+-    anonsync::SyncReplicaFileDeliveryService service(
+-        owner, &effect_owner, file_service_limits(max_payload),
+-        "anonsync_replica receiver service");
+     anonsync::SyncReplicaTlsMembershipSqliteOwner membership_owner(
+         membership_database.db, folder, local_actor,
+         "anonsync_replica membership owner");
+@@ -1324,16 +1612,22 @@ int command_serve_one(const Options& options) {
+         "anonsync_replica anchored membership coordinator");
+     auto membership = coordinator.current_authority_or_throw();
+ 
+-    SslContextOwner context = load_tls_context_or_throw(
+-        certificate, private_key, ca_file, true,
+-        "anonsync_replica server TLS context");
+-    ListenerSocket listener_socket = make_listener_or_throw(
+-        options.one("bind-address"), port,
+-        "anonsync_replica listener");
+-    auto listener =
+-        anonsync::observe_sync_replica_file_tls_server_listener_or_throw(
+-            listener_socket.descriptor.get(),
+-            "anonsync_replica listener capability");
++    anonsync::SyncSqliteDb replica_database = open_database_or_throw(
++        replica_db, "anonsync_replica receiver database",
++        DatabaseOpenDisposition::CreateIfMissing);
++    anonsync::SyncSqliteDb effect_database = open_database_or_throw(
++        effect_db, "anonsync_replica effect database",
++        DatabaseOpenDisposition::CreateIfMissing);
++    anonsync::SyncReplicaSqliteOwner owner(
++        replica_database.db, folder, local_actor, {},
++        "anonsync_replica receiver owner");
++    anonsync::SyncReplicaFileEffectSqliteOwner effect_owner(
++        effect_database.db, folder, files_root,
++        effect_owner_limits(max_payload),
++        "anonsync_replica receiver effect owner");
++    anonsync::SyncReplicaFileDeliveryService service(
++        owner, &effect_owner, file_service_limits(max_payload),
++        "anonsync_replica receiver service");
+     const StagedDeadlines staged = staged_deadlines(timeout_seconds);
+     const auto result =
+         anonsync::serve_one_sync_replica_file_delivery_tls_session_or_throw(
+@@ -1438,6 +1732,15 @@ void print_usage(std::ostream& output) {
+         "[--payload-root ABSOLUTE_DIR] "
+         "[--effect-db ABSOLUTE_DB --files-root ABSOLUTE_DIR] "
+         "[--membership-db ABSOLUTE_DB --anchor-db ABSOLUTE_DB]\n"
++        "  anonsync_replica clock-observe --replica-db ABSOLUTE_DB "
++        "--folder ID --local-device ID --local-epoch N "
++        "[--operator-clock-authority-id ID "
++        "--operator-clock-uncertainty-ns N]\n"
++        "  anonsync_replica clock-recover --replica-db ABSOLUTE_DB "
++        "--folder ID --local-device ID --local-epoch N "
++        "--expected-observation-generation N "
++        "[--operator-clock-authority-id ID "
++        "--operator-clock-uncertainty-ns N]\n"
+         "  anonsync_replica enqueue-file --replica-db ABSOLUTE_DB "
+         "--payload-root ABSOLUTE_DIR --folder ID --local-device ID "
+         "--local-epoch N --destination-device ID [--destination-device ID...] "
+@@ -1462,7 +1765,11 @@ void print_usage(std::ostream& output) {
+         "--ca-file ABSOLUTE_PEM [--timeout-seconds N]\n\n"
+         "All database, directory, and credential paths must be absolute. "
+         "status emits a bounded attested condition report using the same "
+-        "durable owners as send and serve. "
++        "durable owners as send and serve. status, clock-observe, "
++        "clock-recover, and send-one require an existing replica database; "
++        "only explicit bootstrap paths create authority stores. "
++        "clock-observe samples and publishes clock health without claiming "
++        "work. clock-recover requires the exact current quarantine generation. "
+         "send-one and serve-one own exactly one bounded TLS conversation; "
+         "they are intentionally not a background daemon. send-one defaults "
+         "to the fail-closed kernel clock source. The paired operator-clock "
+@@ -1485,6 +1792,12 @@ int main(int argc, char** argv) {
+         if (command == "status") {
+             return command_status(options);
+         }
++        if (command == "clock-observe") {
++            return command_clock_observe(options);
++        }
++        if (command == "clock-recover") {
++            return command_clock_recover(options);
++        }
+         if (command == "enqueue-file") {
+             return command_enqueue_file(options);
+         }
+--- a/src/sync_replica_sqlite_owner.cpp
++++ b/src/sync_replica_sqlite_owner.cpp
+@@ -2744,8 +2744,8 @@ void attest_and_commit_staged_cutpoint_or_throw(
+     transaction.commit();
+ }
+ 
+-[[nodiscard]] std::uint64_t
+-accept_outbox_clock_observation_or_commit_quarantine_or_throw(
++[[nodiscard]] SyncReplicaOutboxClockObservationResult
++publish_outbox_clock_observation_or_throw(
+     SyncSqliteTransaction& transaction,
+     SyncSqliteDbHandleSlot& db,
+     const std::string& folder_id,
+@@ -2765,6 +2765,24 @@ accept_outbox_clock_observation_or_commit_quarantine_or_throw(
+         update_outbox_clock_exact_or_throw(
+             db, loaded.outbox_clock, previous, label);
+     }
++    require_write_authority_or_throw(
++        transaction, db, label + " publication authority");
++    return result;
++}
++
++[[nodiscard]] std::uint64_t
++accept_outbox_clock_observation_or_commit_quarantine_or_throw(
++    SyncSqliteTransaction& transaction,
++    SyncSqliteDbHandleSlot& db,
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    LoadedState& loaded,
++    const SyncReplicaOutboxClockObservation& observation,
++    const std::string& label) {
++    const SyncReplicaOutboxClockObservationResult result =
++        publish_outbox_clock_observation_or_throw(
++            transaction, db, folder_id, local_actor, loaded, observation,
++            label);
+     if (result.outcome == SyncReplicaOutboxClockObservationOutcome::Accepted) {
+         return result.usable_epoch;
+     }
+@@ -3818,6 +3836,28 @@ SyncReplicaSqliteOwner::release_outbox_for_retry_or_throw(
+     return SyncReplicaSqliteOutboxReceiptResult::Applied;
+ }
+ 
++SyncReplicaOutboxClockObservationResult
++SyncReplicaSqliteOwner::observe_outbox_clock_or_throw() {
++    SyncSqliteTransaction transaction(
++        db_, label_ + " outbox clock observation",
++        SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " outbox clock observation");
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " outbox clock observation");
++    const SyncReplicaOutboxClockObservation observation =
++        clock_source_->observe_or_throw(
++            label_ + " outbox clock host observation");
++    const SyncReplicaOutboxClockObservationResult result =
++        publish_outbox_clock_observation_or_throw(
++            transaction, db_, folder_id_, local_actor_, loaded, observation,
++            label_ + " outbox clock observation");
++    attest_and_commit_clock_observation_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded,
++        label_ + " outbox clock observation");
++    return result;
++}
++
+ SyncReplicaOutboxClockState
+ SyncReplicaSqliteOwner::recover_outbox_clock_or_throw(
+     std::uint64_t expected_observation_generation) {
+--- a/src/sync_replica_sqlite_owner.hpp
++++ b/src/sync_replica_sqlite_owner.hpp
+@@ -331,6 +331,13 @@ public:
+         const std::string& claim_id,
+         std::uint64_t retry_delay_seconds);
+ 
++    // Samples and publishes only the owned clock cutpoint. This spends no
++    // dispatch authority and returns quarantine as exact state instead of
++    // translating it into an exception, making it suitable for an explicit
++    // supervisor/operator health probe.
++    [[nodiscard]] SyncReplicaOutboxClockObservationResult
++    observe_outbox_clock_or_throw();
++
+     // Quarantine is sticky. Recovery is explicit, generation-fenced, and binds
+     // the current source/boot/thread-time-namespace observation as a fresh drift
+     // anchor without moving below the durable high-water epoch.
+--- a/tests/sync_replica_sqlite_owner_test.cpp
++++ b/tests/sync_replica_sqlite_owner_test.cpp
+@@ -253,6 +253,11 @@ public:
+             destination_device_id, operation_id, claim_id,
+             retry_delay_seconds);
+     }
++    [[nodiscard]] anonsync::SyncReplicaOutboxClockObservationResult
++    observe_outbox_clock_or_throw(std::uint64_t now_epoch) {
++        set_test_clock_epoch(now_epoch);
++        return owner_.observe_outbox_clock_or_throw();
++    }
+     [[nodiscard]] anonsync::SyncReplicaOutboxClockState
+     recover_outbox_clock_or_throw(
+         std::uint64_t expected_observation_generation,
+@@ -3069,6 +3074,135 @@ void test_outbox_clock_precommit_reattestation_and_tamper() {
+         "direct durable clock tamper escaped digest attestation");
+ }
+ 
++void test_explicit_clock_observation_and_recovery_preserve_replica_authority() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-clock-observe-api");
++    const std::string folder = "folder-sqlite-clock-observe-api";
++    const SyncReplicaActor local = actor(
++        "device-sqlite-clock-observe-api", 1433U);
++    const std::string destination = "device-clock-observe-api-peer";
++
++    test_clock_observation.source_id = "test-boottime-realtime-v1";
++    test_clock_observation.boot_id =
++        "01234567-89ab-cdef-0123-456789abcdef";
++    test_clock_observation.time_namespace_id = std::string(64U, 'a');
++    test_clock_observation.synchronization =
++        anonsync::SyncReplicaOutboxClockSynchronization::Synchronized;
++
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "clock observe API owner");
++    (void)owner.create_local_file_or_throw(
++        "clock/observe-api.bin", 11U,
++        anonsync::sha256_hex("clock-observe-api"),
++        std::vector<std::string>{destination});
++    const SyncReplicaSqliteSnapshot baseline = owner.snapshot_or_throw();
++
++    const auto require_nonclock_authority_unchanged = [&baseline](
++        const SyncReplicaSqliteSnapshot& observed,
++        const std::string& label) {
++        require(
++            observed.durable == baseline.durable &&
++                observed.limits == baseline.limits &&
++                observed.state_generation == baseline.state_generation &&
++                observed.policy_generation == baseline.policy_generation &&
++                observed.outbox == baseline.outbox &&
++                observed.local_operation_digest ==
++                    baseline.local_operation_digest &&
++                observed.operation_set_digest ==
++                    baseline.operation_set_digest &&
++                observed.evidence_set_digest ==
++                    baseline.evidence_set_digest &&
++                observed.visible_state_digest ==
++                    baseline.visible_state_digest &&
++                observed.outbox_digest == baseline.outbox_digest,
++            label + " changed replica evidence, policy, or outbox authority");
++    };
++
++    const auto accepted = owner.observe_outbox_clock_or_throw(200U);
++    const SyncReplicaSqliteSnapshot accepted_snapshot =
++        owner.snapshot_or_throw();
++    require(
++        accepted.outcome ==
++                anonsync::SyncReplicaOutboxClockObservationOutcome::Accepted &&
++            accepted.changed && accepted.usable_epoch == 200U &&
++            accepted.state == accepted_snapshot.outbox_clock_state &&
++            accepted.state.health ==
++                anonsync::SyncReplicaOutboxClockHealth::Healthy &&
++            accepted.state.high_water_epoch == 200U &&
++            accepted.state.observation_generation == 1U &&
++            accepted.state.recovery_generation == 0U &&
++            accepted_snapshot.outbox_clock_digest !=
++                baseline.outbox_clock_digest,
++        "explicit clock observation did not publish one exact healthy cutpoint");
++    require_nonclock_authority_unchanged(
++        accepted_snapshot, "explicit clock observation");
++
++    const auto identical = owner.observe_outbox_clock_or_throw(200U);
++    require(
++        identical.outcome ==
++                anonsync::SyncReplicaOutboxClockObservationOutcome::Accepted &&
++            !identical.changed && identical.usable_epoch == 200U &&
++            owner.snapshot_or_throw() == accepted_snapshot,
++        "identical explicit observation rewrote the durable clock cutpoint");
++
++    const auto quarantined = owner.observe_outbox_clock_or_throw(199U);
++    const SyncReplicaSqliteSnapshot quarantined_snapshot =
++        owner.snapshot_or_throw();
++    require(
++        quarantined.outcome ==
++                anonsync::SyncReplicaOutboxClockObservationOutcome::Quarantined &&
++            quarantined.changed && quarantined.usable_epoch == 0U &&
++            quarantined.state == quarantined_snapshot.outbox_clock_state &&
++            quarantined.state.health ==
++                anonsync::SyncReplicaOutboxClockHealth::Quarantined &&
++            quarantined.state.anomaly ==
++                anonsync::SyncReplicaOutboxClockAnomaly::BoottimeRollback &&
++            quarantined.state.high_water_epoch == 200U &&
++            quarantined.state.observation_generation == 2U &&
++            quarantined.state.recovery_generation == 0U,
++        "explicit rollback observation was not durably quarantined");
++    require_nonclock_authority_unchanged(
++        quarantined_snapshot, "explicit clock quarantine");
++
++    const auto sticky = owner.observe_outbox_clock_or_throw(201U);
++    require(
++        sticky.outcome == anonsync::
++                SyncReplicaOutboxClockObservationOutcome::AlreadyQuarantined &&
++            !sticky.changed && sticky.usable_epoch == 0U &&
++            sticky.state == quarantined.state &&
++            owner.snapshot_or_throw() == quarantined_snapshot,
++        "explicit observation bypassed sticky clock quarantine");
++    require_error(
++        [&]() { (void)owner.recover_outbox_clock_or_throw(1U, 201U); },
++        "recovery generation does not name current quarantine",
++        "stale recovery generation changed quarantined clock authority");
++    require(owner.snapshot_or_throw() == quarantined_snapshot,
++            "stale recovery generation changed the durable cutpoint");
++
++    const auto recovered = owner.recover_outbox_clock_or_throw(2U, 201U);
++    const SyncReplicaSqliteSnapshot recovered_snapshot =
++        owner.snapshot_or_throw();
++    require(
++        recovered == recovered_snapshot.outbox_clock_state &&
++            recovered.health ==
++                anonsync::SyncReplicaOutboxClockHealth::Healthy &&
++            recovered.anomaly ==
++                anonsync::SyncReplicaOutboxClockAnomaly::None &&
++            recovered.high_water_epoch == 201U &&
++            recovered.observation_generation == 3U &&
++            recovered.recovery_generation == 1U &&
++            recovered.accepted.has_value() && !recovered.rejected.has_value(),
++        "exact explicit recovery did not publish one fresh healthy anchor");
++    require_nonclock_authority_unchanged(
++        recovered_snapshot, "explicit clock recovery");
++    require_error(
++        [&]() { (void)owner.recover_outbox_clock_or_throw(3U, 202U); },
++        "clock is not quarantined",
++        "repeated recovery changed healthy clock authority");
++    require(owner.snapshot_or_throw() == recovered_snapshot,
++            "repeated recovery changed the durable cutpoint");
++}
++
+ void test_clock_sampling_is_inside_writer_transaction() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-clock-linearization");
+     const std::string folder = "folder-sqlite-clock-linearization";
+@@ -4045,6 +4179,7 @@ int main(int argc, char** argv) {
+         test_exact_schema_attachment_and_precommit_reattestation();
+         test_unknown_clock_capability_is_durably_quarantined();
+         test_outbox_clock_precommit_reattestation_and_tamper();
++        test_explicit_clock_observation_and_recovery_preserve_replica_authority();
+         test_clock_sampling_is_inside_writer_transaction();
+         test_local_authority_mapping_digest();
+         test_pending_dependency_restart_and_activation();
+--- a/tools/audit_anonsync_replica_database_open_policy.py
++++ b/tools/audit_anonsync_replica_database_open_policy.py
+@@ -0,0 +1,311 @@
++#!/usr/bin/env python3
++"""Lexical audit for product-spine SQLite targeting and bootstrap order.
++
++This pins reviewed call-site intent and failed-open ownership ordering. It is a
++source hygiene check, not semantic proof of filesystem identity, SQLite, or
++multi-database atomicity.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++REQUIRED = (
++    Path("CMakeLists.txt"),
++    Path("src/anonsync_replica.cpp"),
++    Path("tools/test_anonsync_replica_cli.py"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def ordered(text: str, *tokens: str) -> bool:
++    cursor = -1
++    for token in tokens:
++        cursor = text.find(token, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
++def function_body(text: str, signature: str) -> str:
++    start = text.find(signature)
++    if start < 0:
++        return ""
++    brace = text.find("{", start)
++    if brace < 0:
++        return ""
++    depth = 0
++    for index in range(brace, len(text)):
++        if text[index] == "{":
++            depth += 1
++        elif text[index] == "}":
++            depth -= 1
++            if depth == 0:
++                return text[start : index + 1]
++    return ""
++
++
++def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
++    violations = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-replica-database-open-policy-audit-v1",
++        "scope": "lexical-hygiene-not-semantic-proof",
++        "root": str(root),
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if output is None:
++        sys.stdout.write(rendered)
++    else:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++    return 0 if not violations else 1
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root", type=Path, default=Path(__file__).resolve().parents[1]
++    )
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++    checks: list[Check] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    missing = [path.as_posix() for path in REQUIRED if not (root / path).is_file()]
++    require(not missing, "required_files_exist", f"missing={missing}")
++    if missing:
++        return emit(root, args.json, checks)
++
++    cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
++    source = (root / "src/anonsync_replica.cpp").read_text(encoding="utf-8")
++    process_test = (root / "tools/test_anonsync_replica_cli.py").read_text(
++        encoding="utf-8"
++    )
++
++    candidate_owner = function_body(
++        source, "class UnadoptedSqliteConnection final"
++    )
++    reject_helper = function_body(
++        source, "reject_unadopted_database_handle_or_throw("
++    )
++    open_helper = function_body(source, "open_database_or_throw(")
++    require(
++        "enum class DatabaseOpenDisposition" in source
++        and "ExistingOnly = 1U" in source
++        and "CreateIfMissing = 2U" in source
++        and "DatabaseOpenDisposition disposition" in open_helper
++        and "= DatabaseOpenDisposition" not in open_helper.split("{", 1)[0],
++        "every_database_open_requires_explicit_disposition",
++        "no product call site may inherit creation authority from a default",
++    )
++    require(
++        source.count("sqlite3_open_v2(") == 1
++        and "SQLITE_OPEN_CREATE" not in open_helper.split(
++            "if (disposition == DatabaseOpenDisposition::CreateIfMissing)", 1
++        )[0]
++        and ordered(
++            open_helper,
++            "int flags = SQLITE_OPEN_READWRITE",
++            "if (disposition == DatabaseOpenDisposition::CreateIfMissing)",
++            "flags |= SQLITE_OPEN_CREATE",
++            "sqlite3_open_v2",
++        ),
++        "sqlite_create_flag_is_narrow_and_centralized",
++        "the product binary has one reviewed open frontier and creation is opt-in",
++    )
++    require(
++        ordered(
++            candidate_owner,
++            "~UnadoptedSqliteConnection() noexcept",
++            "sqlite3_close(handle_)",
++            "sqlite3_close_v2(handle_)",
++            "sqlite3* release() noexcept",
++            "int close_noexcept() noexcept",
++        )
++        and ordered(
++            reject_helper,
++            "UnadoptedSqliteConnection& candidate",
++            "candidate.close_noexcept()",
++            "throw std::runtime_error(std::move(message))",
++        )
++        and ordered(
++            open_helper,
++            "UnadoptedSqliteConnection candidate",
++            "sqlite3_open_v2",
++            "if (opened != SQLITE_OK)",
++            "reject_unadopted_database_handle_or_throw",
++            "if (candidate.get() == nullptr)",
++            "sqlite3_db_readonly(candidate.get(), \"main\")",
++            "if (read_only != 0)",
++            "reject_unadopted_database_handle_or_throw",
++            "anonsync::SyncSqliteDb database",
++            "database.db.out()",
++            "*destination = candidate.release()",
++        ),
++        "only_exception_safe_successful_writable_handles_cross_strict_owner_adoption",
++        "the raw candidate remains RAII-owned across diagnostic construction and owner allocation; failed/read-only handles close before adoption",
++    )
++    require(
++        "SQLITE_OPEN_NOFOLLOW" in open_helper
++        and "sqlite_set_busy_timeout_or_throw" in open_helper
++        and "PRAGMA journal_mode=WAL;" in open_helper
++        and "PRAGMA synchronous=FULL;" in open_helper,
++        "successful_opens_retain_reviewed_path_and_durability_profile",
++        "open disposition does not bypass no-follow, bounded busy, WAL, or FULL synchronization policy",
++    )
++    require(
++        all(
++            token in source
++            for token in (
++                "database_has_persistent_schema_or_throw",
++                "SELECT 1 FROM main.sqlite_schema",
++                "database_journal_mode_or_throw",
++                "PRAGMA main.journal_mode;",
++                "require_wal_journal_mode_or_throw",
++            )
++        )
++        and ordered(
++            open_helper,
++            "const bool has_persistent_schema",
++            "database_has_persistent_schema_or_throw",
++            "if (disposition == DatabaseOpenDisposition::ExistingOnly)",
++            "if (!has_persistent_schema)",
++            "has no persistent schema",
++            "require_wal_journal_mode_or_throw",
++            "} else if (!has_persistent_schema) {",
++            "PRAGMA journal_mode=WAL;",
++            "WAL enablement",
++            "require_wal_journal_mode_or_throw",
++            "} else {",
++            "arbitrary existing SQLite store",
++            "require_wal_journal_mode_or_throw",
++            "PRAGMA synchronous=FULL;",
++        ),
++        "existing_only_requires_nonempty_preprofiled_authority_target",
++        "file existence cannot mint genesis; all nonempty targets verify persistent WAL instead of rewriting journal mode before exact owner attestation, while only schema-empty bootstrap targets may enable WAL",
++    )
++
++    status = function_body(source, "int command_status(")
++    clock_observe = function_body(source, "int command_clock_observe(")
++    clock_recover = function_body(source, "int command_clock_recover(")
++    enqueue = function_body(source, "int command_enqueue_file(")
++    membership = function_body(source, "int command_membership_publish(")
++    send = function_body(source, "int command_send_one(")
++    serve = function_body(source, "int command_serve_one(")
++
++    require(
++        status.count("DatabaseOpenDisposition::ExistingOnly") == 4
++        and "DatabaseOpenDisposition::CreateIfMissing" not in status,
++        "status_cannot_create_any_authority_store",
++        "replica, effect, membership, and anchor observations all require existing targets",
++    )
++    require(
++        clock_observe.count("DatabaseOpenDisposition::ExistingOnly") == 1
++        and "DatabaseOpenDisposition::CreateIfMissing" not in clock_observe
++        and clock_recover.count("DatabaseOpenDisposition::ExistingOnly") == 1
++        and "DatabaseOpenDisposition::CreateIfMissing" not in clock_recover,
++        "clock_operations_require_existing_replica_authority",
++        "health publication and generation-fenced recovery cannot bootstrap a typo",
++    )
++    require(
++        send.count("DatabaseOpenDisposition::ExistingOnly") == 1
++        and "DatabaseOpenDisposition::CreateIfMissing" not in send,
++        "sender_requires_existing_replica_authority",
++        "network dispatch cannot manufacture an empty sender store",
++    )
++    require(
++        enqueue.count("DatabaseOpenDisposition::CreateIfMissing") == 1
++        and membership.count("DatabaseOpenDisposition::CreateIfMissing") == 2,
++        "state_minting_commands_name_creation_explicitly",
++        "only enqueue and membership publication retain their reviewed bootstrap capability",
++    )
++    require(
++        serve.count("DatabaseOpenDisposition::ExistingOnly") == 2
++        and serve.count("DatabaseOpenDisposition::CreateIfMissing") == 2
++        and ordered(
++            serve,
++            "load_tls_context_or_throw",
++            "make_listener_or_throw",
++            "membership database",
++            "DatabaseOpenDisposition::ExistingOnly",
++            "membership anchor database",
++            "DatabaseOpenDisposition::ExistingOnly",
++            "current_authority_or_throw",
++            "receiver database",
++            "DatabaseOpenDisposition::CreateIfMissing",
++            "effect database",
++            "DatabaseOpenDisposition::CreateIfMissing",
++        ),
++        "serve_preflights_noncreating_authority_before_receiver_bootstrap",
++        "bad TLS/listener/membership prerequisites cannot leave empty receiver/effect stores",
++    )
++
++    require(
++        "expected_returncode: int = 1" in process_test
++        and "completed.returncode != expected_returncode" in process_test
++        and "mistyped-sender.sqlite" in process_test
++        and "status created a database family for a mistyped target" in process_test
++        and "clock-observe" in process_test,
++        "process_test_pins_normal_failed_open_exit_and_no_created_family",
++        "a failed diagnostic handle may not trigger the strict exit-86 owner fail-stop or create WAL sidecars",
++    )
++    require(
++        all(
++            token in process_test
++            for token in (
++                "empty-existing.sqlite",
++                "requires explicit bootstrap",
++                "unrelated.sqlite",
++                "journal mode is delete, expected wal",
++                "existing-only open rewrote an unrelated SQLite database",
++                "creation-capable open rewrote an existing unrelated",
++                "wrong-profile membership target created its paired anchor",
++            )
++        ),
++        "process_test_pins_empty_file_and_wrong_profile_nonmutation",
++        "a real process refuses pre-existing empty genesis and byte-proves that neither observational nor bootstrap-capable opens silently convert a nonempty wrong DELETE-mode SQLite target to WAL",
++    )
++    require(
++        all(
++            token in process_test
++            for token in (
++                "preflight-receiver.sqlite",
++                "preflight-effect.sqlite",
++                "missing-membership.sqlite",
++                "serve-one preflight created a database family",
++            )
++        ),
++        "process_test_pins_serve_preflight_no_orphan_bootstrap",
++        "real TLS/listener setup plus missing membership proves receiver/effect creation remains last",
++    )
++    require(
++        "audit_anonsync_replica_database_open_policy.py" in cmake
++        and "anonsync_replica_database_open_policy_source_audit" in cmake,
++        "database_open_policy_audit_is_registered",
++        "the product targeting boundary runs in the normal CTest lane",
++    )
++
++    return emit(root, args.json, checks)
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+--- a/tools/audit_sync_replica_outbox_clock.py
++++ b/tools/audit_sync_replica_outbox_clock.py
+@@ -29,6 +29,7 @@ REQUIRED = (
+     Path("src/anonsync_replica.cpp"),
+     Path("tests/sync_replica_sqlite_owner_test.cpp"),
+     Path("tests/sync_replica_delivery_service_test.cpp"),
++    Path("tools/test_anonsync_replica_cli.py"),
+     Path("tools/verify_release_package.py"),
+ )
+ 
+@@ -126,6 +127,7 @@ def main() -> int:
+     replica_cli = text["src/anonsync_replica.cpp"]
+     owner_runtime = text["tests/sync_replica_sqlite_owner_test.cpp"]
+     delivery_runtime = text["tests/sync_replica_delivery_service_test.cpp"]
++    process_runtime = text["tools/test_anonsync_replica_cli.py"]
+     verifier = text["tools/verify_release_package.py"]
+ 
+     require(
+@@ -416,6 +418,50 @@ def main() -> int:
+         "container clock trust is a named deployment assertion with bracketed sampling, hard uncertainty bounds, explicit CLI selection, and focused runtime coverage",
+     )
+ 
++    explicit_observe = function_body(
++        owner, "SyncReplicaSqliteOwner::observe_outbox_clock_or_throw()"
++    )
++    require(
++        "observe_outbox_clock_or_throw();" in owner_header
++        and ordered(
++            explicit_observe,
++            "SyncSqliteTransactionMode::Immediate",
++            "require_write_authority_or_throw",
++            "load_state_or_throw",
++            "clock_source_->observe_or_throw",
++            "publish_outbox_clock_observation_or_throw",
++            "attest_and_commit_clock_observation_or_throw",
++        )
++        and "accept_outbox_clock_observation_or_commit_quarantine_or_throw"
++        not in explicit_observe,
++        "explicit_clock_probe_publishes_exact_state_without_spending_dispatch_authority",
++        "an operator probe samples under the writer lock, reuses the reviewed exact-CAS publication path, and returns quarantine instead of translating it into a work-path exception",
++    )
++    require(
++        all(
++            token in replica_cli
++            for token in (
++                '"clock-observe"',
++                '"clock-recover"',
++                "expected-observation-generation",
++                "outbox_clock_observation_outcome_name",
++                "append_outbox_clock_state_json_fields",
++                "DatabaseOpenDisposition::ExistingOnly",
++            )
++        )
++        and all(
++            token in process_runtime
++            for token in (
++                "initial clock observation",
++                "source-change quarantine",
++                "generation-fenced clock recovery",
++                "clock is not quarantined",
++            )
++        ),
++        "product_cli_exposes_observe_quarantine_and_generation_fenced_recovery",
++        "the shipped process can diagnose and explicitly recover a sticky clock quarantine, with the full healthy-to-quarantined-to-healthy sequence proven across process invocations",
++    )
++
+     claim_wrapper = function_body(
+         owner, "SyncReplicaSqliteOwner::claim_next_outbox_or_throw("
+     )
+@@ -498,6 +544,9 @@ def main() -> int:
+                 "clock rollback was not durably isolated from receipt authority",
+                 "test_unknown_clock_capability_is_durably_quarantined",
+                 "restart forgot the synchronization-unknown quarantine cutpoint",
++                "test_explicit_clock_observation_and_recovery_preserve_replica_authority",
++                "explicit observation bypassed sticky clock quarantine",
++                "stale recovery generation changed the durable cutpoint",
+             )
+         ),
+         "owner_runtime_pins_linearization_migration_and_tamper_recovery",
+@@ -534,6 +583,7 @@ def main() -> int:
+     )
+     require(
+         "revision_number >= 875" in verifier
++        and "revision_number is not None and revision_number >= 897" in verifier
+         and all(
+             token in verifier
+             for token in (
+@@ -545,10 +595,12 @@ def main() -> int:
+                 "tools/audit_sync_replica_outbox_clock.py",
+                 "OWNED_OUTBOX_CLOCK_AUDIT_rev0874.md",
+                 "TIME_NAMESPACE_CAPABILITY_AUDIT_rev0875.md",
++                "PRODUCT_CLOCK_RECOVERY_AND_DATABASE_TARGET_AUDIT_rev0897.md",
++                "tools/audit_anonsync_replica_database_open_policy.py",
+             )
+         ),
+-        "release_verifier_requires_the_owned_clock_capability_slice",
+-        "a sealed rev0875 archive cannot omit capability classification, runtime proof, structural audit, or design record",
++        "release_verifier_requires_the_owned_clock_and_product_recovery_slice",
++        "a sealed current archive cannot omit capability classification, runtime proof, product recovery, database targeting audit, or design records",
+     )
+ 
+     return emit(root, args.json, checks)
+--- a/tools/test_anonsync_replica_cli.py
++++ b/tools/test_anonsync_replica_cli.py
+@@ -4,18 +4,21 @@
+ This test deliberately launches the shipped executable for every authority
+ transition. It is not a source-shape audit: it proves first membership
+ publication, subsequent publication, durable enqueue, separate TLS client and
+-server processes, exact file publication, and terminal sender settlement.
++server processes, exact file publication, terminal sender settlement, explicit
++clock quarantine/recovery, and non-creating observation of mistyped stores.
+ """
+ 
+ from __future__ import annotations
+ 
+ import argparse
++import hashlib
+ import json
+ import os
+ from pathlib import Path
+ import shutil
+ import signal
+ import socket
++import sqlite3
+ import subprocess
+ import sys
+ import tempfile
+@@ -59,6 +62,39 @@ def run_json(command: Sequence[str], *, timeout: float = 30.0) -> dict[str, Any]
+     return value
+ 
+ 
++def run_failure(
++    command: Sequence[str],
++    *,
++    stderr_contains: str,
++    expected_returncode: int = 1,
++    timeout: float = 30.0,
++) -> None:
++    completed = subprocess.run(
++        list(command),
++        check=False,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        text=True,
++        timeout=timeout,
++    )
++    if completed.returncode != expected_returncode:
++        fail(
++            f"command returned {completed.returncode}, expected "
++            f"{expected_returncode}: {' '.join(command)}\n"
++            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
++        )
++    if completed.stdout:
++        fail(
++            f"failed command published stdout: {' '.join(command)}\n"
++            f"{completed.stdout}"
++        )
++    if stderr_contains not in completed.stderr:
++        fail(
++            f"failed command diagnostic omitted {stderr_contains!r}: "
++            f"{' '.join(command)}\nstderr:\n{completed.stderr}"
++        )
++
++
+ def openssl(openssl_executable: str, arguments: Sequence[str]) -> None:
+     completed = subprocess.run(
+         [openssl_executable, *arguments],
+@@ -187,6 +223,114 @@ def main() -> int:
+         source.write_bytes(payload)
+         generate_tls_fixture(certificates, openssl_executable)
+ 
++        # Observation must not turn a typo into a valid empty authority store.
++        # This also covers the failed-open cleanup path: SQLite may return a
++        # diagnostic handle even when SQLITE_OPEN_CREATE is absent.
++        mistyped_database = database_root / "mistyped-sender.sqlite"
++        run_failure([
++            str(replica), "status", "--replica-db", str(mistyped_database),
++            "--folder", "product-spine", "--local-device", "sender",
++            "--local-epoch", "1",
++        ], stderr_contains="unable to open database file")
++        run_failure([
++            str(replica), "clock-observe", "--replica-db",
++            str(mistyped_database), "--folder", "product-spine",
++            "--local-device", "sender", "--local-epoch", "1",
++        ], stderr_contains="unable to open database file")
++        if any(path.exists() for path in (
++            mistyped_database,
++            Path(f"{mistyped_database}-wal"),
++            Path(f"{mistyped_database}-shm"),
++        )):
++            fail("status created a database family for a mistyped target")
++
++        # File existence alone is not authority. A stale deployment script or
++        # attacker can leave a zero-byte file at an otherwise plausible path;
++        # observation must not turn that placeholder into product genesis.
++        empty_existing_database = database_root / "empty-existing.sqlite"
++        empty_existing_database.write_bytes(b"")
++        run_failure([
++            str(replica), "status", "--replica-db",
++            str(empty_existing_database), "--folder", "product-spine",
++            "--local-device", "sender", "--local-epoch", "1",
++        ], stderr_contains="requires explicit bootstrap")
++        if empty_existing_database.read_bytes() != b"":
++            fail("status initialized a pre-existing empty database target")
++        if any(path.exists() for path in (
++            Path(f"{empty_existing_database}-wal"),
++            Path(f"{empty_existing_database}-shm"),
++        )):
++            fail("empty existing-target rejection created WAL sidecars")
++
++        # Existing-only opens must observe the persistent journal profile, not
++        # rewrite an unrelated database to WAL before the exact owner rejects
++        # its schema. Byte equality gives this failure path a process proof.
++        unrelated_database = database_root / "unrelated.sqlite"
++        with sqlite3.connect(unrelated_database) as unrelated:
++            unrelated.execute("CREATE TABLE sentinel(value TEXT NOT NULL)")
++            unrelated.execute("INSERT INTO sentinel VALUES ('unchanged')")
++            journal_mode = unrelated.execute(
++                "PRAGMA journal_mode"
++            ).fetchone()[0]
++        if journal_mode != "delete":
++            fail(
++                "unrelated SQLite fixture did not begin in DELETE mode: "
++                f"{journal_mode}"
++            )
++        unrelated_before = hashlib.sha256(
++            unrelated_database.read_bytes()
++        ).digest()
++        run_failure([
++            str(replica), "status", "--replica-db", str(unrelated_database),
++            "--folder", "product-spine", "--local-device", "sender",
++            "--local-epoch", "1",
++        ], stderr_contains="journal mode is delete, expected wal")
++        unrelated_after = hashlib.sha256(
++            unrelated_database.read_bytes()
++        ).digest()
++        if unrelated_after != unrelated_before:
++            fail("existing-only open rewrote an unrelated SQLite database")
++        if any(path.exists() for path in (
++            Path(f"{unrelated_database}-wal"),
++            Path(f"{unrelated_database}-shm"),
++        )):
++            fail("existing-only profile rejection created WAL sidecars")
++
++        # Receiver bootstrap is deliberately last. TLS/listener validation and
++        # both existing membership authorities must succeed before serve-one is
++        # allowed to create replica or effect state.
++        preflight_replica = database_root / "preflight-receiver.sqlite"
++        preflight_effect = database_root / "preflight-effect.sqlite"
++        missing_membership = database_root / "missing-membership.sqlite"
++        missing_anchor = database_root / "missing-anchor.sqlite"
++        run_failure([
++            str(replica), "serve-one",
++            "--replica-db", str(preflight_replica),
++            "--effect-db", str(preflight_effect),
++            "--membership-db", str(missing_membership),
++            "--anchor-db", str(missing_anchor),
++            "--files-root", str(files_root),
++            "--folder", "product-spine", "--local-device", "receiver",
++            "--local-epoch", "1", "--bind-address", "127.0.0.1",
++            "--port", str(reserve_port()),
++            "--certificate", str(certificates / "receiver.pem"),
++            "--private-key", str(certificates / "receiver.key"),
++            "--ca-file", str(certificates / "ca.pem"),
++        ], stderr_contains="unable to open database file")
++        for database in (
++            preflight_replica, preflight_effect,
++            missing_membership, missing_anchor,
++        ):
++            if any(path.exists() for path in (
++                database,
++                Path(f"{database}-wal"),
++                Path(f"{database}-shm"),
++            )):
++                fail(
++                    "serve-one preflight created a database family before "
++                    f"existing membership authority was proved: {database}"
++                )
++
+         sender_pin = run_json([
+             str(replica), "certificate-spki", "--certificate",
+             str(certificates / "sender.pem"),
+@@ -196,6 +340,33 @@ def main() -> int:
+             str(certificates / "receiver.pem"),
+         ])["spki_sha256"]
+ 
++        # Bootstrap authority applies only to missing/schema-empty targets. It
++        # must not authorize rewriting an existing nonempty wrong-role store.
++        wrong_profile_anchor = database_root / "wrong-profile-anchor.sqlite"
++        run_failure([
++            str(replica), "membership-publish",
++            "--membership-db", str(unrelated_database),
++            "--anchor-db", str(wrong_profile_anchor),
++            "--folder", "product-spine", "--local-device", "receiver",
++            "--local-epoch", "1", "--policy-epoch", "1",
++            "--peer", f"sender:1:{sender_pin}",
++        ], stderr_contains="journal mode is delete, expected wal")
++        if hashlib.sha256(unrelated_database.read_bytes()).digest() != (
++            unrelated_before
++        ):
++            fail(
++                "creation-capable open rewrote an existing unrelated "
++                "SQLite database"
++            )
++        if any(path.exists() for path in (
++            wrong_profile_anchor,
++            Path(f"{wrong_profile_anchor}-wal"),
++            Path(f"{wrong_profile_anchor}-shm"),
++        )):
++            fail(
++                "wrong-profile membership target created its paired anchor"
++            )
++
+         membership_base = [
+             str(replica), "membership-publish",
+             "--membership-db", str(database_root / "membership.sqlite"),
+@@ -258,6 +429,10 @@ def main() -> int:
+             "replica_outbox_intents": 1,
+             "replica_outbox_claimable_at_high_water": 0,
+             "replica_outbox_time_high_water_epoch": 0,
++            "replica_outbox_clock_health": "uninitialized",
++            "replica_outbox_clock_anomaly": "none",
++            "replica_outbox_clock_observation_generation": 0,
++            "replica_outbox_clock_recovery_generation": 0,
+             "payload_status_present": True,
+             "payload_entries": 1,
+             "payload_indexed_bytes": len(payload),
+@@ -265,6 +440,82 @@ def main() -> int:
+             "membership_status_present": False,
+         }, "queued sender status")
+ 
++        clock_base = [
++            str(replica), "clock-observe",
++            "--replica-db", str(database_root / "sender.sqlite"),
++            "--folder", "product-spine", "--local-device", "sender",
++            "--local-epoch", "1", "--operator-clock-uncertainty-ns",
++            "1000000",
++        ]
++        initial_clock = run_json([
++            *clock_base, "--operator-clock-authority-id",
++            "cloudtainer-process-test-old",
++        ])
++        expect_fields(initial_clock, {
++            "command": "clock-observe", "clock_profile": "operator-trusted",
++            "outcome": "accepted", "changed": True,
++            "clock_health": "healthy", "clock_anomaly": "none",
++            "clock_observation_generation": 1,
++            "clock_recovery_generation": 0,
++            "clock_accepted_observation_present": True,
++            "clock_rejected_observation_present": False,
++        }, "initial clock observation")
++        if initial_clock.get("clock_high_water_epoch", 0) <= 0:
++            fail("initial clock observation did not publish a positive high-water")
++
++        quarantined_clock = run_json([
++            *clock_base, "--operator-clock-authority-id",
++            "cloudtainer-process-test",
++        ])
++        expect_fields(quarantined_clock, {
++            "command": "clock-observe", "clock_profile": "operator-trusted",
++            "outcome": "quarantined", "changed": True,
++            "clock_health": "quarantined",
++            "clock_anomaly": "source-changed",
++            "clock_observation_generation": 2,
++            "clock_recovery_generation": 0,
++            "clock_accepted_observation_present": True,
++            "clock_rejected_observation_present": True,
++        }, "source-change quarantine")
++
++        sender_quarantined_status = run_json([
++            str(replica), "status",
++            "--replica-db", str(database_root / "sender.sqlite"),
++            "--payload-root", str(payload_root),
++            "--folder", "product-spine", "--local-device", "sender",
++            "--local-epoch", "1",
++        ])
++        expect_fields(sender_quarantined_status, {
++            "command": "status", "replica_outbox_intents": 1,
++            "replica_outbox_clock_health": "quarantined",
++            "replica_outbox_clock_anomaly": "source-changed",
++            "replica_outbox_clock_observation_generation": 2,
++            "replica_outbox_clock_recovery_generation": 0,
++        }, "quarantined sender status")
++
++        recovery_command = [
++            str(replica), "clock-recover",
++            "--replica-db", str(database_root / "sender.sqlite"),
++            "--folder", "product-spine", "--local-device", "sender",
++            "--local-epoch", "1", "--expected-observation-generation", "2",
++            "--operator-clock-authority-id", "cloudtainer-process-test",
++            "--operator-clock-uncertainty-ns", "1000000",
++        ]
++        recovered_clock = run_json(recovery_command)
++        expect_fields(recovered_clock, {
++            "command": "clock-recover", "clock_profile": "operator-trusted",
++            "expected_observation_generation": 2,
++            "clock_health": "healthy", "clock_anomaly": "none",
++            "clock_observation_generation": 3,
++            "clock_recovery_generation": 1,
++            "clock_accepted_observation_present": True,
++            "clock_rejected_observation_present": False,
++        }, "generation-fenced clock recovery")
++        run_failure(
++            recovery_command,
++            stderr_contains="clock is not quarantined",
++        )
++
+         port = reserve_port()
+         server_command = [
+             str(replica), "serve-one",
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -794,6 +794,17 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "PRODUCT_SPINE_TLS_CLIENT_AUDIT_rev0895.md",
+             "REVISION_NOTES_rev0895.md",
+         })
++    if revision_number is not None and revision_number >= 897:
++        revision_scoped_required.update({
++            "src/anonsync_replica.cpp",
++            "src/sync_replica_sqlite_owner.hpp",
++            "src/sync_replica_sqlite_owner.cpp",
++            "tests/sync_replica_sqlite_owner_test.cpp",
++            "tools/test_anonsync_replica_cli.py",
++            "tools/audit_anonsync_replica_database_open_policy.py",
++            "PRODUCT_CLOCK_RECOVERY_AND_DATABASE_TARGET_AUDIT_rev0897.md",
++            "REVISION_NOTES_rev0897.md",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

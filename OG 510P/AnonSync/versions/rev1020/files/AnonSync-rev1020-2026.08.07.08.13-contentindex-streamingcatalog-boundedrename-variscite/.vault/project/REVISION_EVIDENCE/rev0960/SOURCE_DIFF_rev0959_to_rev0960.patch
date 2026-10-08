@@ -1,0 +1,2482 @@
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index 4440921845c68350f3760d4797f1a1f0afc4ffcc..d1493d299baee11639ee984d25864e93a3ad6b67 100755
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -1547,13 +1547,25 @@ int command_run(const Options& options) {
+     bool terminal_handoff_drain_deadline_reached = false;
+     std::optional<std::chrono::steady_clock::time_point>
+         terminal_handoff_drain_deadline;
++    anonsync::SyncLocalStatusSocketActionSnapshot observed_local_actions;
++    const auto observe_local_actions_or_throw = [&]() {
++        if (!status_server) {
++            observed_local_actions = {};
++            return observed_local_actions;
++        }
++        observed_local_actions = status_server->action_snapshot();
++        owner.observe_payload_recheck_request_generation_or_throw(
++            observed_local_actions.recheck_request_generation);
++        return observed_local_actions;
++    };
+     for (;;) {
+         const auto now = std::chrono::steady_clock::now();
++        const auto actions_at_loop_start = observe_local_actions_or_throw();
+         if (g_peer_service_stop_requested != 0) {
+             stop_reason = "stop_requested";
+             break;
+         }
+-        if (status_server && status_server->stop_requested()) {
++        if (actions_at_loop_start.stop_requested) {
+             stop_reason = "local_stop_requested";
+             break;
+         }
+@@ -1604,15 +1616,24 @@ int command_run(const Options& options) {
+             }
+         }
+ 
++        const bool payload_recheck_pending =
++            owner.payload_recheck_status().pending;
+         publish_status(
+             current_service_state(),
+-            owner.payload_integrity_fault_active()
+-                ? "payload_integrity_reproof"
+-                : (!owner.initial_repair_complete()
+-                       ? "initial_repair"
+-                       : (owner.ingress_ready()
+-                              ? "peer_service_step"
+-                              : "ingress_publication")));
++            payload_recheck_pending
++                ? "payload_recheck"
++                : (owner.payload_integrity_fault_active()
++                       ? "payload_integrity_reproof"
++                       : (!owner.initial_repair_complete()
++                              ? "initial_repair"
++                              : (owner.ingress_ready()
++                                     ? "peer_service_step"
++                                     : "ingress_publication"))));
++        const auto actions_before_step = observe_local_actions_or_throw();
++        if (actions_before_step.stop_requested) {
++            stop_reason = "local_stop_requested";
++            break;
++        }
+         const auto step = owner.run_next_or_throw();
+         anonsync::account_sync_replica_peer_service_step(summary, step);
+         ++status_generation;
+@@ -1625,8 +1646,8 @@ int command_run(const Options& options) {
+             std::chrono::steady_clock::now() >= *service_deadline) {
+             runtime_deadline_reached_after_step = true;
+         }
+-        const bool local_drain_pending =
+-            status_server && status_server->stop_requested();
++        const auto actions_after_step = observe_local_actions_or_throw();
++        const bool local_drain_pending = actions_after_step.stop_requested;
+         const bool ingress_backoff_pending =
+             step.disposition == anonsync::SyncReplicaPeerServiceStepDisposition::
+                 IngressPublicationBackoffPending;
+@@ -1671,7 +1692,8 @@ int command_run(const Options& options) {
+         }
+         if (bounded_wait != 0U && !local_drain_pending) {
+             if (status_server) {
+-                (void)status_server->wait_for_stop_request_or_timeout(
++                (void)status_server->wait_for_action_request_or_timeout(
++                    actions_after_step.recheck_request_generation,
+                     bounded_wait);
+             } else {
+                 std::this_thread::sleep_for(
+@@ -1679,6 +1701,16 @@ int command_run(const Options& options) {
+             }
+         }
+     }
++    if (status_server) {
++        // Close action admission before terminal status is frozen. A recheck
++        // racing any non-local stop reason is therefore either included in
++        // this exact generation cutpoint or rejected after drain; it can never
++        // receive acceptance after the owner's final observation.
++        observed_local_actions =
++            status_server->seal_actions_for_owner_shutdown();
++        owner.observe_payload_recheck_request_generation_or_throw(
++            observed_local_actions.recheck_request_generation);
++    }
+     service_manager.announce_stopping(
+         "Stopping: " + std::string(stop_reason));
+     publish_status("stopping", "stopped", stop_reason);
+@@ -1687,6 +1719,7 @@ int command_run(const Options& options) {
+         std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now() - service_started_at);
+     const auto& counters = owner.counters();
++    const auto payload_recheck = owner.payload_recheck_status();
+     const auto service_manager_snapshot = service_manager.snapshot();
+ 
+     std::cout
+@@ -1780,6 +1813,10 @@ int command_run(const Options& options) {
+         << json_quote(anonsync::sync_replica_peer_service_role_name(
+                owner.role()))
+         << ",\"steps\":" << counters.steps
++        << ",\"payload_recheck\":"
++        << anonsync::
++               render_sync_replica_peer_service_payload_recheck_status_json(
++                   payload_recheck)
+         << ",\"payload_integrity_fault_active\":"
+         << json_bool(owner.payload_integrity_fault_active())
+         << ",\"payload_integrity_faults_observed\":"
+@@ -1804,6 +1841,22 @@ int command_run(const Options& options) {
+         << counters.payload_store_lease_backoff_deferrals
+         << ",\"payload_authority_network_outcome_uncertain_steps\":"
+         << counters.payload_authority_network_outcome_uncertain_steps
++        << ",\"payload_recheck_requests_observed\":"
++        << counters.payload_recheck_requests_observed
++        << ",\"payload_recheck_requests_coalesced\":"
++        << counters.payload_recheck_requests_coalesced
++        << ",\"payload_recheck_attempts\":"
++        << counters.payload_recheck_attempts
++        << ",\"payload_recheck_completions\":"
++        << counters.payload_recheck_completions
++        << ",\"payload_recheck_integrity_recoveries\":"
++        << counters.payload_recheck_integrity_recoveries
++        << ",\"payload_recheck_snapshot_handoffs\":"
++        << counters.payload_recheck_snapshot_handoffs
++        << ",\"payload_recheck_convergence_snapshot_observations\":"
++        << counters.payload_recheck_convergence_snapshot_observations
++        << ",\"payload_recheck_convergence_mutation_full_scans\":"
++        << counters.payload_recheck_convergence_mutation_full_scans
+         << ",\"initial_repairs\":" << counters.initial_repairs
+         << ",\"periodic_repairs\":" << counters.periodic_repairs
+         << ",\"filesystem_wake_repairs\":"
+@@ -1906,7 +1959,25 @@ int command_run(const Options& options) {
+             << ",\"payload_integrity_retry_delay_milliseconds\":"
+             << step.payload_integrity_retry_delay_milliseconds
+             << ",\"payload_store_lease_retry_delay_milliseconds\":"
+-            << step.payload_store_lease_retry_delay_milliseconds << '}';
++            << step.payload_store_lease_retry_delay_milliseconds
++            << ",\"payload_recheck_generation\":"
++            << step.payload_recheck_generation
++            << ",\"payload_recheck_hashed_entries\":"
++            << step.payload_recheck_hashed_entry_count
++            << ",\"payload_recheck_hashed_bytes\":"
++            << step.payload_recheck_hashed_bytes
++            << ",\"payload_recheck_snapshot_handoffs\":"
++            << step.payload_recheck_snapshot_handoff_count
++            << ",\"payload_recheck_convergence_snapshot_observations\":"
++            << step
++                   .payload_recheck_convergence_snapshot_observation_count
++            << ",\"payload_recheck_convergence_mutation_full_scans\":"
++            << step
++                   .payload_recheck_convergence_mutation_full_scan_count
++            << ",\"payload_recheck_recovered_integrity_fault\":"
++            << json_bool(
++                   step.payload_recheck_recovered_integrity_fault)
++            << '}';
+     }
+ 
+     std::cout << ",\"last_cycle\":";
+@@ -3186,6 +3257,19 @@ int command_stop(const Options& options) {
+     return 0;
+ }
+ 
++int command_recheck(const Options& options) {
++    options.require_only({"socket", "timeout-milliseconds"});
++    const fs::path socket_path = require_absolute_path(
++        options.one("socket"), "--socket");
++    const std::uint64_t timeout_milliseconds = option_uint64_or(
++        options, "timeout-milliseconds",
++        anonsync::kSyncLocalStatusSocketDefaultTimeoutMilliseconds);
++    std::cout << anonsync::request_sync_local_status_recheck_or_throw(
++        socket_path, timeout_milliseconds,
++        "anonsync_sync recheck") << '\n';
++    return 0;
++}
++
+ void print_usage(std::ostream& output) {
+     output
+         << "AnonSync bounded peer synchronization\n\n"
+@@ -3239,6 +3323,8 @@ void print_usage(std::ostream& output) {
+            "[--max-service-runtime-seconds N]\n"
+         << "  anonsync_sync status --socket ABSOLUTE_SOCKET "
+            "[--timeout-milliseconds N]\n"
++        << "  anonsync_sync recheck --socket ABSOLUTE_SOCKET "
++           "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync stop --socket ABSOLUTE_SOCKET "
+            "[--timeout-milliseconds N]\n\n"
+         << "once performs one local configured-folder pass, at most one "
+@@ -3249,7 +3335,11 @@ void print_usage(std::ostream& output) {
+            "run retains one direct/Tor numeric listener or one native I2P "
+            "STREAM ACCEPT route worker and repeatedly invokes that exact "
+            "operation with bounded retry until SIGINT/SIGTERM, a cycle bound, "
+-           "or a service-runtime bound. share-create is the idempotent first "
++           "or a service-runtime bound. recheck accepts an owner-only, "
++           "generation-tracked maintenance obligation that hashes every current "
++           "payload byte and moves the exact resulting snapshot into ordinary "
++           "convergence; acceptance is not completion, so status reports the "
++           "requested and completed generations. share-create is the idempotent first "
+            "local-share workflow: it creates or resumes one exact deployment "
+            "under an owner-only instance-bound state directory, explicitly "
+            "adopts and publishes existing regular files through the ordinary "
+@@ -3341,6 +3431,9 @@ int main(int argc, char** argv) {
+         if (command == "stop") {
+             return command_stop(options);
+         }
++        if (command == "recheck") {
++            return command_recheck(options);
++        }
+         throw std::invalid_argument("unknown command: " + command);
+     } catch (const std::invalid_argument& error) {
+         emit_error(command, "invalid_arguments", error.what());
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index 7cc3581aefc5b4a13ed182f16d44188cb39d4962..ad13c72cb8cde5e4ec7d9fe7067a2b9c41911e05 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -6,7 +6,6 @@
+ #include "sync_directory_authority.hpp"
+ 
+ #include <array>
+-#include <atomic>
+ #include <cerrno>
+ #include <chrono>
+ #include <cstddef>
+@@ -40,8 +39,11 @@ using Clock = std::chrono::steady_clock;
+ 
+ constexpr std::string_view kStatusRequest = "status\n";
+ constexpr std::string_view kStopRequest = "stop\n";
++constexpr std::string_view kRecheckRequest = "recheck\n";
+ constexpr std::string_view kStopResponseSchema =
+     "anonsync.local-stop.response.v1";
++constexpr std::string_view kRecheckResponseSchema =
++    "anonsync.local-recheck.response.v1";
+ constexpr std::string_view kUnsupportedResponse =
+     "{\"schema\":\"anonsync.local-status.response.v1\","
+     "\"ok\":false,\"error\":\"unsupported_request\"}";
+@@ -646,6 +648,56 @@ void validate_stop_response_or_throw(
+     }
+ }
+ 
++[[nodiscard]] std::uint64_t exact_nonnegative_uint64_or_throw(
++    const Json& value,
++    std::string_view label) {
++    if (!value.is_number()) {
++        throw std::runtime_error(
++            std::string(label) + " generation is not a JSON number");
++    }
++    const long long generation = value.integer();
++    if (generation < 0) {
++        throw std::runtime_error(
++            std::string(label) + " generation is negative");
++    }
++    return static_cast<std::uint64_t>(generation);
++}
++
++void validate_recheck_response_or_throw(
++    std::string_view response,
++    const LocalPeerCredentials& peer,
++    std::string_view label) {
++    const Json parsed = parse_json_object_or_throw(response, label);
++    const std::string terminal_class = parsed.at("terminal_class").str();
++    const bool accepted = terminal_class == "accepted";
++    const bool rejected = terminal_class == "rejected";
++    const std::size_t expected_fields = rejected ? 6U : 5U;
++    if ((!accepted && !rejected) || parsed.o.size() != expected_fields ||
++        parsed.at("schema").str() != kRecheckResponseSchema ||
++        parsed.at("command").str() != "recheck") {
++        throw std::runtime_error(
++            std::string(label) + " has an invalid recheck-response shape");
++    }
++    const std::uint64_t generation = exact_nonnegative_uint64_or_throw(
++        parsed.at("request_generation"), label);
++    if (accepted && generation == 0U) {
++        throw std::runtime_error(
++            std::string(label) + " accepted generation is zero");
++    }
++    if (rejected && parsed.at("reason").str() != "drain_requested") {
++        throw std::runtime_error(
++            std::string(label) + " has an invalid recheck rejection reason");
++    }
++    const long long reported_pid = exact_positive_pid_or_throw(
++        parsed.at("server_pid"), label);
++    if (peer.process_id.has_value() &&
++        reported_pid != static_cast<long long>(*peer.process_id)) {
++        throw std::runtime_error(
++            std::string(label) +
++            " server_pid does not match the connected Unix peer");
++    }
++}
++
+ }  // namespace
+ 
+ struct SyncLocalStatusSocketServer::State final {
+@@ -657,8 +709,9 @@ struct SyncLocalStatusSocketServer::State final {
+     int stop_write = -1;
+     std::optional<SocketPathIdentity> path_identity;
+     mutable std::mutex mutex;
+-    std::condition_variable stop_condition;
+-    std::atomic<bool> drain_requested{false};
++    std::condition_variable action_condition;
++    bool drain_requested = false;
++    std::uint64_t recheck_generation = 0U;
+     std::string snapshot;
+     std::optional<std::string> failure;
+     std::thread worker;
+@@ -763,15 +816,17 @@ struct SyncLocalStatusSocketServer::State final {
+     [[nodiscard]] std::string request_drain_response() {
+         bool first_request = false;
+         {
+-            // The predicate is atomic for lock-free service-thread observation,
+-            // but its false-to-true transition still takes the wait mutex. This
+-            // prevents notify-before-wait from turning a local stop into the
+-            // full retry-sleep latency.
++            // Stop and recheck are serialized by one mutex. The owner can read
++            // one action snapshot and therefore cannot observe drain while
++            // omitting an earlier accepted recheck generation.
+             std::lock_guard lock(mutex);
+-            first_request =
+-                !drain_requested.exchange(true, std::memory_order_acq_rel);
++            first_request = !drain_requested;
++            drain_requested = true;
+         }
+-        stop_condition.notify_all();
++        // Publish and notify the obligation before response construction can
++        // allocate or fail. The waiter checks the same predicate under mutex,
++        // so notify-before-wait cannot lose the accepted action.
++        action_condition.notify_all();
+         std::ostringstream response;
+         response
+             << "{\"schema\":\"" << kStopResponseSchema
+@@ -784,6 +839,40 @@ struct SyncLocalStatusSocketServer::State final {
+         return response.str();
+     }
+ 
++    [[nodiscard]] std::string request_recheck_response() {
++        bool accepted = false;
++        std::uint64_t generation = 0U;
++        {
++            std::lock_guard lock(mutex);
++            generation = recheck_generation;
++            if (!drain_requested) {
++                if (generation >= static_cast<std::uint64_t>(
++                                      std::numeric_limits<long long>::max())) {
++                    throw std::overflow_error(
++                        label + " recheck request generation is exhausted");
++                }
++                ++generation;
++                recheck_generation = generation;
++                accepted = true;
++            }
++        }
++        if (accepted) action_condition.notify_all();
++        std::ostringstream response;
++        response
++            << "{\"schema\":\"" << kRecheckResponseSchema
++            << "\",\"command\":\"recheck\","
++               "\"terminal_class\":\""
++            << (accepted ? "accepted" : "rejected") << "\"";
++        if (!accepted) {
++            response << ",\"reason\":\"drain_requested\"";
++        }
++        response
++            << ",\"request_generation\":" << generation
++            << ",\"server_pid\":" << static_cast<long long>(::getpid())
++            << '}';
++        return response.str();
++    }
++
+     void serve_client_noexcept(int descriptor) noexcept {
+         try {
+             (void)observe_local_peer_or_throw(
+@@ -799,6 +888,8 @@ struct SyncLocalStatusSocketServer::State final {
+                 response = snapshot_copy();
+             } else if (request.has_value() && *request == kStopRequest) {
+                 response = request_drain_response();
++            } else if (request.has_value() && *request == kRecheckRequest) {
++                response = request_recheck_response();
+             } else {
+                 response = std::string(kUnsupportedResponse);
+             }
+@@ -931,25 +1022,55 @@ void SyncLocalStatusSocketServer::require_healthy_or_throw() const {
+     }
+ }
+ 
+-bool SyncLocalStatusSocketServer::stop_requested() const noexcept {
+-    return state_->drain_requested.load(std::memory_order_acquire);
++SyncLocalStatusSocketActionSnapshot
++SyncLocalStatusSocketServer::action_snapshot() const {
++    std::lock_guard lock(state_->mutex);
++    return {
++        state_->drain_requested,
++        state_->recheck_generation,
++    };
+ }
+ 
+-bool SyncLocalStatusSocketServer::wait_for_stop_request_or_timeout(
++SyncLocalStatusSocketActionSnapshot
++SyncLocalStatusSocketServer::seal_actions_for_owner_shutdown() {
++    SyncLocalStatusSocketActionSnapshot terminal_actions;
++    {
++        std::lock_guard lock(state_->mutex);
++        state_->drain_requested = true;
++        terminal_actions = {
++            state_->drain_requested,
++            state_->recheck_generation,
++        };
++    }
++    state_->action_condition.notify_all();
++    return terminal_actions;
++}
++
++bool SyncLocalStatusSocketServer::wait_for_action_request_or_timeout(
++    std::uint64_t observed_recheck_generation,
+     std::uint64_t timeout_milliseconds) {
+     if (timeout_milliseconds >
+         kSyncLocalStatusSocketMaximumTimeoutMilliseconds) {
+         throw std::invalid_argument(
+-            state_->label + " stop wait exceeds 60000 milliseconds");
+-    }
+-    if (stop_requested() || timeout_milliseconds == 0U) {
+-        return stop_requested();
++            state_->label + " action wait exceeds 60000 milliseconds");
+     }
+     std::unique_lock lock(state_->mutex);
+-    return state_->stop_condition.wait_for(
+-        lock, std::chrono::milliseconds(timeout_milliseconds), [this] {
+-            return state_->drain_requested.load(std::memory_order_acquire);
+-        });
++    const auto current_generation = [this] {
++        return state_->recheck_generation;
++    };
++    if (observed_recheck_generation > current_generation()) {
++        throw std::invalid_argument(
++            state_->label + " action wait baseline is a future generation");
++    }
++    const auto action_pending = [this, observed_recheck_generation] {
++        return state_->drain_requested ||
++            state_->recheck_generation > observed_recheck_generation;
++    };
++    if (action_pending() || timeout_milliseconds == 0U) {
++        return action_pending();
++    }
++    return state_->action_condition.wait_for(
++        lock, std::chrono::milliseconds(timeout_milliseconds), action_pending);
+ }
+ 
+ std::string query_sync_local_status_socket_or_throw(
+@@ -973,6 +1094,16 @@ std::string request_sync_local_status_stop_or_throw(
+     return std::move(response.json);
+ }
+ 
++std::string request_sync_local_status_recheck_or_throw(
++    const fs::path& absolute_socket_path,
++    std::uint64_t timeout_milliseconds,
++    std::string_view label) {
++    LocalSocketResponse response = request_local_socket_or_throw(
++        absolute_socket_path, kRecheckRequest, timeout_milliseconds, label);
++    validate_recheck_response_or_throw(response.json, response.peer, label);
++    return std::move(response.json);
++}
++
+ }  // namespace anonsync
+ 
+ #endif
+diff --git a/src/sync_local_status_socket.hpp b/src/sync_local_status_socket.hpp
+index 956fd9897f6d650aa2a1590d10055ab3fc56577b..a3efc779c57d123a867f89755615a3b6253c3f63 100644
+--- a/src/sync_local_status_socket.hpp
++++ b/src/sync_local_status_socket.hpp
+@@ -29,11 +29,24 @@ void preflight_sync_local_status_socket_or_throw(
+     const std::filesystem::path& absolute_socket_path,
+     std::string_view label = "sync local status socket preflight");
+ 
++// One mutex-linearized observation of the local control plane. The socket
++// worker may only advance the recheck generation or latch drain; the service
++// owner reads both together so every generation accepted before drain is
++// observed before shutdown.
++struct SyncLocalStatusSocketActionSnapshot final {
++    bool stop_requested = false;
++    std::uint64_t recheck_request_generation = 0U;
++
++    bool operator==(const SyncLocalStatusSocketActionSnapshot&) const = default;
++};
++
+ // Narrow owner-only local service front end. The worker thread owns only the
+-// Unix socket, immutable JSON bytes copied under a mutex, and one atomic drain
+-// latch. It never sees SQLite owners, TLS contexts, folder roots, or mutable
+-// service state. The exact "stop\n" request means: finish the current bounded
+-// owner step, then begin no new one. It is not a generic command dispatcher.
++// Unix socket, immutable JSON bytes, one drain latch, and one monotonic
++// recheck generation, all copied or changed under one mutex. It never sees SQLite owners, TLS
++// contexts, folder roots, or mutable service state. The exact "stop\n" request
++// means: finish the current bounded owner step, then begin no new one. The exact
++// "recheck\n" request accepts an owner-thread maintenance obligation; it does
++// not itself inspect payload bytes. This is not a generic command dispatcher.
+ class SyncLocalStatusSocketServer final {
+ public:
+     SyncLocalStatusSocketServer(
+@@ -53,12 +66,23 @@ public:
+     void publish_or_throw(std::string status_json);
+     void require_healthy_or_throw() const;
+ 
+-    [[nodiscard]] bool stop_requested() const noexcept;
+-
+-    // Waits only on the drain latch. This allows the service owner to leave a
+-    // retry sleep promptly without granting the socket worker any scheduler or
+-    // database capability. A zero timeout performs a nonblocking observation.
+-    [[nodiscard]] bool wait_for_stop_request_or_timeout(
++    // This is the sole owner-thread action observation. Keeping drain and
++    // recheck generation inseparable prevents a future caller from recreating
++    // the split-read shutdown race through convenience getters.
++    [[nodiscard]] SyncLocalStatusSocketActionSnapshot action_snapshot() const;
++
++    // Atomically closes action admission for owner shutdown and returns the
++    // terminal action cutpoint. Every recheck linearized before this call is
++    // included in the returned generation; every later recheck is rejected.
++    // Status reads remain available until destruction.
++    [[nodiscard]] SyncLocalStatusSocketActionSnapshot
++    seal_actions_for_owner_shutdown();
++
++    // Waits for drain or for a generation newer than the caller's exact
++    // observation. A future baseline is rejected rather than silently turning
++    // a generation bug into a full retry-sleep latency.
++    [[nodiscard]] bool wait_for_action_request_or_timeout(
++        std::uint64_t observed_recheck_generation,
+         std::uint64_t timeout_milliseconds);
+ 
+ private:
+@@ -85,6 +109,15 @@ private:
+         kSyncLocalStatusSocketDefaultTimeoutMilliseconds,
+     std::string_view label = "sync local stop request");
+ 
++// Sends "recheck\n" and validates the PID-bound structured response. An
++// accepted response advances one monotonic generation; a request serialized
++// after drain is rejected without advancing it. Acceptance is not completion.
++[[nodiscard]] std::string request_sync_local_status_recheck_or_throw(
++    const std::filesystem::path& absolute_socket_path,
++    std::uint64_t timeout_milliseconds =
++        kSyncLocalStatusSocketDefaultTimeoutMilliseconds,
++    std::string_view label = "sync local recheck request");
++
+ }  // namespace anonsync
+ 
+ #endif
+diff --git a/src/sync_replica_file_payload_store.cpp b/src/sync_replica_file_payload_store.cpp
+index a1078f97600b3d88c275bffa794497e78d026ddd..2e0d5151a99efdf52ffc43364fac07ad428e49a2 100755
+--- a/src/sync_replica_file_payload_store.cpp
++++ b/src/sync_replica_file_payload_store.cpp
+@@ -6314,6 +6314,18 @@ SyncReplicaFilePayloadStore::begin_targeted_access_or_throw(
+ 
+ SyncReplicaFilePayloadStoreSnapshot
+ SyncReplicaFilePayloadStore::snapshot_or_throw() const {
++    return snapshot_with_reuse_policy_or_throw(false);
++}
++
++SyncReplicaFilePayloadStoreSnapshot
++SyncReplicaFilePayloadStore::snapshot_rechecking_current_bytes_or_throw()
++    const {
++    return snapshot_with_reuse_policy_or_throw(true);
++}
++
++SyncReplicaFilePayloadStoreSnapshot
++SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
++    bool require_current_bytes) const {
+     if (!state_) throw std::logic_error("file payload store is inactive");
+     State& store = *state_;
+     const StoreObservationDurability durability =
+@@ -6321,6 +6333,12 @@ SyncReplicaFilePayloadStore::snapshot_or_throw() const {
+                 SyncReplicaFilePayloadStoreOpenDisposition::ReadOnlyInspect
+             ? StoreObservationDurability::ObserveOnly
+             : StoreObservationDurability::Reconcile;
++    if (require_current_bytes &&
++        !synchronizes_store_observation(durability)) {
++        throw std::logic_error(
++            store.label +
++            " read-only inspection cannot accept an operator recheck");
++    }
+     store.root_authority.verify_or_throw(
+         store.label + " snapshot source preflight");
+     if (synchronizes_store_observation(durability)) {
+@@ -6349,7 +6367,23 @@ SyncReplicaFilePayloadStore::snapshot_or_throw() const {
+             store.label + " snapshot", durability,
+             synchronizes_store_observation(durability)
+                 ? store.verification_cache.get()
+-                : nullptr);
++                : nullptr,
++            require_current_bytes
++                ? PayloadVerificationReusePolicy::RequireCurrentBytes
++                : PayloadVerificationReusePolicy::AllowAcceleration);
++        if (require_current_bytes &&
++            (scanned.scan_reused_entry_count != 0U ||
++             scanned.scan_reused_bytes != 0U ||
++             scanned.scan_process_reused_entry_count != 0U ||
++             scanned.scan_process_reused_bytes != 0U ||
++             scanned.scan_durable_reused_entry_count != 0U ||
++             scanned.scan_durable_reused_bytes != 0U ||
++             scanned.scan_hashed_entry_count != scanned.entries.size() ||
++             scanned.scan_hashed_bytes != scanned.indexed_bytes)) {
++            throw std::logic_error(
++                store.label +
++                " operator recheck returned incomplete current-byte work");
++        }
+         const bool checkpoint_deferred_by_capacity =
+             synchronizes_store_observation(durability) &&
+             verification_checkpoint_deferred_by_known_capacity(
+diff --git a/src/sync_replica_file_payload_store.hpp b/src/sync_replica_file_payload_store.hpp
+index 1e8e368aee59fd087f56148835d8281e3e62a729..2f9cd5fc73d57434ad05c75c9ad4b0f1fe771bc0 100755
+--- a/src/sync_replica_file_payload_store.hpp
++++ b/src/sync_replica_file_payload_store.hpp
+@@ -705,7 +705,18 @@ public:
+ 
+     [[nodiscard]] SyncReplicaFilePayloadStoreSnapshot snapshot_or_throw() const;
+ 
++    // Owner-triggered current-byte proof. This takes the same complete rooted
++    // shared-lease snapshot as snapshot_or_throw(), but mechanically disables
++    // both process-local and durable digest reuse. Every current payload byte is
++    // hashed before authority is returned; the exact resulting snapshot can be
++    // moved directly into ordinary convergence without a second namespace scan.
++    [[nodiscard]] SyncReplicaFilePayloadStoreSnapshot
++    snapshot_rechecking_current_bytes_or_throw() const;
++
+ private:
++    [[nodiscard]] SyncReplicaFilePayloadStoreSnapshot
++    snapshot_with_reuse_policy_or_throw(bool require_current_bytes) const;
++
+     // Exact-owner composition fence for a snapshot handed directly into the
+     // retained folder owner. Folder/root/limit equality is not enough: another
+     // independently opened handle to the same durable store owns a different
+diff --git a/src/sync_replica_peer_service.cpp b/src/sync_replica_peer_service.cpp
+index 218fa76090787fab4baf484c05c05bb30592ef8c..cc37943ab77c30d30ebc54816c1cdf899a323dfc 100644
+--- a/src/sync_replica_peer_service.cpp
++++ b/src/sync_replica_peer_service.cpp
+@@ -115,6 +115,7 @@ enum class PayloadAuthorityFailureContext : std::uint8_t {
+     HealthyRepair = 3U,
+     OutboundNetworkStep = 4U,
+     InboundNetworkStep = 5U,
++    OperatorRecheck = 6U,
+ };
+ 
+ [[nodiscard]] bool network_outcome_is_unknown(
+@@ -454,6 +455,9 @@ std::string_view sync_replica_peer_service_step_disposition_name(
+         case SyncReplicaPeerServiceStepDisposition::
+                 PayloadStoreLeaseBusyDeferred:
+             return "payload_store_lease_busy_deferred";
++        case SyncReplicaPeerServiceStepDisposition::
++                OperatorPayloadRecheckCompleted:
++            return "operator_payload_recheck_completed";
+     }
+     return "unknown";
+ }
+@@ -495,6 +499,17 @@ struct SyncReplicaPeerServiceOwner::State final {
+     // remain fail-closed and return clock-only deferral steps.
+     Clock::time_point next_payload_store_lease_retry_at =
+         Clock::time_point::min();
++    std::uint64_t payload_recheck_requested_generation = 0U;
++    std::uint64_t payload_recheck_started_generation = 0U;
++    std::uint64_t payload_recheck_completed_generation = 0U;
++    std::uint64_t payload_recheck_last_hashed_entry_count = 0U;
++    std::uint64_t payload_recheck_last_hashed_bytes = 0U;
++    std::uint64_t payload_recheck_last_snapshot_handoff_count = 0U;
++    std::uint64_t
++        payload_recheck_last_convergence_snapshot_observation_count = 0U;
++    std::uint64_t
++        payload_recheck_last_convergence_mutation_full_scan_count = 0U;
++    bool payload_recheck_last_completion_recovered_integrity_fault = false;
+     bool ingress_is_ready = false;
+     bool ingress_setup_in_progress = false;
+     Clock::time_point next_ingress_attempt_at = Clock::time_point::min();
+@@ -755,6 +770,69 @@ struct SyncReplicaPeerServiceOwner::State final {
+         return status;
+     }
+ 
++    [[nodiscard]] bool payload_recheck_pending() const noexcept {
++        return payload_recheck_requested_generation >
++            payload_recheck_completed_generation;
++    }
++
++    [[nodiscard]] SyncReplicaPeerServicePayloadRecheckStatus
++    payload_recheck_status() const noexcept {
++        SyncReplicaPeerServicePayloadRecheckStatus status;
++        status.requested_generation = payload_recheck_requested_generation;
++        status.started_generation = payload_recheck_started_generation;
++        status.completed_generation = payload_recheck_completed_generation;
++        status.pending = payload_recheck_pending();
++        const Clock::time_point now = Clock::now();
++        status.retry_delay_milliseconds = std::max(
++            remaining_milliseconds(
++                now, next_payload_integrity_reproof_at),
++            remaining_milliseconds(
++                now, next_payload_store_lease_retry_at));
++        status.last_hashed_entry_count =
++            payload_recheck_last_hashed_entry_count;
++        status.last_hashed_bytes = payload_recheck_last_hashed_bytes;
++        status.last_snapshot_handoff_count =
++            payload_recheck_last_snapshot_handoff_count;
++        status.last_convergence_snapshot_observation_count =
++            payload_recheck_last_convergence_snapshot_observation_count;
++        status.last_convergence_mutation_full_scan_count =
++            payload_recheck_last_convergence_mutation_full_scan_count;
++        status.last_completion_recovered_integrity_fault =
++            payload_recheck_last_completion_recovered_integrity_fault;
++        return status;
++    }
++
++    void observe_payload_recheck_request_generation_or_throw(
++        std::uint64_t generation) {
++        if (generation < payload_recheck_requested_generation) {
++            throw std::invalid_argument(
++                label +
++                " payload recheck request generation regressed from " +
++                std::to_string(payload_recheck_requested_generation) +
++                " to " + std::to_string(generation));
++        }
++        if (generation == payload_recheck_requested_generation) return;
++
++        const bool pending_before = payload_recheck_pending();
++        const std::uint64_t delta =
++            generation - payload_recheck_requested_generation;
++        add_saturating(counters.payload_recheck_requests_observed, delta);
++        const std::uint64_t coalesced = pending_before ? delta : delta - 1U;
++        add_saturating(
++            counters.payload_recheck_requests_coalesced, coalesced);
++        payload_recheck_requested_generation = generation;
++
++        if (!pending_before) {
++            // One newly pending explicit owner obligation may bypass an old
++            // automatic cutpoint. Once an attempt establishes fresh integrity
++            // or lease backoff, later accepted generations coalesce without
++            // clearing it, so a request storm cannot turn bounded retry into a
++            // busy loop.
++            next_payload_integrity_reproof_at = Clock::time_point::min();
++            next_payload_store_lease_retry_at = Clock::time_point::min();
++        }
++    }
++
+     void record_payload_integrity_fault_or_throw(
+         const SyncReplicaFilePayloadStoreIntegrityError& error) {
+         const Clock::time_point now = Clock::now();
+@@ -926,66 +1004,139 @@ struct SyncReplicaPeerServiceOwner::State final {
+     }
+ 
+     [[nodiscard]] SyncReplicaPeerServiceStepResult
+-    payload_integrity_reproof_step_or_throw() {
+-        if (!payload_integrity_fault.has_value()) {
++    complete_payload_snapshot_convergence_or_throw(
++        SyncReplicaFilePayloadStoreSnapshot payload_snapshot,
++        SyncReplicaPeerServiceStepDisposition disposition,
++        std::uint64_t payload_recheck_generation = 0U,
++        std::uint64_t payload_recheck_hashed_entry_count = 0U,
++        std::uint64_t payload_recheck_hashed_bytes = 0U) {
++        const bool operator_recheck =
++            disposition == SyncReplicaPeerServiceStepDisposition::
++                OperatorPayloadRecheckCompleted;
++        const bool automatic_reproof =
++            disposition == SyncReplicaPeerServiceStepDisposition::
++                PayloadIntegrityReproofCompleted;
++        if (operator_recheck == automatic_reproof) {
+             throw std::logic_error(
+-                label + " payload integrity reproof lacks an active fault");
++                label + " payload snapshot convergence disposition is invalid");
++        }
++        if (operator_recheck) {
++            if (payload_recheck_generation == 0U ||
++                payload_recheck_generation >
++                    payload_recheck_requested_generation ||
++                payload_recheck_generation <=
++                    payload_recheck_completed_generation) {
++                throw std::logic_error(
++                    label + " payload recheck completion generation is invalid");
++            }
++        } else if (payload_recheck_generation != 0U ||
++                   !payload_integrity_fault.has_value()) {
++            throw std::logic_error(
++                label + " automatic payload reproof lacks exact fault state");
+         }
+-        increment_saturating(counters.payload_integrity_reproof_attempts);
+-        const bool initial = !initial_repair_done;
+-
+-        // The complete leased payload snapshot is the sole authority that can
+-        // clear the process-local fail-closed witness after current bytes or
+-        // absence are proved. Only then run the ordinary convergence pass; the
+-        // service fault remains active until both operations succeed.
+-        SyncReplicaFilePayloadStoreSnapshot payload_reproof =
+-            folder_process.payload_store_or_throw().snapshot_or_throw();
+ 
++        const bool initial = !initial_repair_done;
++        const bool recovered_integrity_fault =
++            payload_integrity_fault.has_value();
+         SyncReplicaPeerServiceStepResult result;
+         result.role_before = role;
+         result.initial_repair = initial;
+         result.repair.emplace(
+             folder_process
+                 .run_convergence_pass_with_payload_snapshot_or_throw(
+-                    std::move(payload_reproof), limits.folder_limits));
+-        add_saturating(
+-            counters.payload_integrity_reproof_snapshot_handoffs,
+-            result.repair->payload_snapshot_handoff_count);
+-        add_saturating(
+-            counters
+-                .payload_integrity_reproof_convergence_snapshot_observations,
+-            result.repair->payload_snapshot_observation_count);
+-        add_saturating(
+-            counters
+-                .payload_integrity_reproof_convergence_mutation_full_scans,
+-            result.repair->payload_mutation_full_scan_count);
++                    std::move(payload_snapshot), limits.folder_limits));
++
++        if (operator_recheck) {
++            result.payload_recheck_generation = payload_recheck_generation;
++            result.payload_recheck_hashed_entry_count =
++                payload_recheck_hashed_entry_count;
++            result.payload_recheck_hashed_bytes =
++                payload_recheck_hashed_bytes;
++            result.payload_recheck_snapshot_handoff_count =
++                result.repair->payload_snapshot_handoff_count;
++            result.payload_recheck_convergence_snapshot_observation_count =
++                result.repair->payload_snapshot_observation_count;
++            result.payload_recheck_convergence_mutation_full_scan_count =
++                result.repair->payload_mutation_full_scan_count;
++            result.payload_recheck_recovered_integrity_fault =
++                recovered_integrity_fault;
++            add_saturating(
++                counters.payload_recheck_snapshot_handoffs,
++                result.payload_recheck_snapshot_handoff_count);
++            add_saturating(
++                counters.payload_recheck_convergence_snapshot_observations,
++                result
++                    .payload_recheck_convergence_snapshot_observation_count);
++            add_saturating(
++                counters.payload_recheck_convergence_mutation_full_scans,
++                result
++                    .payload_recheck_convergence_mutation_full_scan_count);
++        } else {
++            add_saturating(
++                counters.payload_integrity_reproof_snapshot_handoffs,
++                result.repair->payload_snapshot_handoff_count);
++            add_saturating(
++                counters
++                    .payload_integrity_reproof_convergence_snapshot_observations,
++                result.repair->payload_snapshot_observation_count);
++            add_saturating(
++                counters
++                    .payload_integrity_reproof_convergence_mutation_full_scans,
++                result.repair->payload_mutation_full_scan_count);
++        }
++
+         // Native I2P publication continues on its capability-free worker while
+-        // the owner performs the potentially long complete-byte reproof and
+-        // convergence pass. Refresh again at the recovery cutpoint so clearing
+-        // the integrity fault cannot transiently restore readiness from a stale
+-        // pre-fault ingress snapshot.
++        // the owner performs the potentially long byte proof and convergence
++        // pass. Refresh at the authority-restoration cutpoint so readiness can
++        // never be restored from a stale pre-proof ingress snapshot.
+         (void)refresh_ingress_worker(false);
+         initial_repair_done = true;
+-        const Clock::time_point recovered_at = Clock::now();
+-        schedule_next_repair(recovered_at);
+-        RecoveredPayloadIntegrityFault recovered;
+-        recovered.fault = std::move(*payload_integrity_fault);
+-        recovered.recovered_at = recovered_at;
+-        most_recent_payload_integrity_recovery = std::move(recovered);
+-        payload_integrity_fault.reset();
++        const Clock::time_point completed_at = Clock::now();
++        schedule_next_repair(completed_at);
++        if (recovered_integrity_fault) {
++            RecoveredPayloadIntegrityFault recovered;
++            recovered.fault = std::move(*payload_integrity_fault);
++            recovered.recovered_at = completed_at;
++            most_recent_payload_integrity_recovery = std::move(recovered);
++            payload_integrity_fault.reset();
++        }
+         next_payload_integrity_reproof_at = Clock::time_point::min();
+         next_payload_store_lease_retry_at = Clock::time_point::min();
++
++        if (operator_recheck) {
++            payload_recheck_completed_generation = payload_recheck_generation;
++            payload_recheck_last_hashed_entry_count =
++                payload_recheck_hashed_entry_count;
++            payload_recheck_last_hashed_bytes =
++                payload_recheck_hashed_bytes;
++            payload_recheck_last_snapshot_handoff_count =
++                result.payload_recheck_snapshot_handoff_count;
++            payload_recheck_last_convergence_snapshot_observation_count =
++                result
++                    .payload_recheck_convergence_snapshot_observation_count;
++            payload_recheck_last_convergence_mutation_full_scan_count =
++                result
++                    .payload_recheck_convergence_mutation_full_scan_count;
++            payload_recheck_last_completion_recovered_integrity_fault =
++                recovered_integrity_fault;
++            increment_saturating(counters.payload_recheck_completions);
++            if (recovered_integrity_fault) {
++                increment_saturating(
++                    counters.payload_recheck_integrity_recoveries);
++            }
++        } else {
++            increment_saturating(
++                counters.payload_integrity_reproof_recoveries);
++        }
++
+         result.role_after = role;
+         result.ingress_ready = ingress_is_ready;
+         result.consecutive_outbound_failures =
+             consecutive_outbound_failures;
+         result.consecutive_ingress_failures =
+             consecutive_ingress_failures;
+-        result.disposition = SyncReplicaPeerServiceStepDisposition::
+-            PayloadIntegrityReproofCompleted;
++        result.disposition = disposition;
+         increment_saturating(counters.steps);
+-        increment_saturating(
+-            counters.payload_integrity_reproof_recoveries);
+         if (initial) {
+             increment_saturating(counters.initial_repairs);
+         } else {
+@@ -994,6 +1145,54 @@ struct SyncReplicaPeerServiceOwner::State final {
+         return result;
+     }
+ 
++    [[nodiscard]] SyncReplicaPeerServiceStepResult
++    payload_integrity_reproof_step_or_throw() {
++        if (!payload_integrity_fault.has_value()) {
++            throw std::logic_error(
++                label + " payload integrity reproof lacks an active fault");
++        }
++        increment_saturating(counters.payload_integrity_reproof_attempts);
++
++        // The complete leased payload snapshot is the sole authority that can
++        // clear the process-local fail-closed witness after current bytes or
++        // absence are proved. Other unchanged payloads may retain exact verified
++        // metadata reuse; the faulted identity itself cannot.
++        SyncReplicaFilePayloadStoreSnapshot payload_reproof =
++            folder_process.payload_store_or_throw().snapshot_or_throw();
++        return complete_payload_snapshot_convergence_or_throw(
++            std::move(payload_reproof),
++            SyncReplicaPeerServiceStepDisposition::
++                PayloadIntegrityReproofCompleted);
++    }
++
++    [[nodiscard]] SyncReplicaPeerServiceStepResult
++    operator_payload_recheck_step_or_throw() {
++        if (!payload_recheck_pending()) {
++            throw std::logic_error(
++                label + " operator payload recheck lacks pending generation");
++        }
++        const std::uint64_t target_generation =
++            payload_recheck_requested_generation;
++        payload_recheck_started_generation = target_generation;
++        increment_saturating(counters.payload_recheck_attempts);
++
++        // Unlike automatic fault recovery, explicit owner recheck disables all
++        // process and durable digest reuse. Capture the proof work before moving
++        // the exact snapshot into ordinary convergence.
++        SyncReplicaFilePayloadStoreSnapshot payload_reproof =
++            folder_process.payload_store_or_throw()
++                .snapshot_rechecking_current_bytes_or_throw();
++        const std::uint64_t hashed_entry_count =
++            payload_reproof.scan_hashed_entry_count();
++        const std::uint64_t hashed_bytes =
++            payload_reproof.scan_hashed_bytes();
++        return complete_payload_snapshot_convergence_or_throw(
++            std::move(payload_reproof),
++            SyncReplicaPeerServiceStepDisposition::
++                OperatorPayloadRecheckCompleted,
++            target_generation, hashed_entry_count, hashed_bytes);
++    }
++
+     [[nodiscard]] SyncReplicaPeerServiceStepResult repair_step_or_throw(
+         bool initial,
+         bool filesystem_wake = false) {
+@@ -1382,29 +1581,53 @@ SyncReplicaPeerServiceOwner::most_recent_payload_integrity_recovery() const {
+     return state_->payload_integrity_recovery_status();
+ }
+ 
++SyncReplicaPeerServicePayloadRecheckStatus
++SyncReplicaPeerServiceOwner::payload_recheck_status() const noexcept {
++    return state_->payload_recheck_status();
++}
++
++void SyncReplicaPeerServiceOwner::
++observe_payload_recheck_request_generation_or_throw(
++    std::uint64_t generation) {
++    state_->observe_payload_recheck_request_generation_or_throw(generation);
++}
++
+ SyncReplicaPeerServiceStepResult
+ SyncReplicaPeerServiceOwner::run_next_or_throw() {
+-    if (state_->payload_integrity_fault.has_value()) {
++    const bool operator_recheck_pending = state_->payload_recheck_pending();
++    if (state_->payload_integrity_fault.has_value() ||
++        operator_recheck_pending) {
+         // Fault mode suppresses ordinary ingress events, but native I2P
+         // publication still changes asynchronously. Keep its readiness and
+         // retry counters current without allowing an event to preempt the
+-        // fail-closed backoff/reproof state machine.
+-        (void)state_->refresh_ingress_worker(false);
++        // fail-closed backoff/reproof state machine. A healthy explicit owner
++        // recheck is also scheduler-priority work: it must not wait behind an
++        // ordinary network turn after the local socket accepted its generation.
++        if (state_->payload_integrity_fault.has_value()) {
++            (void)state_->refresh_ingress_worker(false);
++        }
+         const Clock::time_point now = Clock::now();
+-        if (now < state_->next_payload_integrity_reproof_at) {
++        if (state_->payload_integrity_fault.has_value() &&
++            now < state_->next_payload_integrity_reproof_at) {
+             return state_->payload_integrity_backoff_step();
+         }
+         if (now < state_->next_payload_store_lease_retry_at) {
+             return state_->payload_store_lease_backoff_step();
+         }
++        const PayloadAuthorityFailureContext context =
++            operator_recheck_pending
++            ? PayloadAuthorityFailureContext::OperatorRecheck
++            : PayloadAuthorityFailureContext::IntegrityReproof;
+         try {
++            if (operator_recheck_pending) {
++                return state_->operator_payload_recheck_step_or_throw();
++            }
+             return state_->payload_integrity_reproof_step_or_throw();
+         } catch (const SyncReplicaFilePayloadStoreIntegrityError& error) {
+             return state_->payload_integrity_fault_step_or_throw(
+-                error, PayloadAuthorityFailureContext::IntegrityReproof);
++                error, context);
+         } catch (const SyncReplicaFilePayloadStoreLeaseBusyError& error) {
+-            return state_->payload_store_lease_busy_step(
+-                error, PayloadAuthorityFailureContext::IntegrityReproof);
++            return state_->payload_store_lease_busy_step(error, context);
+         }
+     }
+     if (!state_->initial_repair_done) {
+diff --git a/src/sync_replica_peer_service.hpp b/src/sync_replica_peer_service.hpp
+index 0d03ba988dd357dddbd546fad52bdb7db0af556f..68377aa65d5945bc8c99256eb383bf8cc4365464 100644
+--- a/src/sync_replica_peer_service.hpp
++++ b/src/sync_replica_peer_service.hpp
+@@ -161,6 +161,7 @@ enum class SyncReplicaPeerServiceStepDisposition : std::uint8_t {
+     OutboundSessionIoFailed = 14U,
+     InboundSessionIoFailed = 15U,
+     PayloadStoreLeaseBusyDeferred = 16U,
++    OperatorPayloadRecheckCompleted = 17U,
+ };
+ 
+ [[nodiscard]] std::string_view sync_replica_peer_service_step_disposition_name(
+@@ -206,6 +207,29 @@ struct SyncReplicaPeerServicePayloadIntegrityRecovery final {
+         const SyncReplicaPeerServicePayloadIntegrityRecovery&) const = default;
+ };
+ 
++// Owner-thread projection of the explicit local current-byte recheck
++// obligation. Generations come only from the owner-only local control socket.
++// Multiple accepted requests may coalesce into one complete proof: completion
++// through generation N means the exact forced-byte snapshot began only after
++// every request through N had already been accepted. This is presentation and
++// scheduler state, never durable payload authority.
++struct SyncReplicaPeerServicePayloadRecheckStatus final {
++    std::uint64_t requested_generation = 0U;
++    std::uint64_t started_generation = 0U;
++    std::uint64_t completed_generation = 0U;
++    bool pending = false;
++    std::uint64_t retry_delay_milliseconds = 0U;
++    std::uint64_t last_hashed_entry_count = 0U;
++    std::uint64_t last_hashed_bytes = 0U;
++    std::uint64_t last_snapshot_handoff_count = 0U;
++    std::uint64_t last_convergence_snapshot_observation_count = 0U;
++    std::uint64_t last_convergence_mutation_full_scan_count = 0U;
++    bool last_completion_recovered_integrity_fault = false;
++
++    bool operator==(
++        const SyncReplicaPeerServicePayloadRecheckStatus&) const = default;
++};
++
+ struct SyncReplicaPeerServiceStepResult final {
+     SyncReplicaPeerServiceStepDisposition disposition =
+         SyncReplicaPeerServiceStepDisposition::InitialRepairCompleted;
+@@ -235,6 +259,14 @@ struct SyncReplicaPeerServiceStepResult final {
+     std::uint64_t ingress_retry_delay_milliseconds = 0U;
+     std::uint64_t payload_integrity_retry_delay_milliseconds = 0U;
+     std::uint64_t payload_store_lease_retry_delay_milliseconds = 0U;
++    std::uint64_t payload_recheck_generation = 0U;
++    std::uint64_t payload_recheck_hashed_entry_count = 0U;
++    std::uint64_t payload_recheck_hashed_bytes = 0U;
++    std::uint64_t payload_recheck_snapshot_handoff_count = 0U;
++    std::uint64_t
++        payload_recheck_convergence_snapshot_observation_count = 0U;
++    std::uint64_t payload_recheck_convergence_mutation_full_scan_count = 0U;
++    bool payload_recheck_recovered_integrity_fault = false;
+     std::optional<SyncReplicaStreamConnectReport> ingress_report;
+     std::optional<std::string> ingress_error;
+     std::optional<std::string> session_io_error;
+@@ -277,6 +309,15 @@ struct SyncReplicaPeerServiceCounters final {
+     std::uint64_t payload_store_lease_busy_deferrals = 0U;
+     std::uint64_t payload_store_lease_backoff_deferrals = 0U;
+     std::uint64_t payload_authority_network_outcome_uncertain_steps = 0U;
++    std::uint64_t payload_recheck_requests_observed = 0U;
++    std::uint64_t payload_recheck_requests_coalesced = 0U;
++    std::uint64_t payload_recheck_attempts = 0U;
++    std::uint64_t payload_recheck_completions = 0U;
++    std::uint64_t payload_recheck_integrity_recoveries = 0U;
++    std::uint64_t payload_recheck_snapshot_handoffs = 0U;
++    std::uint64_t
++        payload_recheck_convergence_snapshot_observations = 0U;
++    std::uint64_t payload_recheck_convergence_mutation_full_scans = 0U;
+ 
+     bool operator==(const SyncReplicaPeerServiceCounters&) const = default;
+ };
+@@ -345,6 +386,15 @@ public:
+     [[nodiscard]]
+     std::optional<SyncReplicaPeerServicePayloadIntegrityRecovery>
+     most_recent_payload_integrity_recovery() const;
++    [[nodiscard]] SyncReplicaPeerServicePayloadRecheckStatus
++    payload_recheck_status() const noexcept;
++
++    // Observe the exact monotonically increasing generation accepted by the
++    // owner-only local socket. A new pending obligation may bypass one existing
++    // automatic retry delay so explicit operator work starts promptly. Further
++    // generations coalesce without clearing active integrity/lease backoff.
++    void observe_payload_recheck_request_generation_or_throw(
++        std::uint64_t generation);
+ 
+     [[nodiscard]] SyncReplicaPeerServiceStepResult run_next_or_throw();
+ 
+diff --git a/src/sync_replica_peer_service_status.cpp b/src/sync_replica_peer_service_status.cpp
+index 6cb7d75fe8cafa115bb6e9b8433c09a2fa33b9dc..23cff6c36601c71ec04781ed84740749879b2cc6 100644
+--- a/src/sync_replica_peer_service_status.cpp
++++ b/src/sync_replica_peer_service_status.cpp
+@@ -282,6 +282,35 @@ void append_payload_integrity_status(
+         << "}}";
+ }
+ 
++void append_payload_recheck_status(
++    std::ostream& output,
++    const SyncReplicaPeerServicePayloadRecheckStatus& status) {
++    output
++        << "{\"requested_generation\":"
++        << status.requested_generation
++        << ",\"started_generation\":"
++        << status.started_generation
++        << ",\"completed_generation\":"
++        << status.completed_generation
++        << ",\"pending\":" << json_bool(status.pending)
++        << ",\"retry_delay_milliseconds\":"
++        << status.retry_delay_milliseconds
++        << ",\"last_hashed_entries\":"
++        << status.last_hashed_entry_count
++        << ",\"last_hashed_bytes\":"
++        << status.last_hashed_bytes
++        << ",\"last_snapshot_handoffs\":"
++        << status.last_snapshot_handoff_count
++        << ",\"last_convergence_snapshot_observations\":"
++        << status.last_convergence_snapshot_observation_count
++        << ",\"last_convergence_mutation_full_scans\":"
++        << status.last_convergence_mutation_full_scan_count
++        << ",\"last_completion_recovered_integrity_fault\":"
++        << json_bool(
++               status.last_completion_recovered_integrity_fault)
++        << '}';
++}
++
+ void validate_status_word_or_throw(
+     std::string_view value,
+     std::string_view label) {
+@@ -310,6 +339,13 @@ std::string render_sync_replica_folder_wake_status_json(
+     return output.str();
+ }
+ 
++std::string render_sync_replica_peer_service_payload_recheck_status_json(
++    const SyncReplicaPeerServicePayloadRecheckStatus& status) {
++    std::ostringstream output;
++    append_payload_recheck_status(output, status);
++    return output.str();
++}
++
+ void account_sync_replica_peer_service_step(
+     SyncReplicaPeerServiceLoopSummary& summary,
+     const SyncReplicaPeerServiceStepResult& step) {
+@@ -412,6 +448,8 @@ void account_sync_replica_peer_service_step(
+         case SyncReplicaPeerServiceStepDisposition::InboundSessionIoFailed:
+         case SyncReplicaPeerServiceStepDisposition::
+                 PayloadStoreLeaseBusyDeferred:
++        case SyncReplicaPeerServiceStepDisposition::
++                OperatorPayloadRecheckCompleted:
+             break;
+     }
+     summary.last_step = step;
+@@ -443,6 +481,8 @@ std::string render_sync_replica_peer_service_status_json(
+     const auto payload_integrity = owner.payload_integrity_fault();
+     const auto payload_integrity_recovery =
+         owner.most_recent_payload_integrity_recovery();
++    const SyncReplicaPeerServicePayloadRecheckStatus payload_recheck =
++        owner.payload_recheck_status();
+ 
+     std::ostringstream output;
+     output
+@@ -505,6 +545,8 @@ std::string render_sync_replica_peer_service_status_json(
+     output << ",\"payload_integrity\":";
+     append_payload_integrity_status(
+         output, payload_integrity, payload_integrity_recovery);
++    output << ",\"payload_recheck\":";
++    append_payload_recheck_status(output, payload_recheck);
+ 
+     output << ",\"stop_reason\":";
+     if (stop_reason.has_value()) {
+@@ -565,6 +607,22 @@ std::string render_sync_replica_peer_service_status_json(
+         << counters.payload_store_lease_backoff_deferrals
+         << ",\"payload_authority_network_outcome_uncertain_steps\":"
+         << counters.payload_authority_network_outcome_uncertain_steps
++        << ",\"payload_recheck_requests_observed\":"
++        << counters.payload_recheck_requests_observed
++        << ",\"payload_recheck_requests_coalesced\":"
++        << counters.payload_recheck_requests_coalesced
++        << ",\"payload_recheck_attempts\":"
++        << counters.payload_recheck_attempts
++        << ",\"payload_recheck_completions\":"
++        << counters.payload_recheck_completions
++        << ",\"payload_recheck_integrity_recoveries\":"
++        << counters.payload_recheck_integrity_recoveries
++        << ",\"payload_recheck_snapshot_handoffs\":"
++        << counters.payload_recheck_snapshot_handoffs
++        << ",\"payload_recheck_convergence_snapshot_observations\":"
++        << counters.payload_recheck_convergence_snapshot_observations
++        << ",\"payload_recheck_convergence_mutation_full_scans\":"
++        << counters.payload_recheck_convergence_mutation_full_scans
+         << ",\"cycles_complete\":" << summary.cycles_complete
+         << ",\"cycles_settled\":" << summary.cycles_settled
+         << ",\"cycles_changed\":" << summary.cycles_changed
+@@ -631,6 +689,23 @@ std::string render_sync_replica_peer_service_status_json(
+             << step.payload_integrity_retry_delay_milliseconds
+             << ",\"payload_store_lease_retry_delay_milliseconds\":"
+             << step.payload_store_lease_retry_delay_milliseconds
++            << ",\"payload_recheck_generation\":"
++            << step.payload_recheck_generation
++            << ",\"payload_recheck_hashed_entries\":"
++            << step.payload_recheck_hashed_entry_count
++            << ",\"payload_recheck_hashed_bytes\":"
++            << step.payload_recheck_hashed_bytes
++            << ",\"payload_recheck_snapshot_handoffs\":"
++            << step.payload_recheck_snapshot_handoff_count
++            << ",\"payload_recheck_convergence_snapshot_observations\":"
++            << step
++                   .payload_recheck_convergence_snapshot_observation_count
++            << ",\"payload_recheck_convergence_mutation_full_scans\":"
++            << step
++                   .payload_recheck_convergence_mutation_full_scan_count
++            << ",\"payload_recheck_recovered_integrity_fault\":"
++            << json_bool(
++                   step.payload_recheck_recovered_integrity_fault)
+             << ",\"session_io_error\":";
+         if (step.session_io_error.has_value()) {
+             output << json_quote(*step.session_io_error);
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index 99ccf87a2e0ca1cfa8eebdbe15800a332993a854..14591a1d9b8894b78218c17445767089174f124f 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v6";
++    "anonsync.peer-service.status.v7";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+@@ -56,6 +56,14 @@ void account_sync_replica_peer_service_step(
+ [[nodiscard]] std::string render_sync_replica_folder_wake_status_json(
+     const SyncReplicaFolderWakeSnapshot& snapshot);
+ 
++// Canonical operator projection for the generation-tracked current-byte
++// recheck obligation. The live status object and terminal service report both
++// embed these exact bytes so field names and completion semantics cannot drift
++// between the two shipping surfaces.
++[[nodiscard]] std::string
++render_sync_replica_peer_service_payload_recheck_status_json(
++    const SyncReplicaPeerServicePayloadRecheckStatus& status);
++
+ // Produces one immutable, secret-free status snapshot. The caller may hand the
+ // resulting bytes to another thread; the renderer itself remains on the exact
+ // service-owner thread and never exports an owner or database capability.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index 4d2de628e93b45c94188520d123fc8a74fa47d54..be88573be53a8f61b06bbc135af8eb8a9e90b348 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -137,10 +137,17 @@ int main() {
+                 anonsync::query_sync_local_status_socket_or_throw(socket_path) ==
+                     initial,
+                 "initial snapshot must be served exactly");
+-            require(!server.stop_requested(),
+-                    "a new status socket must not request drain");
+-            require(!server.wait_for_stop_request_or_timeout(0U),
+-                    "a nonblocking drain observation must begin false");
++            require(
++                server.action_snapshot() ==
++                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 0U},
++                "a new status socket must begin without drain or recheck");
++            require(!server.wait_for_action_request_or_timeout(0U, 0U),
++                    "a nonblocking action observation must begin false");
++            require_throws(
++                [&] {
++                    (void)server.wait_for_action_request_or_timeout(1U, 0U);
++                },
++                "an action wait must reject a future generation baseline");
+ 
+             server.publish_or_throw(updated);
+             server.require_healthy_or_throw();
+@@ -161,13 +168,74 @@ int main() {
+                 "status query must bind a reported pid to the connected peer");
+             server.publish_or_throw(updated);
+ 
++            std::atomic<bool> recheck_wait_started{false};
++            std::atomic<bool> recheck_wait_completed{false};
++            const auto recheck_wait_started_at =
++                std::chrono::steady_clock::now();
++            std::jthread recheck_waiter([&] {
++                recheck_wait_started.store(true, std::memory_order_release);
++                recheck_wait_completed.store(
++                    server.wait_for_action_request_or_timeout(0U, 5000U),
++                    std::memory_order_release);
++            });
++            while (!recheck_wait_started.load(std::memory_order_acquire)) {
++                std::this_thread::yield();
++            }
++            std::this_thread::sleep_for(std::chrono::milliseconds(20));
++            const std::string first_recheck =
++                anonsync::request_sync_local_status_recheck_or_throw(
++                    socket_path);
++            recheck_waiter.join();
++            const auto recheck_wait_elapsed =
++                std::chrono::steady_clock::now() - recheck_wait_started_at;
++            require(
++                first_recheck ==
++                    "{\"schema\":\"anonsync.local-recheck.response.v1\","
++                    "\"command\":\"recheck\","
++                    "\"terminal_class\":\"accepted\","
++                    "\"request_generation\":1,\"server_pid\":" +
++                        process_id + "}",
++                "first recheck request must return the exact acceptance");
++            require(
++                recheck_wait_completed.load(std::memory_order_acquire),
++                "accepted recheck must wake an in-progress action wait");
++            require(
++                recheck_wait_elapsed < std::chrono::seconds(1),
++                "accepted recheck must not wait for the fallback timeout");
++            require(
++                server.action_snapshot().recheck_request_generation == 1U,
++                "accepted recheck must advance the generation");
++            require(
++                server.action_snapshot() ==
++                    anonsync::SyncLocalStatusSocketActionSnapshot{false, 1U},
++                "action snapshot must bind accepted recheck without drain");
++            require(server.wait_for_action_request_or_timeout(0U, 0U),
++                    "an older generation must observe pending action");
++            require(!server.wait_for_action_request_or_timeout(1U, 0U),
++                    "the exact accepted generation must not remain pending");
++
++            const std::string second_recheck =
++                anonsync::request_sync_local_status_recheck_or_throw(
++                    socket_path);
++            require(
++                second_recheck ==
++                    "{\"schema\":\"anonsync.local-recheck.response.v1\","
++                    "\"command\":\"recheck\","
++                    "\"terminal_class\":\"accepted\","
++                    "\"request_generation\":2,\"server_pid\":" +
++                        process_id + "}",
++                "a second recheck must advance one exact generation");
++            require(
++                server.action_snapshot().recheck_request_generation == 2U,
++                "the second recheck generation must be observable");
++
+             std::atomic<bool> stop_wait_started{false};
+             std::atomic<bool> stop_wait_completed{false};
+             const auto stop_wait_started_at = std::chrono::steady_clock::now();
+             std::jthread stop_waiter([&] {
+                 stop_wait_started.store(true, std::memory_order_release);
+                 stop_wait_completed.store(
+-                    server.wait_for_stop_request_or_timeout(5000U),
++                    server.wait_for_action_request_or_timeout(2U, 5000U),
+                     std::memory_order_release);
+             });
+             while (!stop_wait_started.load(std::memory_order_acquire)) {
+@@ -186,7 +254,7 @@ int main() {
+                     "\"stop_mode\":\"drain\",\"first_request\":true,"
+                     "\"server_pid\":" + process_id + "}",
+                 "first stop request must return the exact drain response");
+-            require(server.stop_requested(),
++            require(server.action_snapshot().stop_requested,
+                     "stop request must latch the drain observation");
+             require(
+                 stop_wait_completed.load(std::memory_order_acquire),
+@@ -194,7 +262,7 @@ int main() {
+             require(
+                 stop_wait_elapsed < std::chrono::seconds(1),
+                 "stop request must not wait for the five-second fallback timeout");
+-            require(server.wait_for_stop_request_or_timeout(100U),
++            require(server.wait_for_action_request_or_timeout(2U, 100U),
+                     "latched stop request must wake bounded wait immediately");
+             const std::string repeated_stop =
+                 anonsync::request_sync_local_status_stop_or_throw(socket_path);
+@@ -209,6 +277,27 @@ int main() {
+                 anonsync::query_sync_local_status_socket_or_throw(socket_path) ==
+                     updated,
+                 "drain request must not revoke the status snapshot boundary");
++            const std::string rejected_recheck =
++                anonsync::request_sync_local_status_recheck_or_throw(
++                    socket_path);
++            require(
++                rejected_recheck ==
++                    "{\"schema\":\"anonsync.local-recheck.response.v1\","
++                    "\"command\":\"recheck\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"drain_requested\","
++                    "\"request_generation\":2,\"server_pid\":" +
++                        process_id + "}",
++                "recheck serialized after drain must be rejected exactly");
++            require(
++                server.action_snapshot().recheck_request_generation == 2U,
++                "post-drain rejection must not advance generation");
++            require(
++                server.action_snapshot() ==
++                    anonsync::SyncLocalStatusSocketActionSnapshot{true, 2U},
++                "drain snapshot must retain every pre-drain generation");
++            require(server.wait_for_action_request_or_timeout(2U, 100U),
++                    "latched drain must wake the unified action wait");
+ 
+             require(::chmod(socket_path.c_str(), 0660U) == 0,
+                     "test must loosen socket mode");
+@@ -224,6 +313,12 @@ int main() {
+                         socket_path);
+                 },
+                 "stop must reject a socket without exact mode 0600");
++            require_throws(
++                [&] {
++                    (void)anonsync::request_sync_local_status_recheck_or_throw(
++                        socket_path);
++                },
++                "recheck must reject a socket without exact mode 0600");
+             require_throws(
+                 [&] { server.require_healthy_or_throw(); },
+                 "server health must reject changed socket mode");
+@@ -248,6 +343,12 @@ int main() {
+                         socket_path);
+                 },
+                 "stop must reject a socket beneath a non-private parent");
++            require_throws(
++                [&] {
++                    (void)anonsync::request_sync_local_status_recheck_or_throw(
++                        socket_path);
++                },
++                "recheck must reject a socket beneath a non-private parent");
+             require(::chmod(temporary.path().c_str(), 0700U) == 0,
+                     "test must restore status parent mode");
+ 
+@@ -287,6 +388,58 @@ int main() {
+         }
+         require(!fs::exists(socket_path), "destruction must leave no socket path");
+ 
++        {
++            anonsync::SyncLocalStatusSocketServer sealed(
++                socket_path, initial, "owner-sealed status socket");
++            const std::string accepted =
++                anonsync::request_sync_local_status_recheck_or_throw(
++                    socket_path);
++            require(
++                accepted ==
++                    "{\"schema\":\"anonsync.local-recheck.response.v1\","
++                    "\"command\":\"recheck\","
++                    "\"terminal_class\":\"accepted\","
++                    "\"request_generation\":1,\"server_pid\":" +
++                        process_id + "}",
++                "owner-shutdown setup must accept one exact generation");
++            const auto terminal_actions =
++                sealed.seal_actions_for_owner_shutdown();
++            require(
++                terminal_actions ==
++                    anonsync::SyncLocalStatusSocketActionSnapshot{true, 1U},
++                "owner shutdown seal must bind all pre-seal actions");
++            require(
++                sealed.seal_actions_for_owner_shutdown() == terminal_actions,
++                "owner shutdown seal must be idempotent");
++            const std::string rejected =
++                anonsync::request_sync_local_status_recheck_or_throw(
++                    socket_path);
++            require(
++                rejected ==
++                    "{\"schema\":\"anonsync.local-recheck.response.v1\","
++                    "\"command\":\"recheck\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"drain_requested\","
++                    "\"request_generation\":1,\"server_pid\":" +
++                        process_id + "}",
++                "post-seal recheck must be rejected without generation advance");
++            require(
++                anonsync::query_sync_local_status_socket_or_throw(socket_path) ==
++                    initial,
++                "owner shutdown seal must preserve read-only status service");
++            const std::string stop_after_seal =
++                anonsync::request_sync_local_status_stop_or_throw(socket_path);
++            require(
++                stop_after_seal ==
++                    "{\"schema\":\"anonsync.local-stop.response.v1\","
++                    "\"command\":\"stop\",\"terminal_class\":\"completed\","
++                    "\"stop_mode\":\"drain\",\"first_request\":false,"
++                    "\"server_pid\":" + process_id + "}",
++                "client stop after owner seal must remain idempotent");
++        }
++        require(!fs::exists(socket_path),
++                "owner-sealed socket must be removed on destruction");
++
+         bind_stale_socket_or_throw(socket_path);
+         require_socket_mode(socket_path, 0600U);
+         {
+@@ -337,6 +490,12 @@ int main() {
+                     temporary.path() / "missing.sock", 20U);
+             },
+             "stopping through a missing local socket must fail");
++        require_throws(
++            [&] {
++                (void)anonsync::request_sync_local_status_recheck_or_throw(
++                    temporary.path() / "missing.sock", 20U);
++            },
++            "rechecking through a missing local socket must fail");
+ 
+         std::cout << "sync_local_status_socket_test: " << checks
+                   << " checks passed\n";
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index c26cdb650c2172e03611e59eb1faae0859eee294..7e679efd920d7df30965d1d37be060ec44052304 100755
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -203,7 +203,11 @@ void require_integrity_error(
+         if (error.expected_content_sha256() != expected_content_sha256 ||
+             error.observed_content_sha256() != observed_content_sha256 ||
+             error.failure_persisted() != expected_failure_persisted) {
+-            fail(message + ": typed integrity evidence was not exact");
++            fail(
++                message + ": typed integrity evidence was not exact; got " +
++                error.expected_content_sha256() + "/" +
++                error.observed_content_sha256() + "/" +
++                (error.failure_persisted() ? "persisted" : "volatile"));
+         }
+         return;
+     } catch (const std::exception& error) {
+@@ -1595,6 +1599,30 @@ void test_verification_cache_is_exact_and_durable_across_restart() {
+         warm, 2U, total_bytes, 0U, 0U,
+         "unchanged retained-owner snapshot did not attribute reuse to process-local state");
+ 
++    const auto operator_recheck =
++        owner.snapshot_rechecking_current_bytes_or_throw();
++    require(
++        operator_recheck.snapshot_digest() == canonical_snapshot_digest &&
++            operator_recheck.entry_count() == 2U &&
++            operator_recheck.indexed_bytes() == total_bytes &&
++            operator_recheck.scan_hashed_entry_count() == 2U &&
++            operator_recheck.scan_hashed_bytes() == total_bytes &&
++            operator_recheck.scan_reused_entry_count() == 0U &&
++            operator_recheck.scan_reused_bytes() == 0U,
++        "operator recheck did not hash every current payload byte");
++    require_reuse_partition(
++        operator_recheck, 0U, 0U, 0U, 0U,
++        "operator recheck reported prohibited verification reuse");
++    const auto post_recheck_warm = owner.snapshot_or_throw();
++    require(
++        post_recheck_warm.scan_hashed_entry_count() == 0U &&
++            post_recheck_warm.scan_reused_entry_count() == 2U &&
++            post_recheck_warm.scan_reused_bytes() == total_bytes,
++        "successful operator recheck did not publish exact immediate warm state");
++    require_reuse_partition(
++        post_recheck_warm, 2U, total_bytes, 0U, 0U,
++        "post-recheck warm snapshot reported the wrong reuse origin");
++
+     // Same-inode mutation is the harder metadata-cache frontier: identity and
+     // extent remain stable while mtime/ctime change. It must fall through to a
+     // complete hash, reject wrong bytes, and leave the prior cache intact.
+@@ -2855,23 +2883,57 @@ void test_process_fault_preserves_original_target_across_second_mismatch() {
+         fs::remove(scrub_state_path) && !fs::exists(scrub_state_path),
+         "process-fault ordering fixture did not remove durable evidence");
+ 
+-    // A changed earlier path is independently hash-forcing. Its mismatch may
+-    // abort the scan, but it must not evict the still-unresolved later witness.
++    // A changed second path is independently hash-forcing. The complete
++    // namespace scanner intentionally follows descriptor-owned readdir order,
++    // not digest order, so either mismatch may be the first typed result on a
++    // particular filesystem. Whichever one is reported first, repairing only
++    // that path must expose the other mismatch; no unresolved witness may be
++    // displaced merely because directory enumeration chose another order.
+     std::this_thread::sleep_for(std::chrono::milliseconds(2));
+     overwrite_private_file(first_path, first_corrupt);
+-    require_integrity_error(
+-        [&] { (void)detector.snapshot_or_throw(); }, first_digest,
+-        first_observed, false,
+-        "an earlier changed mismatch did not fail the complete scan");
++    const auto observe_one_of_two_faults = [&](const std::string& message) {
++        ++checks;
++        try {
++            (void)detector.snapshot_or_throw();
++        } catch (const anonsync::SyncReplicaFilePayloadStoreIntegrityError&
++                     error) {
++            if (error.failure_persisted()) {
++                fail(message + ": lost durable evidence was invented again");
++            }
++            if (error.expected_content_sha256() == first_digest &&
++                error.observed_content_sha256() == first_observed) {
++                return first_digest;
++            }
++            if (error.expected_content_sha256() == second_digest &&
++                error.observed_content_sha256() == second_observed) {
++                return second_digest;
++            }
++            fail(message + ": scanner reported unrelated integrity evidence");
++        } catch (const std::exception& error) {
++            fail(message + ": wrong exception type: " + error.what());
++        }
++        fail(message + ": no error was thrown");
++    };
++    const std::string first_reported = observe_one_of_two_faults(
++        "two simultaneous mismatches did not fail the complete scan");
+ 
+     std::this_thread::sleep_for(std::chrono::milliseconds(2));
+-    overwrite_private_file(first_path, first_good);
+-    require_integrity_error(
+-        [&] { (void)detector.snapshot_or_throw(); }, second_digest,
+-        second_observed, false,
+-        "a second mismatch displaced the original unresolved process fault");
++    if (first_reported == first_digest) {
++        overwrite_private_file(first_path, first_good);
++        require_integrity_error(
++            [&] { (void)detector.snapshot_or_throw(); }, second_digest,
++            second_observed, false,
++            "repairing the first-reported mismatch displaced the original unresolved process fault");
++    } else {
++        overwrite_private_file(second_path, second_good);
++        require_integrity_error(
++            [&] { (void)detector.snapshot_or_throw(); }, first_digest,
++            first_observed, false,
++            "repairing the original first-reported mismatch hid the other changed payload");
++    }
+ 
+     std::this_thread::sleep_for(std::chrono::milliseconds(2));
++    overwrite_private_file(first_path, first_good);
+     overwrite_private_file(second_path, second_good);
+     const auto repaired = detector.snapshot_or_throw();
+     require(
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index d0d6bb8d6b4c592c43a5d8ba6a0982e92de42012..769ef04b5fb7826667773884d4f11ad5987bf57f 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -45,6 +45,8 @@ REQUIRED = (
+     Path("src/anonsync_replica.cpp"),
+     Path("src/anonsync_folder.cpp"),
+     Path("src/anonsync_sync.cpp"),
++    Path("src/sync_local_status_socket.hpp"),
++    Path("src/sync_local_status_socket.cpp"),
+     Path("src/sync_replica_folder_observer.hpp"),
+     Path("src/sync_replica_folder_observer.cpp"),
+     Path("src/sync_replica_model.hpp"),
+@@ -74,6 +76,7 @@ REQUIRED = (
+     Path("src/sync_replica_file_tls_dispatch.cpp"),
+     Path("tests/sync_atomic_file_publication_test.cpp"),
+     Path("tests/sync_bounded_regular_file_test.cpp"),
++    Path("tests/sync_local_status_socket_test.cpp"),
+     Path("tests/sync_replica_file_payload_store_test.cpp"),
+     Path("tests/resumable_sha256_test.cpp"),
+     Path("tests/sync_replica_file_payload_scrub_state_test.cpp"),
+@@ -110,6 +113,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0958.md"),
+     Path("MINIMUM_READER_IDENTITY_MIGRATION_AUDIT_rev0959.md"),
+     Path("REVISION_NOTES_rev0959.md"),
++    Path("OWNER_TRIGGERED_PAYLOAD_RECHECK_AUDIT_rev0960.md"),
++    Path("REVISION_NOTES_rev0960.md"),
+ )
+ 
+ 
+@@ -244,6 +249,8 @@ def main() -> int:
+     replica_cli = text["src/anonsync_replica.cpp"]
+     folder_cli = text["src/anonsync_folder.cpp"]
+     sync_cli = text["src/anonsync_sync.cpp"]
++    local_status_h = text["src/sync_local_status_socket.hpp"]
++    local_status = text["src/sync_local_status_socket.cpp"]
+     folder_observer_h = text["src/sync_replica_folder_observer.hpp"]
+     folder_observer = text["src/sync_replica_folder_observer.cpp"]
+     model_h = text["src/sync_replica_model.hpp"]
+@@ -274,6 +281,7 @@ def main() -> int:
+     dispatch = text["src/sync_replica_file_tls_dispatch.cpp"]
+     atomic_runtime = text["tests/sync_atomic_file_publication_test.cpp"]
+     bounded_runtime = text["tests/sync_bounded_regular_file_test.cpp"]
++    local_status_runtime = text["tests/sync_local_status_socket_test.cpp"]
+     runtime = text["tests/sync_replica_file_payload_store_test.cpp"]
+     resumable_runtime = text["tests/resumable_sha256_test.cpp"]
+     scrub_state_runtime = text[
+@@ -342,6 +350,10 @@ def main() -> int:
+         "MINIMUM_READER_IDENTITY_MIGRATION_AUDIT_rev0959.md"
+     ]
+     rev0959_notes = text["REVISION_NOTES_rev0959.md"]
++    owner_recheck_design = text[
++        "OWNER_TRIGGERED_PAYLOAD_RECHECK_AUDIT_rev0960.md"
++    ]
++    rev0960_notes = text["REVISION_NOTES_rev0960.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -353,6 +365,17 @@ def main() -> int:
+         if rev0959_verifier_start >= 0 and rev0959_verifier_end >= 0
+         else ""
+     )
++    rev0960_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 960:"
++    )
++    rev0960_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0960_verifier_start
++    )
++    rev0960_verifier_block = (
++        verifier[rev0960_verifier_start:rev0960_verifier_end]
++        if rev0960_verifier_start >= 0 and rev0960_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     store_sources = cmake_call(
+@@ -1206,7 +1229,7 @@ def main() -> int:
+         store, "verification_checkpoint_due("
+     )
+     snapshot_body = function_body(
+-        store, "SyncReplicaFilePayloadStore::snapshot_or_throw() const"
++        store, "SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw("
+     )
+     snapshot_state_gate = function_body(
+         store,
+@@ -1807,7 +1830,9 @@ def main() -> int:
+         "only exact writer temp names are classified and both their count and bytes remain finite",
+     )
+ 
+-    snapshot = function_body(store, "SyncReplicaFilePayloadStore::snapshot_or_throw()")
++    snapshot = function_body(
++        store, "SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw("
++    )
+     require(
+         ordered(
+             snapshot,
+@@ -3355,7 +3380,7 @@ def main() -> int:
+         store, "process_scrub_active_observation_matches("
+     )
+     snapshot_body = function_body(
+-        store, "SyncReplicaFilePayloadStore::snapshot_or_throw() const"
++        store, "SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw("
+     )
+     scrub_limit_validation = function_body(
+         store, "validate_sync_replica_file_payload_store_limits_or_throw("
+@@ -3939,7 +3964,8 @@ def main() -> int:
+                 "a live pre-fault snapshot retained digest authority after corruption",
+                 "repair resurrected a snapshot that was live when corruption was found",
+                 "test_process_fault_preserves_original_target_across_second_mismatch",
+-                "a second mismatch displaced the original unresolved process fault",
++                "repairing the first-reported mismatch displaced the original unresolved process fault",
++                "descriptor-owned readdir order",
+             )
+         )
+         and all(
+@@ -4085,6 +4111,12 @@ def main() -> int:
+     integrity_reproof = function_body(
+         peer_service, "payload_integrity_reproof_step_or_throw()"
+     )
++    payload_snapshot_convergence = function_body(
++        peer_service, "complete_payload_snapshot_convergence_or_throw("
++    )
++    operator_recheck = function_body(
++        peer_service, "operator_payload_recheck_step_or_throw()"
++    )
+     peer_ready = function_body(
+         peer_service, "SyncReplicaPeerServiceOwner::ready() const noexcept"
+     )
+@@ -4137,6 +4169,12 @@ def main() -> int:
+             for token in (
+                 "payload_integrity_reproof_attempts",
+                 "snapshot_or_throw()",
++                "complete_payload_snapshot_convergence_or_throw",
++            )
++        )
++        and all(
++            token in payload_snapshot_convergence
++            for token in (
+                 "run_convergence_pass_with_payload_snapshot_or_throw",
+                 "most_recent_payload_integrity_recovery",
+                 "payload_integrity_fault.reset()",
+@@ -4146,6 +4184,10 @@ def main() -> int:
+         and ordered(
+             integrity_reproof,
+             "snapshot_or_throw()",
++            "complete_payload_snapshot_convergence_or_throw",
++        )
++        and ordered(
++            payload_snapshot_convergence,
+             "run_convergence_pass_with_payload_snapshot_or_throw",
+             "most_recent_payload_integrity_recovery",
+             "payload_integrity_fault.reset()",
+@@ -4176,7 +4218,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v6"' in peer_status_h
++        '"anonsync.peer-service.status.v7"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4193,7 +4235,7 @@ def main() -> int:
+             )
+         )
+         and "render_sync_replica_peer_service_status_json" in sync_cli,
+-        "status_v6_exposes_scan_settlement_scrub_active_fault_and_bounded_recovery_history_once",
++        "status_v7_exposes_scan_settlement_scrub_active_fault_recheck_and_bounded_recovery_history_once",
+         "one canonical live/terminal renderer distinguishes zero-read active-checkpoint settlement from failure repair while separating scrub scheduling observations, exact-pair active authority failure, and one process-local recovered event",
+     )
+ 
+@@ -4383,7 +4425,7 @@ def main() -> int:
+ 
+     require(
+         all(
+-            token in integrity_reproof
++            token in integrity_reproof + payload_snapshot_convergence
+             for token in (
+                 "SyncReplicaFilePayloadStoreSnapshot payload_reproof",
+                 "run_convergence_pass_with_payload_snapshot_or_throw",
+@@ -4395,13 +4437,17 @@ def main() -> int:
+         and ordered(
+             integrity_reproof,
+             "snapshot_or_throw()",
++            "complete_payload_snapshot_convergence_or_throw",
++        )
++        and ordered(
++            payload_snapshot_convergence,
+             "run_convergence_pass_with_payload_snapshot_or_throw",
+             "refresh_ingress_worker(false)",
+             "most_recent_payload_integrity_recovery",
+             "payload_integrity_fault.reset()",
+         )
+         and "(void)folder_process.payload_store_or_throw().snapshot_or_throw();"
+-        not in integrity_reproof,
++        not in integrity_reproof + payload_snapshot_convergence,
+         "service_recovery_moves_current_byte_proof_and_accounts_both_rescan_routes",
+         "the required complete reproof is consumed once, and both a convergence-owned snapshot and a fallback mutation full scan remain independently visible",
+     )
+@@ -4479,14 +4525,28 @@ def main() -> int:
+                 "payload_integrity_reproof_convergence_mutation_full_scans",
+             )
+         )
++        and all(
++            token in peer_service_h + peer_status + sync_cli
++            for token in (
++                "payload_recheck_snapshot_handoffs",
++                "payload_recheck_convergence_snapshot_observations",
++                "payload_recheck_convergence_mutation_full_scans",
++            )
++        )
+         and all(
+             token in service_configuration_runtime
+             for token in (
+-                '"payload_integrity_reproof_snapshot_handoffs"',
+-                '"payload_integrity_reproof_convergence_snapshot_observations"',
+-                '"payload_integrity_reproof_convergence_mutation_full_scans"',
++                '"payload_recheck_snapshot_handoffs"',
++                '"payload_recheck_convergence_snapshot_observations"',
++                '"payload_recheck_convergence_mutation_full_scans"',
+             )
+-        ),
++        )
++        and "render_sync_replica_peer_service_payload_recheck_status_json"
++        in peer_status_h
++        and "render_sync_replica_peer_service_payload_recheck_status_json"
++        in peer_status
++        and "render_sync_replica_peer_service_payload_recheck_status_json"
++        in sync_cli,
+         "shipping_status_distinguishes_handoff_observation_and_mutation_full_scan",
+         "live, terminal, and one-shot surfaces expose enough accounting to detect either form of duplicate complete recovery scan",
+     )
+@@ -4572,22 +4632,24 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v6"' in peer_status_h
++        '"anonsync.peer-service.status.v7"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v6"'
++        and '"anonsync.peer-service.status.v7"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v6"'
++        and '"anonsync.peer-service.status.v7"'
+         in service_i2p_ingress_runtime,
+-        "status_v6_binds_checkpoint_settlement_exact_pair_semantics_and_all_process_oracles",
++        "status_v7_binds_checkpoint_settlement_exact_pair_recheck_semantics_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+     )
+ 
+     require(
+         peer_owner_run.count("refresh_ingress_worker(false)") >= 1
+-        and integrity_reproof.count("refresh_ingress_worker(false)") >= 1
++        and payload_snapshot_convergence.count(
++            "refresh_ingress_worker(false)"
++        ) >= 1
+         and ordered(
+-            integrity_reproof,
++            payload_snapshot_convergence,
+             "run_convergence_pass_with_payload_snapshot_or_throw",
+             "refresh_ingress_worker(false)",
+             "payload_integrity_fault.reset()",
+@@ -4874,7 +4936,7 @@ def main() -> int:
+     )
+     snapshot_owner = function_body(
+         store,
+-        "SyncReplicaFilePayloadStore::snapshot_or_throw() const",
++        "SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(",
+     )
+     require(
+         all(
+@@ -5311,7 +5373,7 @@ def main() -> int:
+             "payload_store_lease_retry_wait",
+             "bounded_wait = std::min(",
+             "kSyncReplicaPeerServiceMaximumPayloadStoreLeaseBackoffWaitMilliseconds",
+-            "wait_for_stop_request_or_timeout(",
++            "wait_for_action_request_or_timeout(",
+         ),
+         "lease_deferral_is_operator_visible_and_daemon_wait_is_bounded",
+         "live and terminal status expose the typed disposition, delay and monotonic counter while the run loop caps the cooperative retry wait and remains drain-responsive",
+@@ -5510,6 +5572,197 @@ def main() -> int:
+         "the release binds the mandatory intent ordering, exact same-process exception, hard lease oracle, downgrade boundary, and remaining power-loss/product work",
+     )
+ 
++    local_action_snapshot = function_body(
++        local_status,
++        "SyncLocalStatusSocketServer::action_snapshot() const",
++    )
++    local_action_wait = function_body(
++        local_status,
++        "SyncLocalStatusSocketServer::wait_for_action_request_or_timeout(",
++    )
++    local_action_seal = function_body(
++        local_status,
++        "SyncLocalStatusSocketServer::seal_actions_for_owner_shutdown()",
++    )
++    require(
++        all(
++            token in local_status_h
++            for token in (
++                "SyncLocalStatusSocketActionSnapshot action_snapshot() const",
++                "seal_actions_for_owner_shutdown()",
++                "wait_for_action_request_or_timeout(",
++                "sole owner-thread action observation",
++                "split-read shutdown race",
++            )
++        )
++        and all(
++            token not in local_status_h + local_status
++            for token in (
++                "SyncLocalStatusSocketServer::stop_requested()",
++                "SyncLocalStatusSocketServer::recheck_request_generation()",
++                "wait_for_stop_request_or_timeout(",
++                "std::atomic<",
++                "std::memory_order_",
++            )
++        )
++        and all(
++            token in local_action_snapshot
++            for token in (
++                "std::lock_guard lock(state_->mutex)",
++                "state_->drain_requested",
++                "state_->recheck_generation",
++            )
++        )
++        and all(
++            token in local_action_wait
++            for token in (
++                "std::unique_lock lock(state_->mutex)",
++                "state_->drain_requested",
++                "state_->recheck_generation >",
++                "state_->action_condition.wait_for(",
++            )
++        ),
++        "local_control_actions_have_one_mutex_linearization_model",
++        "drain and recheck generation are observed and waited on only as one mutex-protected action state; obsolete split getters and redundant atomic shadow state are absent",
++    )
++
++    command_run = function_body(sync_cli, "int command_run(")
++    require(
++        all(
++            token in local_action_seal
++            for token in (
++                "std::lock_guard lock(state_->mutex)",
++                "state_->drain_requested = true",
++                "state_->recheck_generation",
++                "state_->action_condition.notify_all()",
++            )
++        )
++        and ordered(
++            command_run,
++            "status_server->seal_actions_for_owner_shutdown()",
++            "owner.observe_payload_recheck_request_generation_or_throw(",
++            "service_manager.announce_stopping(",
++            'publish_status("stopping", "stopped", stop_reason)',
++            "const auto payload_recheck = owner.payload_recheck_status()",
++        )
++        and all(
++            token in local_status_runtime
++            for token in (
++                "owner shutdown seal must bind all pre-seal actions",
++                "owner shutdown seal must be idempotent",
++                "post-seal recheck must be rejected without generation advance",
++                "owner shutdown seal must preserve read-only status service",
++            )
++        ),
++        "owner_shutdown_seal_closes_the_recheck_acceptance_race",
++        "before terminal status is frozen the owner atomically latches drain and observes the final accepted generation, so a racing request is either represented as pending/completed terminal work or rejected after the cutpoint",
++    )
++
++    local_drain_request = function_body(
++        local_status, "request_drain_response()"
++    )
++    local_recheck_request = function_body(
++        local_status, "request_recheck_response()"
++    )
++    require(
++        ordered(
++            local_drain_request,
++            "std::lock_guard lock(mutex)",
++            "first_request = !drain_requested",
++            "drain_requested = true",
++            "action_condition.notify_all()",
++            "std::ostringstream response",
++        )
++        and ordered(
++            local_recheck_request,
++            "std::lock_guard lock(mutex)",
++            "if (!drain_requested)",
++            "++generation",
++            "recheck_generation = generation",
++            "if (accepted) action_condition.notify_all()",
++            "std::ostringstream response",
++        )
++        and all(
++            token in local_status_runtime
++            for token in (
++                "wait_for_action_request_or_timeout(2U, 5000U)",
++                "post-drain rejection must not advance generation",
++                "accepted recheck must not wait for the fallback timeout",
++            )
++        ),
++        "local_recheck_acceptance_precedes_response_allocation_and_drain_is_terminal",
++        "the worker publishes and wakes accepted owner work before response construction, while the same mutex makes a recheck serialized after drain reject without generation advance",
++    )
++
++    require(
++        "unique_json_object_pairs" in sync_process_runtime
++        and "duplicate JSON object key" in sync_process_runtime
++        and "object_pairs_hook=unique_json_object_pairs" in sync_process_runtime
++        and "unique_json_object_pairs" in service_process_runtime
++        and "object_pairs_hook=unique_json_object_pairs"
++            in service_process_runtime,
++        "live_and_terminal_process_oracles_reject_duplicate_json_keys",
++        "the real-process status and terminal-output parsers reject duplicate object members instead of accepting parser-dependent operator evidence",
++    )
++
++    require(
++        all(
++            token in owner_recheck_design
++            for token in (
++                "Heart of the mission",
++                "Product boundary",
++                "Local control authority",
++                "One linearized action observation",
++                "Generation and coalescing semantics",
++                "Current-byte authority path",
++                "Exact handoff into ordinary convergence",
++                "Contention, mismatch, and recovery",
++                "Mechanical process oracle",
++                "Research-informed product comparison",
++                "What this proves",
++                "What this does not prove",
++                "seal_actions_for_owner_shutdown()",
++                "duplicate object keys",
++                "process-local scheduling evidence",
++            )
++        )
++        and all(
++            token in rev0960_notes
++            for token in (
++                "owner-operated current-byte payload recheck",
++                "anonsync_sync recheck --socket ABSOLUTE_SOCKET",
++                "anonsync.local-recheck.response.v1",
++                "anonsync.peer-service.status.v7",
++                "seal_actions_for_owner_shutdown()",
++                "duplicate JSON object keys",
++                "ReadOnlyInspect",
++                "Nonclaims",
++                "GCC 14.2",
++                "Clang 17 ASan/UBSan",
++                "structural audit",
++            )
++        )
++        and "VALIDATION_PENDING_REV0960" not in rev0960_notes
++        and verifier.count(
++            "if revision_number is not None and revision_number >= 960:"
++        ) == 1
++        and all(
++            token in rev0960_verifier_block
++            for token in (
++                "OWNER_TRIGGERED_PAYLOAD_RECHECK_AUDIT_rev0960.md",
++                "REVISION_NOTES_rev0960.md",
++                "src/sync_local_status_socket.hpp",
++                "src/sync_local_status_socket.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tools/test_anonsync_service_process.py",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/audit_sync_file_payload_store.py",
++            )
++        ),
++        "rev0960_records_owner_recheck_shutdown_cutpoint_nonclaims_and_release_binding",
++        "the revision record binds forced current-byte proof, exact snapshot handoff, generation coalescing, terminal action sealing, strict JSON evidence, operator nonclaims, and the mandatory package surface",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index 9a4a39de6f5302e550f4b3a9445aa38d5aad5570..e61a767dbf50ee8fe909d4b5adcf17b3c54a1368 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -226,6 +226,14 @@ def require_payload_operator_status(
+         "payload_store_lease_busy_deferrals",
+         "payload_store_lease_backoff_deferrals",
+         "payload_authority_network_outcome_uncertain_steps",
++        "payload_recheck_requests_observed",
++        "payload_recheck_requests_coalesced",
++        "payload_recheck_attempts",
++        "payload_recheck_completions",
++        "payload_recheck_integrity_recoveries",
++        "payload_recheck_snapshot_handoffs",
++        "payload_recheck_convergence_snapshot_observations",
++        "payload_recheck_convergence_mutation_full_scans",
+     ):
+         counter = counters.get(counter_name)
+         if not isinstance(counter, int) or counter < 0:
+@@ -238,9 +246,58 @@ def require_payload_operator_status(
+         for boolean_field in (
+             "network_outcome_known",
+             "payload_store_lease_conflict_observed",
++            "payload_recheck_recovered_integrity_fault",
+         ):
+             if not isinstance(last_step.get(boolean_field), bool):
+                 fail(f"{label} last step omitted {boolean_field}")
++        for integer_field in (
++            "payload_recheck_generation",
++            "payload_recheck_hashed_entries",
++            "payload_recheck_hashed_bytes",
++            "payload_recheck_snapshot_handoffs",
++            "payload_recheck_convergence_snapshot_observations",
++            "payload_recheck_convergence_mutation_full_scans",
++        ):
++            field = last_step.get(integer_field)
++            if not isinstance(field, int) or field < 0:
++                fail(f"{label} last step omitted bounded {integer_field}")
++
++    recheck = value.get("payload_recheck")
++    if not isinstance(recheck, dict):
++        fail(f"{label} status omitted payload recheck state")
++    for integer_field in (
++        "requested_generation",
++        "started_generation",
++        "completed_generation",
++        "retry_delay_milliseconds",
++        "last_hashed_entries",
++        "last_hashed_bytes",
++        "last_snapshot_handoffs",
++        "last_convergence_snapshot_observations",
++        "last_convergence_mutation_full_scans",
++    ):
++        field = recheck.get(integer_field)
++        if not isinstance(field, int) or field < 0:
++            fail(f"{label} payload recheck omitted bounded {integer_field}")
++    for boolean_field in (
++        "pending",
++        "last_completion_recovered_integrity_fault",
++    ):
++        if not isinstance(recheck.get(boolean_field), bool):
++            fail(f"{label} payload recheck omitted {boolean_field}")
++    requested = recheck["requested_generation"]
++    started = recheck["started_generation"]
++    completed = recheck["completed_generation"]
++    if completed > started or started > requested:
++        fail(
++            f"{label} payload recheck generations were incoherent: "
++            f"{json.dumps(recheck, sort_keys=True)}"
++        )
++    if recheck["pending"] != (requested > completed):
++        fail(
++            f"{label} payload recheck pending state disagreed with its "
++            f"generations: {json.dumps(recheck, sort_keys=True)}"
++        )
+ 
+     integrity = value.get("payload_integrity")
+     if not isinstance(integrity, dict):
+@@ -540,7 +597,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v6",
++                    "schema": "anonsync.peer-service.status.v7",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -686,16 +743,29 @@ def expect_terminal(
+             fail(f"{label} terminal retained an active payload fault")
+         for field in (
+             "payload_integrity_faults_observed",
+-            "payload_integrity_reproof_attempts",
+-            "payload_integrity_reproof_recoveries",
++            "payload_recheck_requests_observed",
++            "payload_recheck_requests_coalesced",
++            "payload_recheck_attempts",
++            "payload_recheck_completions",
++            "payload_recheck_integrity_recoveries",
+         ):
+             if value.get(field, 0) < 1:
+                 fail(f"{label} terminal omitted successful {field}")
+-        if value.get("payload_integrity_reproof_snapshot_handoffs", 0) < 1:
+-            fail(f"{label} terminal omitted the successful reproof handoff")
++        recheck = value.get("payload_recheck")
++        if not isinstance(recheck, dict) or recheck.get("pending") is not False:
++            fail(f"{label} terminal did not settle its payload recheck")
++        if recheck.get("requested_generation", 0) < 1 or (
++            recheck.get("completed_generation")
++            != recheck.get("requested_generation")
++        ):
++            fail(f"{label} terminal lost payload recheck generations")
++        if recheck.get("last_completion_recovered_integrity_fault") is not True:
++            fail(f"{label} terminal omitted operator-driven fault recovery")
++        if value.get("payload_recheck_snapshot_handoffs", 0) < 1:
++            fail(f"{label} terminal omitted the successful recheck handoff")
+         if (
+             value.get(
+-                "payload_integrity_reproof_convergence_snapshot_observations",
++                "payload_recheck_convergence_snapshot_observations",
+                 -1,
+             )
+             != 0
+@@ -705,7 +775,7 @@ def expect_terminal(
+                 "payload-root observation"
+             )
+         if value.get(
+-            "payload_integrity_reproof_convergence_mutation_full_scans", -1
++            "payload_recheck_convergence_mutation_full_scans", -1
+         ) != 0:
+             fail(
+                 f"{label} recovery convergence hid a duplicate complete "
+@@ -1426,8 +1496,40 @@ def main() -> int:
+             )
+             if not isinstance(lease_deferrals_before, int):
+                 fail("source status omitted lease deferral baseline")
++            source_recheck_before = source_after.get("payload_recheck")
++            if not isinstance(source_recheck_before, dict):
++                fail("source status omitted payload recheck baseline")
++            if source_recheck_before.get("pending") is not False:
++                fail("source unexpectedly began with a pending payload recheck")
++            accepted_recheck_generation = 0
+ 
+             def require_live_lease_deferral() -> None:
++                nonlocal accepted_recheck_generation
++                accepted_responses: list[dict[str, Any]] = []
++                for index in range(2):
++                    response = run_json(
++                        [
++                            str(sync), "recheck", "--socket",
++                            str(source_status), "--timeout-milliseconds", "1000",
++                        ],
++                        label=f"owner-only payload recheck request {index + 1}",
++                    )
++                    accepted_responses.append(response)
++                    expected_generation = accepted_recheck_generation + 1
++                    expected_response = {
++                        "schema": "anonsync.local-recheck.response.v1",
++                        "command": "recheck",
++                        "terminal_class": "accepted",
++                        "request_generation": expected_generation,
++                        "server_pid": source.pid,
++                    }
++                    if response != expected_response:
++                        fail(
++                            "payload recheck acceptance was not exact: "
++                            f"{json.dumps(response, sort_keys=True)}"
++                        )
++                    accepted_recheck_generation = expected_generation
++
+                 deadline = time.monotonic() + 5.0
+                 last_status: dict[str, Any] | None = None
+                 while time.monotonic() < deadline:
+@@ -1450,8 +1552,20 @@ def main() -> int:
+                     )
+                     counters = last_status.get("counters")
+                     last_step = last_status.get("last_step")
++                    recheck = last_status.get("payload_recheck")
+                     if (
+                         isinstance(counters, dict)
++                        and isinstance(recheck, dict)
++                        and recheck.get("requested_generation")
++                        == accepted_recheck_generation
++                        and recheck.get("completed_generation", -1)
++                        < accepted_recheck_generation
++                        and recheck.get("pending") is True
++                        and counters.get("payload_recheck_requests_observed", 0)
++                        >= 2
++                        and counters.get("payload_recheck_requests_coalesced", 0)
++                        >= 1
++                        and counters.get("payload_recheck_attempts", 0) >= 1
+                         and counters.get(
+                             "payload_store_lease_busy_deferrals", -1
+                         ) > lease_deferrals_before
+@@ -1534,6 +1648,18 @@ def main() -> int:
+                     "service readiness: "
+                     f"{json.dumps(faulted_status, sort_keys=True)}"
+                 )
++            faulted_recheck = faulted_status.get("payload_recheck")
++            if not isinstance(faulted_recheck, dict) or (
++                faulted_recheck.get("requested_generation")
++                != accepted_recheck_generation
++            ) or faulted_recheck.get("pending") is not True or (
++                faulted_recheck.get("completed_generation", -1)
++                >= accepted_recheck_generation
++            ):
++                fail(
++                    "detected corruption lost the accepted recheck obligation: "
++                    f"{json.dumps(faulted_recheck, sort_keys=True)}"
++                )
+             if not isinstance(
+                 faulted_status["payload_scrub"].get("last_report"), dict
+             ):
+@@ -1659,6 +1785,34 @@ def main() -> int:
+                     "complete current-byte reproof did not restore readiness: "
+                     f"{json.dumps(recovered_status, sort_keys=True)}"
+                 )
++            recovered_recheck = recovered_status.get("payload_recheck")
++            if not isinstance(recovered_recheck, dict):
++                fail("integrity recovery omitted payload recheck completion")
++            expected_recheck_completion = {
++                "requested_generation": accepted_recheck_generation,
++                "started_generation": accepted_recheck_generation,
++                "completed_generation": accepted_recheck_generation,
++                "pending": False,
++                "last_snapshot_handoffs": 1,
++                "last_convergence_snapshot_observations": 0,
++                "last_convergence_mutation_full_scans": 0,
++                "last_completion_recovered_integrity_fault": True,
++            }
++            for key, wanted in expected_recheck_completion.items():
++                if recovered_recheck.get(key) != wanted:
++                    fail(
++                        f"recovered payload recheck field {key!r} was "
++                        f"{recovered_recheck.get(key)!r}, expected {wanted!r}: "
++                        f"{json.dumps(recovered_recheck, sort_keys=True)}"
++                    )
++            if recovered_recheck.get("last_hashed_entries", 0) < 1 or (
++                recovered_recheck.get("last_hashed_bytes", 0)
++                < len(source_payload_bytes)
++            ):
++                fail(
++                    "operator recheck did not report a complete current-byte "
++                    f"proof: {json.dumps(recovered_recheck, sort_keys=True)}"
++                )
+             if faulted_status.get("pid") != source.pid or (
+                 recovered_status.get("pid") != source.pid
+             ):
+@@ -1700,17 +1854,20 @@ def main() -> int:
+                 fail("integrity recovery status omitted counters")
+             for field in (
+                 "payload_integrity_faults_observed",
+-                "payload_integrity_reproof_attempts",
+-                "payload_integrity_reproof_recoveries",
++                "payload_recheck_attempts",
++                "payload_recheck_completions",
++                "payload_recheck_integrity_recoveries",
+             ):
+                 if recovery_counters.get(field, 0) < 1:
+                     fail(f"integrity recovery did not account {field}")
++            if recovery_counters.get("payload_recheck_requests_observed", 0) < 2:
++                fail("integrity recovery lost accepted recheck accounting")
++            if recovery_counters.get("payload_recheck_requests_coalesced", 0) < 1:
++                fail("integrity recovery lost recheck coalescing accounting")
++            if recovery_counters.get("payload_recheck_snapshot_handoffs", 0) < 1:
++                fail("integrity recovery did not account the recheck handoff")
+             if recovery_counters.get(
+-                "payload_integrity_reproof_snapshot_handoffs", 0
+-            ) < 1:
+-                fail("integrity recovery did not account the reproof handoff")
+-            if recovery_counters.get(
+-                "payload_integrity_reproof_convergence_snapshot_observations",
++                "payload_recheck_convergence_snapshot_observations",
+                 -1,
+             ) != 0:
+                 fail(
+@@ -1718,7 +1875,7 @@ def main() -> int:
+                     "payload-root observation during convergence"
+                 )
+             if recovery_counters.get(
+-                "payload_integrity_reproof_convergence_mutation_full_scans",
++                "payload_recheck_convergence_mutation_full_scans",
+                 -1,
+             ) != 0:
+                 fail(
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index 7767f8cbc8d10ef2874c1f32839ac14aeb27496e..f18df8100b4cf700f79c8f028960cd22d2126033 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -542,7 +542,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v6"
++                    value.get("schema") == "anonsync.peer-service.status.v7"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/test_anonsync_service_process.py b/tools/test_anonsync_service_process.py
+index 4b7bc402c24e4a84ae2dcfb35ed4125e2b1d98f3..f97abb45dbe6161b2a0a66897f3a50b020d53fc0 100644
+--- a/tools/test_anonsync_service_process.py
++++ b/tools/test_anonsync_service_process.py
+@@ -32,6 +32,7 @@ from test_anonsync_sync_process import (
+     reserve_port,
+     run_json,
+     tree_snapshot,
++    unique_json_object_pairs,
+ )
+ 
+ 
+@@ -96,8 +97,10 @@ def finish_service(
+     if stderr:
+         fail(f"{label} wrote diagnostics on success: {stderr}")
+     try:
+-        value = json.loads(stdout)
+-    except json.JSONDecodeError as error:
++        value = json.loads(
++            stdout, object_pairs_hook=unique_json_object_pairs
++        )
++    except (json.JSONDecodeError, ValueError) as error:
+         fail(f"{label} did not emit one JSON object: {error}: {stdout}")
+     if not isinstance(value, dict):
+         fail(f"{label} JSON is not an object")
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 7511e99086a43c0296f23a6eb841e5cbeaae79b5..dfc92f8a4ecf27469d0cb573297ec655c9043418 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1241,6 +1241,27 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 960:
++        revision_scoped_required.update({
++            "OWNER_TRIGGERED_PAYLOAD_RECHECK_AUDIT_rev0960.md",
++            "REVISION_NOTES_rev0960.md",
++            "src/anonsync_sync.cpp",
++            "src/sync_local_status_socket.hpp",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_file_payload_store.hpp",
++            "src/sync_replica_file_payload_store.cpp",
++            "src/sync_replica_peer_service.hpp",
++            "src/sync_replica_peer_service.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_peer_service_status.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tests/sync_replica_file_payload_store_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/test_anonsync_service_process.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

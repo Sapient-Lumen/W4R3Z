@@ -1,0 +1,1053 @@
+diff --git a/src/sync_replica_file_payload_scrub_state.cpp b/src/sync_replica_file_payload_scrub_state.cpp
+index d72d2849326025593979d6c81f58d02f38ec9026..428a2508a9604525853ef9f5b35f8abb45dfc035 100644
+--- a/src/sync_replica_file_payload_scrub_state.cpp
++++ b/src/sync_replica_file_payload_scrub_state.cpp
+@@ -111,6 +111,7 @@ void validate_state(
+             invalid(label, "idle form contains active progress");
+         }
+         break;
++    case SyncReplicaFilePayloadScrubStateDisposition::Prepared:
+     case SyncReplicaFilePayloadScrubStateDisposition::Progress:
+     case SyncReplicaFilePayloadScrubStateDisposition::IntegrityFailure: {
+         if (!is_lowercase_sha256_hex(state.active_content_sha256)) {
+@@ -130,7 +131,16 @@ void validate_state(
+             invalid(label, "active offset does not match hash progress");
+         }
+         if (state.disposition ==
+-            SyncReplicaFilePayloadScrubStateDisposition::Progress) {
++            SyncReplicaFilePayloadScrubStateDisposition::Prepared) {
++            if (state.active_offset_bytes != 0U ||
++                state.active_hash != initial_hash_checkpoint()) {
++                invalid(label, "prepared form is not at the initial cutpoint");
++            }
++            if (!state.observed_content_sha256.empty()) {
++                invalid(label, "prepared form contains a terminal digest");
++            }
++        } else if (state.disposition ==
++                   SyncReplicaFilePayloadScrubStateDisposition::Progress) {
+             if (state.active_offset_bytes == 0U ||
+                 state.active_offset_bytes >= state.active_metadata.size_bytes) {
+                 invalid(label, "contains a non-progressing active extent");
+diff --git a/src/sync_replica_file_payload_scrub_state.hpp b/src/sync_replica_file_payload_scrub_state.hpp
+index b5352029938525dabe09f168b870eef780728d49..8e26684f1b58fe8160047c48d3a571c69cddebc0 100644
+--- a/src/sync_replica_file_payload_scrub_state.hpp
++++ b/src/sync_replica_file_payload_scrub_state.hpp
+@@ -19,6 +19,11 @@ enum class SyncReplicaFilePayloadScrubStateDisposition : std::uint8_t {
+     Idle = 1,
+     Progress = 2,
+     IntegrityFailure = 3,
++    // Durable write-ahead intent published before the first byte of a newly
++    // selected payload is read. Keeping the new value after the established
++    // v1 values preserves old Idle/Progress/IntegrityFailure encodings while
++    // making an interrupted read conservatively visible after restart.
++    Prepared = 4,
+ };
+ 
+ // One checksum-framed continuation for the rotating payload-byte scrub. This
+@@ -37,10 +42,11 @@ struct SyncReplicaFilePayloadScrubState final {
+     // first lexicographic payload identity.
+     std::string cursor_after_content_sha256;
+ 
+-    // Progress/IntegrityFailure only. The exact metadata freezes the file that
+-    // contributed every byte in active_hash. Progress requires
+-    // 0 < active_offset_bytes < size. IntegrityFailure requires exact completion
+-    // and an observed digest different from the basename.
++    // Prepared/Progress/IntegrityFailure only. The exact metadata freezes the
++    // file selected for the read. Prepared is the durable write-ahead form and
++    // requires offset zero plus the initial SHA-256 checkpoint. Progress
++    // requires 0 < active_offset_bytes < size. IntegrityFailure requires exact
++    // completion and an observed digest different from the basename.
+     std::string active_content_sha256;
+     SyncPosixRegularFileSnapshotMetadata active_metadata;
+     std::uint64_t active_offset_bytes = 0U;
+diff --git a/src/sync_replica_file_payload_store.cpp b/src/sync_replica_file_payload_store.cpp
+index 7135169e0194a4151310a08e06306170cd8eec3b..7c325d4298caac9ec2c5f709b60696265f092c3e 100755
+--- a/src/sync_replica_file_payload_store.cpp
++++ b/src/sync_replica_file_payload_store.cpp
+@@ -310,6 +310,35 @@ static_assert(noexcept(
+     std::declval<std::optional<ProcessIntegrityFaultObservation>&>() =
+         std::declval<const ProcessIntegrityFaultObservation&>()));
+ 
++// Same-process proof for one exact durable Prepared/Progress record. It is
++// installed either when this owner publishes and re-observes the record or when
++// this owner completes a current-byte scan while that exact record and file
++// observation are frozen by the shared lease. A fresh process begins without
++// this witness and must hash the active payload before it may trust any
++// metadata-only checkpoint. The fixed-width form is deliberately allocation-
++// free; exact scrub-state-file metadata prevents another process's replacement
++// from borrowing this owner's acceleration.
++struct ProcessScrubActiveObservation final {
++    std::array<char, kSha256HexCharacters> active_content_sha256{};
++    std::uint64_t state_generation = 0U;
++    SyncReplicaFilePayloadScrubStateDisposition disposition =
++        SyncReplicaFilePayloadScrubStateDisposition::Prepared;
++    SyncPosixRegularFileSnapshotMetadata active_metadata;
++    std::uint64_t active_offset_bytes = 0U;
++    ResumableSha256Checkpoint active_hash;
++    SyncPosixRegularFileSnapshotMetadata scrub_state_metadata;
++
++    [[nodiscard]] std::string_view active_digest() const noexcept {
++        return {active_content_sha256.data(),
++                active_content_sha256.size()};
++    }
++};
++
++static_assert(std::is_trivially_copyable_v<ProcessScrubActiveObservation>);
++static_assert(noexcept(
++    std::declval<std::optional<ProcessScrubActiveObservation>&>() =
++        std::declval<const ProcessScrubActiveObservation&>()));
++
+ [[nodiscard]] bool copy_exact_lowercase_sha256_hex(
+     std::string_view source,
+     std::array<char, kSha256HexCharacters>& destination) noexcept {
+@@ -336,8 +365,70 @@ struct PayloadVerificationCache final {
+     std::optional<ProcessIntegrityFaultObservation> integrity_fault;
+     std::optional<ProcessIntegrityFaultObservation>
+         most_recent_integrity_fault;
++    std::optional<ProcessScrubActiveObservation> scrub_active;
+ };
+ 
++[[nodiscard]] bool scrub_state_is_active(
++    const SyncReplicaFilePayloadScrubState& state) noexcept {
++    return state.disposition ==
++               SyncReplicaFilePayloadScrubStateDisposition::Prepared ||
++           state.disposition ==
++               SyncReplicaFilePayloadScrubStateDisposition::Progress;
++}
++
++[[nodiscard]] bool retain_process_scrub_active_observation(
++    PayloadVerificationCache& cache,
++    const SyncReplicaFilePayloadScrubState& state,
++    const SyncPosixRegularFileSnapshotMetadata& state_metadata) noexcept {
++    if (!scrub_state_is_active(state)) {
++        cache.scrub_active.reset();
++        return false;
++    }
++    ProcessScrubActiveObservation observation;
++    if (!copy_exact_lowercase_sha256_hex(
++            state.active_content_sha256,
++            observation.active_content_sha256)) {
++        cache.scrub_active.reset();
++        return false;
++    }
++    observation.state_generation = state.generation;
++    observation.disposition = state.disposition;
++    observation.active_metadata = state.active_metadata;
++    observation.active_offset_bytes = state.active_offset_bytes;
++    observation.active_hash = state.active_hash;
++    observation.scrub_state_metadata = state_metadata;
++    cache.scrub_active = observation;
++    return true;
++}
++
++[[nodiscard]] bool process_scrub_active_observation_matches(
++    const PayloadVerificationCache& cache,
++    const SyncReplicaFilePayloadScrubState& state,
++    const SyncPosixRegularFileSnapshotMetadata& state_metadata) noexcept {
++    if (!scrub_state_is_active(state) || !cache.scrub_active.has_value()) {
++        return false;
++    }
++    const ProcessScrubActiveObservation& observation = *cache.scrub_active;
++    return observation.active_digest() == state.active_content_sha256 &&
++           observation.state_generation == state.generation &&
++           observation.disposition == state.disposition &&
++           observation.active_metadata == state.active_metadata &&
++           observation.active_offset_bytes == state.active_offset_bytes &&
++           observation.active_hash == state.active_hash &&
++           observation.scrub_state_metadata == state_metadata;
++}
++
++void note_process_scrub_state_observation(
++    PayloadVerificationCache& cache,
++    const SyncReplicaFilePayloadScrubState* state,
++    const SyncPosixRegularFileSnapshotMetadata* state_metadata) noexcept {
++    if (state == nullptr || state_metadata == nullptr ||
++        !retain_process_scrub_active_observation(
++            cache, *state, *state_metadata)) {
++        cache.scrub_active.reset();
++    }
++}
++
+ [[nodiscard]] bool retain_process_integrity_fault(
+     PayloadVerificationCache& cache,
+     std::string_view expected_content_sha256,
+@@ -2228,6 +2319,17 @@ void acquire_flock_nonblocking_or_throw(
+                 scrub_failure_targets_payload &&
+                 sync_posix_regular_file_snapshot_metadata_matches_status(
+                     scrub_state.state->active_metadata, opened.status);
++            const bool scrub_active_targets_payload =
++                scrub_state.usable && scrub_state.state.has_value() &&
++                scrub_state_is_active(*scrub_state.state) &&
++                scrub_state.state->active_content_sha256 == basename;
++            const bool exact_same_process_scrub_active =
++                scrub_active_targets_payload &&
++                verification_cache != nullptr &&
++                scrub_state.metadata.has_value() &&
++                process_scrub_active_observation_matches(
++                    *verification_cache, *scrub_state.state,
++                    *scrub_state.metadata);
+             const bool process_integrity_fault_targets_payload =
+                 verification_cache != nullptr &&
+                 verification_cache->integrity_fault.has_value() &&
+@@ -2237,19 +2339,23 @@ void acquire_flock_nonblocking_or_throw(
+                 matching_scrub_failure ||
+                 process_integrity_fault_targets_payload;
+             // Neither a checksum-framed durable failure record nor a
+-            // process-local observed mismatch is content authority. Force a
+-            // complete current-byte proof instead of allowing either warm
+-            // metadata cache to perpetuate or falsely clear that failure. The
+-            // process-local witness intentionally survives metadata changes:
+-            // only current good bytes or absence can clear observed corruption.
++            // process-local observed mismatch is content authority. Likewise,
++            // Prepared/Progress is a write-ahead crash witness, not proof that
++            // the selected bytes were good. A matching same-process witness may
++            // reuse only the exact process cache; a fresh process or a replaced
++            // state file must hash, and durable checkpoint reuse is forbidden
++            // for every active target.
+             const bool exact_process_observation =
+                 !current_failure_requires_hash &&
++                (!scrub_active_targets_payload ||
++                 exact_same_process_scrub_active) &&
+                 process_verified != nullptr &&
+                 process_verified->size_bytes == size_bytes &&
+                 same_regular_file_observation(
+                     process_verified->status, opened.status);
+             const bool exact_durable_observation =
+                 !current_failure_requires_hash &&
++                !scrub_active_targets_payload &&
+                 durable_verified != nullptr &&
+                 durable_verified->metadata.size_bytes == size_bytes &&
+                 sync_posix_regular_file_snapshot_metadata_matches_status(
+@@ -2710,6 +2816,17 @@ void acquire_flock_nonblocking_or_throw(
+             // fail-closed witness.
+             verification_cache->integrity_fault.reset();
+         }
++        // A complete successful scan has now proved the active target's current
++        // bytes (or its absence). Retain exact same-process acceleration only
++        // for the precise state-file inode/metadata instance just observed.
++        note_process_scrub_state_observation(
++            *verification_cache,
++            out.scrub_state_usable && out.scrub_state.has_value()
++                ? &*out.scrub_state
++                : nullptr,
++            out.scrub_state_metadata.has_value()
++                ? &*out.scrub_state_metadata
++                : nullptr);
+     }
+     return out;
+ }
+@@ -3743,8 +3860,7 @@ void clear_payload_scrub_active(
+     if (state != nullptr) {
+         report.completed_cycles = state->completed_cycles;
+         report.state_generation = state->generation;
+-        if (state->disposition ==
+-            SyncReplicaFilePayloadScrubStateDisposition::Progress) {
++        if (scrub_state_is_active(*state)) {
+             report.active_content_sha256 = state->active_content_sha256;
+             report.active_offset_bytes = state->active_offset_bytes;
+         }
+@@ -3752,7 +3868,8 @@ void clear_payload_scrub_active(
+     return report;
+ }
+ 
+-[[nodiscard]] bool publish_payload_scrub_state_with_reconciliation(
++[[nodiscard]] std::optional<SyncPosixRegularFileSnapshotMetadata>
++publish_payload_scrub_state_with_reconciliation(
+     const SyncDirectoryAuthority& root_authority,
+     int root_descriptor,
+     SyncPosixDirectoryResolutionCapability resolution_capability,
+@@ -3763,6 +3880,25 @@ void clear_payload_scrub_active(
+     const ScrubStateFileObservation& current,
+     const SyncReplicaFilePayloadScrubState& desired,
+     const std::string& label) noexcept {
++    const auto observe_exact_committed = [&]()
++        -> std::optional<SyncPosixRegularFileSnapshotMetadata> {
++        const ScrubStateFileObservation observed =
++            observe_scrub_state_file_or_throw(
++                root_descriptor, root_authority.path(),
++                resolution_capability, mount_identity,
++                root_authority.attestation(), limits, expected_identity,
++                &lease.identity_status(), true,
++                label + " committed-state observation");
++        lease.verify_or_throw(
++            root_authority, label + " committed-state lease cutpoint");
++        if (!observed.usable || !observed.state.has_value() ||
++            !observed.metadata.has_value() ||
++            *observed.state != desired) {
++            return std::nullopt;
++        }
++        return observed.metadata;
++    };
++
+     try {
+         const std::string encoded =
+             serialize_sync_replica_file_payload_scrub_state_or_throw(
+@@ -3785,26 +3921,17 @@ void clear_payload_scrub_active(
+                 byte_span(encoded), label);
+         }
+         lease.verify_or_throw(
+-            root_authority, label + " final lease cutpoint");
+-        return true;
++            root_authority, label + " postpublication lease cutpoint");
++        return observe_exact_committed();
+     } catch (...) {
+-        // Atomic publication may report an exception after the rename cutpoint.
+-        // Re-read the exact checksum-framed record under the still-live
+-        // exclusive lease so committed progress is not needlessly repeated.
++        // Atomic publication may report an exception after the rename cutpoint,
++        // or exact re-observation itself may fail transiently. Reconcile under
++        // the still-live exclusive lease; only an exact checksum-framed record
++        // equal to desired authorizes the caller to read payload bytes.
+         try {
+-            const ScrubStateFileObservation reconciled =
+-                observe_scrub_state_file_or_throw(
+-                    root_descriptor, root_authority.path(),
+-                    resolution_capability, mount_identity,
+-                    root_authority.attestation(), limits, expected_identity,
+-                    &lease.identity_status(), true,
+-                    label + " reconciliation");
+-            lease.verify_or_throw(
+-                root_authority, label + " reconciliation lease cutpoint");
+-            return reconciled.usable && reconciled.state.has_value() &&
+-                   *reconciled.state == desired;
++            return observe_exact_committed();
+         } catch (...) {
+-            return false;
++            return std::nullopt;
+         }
+     }
+ }
+@@ -3854,7 +3981,7 @@ advance_payload_scrub_from_snapshot_or_throw(
+             nullptr);
+     }
+ 
+-    const ScrubStateFileObservation current =
++    ScrubStateFileObservation current =
+         observe_scrub_state_file_or_throw(
+             root_descriptor.get(), scrub_root.path(), resolution_capability,
+             mount_identity, scrub_root.attestation(), limits,
+@@ -3898,9 +4025,32 @@ advance_payload_scrub_from_snapshot_or_throw(
+     bool state_rebuilt = current.present && !current.usable;
+     bool reverified_failure_cleared = false;
+ 
++    // Every committed transition is re-observed under the exact exclusive
++    // lease. This mutable observation then becomes the compare-and-replace
++    // source for the next transition in the same bounded attempt. The
++    // same-process active witness is retained before any potentially allocating
++    // copy into current.state; a failure after commit is therefore safe and the
++    // durable Prepared/Progress record remains conservative across restart.
++    const auto publish_working = [&](const std::string& publication_label) {
++        working.generation =
++            next_scrub_generation_or_throw(current, publication_label);
++        const std::optional<SyncPosixRegularFileSnapshotMetadata> committed =
++            publish_payload_scrub_state_with_reconciliation(
++                scrub_root, root_descriptor.get(), resolution_capability,
++                mount_identity, limits, expected_identity, lease, current,
++                working, publication_label);
++        if (!committed.has_value()) return false;
++        note_process_scrub_state_observation(
++            verification_cache, &working, &*committed);
++        current.present = true;
++        current.usable = true;
++        current.metadata = *committed;
++        current.state = working;
++        return true;
++    };
++
+     if (current.usable) {
+-        if (working.disposition ==
+-            SyncReplicaFilePayloadScrubStateDisposition::Progress) {
++        if (scrub_state_is_active(working)) {
+             const PayloadIndexEntry* active = find_entry(
+                 snapshot.entries, working.active_content_sha256);
+             if (active == nullptr ||
+@@ -3956,11 +4106,8 @@ advance_payload_scrub_from_snapshot_or_throw(
+         clear_payload_scrub_active(working);
+         working.cursor_after_content_sha256.clear();
+         working.completed_cycles = 0U;
+-        working.generation = next_scrub_generation_or_throw(current, label);
+-        const bool published = publish_payload_scrub_state_with_reconciliation(
+-            scrub_root, root_descriptor.get(), resolution_capability,
+-            mount_identity, limits, expected_identity, lease, current,
+-            working, label + " empty-state publication");
++        const bool published = publish_working(
++            label + " empty-state publication");
+         return scrub_report_from_state(
+             published
+                 ? SyncReplicaFilePayloadStoreScrubDisposition::Empty
+@@ -3971,11 +4118,8 @@ advance_payload_scrub_from_snapshot_or_throw(
+     }
+ 
+     if (reverified_failure_cleared) {
+-        working.generation = next_scrub_generation_or_throw(current, label);
+-        const bool published = publish_payload_scrub_state_with_reconciliation(
+-            scrub_root, root_descriptor.get(), resolution_capability,
+-            mount_identity, limits, expected_identity, lease, current,
+-            working, label + " reverified-failure publication");
++        const bool published = publish_working(
++            label + " reverified-failure publication");
+         SyncReplicaFilePayloadStoreScrubReport report =
+             scrub_report_from_state(
+                 published
+@@ -4003,8 +4147,7 @@ advance_payload_scrub_from_snapshot_or_throw(
+ 
+     while (report.touched_entry_count < distinct_limit) {
+         const PayloadIndexEntry* active = nullptr;
+-        if (working.disposition ==
+-            SyncReplicaFilePayloadScrubStateDisposition::Progress) {
++        if (scrub_state_is_active(working)) {
+             active = find_entry(
+                 snapshot.entries, working.active_content_sha256);
+             if (active == nullptr) {
+@@ -4038,8 +4181,14 @@ advance_payload_scrub_from_snapshot_or_throw(
+                     limits.max_scrub_bytes_per_attempt) {
+                 break;
+             }
++
++            // Write-ahead rule: persist and re-observe the exact selected
++            // inode/metadata before opening or reading even one byte. If this
++            // process dies after the read begins but before terminal failure or
++            // progress publication, a fresh process sees Prepared and cannot
++            // reuse the durable metadata checkpoint for this payload.
+             working.disposition =
+-                SyncReplicaFilePayloadScrubStateDisposition::Progress;
++                SyncReplicaFilePayloadScrubStateDisposition::Prepared;
+             working.active_content_sha256 = selected->content_sha256;
+             working.active_metadata =
+                 sync_posix_regular_file_snapshot_metadata_from_status_or_throw(
+@@ -4049,6 +4198,18 @@ advance_payload_scrub_from_snapshot_or_throw(
+             working.active_offset_bytes = 0U;
+             working.active_hash = ResumableSha256{}.checkpoint();
+             working.observed_content_sha256.clear();
++            if (!publish_working(label + " write-ahead intent publication")) {
++                SyncReplicaFilePayloadStoreScrubReport deferred =
++                    scrub_report_from_state(
++                        SyncReplicaFilePayloadStoreScrubDisposition::
++                            DeferredPublicationFailure,
++                        current.usable ? &*current.state : nullptr,
++                        state_rebuilt);
++                deferred.hashed_bytes = report.hashed_bytes;
++                deferred.touched_entry_count = report.touched_entry_count;
++                deferred.completed_entry_count = report.completed_entry_count;
++                return deferred;
++            }
+             active = &*selected;
+         }
+ 
+@@ -4134,6 +4295,8 @@ advance_payload_scrub_from_snapshot_or_throw(
+             scrub_root, label + " payload-read lease cutpoint");
+ 
+         if (working.active_offset_bytes != active->size_bytes) {
++            working.disposition =
++                SyncReplicaFilePayloadScrubStateDisposition::Progress;
+             break;
+         }
+ 
+@@ -4146,24 +4309,20 @@ advance_payload_scrub_from_snapshot_or_throw(
+         if (observed != active->content_sha256) {
+             // This is the first exact point at which current bytes are known to
+             // disagree with their immutable digest name. Revoke every older
+-            // snapshot before assigning strings, serializing durable evidence,
+-            // or constructing the typed exception: all of those later steps
+-            // may allocate or fail independently. The fixed-width witness and
+-            // epoch transition are noexcept, so a post-detection failure can
+-            // never be downgraded to an optional scrub deferral.
++            // snapshot and drop the same-process active acceleration before
++            // assigning strings, serializing durable evidence, or constructing
++            // the typed exception. If any later allocation/publication fails,
++            // the already committed Prepared/Progress state remains a durable
++            // restart fence and the fixed-width process fault remains fail-closed.
+             (void)retain_process_integrity_fault(
+                 verification_cache, active->content_sha256, observed);
++            verification_cache.scrub_active.reset();
+             working.disposition =
+                 SyncReplicaFilePayloadScrubStateDisposition::
+                     IntegrityFailure;
+             working.observed_content_sha256 = observed;
+-            working.generation =
+-                next_scrub_generation_or_throw(current, label);
+-            const bool persisted =
+-                publish_payload_scrub_state_with_reconciliation(
+-                    scrub_root, root_descriptor.get(), resolution_capability,
+-                    mount_identity, limits, expected_identity, lease, current,
+-                    working, label + " failure publication");
++            const bool persisted = publish_working(
++                label + " failure publication");
+             throw SyncReplicaFilePayloadStoreIntegrityError(
+                 active->content_sha256, std::string(observed), persisted,
+                 label + " detected a payload-byte integrity mismatch for " +
+@@ -4182,10 +4341,7 @@ advance_payload_scrub_from_snapshot_or_throw(
+     // one payload or stop only after an earlier completed file exhausted the
+     // byte budget. In both cases the resulting cursor/progress is worth one
+     // durable publication.
+-    working.generation = next_scrub_generation_or_throw(current, label);
+-    const bool published = publish_payload_scrub_state_with_reconciliation(
+-        scrub_root, root_descriptor.get(), resolution_capability,
+-        mount_identity, limits, expected_identity, lease, current, working,
++    const bool published = publish_working(
+         label + " progress publication");
+     if (!published) {
+         SyncReplicaFilePayloadStoreScrubReport deferred =
+@@ -4201,8 +4357,7 @@ advance_payload_scrub_from_snapshot_or_throw(
+ 
+     report.completed_cycles = working.completed_cycles;
+     report.state_generation = working.generation;
+-    if (working.disposition ==
+-        SyncReplicaFilePayloadScrubStateDisposition::Progress) {
++    if (scrub_state_is_active(working)) {
+         report.active_content_sha256 = working.active_content_sha256;
+         report.active_offset_bytes = working.active_offset_bytes;
+     }
+diff --git a/tests/sync_replica_file_payload_scrub_state_test.cpp b/tests/sync_replica_file_payload_scrub_state_test.cpp
+index 4dded83cd14198a71c59162b78f6d51112672702..a5cdab4bfdb89558418fbea227d66cb9db6e5b64 100644
+--- a/tests/sync_replica_file_payload_scrub_state_test.cpp
++++ b/tests/sync_replica_file_payload_scrub_state_test.cpp
+@@ -96,6 +96,27 @@ void test_idle_round_trip() {
+         "scrub-state basename drifted");
+ }
+ 
++void test_prepared_round_trip() {
++    auto prepared = initial();
++    prepared.generation = 5U;
++    prepared.completed_cycles = 2U;
++    prepared.cursor_after_content_sha256 = anonsync::sha256_hex("previous");
++    prepared.disposition =
++        anonsync::SyncReplicaFilePayloadScrubStateDisposition::Prepared;
++    prepared.active_content_sha256 = anonsync::sha256_hex("");
++    prepared.active_metadata = metadata(600U, 0U, 10);
++    prepared.active_offset_bytes = 0U;
++    prepared.active_hash = anonsync::ResumableSha256{}.checkpoint();
++
++    const std::string encoded =
++        anonsync::serialize_sync_replica_file_payload_scrub_state_or_throw(
++            prepared, 1024U, "prepared scrub state");
++    require(
++        anonsync::parse_sync_replica_file_payload_scrub_state_or_throw(
++            encoded, 1024U, "prepared scrub state") == prepared,
++        "prepared scrub-state round trip changed fields");
++}
++
+ void test_progress_and_failure_round_trip() {
+     auto progress = initial();
+     progress.generation = 7U;
+@@ -197,6 +218,34 @@ void test_semantic_rejection() {
+         "idle form",
+         "idle scrub state retained active progress");
+ 
++    auto prepared = initial();
++    prepared.disposition =
++        anonsync::SyncReplicaFilePayloadScrubStateDisposition::Prepared;
++    prepared.active_content_sha256 = anonsync::sha256_hex("payload");
++    prepared.active_metadata = metadata(601U, 7U, 14);
++    anonsync::ResumableSha256 prepared_after_byte;
++    prepared_after_byte.update("p");
++    prepared.active_hash = prepared_after_byte.checkpoint();
++    prepared.active_offset_bytes = 1U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_scrub_state_or_throw(
++                prepared, 1024U, "advanced prepared scrub state");
++        },
++        "initial cutpoint",
++        "prepared state with consumed bytes was accepted");
++
++    prepared.active_hash = anonsync::ResumableSha256{}.checkpoint();
++    prepared.active_offset_bytes = 0U;
++    prepared.observed_content_sha256 = anonsync::sha256_hex("premature");
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_scrub_state_or_throw(
++                prepared, 1024U, "terminal prepared scrub state");
++        },
++        "terminal digest",
++        "prepared state retained a terminal digest");
++
+     auto progress = initial();
+     progress.disposition =
+         anonsync::SyncReplicaFilePayloadScrubStateDisposition::Progress;
+@@ -267,6 +316,7 @@ void test_semantic_rejection() {
+ int main() {
+     try {
+         test_idle_round_trip();
++        test_prepared_round_trip();
+         test_progress_and_failure_round_trip();
+         test_checksum_and_framing_rejection();
+         test_semantic_rejection();
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index e624c590beaf4d19ba784746c4a2315b9f680297..6c9316099d87dec14b1f9d7c6dd888cec8958a77 100755
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -1837,12 +1837,15 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+         const auto throttled = owner.snapshot_or_throw();
+         require(
+             throttled.snapshot_digest() == canonical_snapshot_digest &&
++                throttled.scan_hashed_entry_count() == 0U &&
++                throttled.scan_process_reused_entry_count() == 1U &&
++                throttled.scan_durable_reused_entry_count() == 0U &&
+                 throttled.scrub_report().disposition ==
+                     anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
+                         DeferredBySchedule &&
+                 throttled.scrub_report().active_offset_bytes == 10U &&
+                 read_file_bytes(scrub_state_path) == state_before_throttle,
+-            "same-owner scrub scheduling repeated work before its deadline");
++            "same-owner active-scrub witness did not preserve exact process-cache reuse");
+         const auto throttled_status = owner.scrub_status();
+         require(
+             throttled_status.last_report == throttled.scrub_report() &&
+@@ -1856,6 +1859,7 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+                                  std::uint64_t expected_hashed_bytes,
+                                  std::uint64_t expected_completed,
+                                  std::uint64_t expected_cycles,
++                                 std::uint64_t expected_scan_hashed_entries,
+                                  const std::string& label) {
+         anonsync::SyncReplicaFilePayloadStore restarted(
+             folder, root,
+@@ -1866,6 +1870,11 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+             snapshot.snapshot_digest() == canonical_snapshot_digest &&
+                 snapshot.entry_count() == 1U &&
+                 snapshot.transient_entry_count() == 0U &&
++                snapshot.scan_hashed_entry_count() ==
++                    expected_scan_hashed_entries &&
++                snapshot.scan_durable_reused_entry_count() ==
++                    (1U - expected_scan_hashed_entries) &&
++                snapshot.scan_process_reused_entry_count() == 0U &&
+                 snapshot.scrub_report().disposition ==
+                     anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
+                         Advanced &&
+@@ -1878,9 +1887,9 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+             label + " did not resume the exact durable scrub cutpoint");
+     };
+ 
+-    resume_once(20U, 10U, 0U, 0U, "rotating scrub restart two");
+-    resume_once(30U, 10U, 0U, 0U, "rotating scrub restart three");
+-    resume_once(0U, 7U, 1U, 0U, "rotating scrub restart completion");
++    resume_once(20U, 10U, 0U, 0U, 1U, "rotating scrub restart two");
++    resume_once(30U, 10U, 0U, 0U, 1U, "rotating scrub restart three");
++    resume_once(0U, 7U, 1U, 0U, 1U, "rotating scrub restart completion");
+     const auto completed = read_scrub_state_or_fail(
+         root, limits.max_payload_bytes, "completed rotating scrub state");
+     require(
+@@ -1890,7 +1899,7 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+             completed.completed_cycles == 0U,
+         "completed rotating scrub did not retain its fair cursor");
+ 
+-    resume_once(10U, 10U, 0U, 1U, "rotating scrub next cycle");
++    resume_once(10U, 10U, 0U, 1U, 0U, "rotating scrub next cycle");
+     const std::string state_before_inspection = read_file_bytes(scrub_state_path);
+     anonsync::SyncReplicaFilePayloadStore inspector(
+         folder, root,
+@@ -2445,6 +2454,65 @@ void test_process_fault_preserves_original_target_across_second_mismatch() {
+         "multi-fault reproof did not restore exact warm metadata reuse");
+ }
+ 
++void test_prepared_scrub_state_forces_restart_reproof_before_blocked_optional_attempt() {
++    TemporaryDirectory temporary;
++    const MetadataHiddenCorruptionFixture fixture =
++        make_metadata_hidden_corruption_fixture(temporary, 9000U);
++    const fs::path identity_path =
++        fixture.root / ".anonsync-payload-store-identity-v2";
++    const fs::path state_path =
++        fixture.root /
++        std::string(anonsync::kSyncReplicaFilePayloadScrubStateBasename);
++    const fs::path payload_path = fixture.root / fixture.expected_digest;
++
++    auto prepared =
++        anonsync::initial_sync_replica_file_payload_scrub_state_or_throw(
++            anonsync::sha256_hex(read_file_bytes(identity_path)),
++            private_file_metadata(
++                identity_path, "prepared-restart identity metadata"),
++            "prepared-restart state");
++    prepared.disposition =
++        anonsync::SyncReplicaFilePayloadScrubStateDisposition::Prepared;
++    prepared.active_content_sha256 = fixture.expected_digest;
++    prepared.active_metadata = private_file_metadata(
++        payload_path, "prepared-restart payload metadata");
++    prepared.active_offset_bytes = 0U;
++    prepared.active_hash = anonsync::ResumableSha256{}.checkpoint();
++    prepared.observed_content_sha256.clear();
++    write_private_file(
++        state_path,
++        anonsync::serialize_sync_replica_file_payload_scrub_state_or_throw(
++            prepared, fixture.limits.max_payload_bytes,
++            "prepared-restart state"));
++
++    // Model a detector process that died after its write-ahead publication but
++    // before it could publish terminal failure. A cooperative reader holds a
++    // shared flock: the fresh owner can complete its ordinary shared scan, but
++    // its optional exclusive scrub attempt is mechanically unavailable. The
++    // scan itself must therefore reject the forged metadata checkpoint and
++    // hash the active payload before returning any authority.
++    ChildHeldFileLock shared_holder(
++        identity_path, LOCK_SH, temporary.path(),
++        "prepared-restart-fence");
++    {
++        anonsync::SyncReplicaFilePayloadStore restarted(
++            fixture.folder, fixture.root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            fixture.limits, "prepared-restart detector");
++        require_integrity_error(
++            [&] { (void)restarted.snapshot_or_throw(); },
++            fixture.expected_digest, fixture.observed_digest, false,
++            "durable Prepared intent did not force restart current-byte reproof");
++    }
++    require(
++        read_scrub_state_or_fail(
++            fixture.root, fixture.limits.max_payload_bytes,
++            "prepared-restart retained state").disposition ==
++            anonsync::SyncReplicaFilePayloadScrubStateDisposition::Prepared,
++        "restart reproof mutated the write-ahead intent before optional scrub authority was available");
++    shared_holder.release_and_wait_or_fail();
++}
++
+ void test_allocation_failure_after_scrub_mismatch_remains_fail_closed() {
+     TemporaryDirectory temporary;
+ 
+@@ -3925,6 +3993,7 @@ int main() {
+         test_process_fault_survives_scrub_record_loss_until_reproof();
+         test_process_fault_permanently_revokes_live_snapshot_authority();
+         test_process_fault_preserves_original_target_across_second_mismatch();
++        test_prepared_scrub_state_forces_restart_reproof_before_blocked_optional_attempt();
+         test_allocation_failure_after_scrub_mismatch_remains_fail_closed();
+         test_scrub_defers_under_capacity_and_cooperative_contention();
+         test_publication_restart_and_exact_lookup();
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 2fb159831c4bb71dd6b16a926dd97acc4de9b5e0..a731a927bf2bed45f87cdabfbc5ceb968d56af0f 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -105,6 +105,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0956.md"),
+     Path("PAYLOAD_REPROOF_HANDOFF_AND_EXACT_OWNER_AUDIT_rev0957.md"),
+     Path("REVISION_NOTES_rev0957.md"),
++    Path("SCRUB_WRITE_AHEAD_RESTART_FENCE_AUDIT_rev0958.md"),
++    Path("REVISION_NOTES_rev0958.md"),
+ )
+ 
+ 
+@@ -323,6 +325,10 @@ def main() -> int:
+         "PAYLOAD_REPROOF_HANDOFF_AND_EXACT_OWNER_AUDIT_rev0957.md"
+     ]
+     rev0957_notes = text["REVISION_NOTES_rev0957.md"]
++    scrub_restart_fence_design = text[
++        "SCRUB_WRITE_AHEAD_RESTART_FENCE_AUDIT_rev0958.md"
++    ]
++    rev0958_notes = text["REVISION_NOTES_rev0958.md"]
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     store_sources = cmake_call(
+@@ -3029,6 +3035,16 @@ def main() -> int:
+     scrub_advance = function_body(
+         store, "advance_payload_scrub_from_snapshot_or_throw("
+     )
++    scrub_publish = function_body(
++        store, "publish_payload_scrub_state_with_reconciliation("
++    )
++    scrub_state_validate = function_body(scrub_state, "void validate_state(")
++    process_scrub_retain = function_body(
++        store, "retain_process_scrub_active_observation("
++    )
++    process_scrub_match = function_body(
++        store, "process_scrub_active_observation_matches("
++    )
+     snapshot_body = function_body(
+         store, "SyncReplicaFilePayloadStore::snapshot_or_throw() const"
+     )
+@@ -3191,7 +3207,7 @@ def main() -> int:
+             token in runtime
+             for token in (
+                 "first rotating scrub progress was not durably resumable",
+-                "same-owner scrub scheduling repeated work before its deadline",
++                "same-owner active-scrub witness did not preserve exact process-cache reuse",
+                 "rotating scrub restart two",
+                 "rotating scrub restart three",
+                 "rotating scrub restart completion",
+@@ -3481,8 +3497,9 @@ def main() -> int:
+             scrub_advance,
+             "finish_hex_array",
+             "retain_process_integrity_fault(",
++            "verification_cache.scrub_active.reset()",
+             "working.observed_content_sha256 = observed",
+-            "publish_payload_scrub_state_with_reconciliation(",
++            "const bool persisted = publish_working(",
+             "throw SyncReplicaFilePayloadStoreIntegrityError(",
+         )
+         and ordered(
+@@ -4232,6 +4249,256 @@ def main() -> int:
+         "the release documents exact-owner cutpoint reuse, hard mechanical proof, pair-scoped evidence, asynchronous readiness, research precedents, and explicit product gaps",
+     )
+ 
++
++    require(
++        all(
++            token in scrub_state_h
++            for token in (
++                "Idle = 1",
++                "Progress = 2",
++                "IntegrityFailure = 3",
++                "Prepared = 4",
++                "Durable write-ahead intent",
++                "Prepared/Progress/IntegrityFailure only",
++            )
++        )
++        and all(
++            token in scrub_state_validate
++            for token in (
++                "SyncReplicaFilePayloadScrubStateDisposition::Prepared",
++                "state.active_offset_bytes != 0U",
++                "state.active_hash != initial_hash_checkpoint()",
++                "prepared form is not at the initial cutpoint",
++                "prepared form contains a terminal digest",
++            )
++        )
++        and all(
++            token in scrub_state_runtime
++            for token in (
++                "test_prepared_round_trip",
++                "prepared scrub-state round trip changed fields",
++                "prepared state with consumed bytes was accepted",
++                "prepared state retained a terminal digest",
++            )
++        ),
++        "prepared_scrub_state_is_canonical_zero_offset_write_ahead_intent",
++        "the fixed-width state format retains prior encodings and admits exactly one zero-byte-progress active form before a newly selected payload read",
++    )
++
++    require(
++        "std::optional<SyncPosixRegularFileSnapshotMetadata>" in scrub_publish
++        and all(
++            token in scrub_publish
++            for token in (
++                "observe_exact_committed",
++                "observe_scrub_state_file_or_throw",
++                "committed-state lease cutpoint",
++                "*observed.state != desired",
++                "return observed.metadata",
++                "return observe_exact_committed()",
++                "return std::nullopt",
++                "equal to desired authorizes the caller to read payload bytes",
++            )
++        )
++        and ordered(
++            scrub_publish,
++            "serialize_sync_replica_file_payload_scrub_state_or_throw",
++            "prepublication lease cutpoint",
++            "write_sync_file_atomically_",
++            "postpublication lease cutpoint",
++            "return observe_exact_committed()",
++        ),
++        "scrub_publication_returns_exact_reobserved_committed_metadata",
++        "normal publication and rename-cutpoint reconciliation authorize later byte reads only after exact parsed state and state-file metadata are observed under the live lease",
++    )
++
++    require(
++        all(
++            token in scrub_advance
++            for token in (
++                "const auto publish_working",
++                "next_scrub_generation_or_throw",
++                "publish_payload_scrub_state_with_reconciliation",
++                "note_process_scrub_state_observation",
++                "write-ahead intent publication",
++                "DeferredPublicationFailure",
++                "open_store_file_or_throw",
++                "::pread(",
++            )
++        )
++        and ordered(
++            scrub_advance,
++            "SyncReplicaFilePayloadScrubStateDisposition::Prepared",
++            "working.active_offset_bytes = 0U",
++            "working.active_hash = ResumableSha256{}.checkpoint()",
++            "write-ahead intent publication",
++            "active = &*selected",
++            "open_store_file_or_throw",
++            "::pread(",
++        ),
++        "new_scrub_target_commits_prepared_before_open_or_read",
++        "a selected digest cannot cross its first open or pread unless its exact Prepared record was committed and re-observed; uncertain publication returns a bounded deferral",
++    )
++
++    require(
++        all(
++            token in store
++            for token in (
++                "struct ProcessScrubActiveObservation final",
++                "std::is_trivially_copyable_v<ProcessScrubActiveObservation>",
++                "std::optional<ProcessScrubActiveObservation> scrub_active",
++                "state_generation",
++                "scrub_state_metadata",
++                "retain_process_scrub_active_observation",
++                "process_scrub_active_observation_matches",
++            )
++        )
++        and "std::string " not in function_body(
++            store, "struct ProcessScrubActiveObservation final"
++        )
++        and all(
++            token in process_scrub_retain
++            for token in (
++                "copy_exact_lowercase_sha256_hex",
++                "observation.state_generation = state.generation",
++                "observation.scrub_state_metadata = state_metadata",
++                "cache.scrub_active = observation",
++            )
++        )
++        and all(
++            token in process_scrub_match
++            for token in (
++                "observation.active_digest() == state.active_content_sha256",
++                "observation.state_generation == state.generation",
++                "observation.disposition == state.disposition",
++                "observation.active_metadata == state.active_metadata",
++                "observation.active_hash == state.active_hash",
++                "observation.scrub_state_metadata == state_metadata",
++            )
++        ),
++        "same_process_active_scrub_reuse_is_fixed_width_and_exact_state_file_bound",
++        "only an owner with an exact active-state observation plus its own commit or a complete current-byte scan may retain process-cache acceleration",
++    )
++
++    active_scan_fragment = complete_scan[
++        complete_scan.find("const bool scrub_active_targets_payload") :
++        complete_scan.find("const bool process_integrity_fault_targets_payload")
++    ]
++    require(
++        all(
++            token in active_scan_fragment
++            for token in (
++                "scrub_active_targets_payload",
++                "exact_same_process_scrub_active",
++                "process_scrub_active_observation_matches",
++            )
++        )
++        and all(
++            token in complete_scan
++            for token in (
++                "Prepared/Progress is a write-ahead crash witness",
++                "(!scrub_active_targets_payload ||",
++                "exact_same_process_scrub_active",
++                "!scrub_active_targets_payload &&",
++            )
++        )
++        and ordered(
++            complete_scan,
++            "const bool scrub_active_targets_payload",
++            "const bool exact_same_process_scrub_active",
++            "const bool exact_process_observation",
++            "const bool exact_durable_observation",
++        ),
++        "active_scrub_state_forbids_durable_reuse_and_fresh_process_cache_reuse",
++        "Prepared/Progress forces current-byte hashing after restart; only a process that has since proved the exact active observation may reuse its process generation",
++    )
++
++    require(
++        ordered(
++            scrub_advance,
++            "finish_hex_array",
++            "retain_process_integrity_fault(",
++            "verification_cache.scrub_active.reset()",
++            "working.disposition =",
++            "IntegrityFailure",
++            "working.observed_content_sha256 = observed",
++            "const bool persisted = publish_working(",
++            "throw SyncReplicaFilePayloadStoreIntegrityError(",
++        )
++        and "already committed Prepared/Progress state remains a durable" in scrub_advance,
++        "scrub_mismatch_clears_active_acceleration_after_fixed_width_revocation",
++        "once current bytes contradict their digest, no active-state acceleration survives and terminal allocation/publication cannot erase the durable restart fence",
++    )
++
++    require(
++        all(
++            token in runtime
++            for token in (
++                "test_prepared_scrub_state_forces_restart_reproof_before_blocked_optional_attempt",
++                "prepared-restart-fence",
++                "durable Prepared intent did not force restart current-byte reproof",
++                "restart reproof mutated the write-ahead intent before optional scrub authority was available",
++                "LOCK_SH",
++            )
++        )
++        and all(
++            token in runtime
++            for token in (
++                "scan_hashed_entry_count() == 0U",
++                "scan_process_reused_entry_count() == 1U",
++                "scan_durable_reused_entry_count() == 0U",
++                "expected_scan_hashed_entries",
++            )
++        ),
++        "compiled_regressions_mechanically_separate_shared_scan_from_blocked_optional_scrub",
++        "a child shared lease permits the complete scanner but blocks the exclusive scrub, proving fresh-process detection is caused by the restart fence rather than by an immediate retry",
++    )
++
++    require(
++        all(
++            token in scrub_restart_fence_design
++            for token in (
++                "Heart of the mission",
++                "The concrete restart gap",
++                "Intent before read",
++                "Fresh-process reproof",
++                "Exact publication and re-observation refactor",
++                "Reuse matrix",
++                "Mechanical restart regression",
++                "Adjacent audit findings",
++                "Research-informed",
++                "What this proves",
++                "What this does not prove",
++                "downgrade compatibility",
++                "power-loss",
++            )
++        )
++        and all(
++            token in rev0958_notes
++            for token in (
++                "Prepared = 4",
++                "write-ahead",
++                "shared store lease",
++                "process-cache",
++                "durable verification-index",
++                "downgrade safety is not claimed",
++                "Nonclaims",
++                "RELEASE_GATE.json",
++            )
++        )
++        and all(
++            token in verifier
++            for token in (
++                "SCRUB_WRITE_AHEAD_RESTART_FENCE_AUDIT_rev0958.md",
++                "REVISION_NOTES_rev0958.md",
++                "src/sync_replica_file_payload_scrub_state.hpp",
++                "tests/sync_replica_file_payload_scrub_state_test.cpp",
++            )
++        ),
++        "rev0958_records_restart_authority_refactor_research_nonclaims_and_release_binding",
++        "the release binds the mandatory intent ordering, exact same-process exception, hard lease oracle, downgrade boundary, and remaining power-loss/product work",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index d70b3792cef0e936534a39cb639cee67f660cd9f..f2cbc6518b5e8bacb5c7e62e8782a2ce47604394 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1212,6 +1212,18 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/test_anonsync_service_i2p_ingress.py",
+             "tools/audit_sync_file_payload_store.py",
+         })
++    if revision_number is not None and revision_number >= 958:
++        revision_scoped_required.update({
++            "SCRUB_WRITE_AHEAD_RESTART_FENCE_AUDIT_rev0958.md",
++            "REVISION_NOTES_rev0958.md",
++            "src/sync_replica_file_payload_scrub_state.hpp",
++            "src/sync_replica_file_payload_scrub_state.cpp",
++            "src/sync_replica_file_payload_store.cpp",
++            "tests/sync_replica_file_payload_scrub_state_test.cpp",
++            "tests/sync_replica_file_payload_store_test.cpp",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

@@ -1,0 +1,2257 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index eeceb6254b3fc5341456f25a8e2b56bb4e481d14..90ef7fb4a69bf2f2bba4c966b4db483bd1cadea0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -653,8 +653,9 @@ target_compile_options(anonsync_sync_replica_model PRIVATE
+ 
+ # Delivery attempts are operational state, but settlement is still authority.
+ # This pure policy owner mints one fresh receipt per lease, fences expired
+-# receipts, preserves retry backoff, and keeps time-dependent liveness separate
+-# from the immutable replica evidence model and SQLite transaction mechanics.
++# receipts, rejects durable liveness rollback, preserves retry backoff, and
++# keeps time-dependent policy separate from immutable replica evidence and
++# SQLite transaction mechanics.
+ set(ANONSYNC_SYNC_REPLICA_OUTBOX_LEASE_SOURCE
+   src/sync_replica_outbox_lease.cpp)
+ add_library(anonsync_sync_replica_outbox_lease STATIC
+@@ -669,8 +670,9 @@ target_compile_options(anonsync_sync_replica_outbox_lease PRIVATE
+ 
+ # The durable replica-operation cutpoint binds exact canonical evidence, local
+ # dot authority, deterministic projection attestations, persisted policy, and
+-# receipt-fenced sender intents in one typed SQLite transaction. One canonical
+-# operation row serves every destination rather than cloning payloads.
++# receipt-fenced sender intents in one typed SQLite transaction. A separate
++# exact clock row remembers accepted liveness without falsely advancing the
++# evidence generation. One canonical operation row serves every destination.
+ set(ANONSYNC_SYNC_REPLICA_SQLITE_OWNER_SOURCE
+   src/sync_replica_sqlite_owner.cpp)
+ add_library(anonsync_sync_replica_sqlite_owner STATIC
+diff --git a/src/sync_replica_outbox_lease.cpp b/src/sync_replica_outbox_lease.cpp
+index b48d3ef08ae89621a2220708de08e3abd60c3b78..611a1a01051349f347a345398069f0d237798047 100644
+--- a/src/sync_replica_outbox_lease.cpp
++++ b/src/sync_replica_outbox_lease.cpp
+@@ -54,6 +54,20 @@ void append_framed(Sha256DigestBuilder& digest, std::string_view bytes) {
+ 
+ }  // namespace
+ 
++std::uint64_t advance_sync_replica_outbox_time_high_water_or_throw(
++    std::uint64_t current_high_water_epoch,
++    std::uint64_t observed_epoch,
++    const std::string& label) {
++    if (observed_epoch == 0U) {
++        throw std::invalid_argument(label + " observed epoch must be positive");
++    }
++    if (observed_epoch < current_high_water_epoch) {
++        throw std::invalid_argument(
++            label + " observed epoch rolls back durable time");
++    }
++    return observed_epoch;
++}
++
+ void validate_sync_replica_outbox_lease_state_or_throw(
+     const SyncReplicaOutboxLeaseState& state,
+     const std::string& label) {
+@@ -79,10 +93,14 @@ void validate_sync_replica_outbox_lease_state_or_throw(
+             throw std::runtime_error(
+                 label + " exceeds the cumulative claim lifetime budget");
+         }
+-    } else if (state.dispatch_attempts == 0U &&
+-               state.retry_not_before_epoch != 0U) {
++    } else if (state.dispatch_attempts == 0U) {
++        if (state.retry_not_before_epoch != 0U) {
++            throw std::runtime_error(
++                label + " backs off an intent that has never been dispatched");
++        }
++    } else if (state.retry_not_before_epoch == 0U) {
+         throw std::runtime_error(
+-            label + " backs off an intent that has never been dispatched");
++            label + " has dispatched history without active or retry authority");
+     }
+ }
+ 
+diff --git a/src/sync_replica_outbox_lease.hpp b/src/sync_replica_outbox_lease.hpp
+index 8ec2ff9a90fcb138e86e7f7eadb5e52c8c16c9fa..cea868c220d33eaeee20a550f3bd3677759cefd2 100644
+--- a/src/sync_replica_outbox_lease.hpp
++++ b/src/sync_replica_outbox_lease.hpp
+@@ -37,6 +37,16 @@ enum class SyncReplicaOutboxClaimStatus {
+     Expired,
+ };
+ 
++// Advances one durable observation fence. Equal observations are idempotent;
++// a smaller observation is a clock rollback and cannot regain authority that
++// a later observation may already have revoked. This is an anti-rollback
++// primitive, not a claim that caller-supplied epoch time is trustworthy.
++[[nodiscard]] std::uint64_t
++advance_sync_replica_outbox_time_high_water_or_throw(
++    std::uint64_t current_high_water_epoch,
++    std::uint64_t observed_epoch,
++    const std::string& label);
++
+ void validate_sync_replica_outbox_lease_state_or_throw(
+     const SyncReplicaOutboxLeaseState& state,
+     const std::string& label);
+diff --git a/src/sync_replica_sqlite_owner.cpp b/src/sync_replica_sqlite_owner.cpp
+index 71f46da126b8550fe1934cdd863811bcc0260dad..7755ecf5840de0e50f76901f58fb0af3e283610f 100644
+--- a/src/sync_replica_sqlite_owner.cpp
++++ b/src/sync_replica_sqlite_owner.cpp
+@@ -27,7 +27,8 @@ namespace anonsync {
+ namespace {
+ 
+ constexpr std::uint64_t kLegacySchemaVersion = 1U;
+-constexpr std::uint64_t kSchemaVersion = 2U;
++constexpr std::uint64_t kPreviousSchemaVersion = 2U;
++constexpr std::uint64_t kSchemaVersion = 3U;
+ constexpr std::uint64_t kMaxSchemaSqlBytes = 1024U * 1024U;
+ 
+ struct SchemaDefinition final {
+@@ -122,7 +123,10 @@ constexpr std::array<SchemaDefinition, 8> kLegacySchema{{
+ 
+ // sqlite_schema.sql is protocol evidence. These are the exact strings SQLite
+ // stores after the main-qualified CREATE statements emitted below.
+-constexpr std::array<SchemaDefinition, 9> kSchema{{
++// Rev0871 schema retained as an exact migration source. Like the rev0869
++// source below, it is accepted only after complete schema and cutpoint
++// attestation inside the migration transaction.
++constexpr std::array<SchemaDefinition, 9> kPreviousSchema{{
+     {"table", "sync_replica_meta", "sync_replica_meta",
+      "CREATE TABLE sync_replica_meta("
+      "id INTEGER PRIMARY KEY CHECK(id=1),"
+@@ -210,6 +214,100 @@ constexpr std::array<SchemaDefinition, 9> kSchema{{
+      "CREATE INDEX sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_before_epoch_be,lease_expires_at_epoch_be,destination_device_id,operation_id)"},
+ }};
+ 
++// Current schema adds a separate, digest-bound durable observation fence.
++constexpr std::array<SchemaDefinition, 10> kSchema{{
++    {"table", "sync_replica_meta", "sync_replica_meta",
++     "CREATE TABLE sync_replica_meta("
++     "id INTEGER PRIMARY KEY CHECK(id=1),"
++     "schema_version INTEGER NOT NULL CHECK(schema_version=3),"
++     "folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),"
++     "local_device_id TEXT NOT NULL CHECK(length(local_device_id) BETWEEN 1 AND 128),"
++     "local_epoch_be BLOB NOT NULL CHECK(length(local_epoch_be)=8),"
++     "last_local_counter_be BLOB NOT NULL CHECK(length(last_local_counter_be)=8),"
++     "state_generation_be BLOB NOT NULL CHECK(length(state_generation_be)=8),"
++     "policy_generation_be BLOB NOT NULL CHECK(length(policy_generation_be)=8),"
++     "max_operations_be BLOB NOT NULL CHECK(length(max_operations_be)=8),"
++     "max_context_entries_be BLOB NOT NULL CHECK(length(max_context_entries_be)=8),"
++     "max_predecessor_ids_be BLOB NOT NULL CHECK(length(max_predecessor_ids_be)=8),"
++     "max_canonical_operation_bytes_be BLOB NOT NULL CHECK(length(max_canonical_operation_bytes_be)=8),"
++     "max_retained_canonical_bytes_be BLOB NOT NULL CHECK(length(max_retained_canonical_bytes_be)=8),"
++     "max_retained_context_entries_be BLOB NOT NULL CHECK(length(max_retained_context_entries_be)=8),"
++     "max_retained_predecessor_ids_be BLOB NOT NULL CHECK(length(max_retained_predecessor_ids_be)=8),"
++     "max_outbox_intents_be BLOB NOT NULL CHECK(length(max_outbox_intents_be)=8),"
++     "max_outbox_destination_bytes_be BLOB NOT NULL CHECK(length(max_outbox_destination_bytes_be)=8),"
++     "evidence_count_be BLOB NOT NULL CHECK(length(evidence_count_be)=8),"
++     "active_count_be BLOB NOT NULL CHECK(length(active_count_be)=8),"
++     "retained_canonical_bytes_be BLOB NOT NULL CHECK(length(retained_canonical_bytes_be)=8),"
++     "retained_context_entries_be BLOB NOT NULL CHECK(length(retained_context_entries_be)=8),"
++     "retained_predecessor_ids_be BLOB NOT NULL CHECK(length(retained_predecessor_ids_be)=8),"
++     "outbox_intent_count_be BLOB NOT NULL CHECK(length(outbox_intent_count_be)=8),"
++     "outbox_destination_bytes_be BLOB NOT NULL CHECK(length(outbox_destination_bytes_be)=8),"
++     "local_actor_compromised INTEGER NOT NULL CHECK(local_actor_compromised IN (0,1)),"
++     "local_operation_digest TEXT NOT NULL CHECK(length(local_operation_digest)=64),"
++     "operation_set_digest TEXT NOT NULL CHECK(length(operation_set_digest)=64),"
++     "evidence_set_digest TEXT NOT NULL CHECK(length(evidence_set_digest)=64),"
++     "visible_state_digest TEXT NOT NULL CHECK(length(visible_state_digest)=64),"
++     "outbox_digest TEXT NOT NULL CHECK(length(outbox_digest)=64),"
++     "cutpoint_digest TEXT NOT NULL CHECK(length(cutpoint_digest)=64)) STRICT"},
++    {"table", "sync_replica_operations", "sync_replica_operations",
++     "CREATE TABLE sync_replica_operations("
++     "operation_id TEXT PRIMARY KEY CHECK(length(operation_id)=64),"
++     "canonical_bytes BLOB NOT NULL,"
++     "canonical_size_be BLOB NOT NULL CHECK(length(canonical_size_be)=8),"
++     "context_count_be BLOB NOT NULL CHECK(length(context_count_be)=8),"
++     "predecessor_count_be BLOB NOT NULL CHECK(length(predecessor_count_be)=8),"
++     "evidence_state TEXT NOT NULL CHECK(evidence_state IN ('active','pending_missing_dependency','quarantined_dot_fork','quarantined_dependency','quarantined_causal_envelope','quarantined_dependency_cycle'))) STRICT"},
++    {"table", "sync_replica_parent_edges", "sync_replica_parent_edges",
++     "CREATE TABLE sync_replica_parent_edges("
++     "child_operation_id TEXT NOT NULL,"
++     "parent_ordinal INTEGER NOT NULL CHECK(parent_ordinal>=0),"
++     "parent_operation_id TEXT NOT NULL CHECK(length(parent_operation_id)=64),"
++     "PRIMARY KEY(child_operation_id,parent_ordinal),"
++     "UNIQUE(child_operation_id,parent_operation_id),"
++     "FOREIGN KEY(child_operation_id) REFERENCES sync_replica_operations(operation_id) ON DELETE CASCADE) STRICT"},
++    {"table", "sync_replica_local_operations", "sync_replica_local_operations",
++     "CREATE TABLE sync_replica_local_operations("
++     "counter_be BLOB PRIMARY KEY CHECK(length(counter_be)=8),"
++     "operation_id TEXT NOT NULL UNIQUE,"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_heads", "sync_replica_heads",
++     "CREATE TABLE sync_replica_heads("
++     "operation_id TEXT PRIMARY KEY,"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_visible", "sync_replica_visible",
++     "CREATE TABLE sync_replica_visible("
++     "canonical_path TEXT NOT NULL CHECK(length(canonical_path) BETWEEN 1 AND 4096),"
++     "visible_ordinal INTEGER NOT NULL CHECK(visible_ordinal>=0),"
++     "operation_id TEXT NOT NULL,"
++     "is_primary INTEGER NOT NULL CHECK(is_primary IN (0,1)),"
++     "preserve_file INTEGER NOT NULL CHECK(preserve_file IN (0,1)),"
++     "PRIMARY KEY(canonical_path,visible_ordinal),"
++     "UNIQUE(canonical_path,operation_id),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_outbox", "sync_replica_outbox",
++     "CREATE TABLE sync_replica_outbox("
++     "destination_device_id TEXT NOT NULL CHECK(length(destination_device_id) BETWEEN 1 AND 128),"
++     "operation_id TEXT NOT NULL,"
++     "enqueued_generation_be BLOB NOT NULL CHECK(length(enqueued_generation_be)=8),"
++     "dispatch_attempts_be BLOB NOT NULL CHECK(length(dispatch_attempts_be)=8),"
++     "claim_id TEXT NOT NULL CHECK(length(claim_id) IN (0,64)),"
++     "worker_id TEXT NOT NULL CHECK(length(worker_id) BETWEEN 0 AND 128),"
++     "claimed_at_epoch_be BLOB NOT NULL CHECK(length(claimed_at_epoch_be)=8),"
++     "lease_expires_at_epoch_be BLOB NOT NULL CHECK(length(lease_expires_at_epoch_be)=8),"
++     "retry_not_before_epoch_be BLOB NOT NULL CHECK(length(retry_not_before_epoch_be)=8),"
++     "PRIMARY KEY(destination_device_id,operation_id),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_outbox_clock", "sync_replica_outbox_clock",
++     "CREATE TABLE sync_replica_outbox_clock("
++     "id INTEGER PRIMARY KEY CHECK(id=1),"
++     "high_water_epoch_be BLOB NOT NULL CHECK(length(high_water_epoch_be)=8),"
++     "clock_digest TEXT NOT NULL CHECK(length(clock_digest)=64)) STRICT"},
++    {"index", "sync_replica_outbox_operation", "sync_replica_outbox",
++     "CREATE INDEX sync_replica_outbox_operation ON sync_replica_outbox(operation_id,destination_device_id)"},
++    {"index", "sync_replica_outbox_schedule", "sync_replica_outbox",
++     "CREATE INDEX sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_before_epoch_be,lease_expires_at_epoch_be,destination_device_id,operation_id)"},
++}};
++
+ struct DurableMeta final {
+     std::uint64_t schema_version = kSchemaVersion;
+     std::string folder_id;
+@@ -236,8 +334,16 @@ struct DurableMeta final {
+     bool operator==(const DurableMeta&) const = default;
+ };
+ 
++struct DurableOutboxClock final {
++    std::uint64_t high_water_epoch = 0;
++    std::string clock_digest;
++
++    bool operator==(const DurableOutboxClock&) const = default;
++};
++
+ struct LoadedState final {
+     DurableMeta meta;
++    DurableOutboxClock outbox_clock;
+     SyncReplicaModel model;
+     std::map<std::string, SyncReplicaEvidenceState> persisted_states;
+     std::vector<SyncReplicaSqliteOutboxIntent> outbox;
+@@ -424,10 +530,9 @@ void append_framed(
+     return digest.finish_hex();
+ }
+ 
+-[[nodiscard]] std::string legacy_cutpoint_digest_or_throw(
++void append_cutpoint_authority(
++    Sha256DigestBuilder& digest,
+     const DurableMeta& meta) {
+-    Sha256DigestBuilder digest;
+-    digest.update("anonsync-sync-replica-sqlite-cutpoint-v1");
+     append_framed(digest, meta.folder_id);
+     append_framed(digest, meta.local_actor.device_id);
+     digest.update(u64_be(meta.local_actor.epoch));
+@@ -457,50 +562,69 @@ void append_framed(
+     append_framed(digest, meta.evidence_set_digest);
+     append_framed(digest, meta.visible_state_digest);
+     append_framed(digest, meta.outbox_digest);
+-    return digest.finish_hex();
+ }
+ 
+-[[nodiscard]] std::string cutpoint_digest_or_throw(
++[[nodiscard]] std::string legacy_cutpoint_digest_or_throw(
+     const DurableMeta& meta) {
+-    if (meta.schema_version != kSchemaVersion) {
+-        throw std::logic_error(
+-            "sync replica SQLite v2 cutpoint has wrong schema version");
++    Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-cutpoint-v1");
++    append_cutpoint_authority(digest, meta);
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::string versioned_cutpoint_digest_or_throw(
++    const DurableMeta& meta,
++    std::uint64_t expected_schema_version,
++    std::string_view domain,
++    const std::string& label) {
++    if (meta.schema_version != expected_schema_version) {
++        throw std::logic_error(label + " cutpoint has wrong schema version");
+     }
+     Sha256DigestBuilder digest;
+-    digest.update("anonsync-sync-replica-sqlite-cutpoint-v2");
++    digest.update(domain);
+     digest.update(u64_be(meta.schema_version));
+-    append_framed(digest, meta.folder_id);
+-    append_framed(digest, meta.local_actor.device_id);
+-    digest.update(u64_be(meta.local_actor.epoch));
+-    digest.update(u64_be(meta.last_local_counter));
+-    digest.update(u64_be(meta.state_generation));
+-    digest.update(u64_be(meta.policy_generation));
+-    digest.update(u64_be(meta.limits.model.max_operations));
+-    digest.update(u64_be(meta.limits.model.max_context_entries));
+-    digest.update(u64_be(meta.limits.model.max_predecessor_ids));
+-    digest.update(u64_be(meta.limits.model.max_canonical_operation_bytes));
+-    digest.update(u64_be(meta.limits.model.max_retained_canonical_bytes));
+-    digest.update(u64_be(meta.limits.model.max_retained_context_entries));
+-    digest.update(u64_be(meta.limits.model.max_retained_predecessor_ids));
+-    digest.update(u64_be(meta.limits.max_outbox_intents));
+-    digest.update(u64_be(meta.limits.max_outbox_destination_bytes));
+-    digest.update(u64_be(meta.evidence_count));
+-    digest.update(u64_be(meta.active_count));
+-    digest.update(u64_be(meta.retained_canonical_bytes));
+-    digest.update(u64_be(meta.retained_context_entries));
+-    digest.update(u64_be(meta.retained_predecessor_ids));
+-    digest.update(u64_be(meta.outbox_intent_count));
+-    digest.update(u64_be(meta.outbox_destination_bytes));
+-    digest.update(meta.local_actor_compromised ? std::string_view("1")
+-                                               : std::string_view("0"));
+-    append_framed(digest, meta.local_operation_digest);
+-    append_framed(digest, meta.operation_set_digest);
+-    append_framed(digest, meta.evidence_set_digest);
+-    append_framed(digest, meta.visible_state_digest);
+-    append_framed(digest, meta.outbox_digest);
++    append_cutpoint_authority(digest, meta);
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::string previous_cutpoint_digest_or_throw(
++    const DurableMeta& meta) {
++    return versioned_cutpoint_digest_or_throw(
++        meta, kPreviousSchemaVersion,
++        "anonsync-sync-replica-sqlite-cutpoint-v2",
++        "sync replica SQLite v2");
++}
++
++[[nodiscard]] std::string cutpoint_digest_or_throw(
++    const DurableMeta& meta) {
++    return versioned_cutpoint_digest_or_throw(
++        meta, kSchemaVersion,
++        "anonsync-sync-replica-sqlite-cutpoint-v3",
++        "sync replica SQLite v3");
++}
++
++[[nodiscard]] std::string outbox_clock_digest_or_throw(
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    std::uint64_t high_water_epoch) {
++    Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-outbox-clock-v1");
++    append_framed(digest, folder_id);
++    append_framed(digest, local_actor.device_id);
++    digest.update(u64_be(local_actor.epoch));
++    digest.update(u64_be(high_water_epoch));
+     return digest.finish_hex();
+ }
+ 
++[[nodiscard]] DurableOutboxClock make_outbox_clock_or_throw(
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    std::uint64_t high_water_epoch) {
++    return {high_water_epoch,
++            outbox_clock_digest_or_throw(
++                folder_id, local_actor, high_water_epoch)};
++}
++
+ [[nodiscard]] std::uint64_t outbox_destination_bytes_or_throw(
+     const std::vector<SyncReplicaSqliteOutboxIntent>& outbox) {
+     std::uint64_t total = 0;
+@@ -723,6 +847,7 @@ void require_no_foreign_key_violations_or_throw(
+         statement.stmt, 0, label + " schema version");
+     if (observed_schema_version != expected_schema_version ||
+         (observed_schema_version != kLegacySchemaVersion &&
++         observed_schema_version != kPreviousSchemaVersion &&
+          observed_schema_version != kSchemaVersion)) {
+         throw std::runtime_error(label + " schema version is unsupported");
+     }
+@@ -803,10 +928,14 @@ void require_no_foreign_key_violations_or_throw(
+     }
+     validate_owner_limits_or_throw(
+         meta.folder_id, meta.local_actor, meta.limits, label + " policy");
+-    const std::string expected_cutpoint =
+-        meta.schema_version == kLegacySchemaVersion
+-            ? legacy_cutpoint_digest_or_throw(meta)
+-            : cutpoint_digest_or_throw(meta);
++    std::string expected_cutpoint;
++    if (meta.schema_version == kLegacySchemaVersion) {
++        expected_cutpoint = legacy_cutpoint_digest_or_throw(meta);
++    } else if (meta.schema_version == kPreviousSchemaVersion) {
++        expected_cutpoint = previous_cutpoint_digest_or_throw(meta);
++    } else {
++        expected_cutpoint = cutpoint_digest_or_throw(meta);
++    }
+     if (expected_cutpoint != meta.cutpoint_digest) {
+         throw std::runtime_error(label + " durable cutpoint digest mismatch");
+     }
+@@ -959,6 +1088,81 @@ void insert_meta_row_or_throw(
+     return meta;
+ }
+ 
++[[nodiscard]] DurableOutboxClock read_outbox_clock_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const DurableMeta& meta,
++    const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT high_water_epoch_be,clock_digest "
++        "FROM main.sync_replica_outbox_clock WHERE id=1 LIMIT 2;",
++        label + " outbox clock query prepare");
++    require_row_or_throw(statement.stmt, label + " outbox clock query");
++    DurableOutboxClock clock;
++    clock.high_water_epoch = column_u64_be_or_throw(
++        statement.stmt, 0, label + " outbox time high water");
++    clock.clock_digest = sqlite_column_text_or_throw(
++        statement.stmt, 1, 64U, label + " outbox clock digest");
++    require_done_or_throw(statement.stmt, label + " outbox clock query");
++    if (!is_lowercase_sha256_hex(clock.clock_digest) ||
++        clock.clock_digest != outbox_clock_digest_or_throw(
++                                  meta.folder_id, meta.local_actor,
++                                  clock.high_water_epoch)) {
++        throw std::runtime_error(label + " outbox clock attestation mismatch");
++    }
++    return clock;
++}
++
++void insert_outbox_clock_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const DurableOutboxClock& clock,
++    const std::string& label) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_outbox_clock("
++        "id,high_water_epoch_be,clock_digest) VALUES(1,?,?);",
++        label + " outbox clock insert prepare");
++    bind_u64_be_or_throw(
++        statement.stmt, 1, clock.high_water_epoch,
++        label + " bind outbox time high water");
++    sqlite_bind_text_or_throw(
++        statement.stmt, 2, clock.clock_digest,
++        label + " bind outbox clock digest");
++    sqlite_step_done_or_throw(statement.stmt, label + " outbox clock insert");
++}
++
++void update_outbox_clock_exact_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const DurableOutboxClock& next,
++    const DurableOutboxClock& previous,
++    const std::string& label) {
++    if (next == previous) return;
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "UPDATE main.sync_replica_outbox_clock SET "
++        "high_water_epoch_be=?,clock_digest=? "
++        "WHERE id=1 AND high_water_epoch_be=? AND clock_digest=?;",
++        label + " outbox clock update prepare");
++    bind_u64_be_or_throw(
++        statement.stmt, 1, next.high_water_epoch,
++        label + " bind next outbox time high water");
++    sqlite_bind_text_or_throw(
++        statement.stmt, 2, next.clock_digest,
++        label + " bind next outbox clock digest");
++    bind_u64_be_or_throw(
++        statement.stmt, 3, previous.high_water_epoch,
++        label + " bind previous outbox time high water");
++    sqlite_bind_text_or_throw(
++        statement.stmt, 4, previous.clock_digest,
++        label + " bind previous outbox clock digest");
++    sqlite_step_done_or_throw(statement.stmt, label + " outbox clock update");
++    auto borrow = db.borrow();
++    if (sqlite3_changes(borrow.get()) != 1) {
++        throw std::runtime_error(
++            label + " outbox clock update lost exact durable authority");
++    }
++}
++
+ [[nodiscard]] std::uint64_t count_rows_or_throw(
+     SyncSqliteDbHandleSlot& db,
+     const std::string& sql,
+@@ -1393,6 +1597,31 @@ read_outbox_or_throw(
+     return outbox;
+ }
+ 
++[[nodiscard]] std::uint64_t outbox_clock_migration_floor_or_throw(
++    const std::vector<SyncReplicaSqliteOutboxIntent>& outbox,
++    const std::string& label) {
++    std::uint64_t floor = 0U;
++    for (const SyncReplicaSqliteOutboxIntent& intent : outbox) {
++        validate_sync_replica_outbox_lease_state_or_throw(intent.lease, label);
++        if (!intent.lease.claim_id.empty()) {
++            floor = std::max(floor, intent.lease.claimed_at_epoch);
++        } else if (intent.lease.dispatch_attempts != 0U) {
++            // A released v2 attempt proves that release time was positive and
++            // no earlier than retry_not_before minus the fixed retry budget.
++            // The exact observation was not retained, so migrate only the
++            // strongest lower bound that the old durable state proves.
++            const std::uint64_t release_floor =
++                intent.lease.retry_not_before_epoch >
++                        kSyncReplicaOutboxMaxRetryDelaySeconds
++                    ? intent.lease.retry_not_before_epoch -
++                          kSyncReplicaOutboxMaxRetryDelaySeconds
++                    : 1U;
++            floor = std::max(floor, release_floor);
++        }
++    }
++    return floor;
++}
++
+ [[nodiscard]] LoadedState load_state_for_schema_or_throw(
+     SyncSqliteDbHandleSlot& db,
+     const std::string& expected_folder_id,
+@@ -1400,6 +1629,7 @@ read_outbox_or_throw(
+     std::span<const SchemaDefinition> schema,
+     std::uint64_t schema_version,
+     bool legacy_outbox,
++    bool has_outbox_clock,
+     const std::string& label) {
+     verify_schema_or_throw(db, schema, label);
+     require_foreign_keys_or_throw(db, label);
+@@ -1456,8 +1686,18 @@ read_outbox_or_throw(
+     std::vector<SyncReplicaSqliteOutboxIntent> outbox = legacy_outbox
+         ? read_legacy_outbox_or_throw(db, meta, stored_states, label)
+         : read_outbox_or_throw(db, meta, stored_states, label);
+-    return {std::move(meta), std::move(model), std::move(stored_states),
+-            std::move(outbox)};
++    const std::uint64_t migration_floor =
++        outbox_clock_migration_floor_or_throw(outbox, label + " outbox clock");
++    DurableOutboxClock outbox_clock = has_outbox_clock
++        ? read_outbox_clock_or_throw(db, meta, label)
++        : make_outbox_clock_or_throw(
++              meta.folder_id, meta.local_actor, migration_floor);
++    if (outbox_clock.high_water_epoch < migration_floor) {
++        throw std::runtime_error(
++            label + " outbox clock predates retained lease authority");
++    }
++    return {std::move(meta), std::move(outbox_clock), std::move(model),
++            std::move(stored_states), std::move(outbox)};
+ }
+ 
+ [[nodiscard]] LoadedState load_state_or_throw(
+@@ -1467,7 +1707,7 @@ read_outbox_or_throw(
+     const std::string& label) {
+     return load_state_for_schema_or_throw(
+         db, expected_folder_id, expected_local_actor, kSchema,
+-        kSchemaVersion, false, label);
++        kSchemaVersion, false, true, label);
+ }
+ 
+ [[nodiscard]] LoadedState load_legacy_state_or_throw(
+@@ -1477,7 +1717,17 @@ read_outbox_or_throw(
+     const std::string& label) {
+     return load_state_for_schema_or_throw(
+         db, expected_folder_id, expected_local_actor, kLegacySchema,
+-        kLegacySchemaVersion, true, label);
++        kLegacySchemaVersion, true, false, label);
++}
++
++[[nodiscard]] LoadedState load_previous_state_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& expected_folder_id,
++    const SyncReplicaActor& expected_local_actor,
++    const std::string& label) {
++    return load_state_for_schema_or_throw(
++        db, expected_folder_id, expected_local_actor, kPreviousSchema,
++        kPreviousSchemaVersion, false, false, label);
+ }
+ 
+ [[nodiscard]] DurableMeta meta_from_state_or_throw(
+@@ -1881,20 +2131,7 @@ find_outbox_intent(
+     return found;
+ }
+ 
+-[[nodiscard]] SyncReplicaSqliteOutboxReceiptResult
+-sqlite_receipt_result_for_claim_status(
+-    SyncReplicaOutboxClaimStatus status) {
+-    switch (status) {
+-        case SyncReplicaOutboxClaimStatus::Current:
+-            return SyncReplicaSqliteOutboxReceiptResult::Applied;
+-        case SyncReplicaOutboxClaimStatus::Stale:
+-            return SyncReplicaSqliteOutboxReceiptResult::StaleClaim;
+-        case SyncReplicaOutboxClaimStatus::Expired:
+-            return SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim;
+-    }
+-    throw std::invalid_argument(
+-        "sync replica SQLite claim status is invalid");
+-}
++
+ 
+ [[nodiscard]] std::vector<std::string> validate_destinations_or_throw(
+     std::span<const std::string> destinations,
+@@ -1979,6 +2216,9 @@ void require_snapshot_authority_or_throw(
+     snapshot.state_generation = loaded.meta.state_generation;
+     snapshot.policy_generation = loaded.meta.policy_generation;
+     snapshot.outbox = loaded.outbox;
++    snapshot.outbox_time_high_water_epoch =
++        loaded.outbox_clock.high_water_epoch;
++    snapshot.outbox_clock_digest = loaded.outbox_clock.clock_digest;
+     snapshot.local_operation_digest = loaded.meta.local_operation_digest;
+     snapshot.operation_set_digest = loaded.meta.operation_set_digest;
+     snapshot.evidence_set_digest = loaded.meta.evidence_set_digest;
+@@ -2001,11 +2241,13 @@ void attest_and_commit_staged_cutpoint_or_throw(
+     const SyncReplicaActor& local_actor,
+     const SyncReplicaModel& expected_model,
+     const DurableMeta& expected_meta,
++    const DurableOutboxClock& expected_outbox_clock,
+     const std::vector<SyncReplicaSqliteOutboxIntent>& expected_outbox,
+     const std::string& label) {
+     LoadedState observed = load_state_or_throw(
+         db, folder_id, local_actor, label + " staged re-attestation");
+     if (observed.meta != expected_meta ||
++        observed.outbox_clock != expected_outbox_clock ||
+         observed.model.durable_state() != expected_model.durable_state() ||
+         observed.outbox != expected_outbox) {
+         throw std::runtime_error(
+@@ -2016,6 +2258,37 @@ void attest_and_commit_staged_cutpoint_or_throw(
+     transaction.commit();
+ }
+ 
++[[nodiscard]] bool observe_outbox_time_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    LoadedState& loaded,
++    std::uint64_t observed_epoch,
++    const std::string& label) {
++    const DurableOutboxClock previous = loaded.outbox_clock;
++    const std::uint64_t next_high_water =
++        advance_sync_replica_outbox_time_high_water_or_throw(
++            previous.high_water_epoch, observed_epoch, label);
++    if (next_high_water == previous.high_water_epoch) return false;
++    loaded.outbox_clock = make_outbox_clock_or_throw(
++        folder_id, local_actor, next_high_water);
++    update_outbox_clock_exact_or_throw(
++        db, loaded.outbox_clock, previous, label);
++    return true;
++}
++
++void attest_and_commit_clock_observation_or_throw(
++    SyncSqliteTransaction& transaction,
++    SyncSqliteDbHandleSlot& db,
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    const LoadedState& loaded,
++    const std::string& label) {
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db, folder_id, local_actor, loaded.model, loaded.meta,
++        loaded.outbox_clock, loaded.outbox, label);
++}
++
+ void publish_outbox_lease_update_or_throw(
+     SyncSqliteTransaction& transaction,
+     SyncSqliteDbHandleSlot& db,
+@@ -2034,34 +2307,41 @@ void publish_outbox_lease_update_or_throw(
+     update_meta_or_throw(db, meta, label);
+     attest_and_commit_staged_cutpoint_or_throw(
+         transaction, db, folder_id, local_actor, loaded.model, meta,
+-        loaded.outbox, label);
++        loaded.outbox_clock, loaded.outbox, label);
+ }
+ 
+-
+-void migrate_legacy_schema_or_throw(
++void migrate_prior_schema_or_throw(
+     SyncSqliteTransaction& transaction,
+     SyncSqliteDbHandleSlot& db,
+-    LoadedState legacy,
++    LoadedState prior,
+     const std::string& folder_id,
+     const SyncReplicaActor& local_actor,
+     const std::string& label) {
+-    if (legacy.meta.schema_version != kLegacySchemaVersion) {
+-        throw std::logic_error(label + " migration source is not schema v1");
++    if (prior.meta.schema_version != kLegacySchemaVersion &&
++        prior.meta.schema_version != kPreviousSchemaVersion) {
++        throw std::logic_error(
++            label + " migration source is not schema v1 or v2");
+     }
+     const std::uint64_t generation = increment_or_throw(
+-        legacy.meta.state_generation, label + " migration state generation");
++        prior.meta.state_generation, label + " migration state generation");
+ 
+-    // Keep all canonical evidence and projections in place. Replace only the
+-    // meta/outbox protocol surfaces after exact v1 restore has succeeded.
++    // Keep canonical evidence and projections in place. Replace only the
++    // meta/outbox protocol surfaces after exact prior-version restoration.
++    if (prior.meta.schema_version == kPreviousSchemaVersion) {
++        sqlite_exec_or_throw(
++            db, "DROP INDEX main.sync_replica_outbox_schedule;",
++            label + " retire previous outbox schedule index");
++    }
+     sqlite_exec_or_throw(
+         db,
+         "DROP INDEX main.sync_replica_outbox_operation;"
+         "DROP TABLE main.sync_replica_outbox;"
+         "DROP TABLE main.sync_replica_meta;",
+-        label + " retire legacy outbox schema");
++        label + " retire prior outbox schema");
+     for (const SchemaDefinition& definition : kSchema) {
+         if (definition.name == "sync_replica_meta" ||
+             definition.name == "sync_replica_outbox" ||
++            definition.name == "sync_replica_outbox_clock" ||
+             definition.name == "sync_replica_outbox_operation" ||
+             definition.name == "sync_replica_outbox_schedule") {
+             sqlite_exec_or_throw(
+@@ -2072,14 +2352,15 @@ void migrate_legacy_schema_or_throw(
+     verify_schema_or_throw(db, label + " migrated schema");
+ 
+     const DurableMeta meta = meta_from_state_or_throw(
+-        legacy.model, legacy.meta.limits, generation,
+-        legacy.meta.policy_generation, legacy.outbox);
++        prior.model, prior.meta.limits, generation,
++        prior.meta.policy_generation, prior.outbox);
+     insert_meta_row_or_throw(db, meta, label + " migrated");
+-    insert_outbox_intents_or_throw(
+-        db, legacy.outbox, label + " migrated");
++    insert_outbox_intents_or_throw(db, prior.outbox, label + " migrated");
++    insert_outbox_clock_or_throw(
++        db, prior.outbox_clock, label + " migrated");
+     attest_and_commit_staged_cutpoint_or_throw(
+-        transaction, db, folder_id, local_actor, legacy.model, meta,
+-        legacy.outbox, label + " migration publication");
++        transaction, db, folder_id, local_actor, prior.model, meta,
++        prior.outbox_clock, prior.outbox, label + " migration publication");
+ }
+ 
+ }  // namespace
+@@ -2121,11 +2402,15 @@ SyncReplicaSqliteOwner::SyncReplicaSqliteOwner(
+         verify_schema_or_throw(db_, label_);
+         const DurableMeta meta = insert_initial_meta_or_throw(
+             db_, folder_id_, local_actor_, initial_limits, label_);
++        const DurableOutboxClock outbox_clock = make_outbox_clock_or_throw(
++            folder_id_, local_actor_, 0U);
++        insert_outbox_clock_or_throw(
++            db_, outbox_clock, label_ + " initial");
+         const SyncReplicaModel empty(
+             folder_id_, local_actor_, initial_limits.model);
+         attest_and_commit_staged_cutpoint_or_throw(
+-            transaction, db_, folder_id_, local_actor_, empty, meta, {},
+-            label_ + " schema initialization");
++            transaction, db_, folder_id_, local_actor_, empty, meta,
++            outbox_clock, {}, label_ + " schema initialization");
+     } else if (schema_matches(observed, kSchema)) {
+         (void)load_state_or_throw(
+             db_, folder_id_, local_actor_, label_ + " existing database");
+@@ -2135,12 +2420,19 @@ SyncReplicaSqliteOwner::SyncReplicaSqliteOwner(
+     } else if (schema_matches(observed, kLegacySchema)) {
+         LoadedState legacy = load_legacy_state_or_throw(
+             db_, folder_id_, local_actor_, label_ + " legacy database");
+-        migrate_legacy_schema_or_throw(
++        migrate_prior_schema_or_throw(
+             transaction, db_, std::move(legacy), folder_id_, local_actor_,
+-            label_ + " schema v1 to v2");
++            label_ + " schema v1 to v3");
++    } else if (schema_matches(observed, kPreviousSchema)) {
++        LoadedState previous = load_previous_state_or_throw(
++            db_, folder_id_, local_actor_, label_ + " previous database");
++        migrate_prior_schema_or_throw(
++            transaction, db_, std::move(previous), folder_id_, local_actor_,
++            label_ + " schema v2 to v3");
+     } else {
+         throw std::runtime_error(
+-            label_ + " database does not match schema v2 or exact rev0869 v1");
++            label_ + " database does not match schema v3, exact rev0871 v2, "
++                     "or exact rev0869 v1");
+     }
+ 
+     // Constructor publication is withheld until every exact operation and
+@@ -2222,7 +2514,7 @@ SyncReplicaOperation SyncReplicaSqliteOwner::create_local_file_or_throw(
+         db_, meta, label_ + " local file publication");
+     attest_and_commit_staged_cutpoint_or_throw(
+         transaction, db_, folder_id_, local_actor_, loaded.model, meta,
+-        loaded.outbox, label_ + " local file publication");
++        loaded.outbox_clock, loaded.outbox, label_ + " local file publication");
+     return operation;
+ }
+ 
+@@ -2284,7 +2576,7 @@ SyncReplicaOperation SyncReplicaSqliteOwner::create_local_tombstone_or_throw(
+         db_, meta, label_ + " local tombstone publication");
+     attest_and_commit_staged_cutpoint_or_throw(
+         transaction, db_, folder_id_, local_actor_, loaded.model, meta,
+-        loaded.outbox, label_ + " local tombstone publication");
++        loaded.outbox_clock, loaded.outbox, label_ + " local tombstone publication");
+     return operation;
+ }
+ 
+@@ -2325,7 +2617,7 @@ SyncReplicaAdmission SyncReplicaSqliteOwner::accept_remote_or_throw(
+     update_meta_or_throw(db_, meta, label_ + " remote admission");
+     attest_and_commit_staged_cutpoint_or_throw(
+         transaction, db_, folder_id_, local_actor_, loaded.model, meta,
+-        loaded.outbox, label_ + " remote admission");
++        loaded.outbox_clock, loaded.outbox, label_ + " remote admission");
+     return admission;
+ }
+ 
+@@ -2372,6 +2664,9 @@ SyncReplicaSqliteOwner::claim_next_outbox_or_throw(
+         transaction, db_, label_ + " outbox claim");
+     LoadedState loaded = load_state_or_throw(
+         db_, folder_id_, local_actor_, label_ + " outbox claim");
++    (void)observe_outbox_time_or_throw(
++        db_, folder_id_, local_actor_, loaded, now_epoch,
++        label_ + " outbox claim time observation");
+     const auto found = std::find_if(
+         loaded.outbox.begin(), loaded.outbox.end(),
+         [&](const SyncReplicaSqliteOutboxIntent& intent) {
+@@ -2382,7 +2677,9 @@ SyncReplicaSqliteOwner::claim_next_outbox_or_throw(
+                        label_ + " outbox claim candidate");
+         });
+     if (found == loaded.outbox.end()) {
+-        transaction.commit();
++        attest_and_commit_clock_observation_or_throw(
++            transaction, db_, folder_id_, local_actor_, loaded,
++            label_ + " outbox claim no-ready-intent");
+         return std::nullopt;
+     }
+ 
+@@ -2439,9 +2736,18 @@ SyncReplicaSqliteOwner::settle_outbox_or_throw(
+         sync_replica_outbox_claim_status_at_or_throw(
+             found->lease, claim_id, now_epoch,
+             label_ + " outbox settlement");
+-    if (status != SyncReplicaOutboxClaimStatus::Current) {
++    if (status == SyncReplicaOutboxClaimStatus::Stale) {
+         transaction.commit();
+-        return sqlite_receipt_result_for_claim_status(status);
++        return SyncReplicaSqliteOutboxReceiptResult::StaleClaim;
++    }
++    (void)observe_outbox_time_or_throw(
++        db_, folder_id_, local_actor_, loaded, now_epoch,
++        label_ + " outbox settlement time observation");
++    if (status == SyncReplicaOutboxClaimStatus::Expired) {
++        attest_and_commit_clock_observation_or_throw(
++            transaction, db_, folder_id_, local_actor_, loaded,
++            label_ + " outbox settlement expired receipt");
++        return SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim;
+     }
+ 
+     delete_outbox_intent_exact_or_throw(
+@@ -2455,7 +2761,7 @@ SyncReplicaSqliteOwner::settle_outbox_or_throw(
+     update_meta_or_throw(db_, meta, label_ + " outbox settlement");
+     attest_and_commit_staged_cutpoint_or_throw(
+         transaction, db_, folder_id_, local_actor_, loaded.model, meta,
+-        loaded.outbox, label_ + " outbox settlement");
++        loaded.outbox_clock, loaded.outbox, label_ + " outbox settlement");
+     return SyncReplicaSqliteOutboxReceiptResult::Applied;
+ }
+ 
+@@ -2503,9 +2809,18 @@ SyncReplicaSqliteOwner::renew_outbox_lease_or_throw(
+         sync_replica_outbox_claim_status_at_or_throw(
+             found->lease, claim_id, now_epoch,
+             label_ + " outbox renewal");
+-    if (status != SyncReplicaOutboxClaimStatus::Current) {
++    if (status == SyncReplicaOutboxClaimStatus::Stale) {
+         transaction.commit();
+-        return sqlite_receipt_result_for_claim_status(status);
++        return SyncReplicaSqliteOutboxReceiptResult::StaleClaim;
++    }
++    (void)observe_outbox_time_or_throw(
++        db_, folder_id_, local_actor_, loaded, now_epoch,
++        label_ + " outbox renewal time observation");
++    if (status == SyncReplicaOutboxClaimStatus::Expired) {
++        attest_and_commit_clock_observation_or_throw(
++            transaction, db_, folder_id_, local_actor_, loaded,
++            label_ + " outbox renewal expired receipt");
++        return SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim;
+     }
+ 
+     const SyncReplicaOutboxLeaseState previous = found->lease;
+@@ -2514,7 +2829,9 @@ SyncReplicaSqliteOwner::renew_outbox_lease_or_throw(
+             previous, claim_id, now_epoch, lease_seconds,
+             label_ + " outbox renewal");
+     if (renewed == previous) {
+-        transaction.commit();
++        attest_and_commit_clock_observation_or_throw(
++            transaction, db_, folder_id_, local_actor_, loaded,
++            label_ + " outbox renewal already covered");
+         return SyncReplicaSqliteOutboxReceiptResult::LeaseAlreadyCovered;
+     }
+     found->lease = renewed;
+@@ -2567,9 +2884,18 @@ SyncReplicaSqliteOwner::release_outbox_for_retry_or_throw(
+         sync_replica_outbox_claim_status_at_or_throw(
+             found->lease, claim_id, now_epoch,
+             label_ + " outbox release");
+-    if (status != SyncReplicaOutboxClaimStatus::Current) {
++    if (status == SyncReplicaOutboxClaimStatus::Stale) {
+         transaction.commit();
+-        return sqlite_receipt_result_for_claim_status(status);
++        return SyncReplicaSqliteOutboxReceiptResult::StaleClaim;
++    }
++    (void)observe_outbox_time_or_throw(
++        db_, folder_id_, local_actor_, loaded, now_epoch,
++        label_ + " outbox release time observation");
++    if (status == SyncReplicaOutboxClaimStatus::Expired) {
++        attest_and_commit_clock_observation_or_throw(
++            transaction, db_, folder_id_, local_actor_, loaded,
++            label_ + " outbox release expired receipt");
++        return SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim;
+     }
+ 
+     const SyncReplicaOutboxLeaseState previous = found->lease;
+@@ -2623,7 +2949,7 @@ void SyncReplicaSqliteOwner::replace_limits_or_throw(
+     update_meta_or_throw(db_, meta, label_ + " policy replacement");
+     attest_and_commit_staged_cutpoint_or_throw(
+         transaction, db_, folder_id_, local_actor_, replacement_model, meta,
+-        loaded.outbox, label_ + " policy replacement");
++        loaded.outbox_clock, loaded.outbox, label_ + " policy replacement");
+ }
+ 
+ }  // namespace anonsync
+diff --git a/src/sync_replica_sqlite_owner.hpp b/src/sync_replica_sqlite_owner.hpp
+index fbcac453e1a14337360839426c4bda210d41c8e4..ccd08eb6d476ed45a55c1cbfe098756127bcdac0 100644
+--- a/src/sync_replica_sqlite_owner.hpp
++++ b/src/sync_replica_sqlite_owner.hpp
+@@ -53,6 +53,11 @@ struct SyncReplicaSqliteSnapshot final {
+     std::uint64_t state_generation = 0;
+     std::uint64_t policy_generation = 0;
+     std::vector<SyncReplicaSqliteOutboxIntent> outbox;
++    // Separate liveness authority. It records the greatest epoch accepted by
++    // a valid outbox scheduling/receipt path without pretending that epoch is
++    // trusted wall time or part of canonical evidence history.
++    std::uint64_t outbox_time_high_water_epoch = 0;
++    std::string outbox_clock_digest;
+     // Binds the exact counter->operation authority map. This cannot be
+     // reconstructed from the evidence set when a local same-dot fork exists.
+     std::string local_operation_digest;
+@@ -75,9 +80,11 @@ struct SyncReplicaSqliteSnapshot final {
+ // redundant projection row, applies the pure replica model, and publishes the
+ // new evidence/projection/mint authority/outbox cutpoint together. Delivery
+ // claims, releases, and settlements are also fully restored and re-attested.
++// A separately digested liveness clock row fences rollback without pretending
++// that liveness observations are canonical evidence or state generations.
+ // This is an intentionally O(history) reference owner, not yet an incremental
+-// production projector. All SQL names are explicitly bound to main, and the exact stored
+-// sqlite_schema text is part of the durable protocol.
++// production projector. All SQL names are explicitly bound to main, and the
++// exact stored sqlite_schema text is part of the durable protocol.
+ class SyncReplicaSqliteOwner final {
+ public:
+     SyncReplicaSqliteOwner(
+@@ -112,7 +119,9 @@ public:
+ 
+     // Claims the first ready intent in canonical order, optionally restricted
+     // to one destination. Every attempt receives a fresh CSPRNG-bound claim ID.
+-    // Expiry revokes the current receipt and permits replacement. Entropy is
++    // Expiry revokes the current receipt and permits replacement. now_epoch
++    // must not roll back the owner's durable observation high-water mark.
++    // Entropy is
+     // acquired before the IMMEDIATE transaction so CSPRNG latency never holds
+     // the single SQLite writer slot.
+     [[nodiscard]] std::optional<SyncReplicaSqliteOutboxClaim>
+@@ -124,7 +133,8 @@ public:
+ 
+     // Retires one exact unsettled sender intent only when claim_id names its
+     // current unexpired attempt. Canonical evidence and other destinations
+-    // remain owned.
++    // remain owned. A matching expired receipt durably advances the time fence
++    // before ExpiredClaim is returned, so rollback cannot revive it.
+     [[nodiscard]] SyncReplicaSqliteOutboxReceiptResult settle_outbox_or_throw(
+         const std::string& destination_device_id,
+         const std::string& operation_id,
+diff --git a/tests/sync_replica_outbox_lease_test.cpp b/tests/sync_replica_outbox_lease_test.cpp
+index db76ff5a7ab8b0466af524f835cd976e920224a2..5d8ed35f035e6fb31e41986b0715b757b5dcf88f 100644
+--- a/tests/sync_replica_outbox_lease_test.cpp
++++ b/tests/sync_replica_outbox_lease_test.cpp
+@@ -213,6 +213,20 @@ void test_renewal_and_expiry_revoke_receipt_authority() {
+ }
+ 
+ void test_invalid_and_overflow_states_fail_closed() {
++    require(
++        anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
++            100U, 100U, "equal time observation") == 100U &&
++            anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
++                100U, 101U, "forward time observation") == 101U,
++        "durable time observation was not monotonic and idempotent");
++    require_error(
++        [&] {
++            (void)anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
++                101U, 100U, "rollback time observation");
++        },
++        "rolls back",
++        "durable time fence accepted rollback");
++
+     SyncReplicaOutboxLeaseState partial;
+     partial.claim_id = anonsync::sha256_hex("claim");
+     require_error(
+@@ -268,10 +282,21 @@ void test_invalid_and_overflow_states_fail_closed() {
+         "never been dispatched",
+         "backoff was accepted without a prior attempt");
+ 
+-    SyncReplicaOutboxLeaseState exhausted;
++    SyncReplicaOutboxLeaseState unreachable_inactive;
++    unreachable_inactive.dispatch_attempts = 1U;
++    require_error(
++        [&] {
++            anonsync::validate_sync_replica_outbox_lease_state_or_throw(
++                unreachable_inactive, "unreachable inactive");
++        },
++        "without active or retry authority",
++        "dispatched history was accepted without a claim or retry fence");
++
++    SyncReplicaOutboxLeaseState exhausted =
++        claim({}, 100U, "worker-a", 'e');
+     exhausted.dispatch_attempts = std::numeric_limits<std::uint64_t>::max();
+     require_error(
+-        [&] { (void)claim(exhausted, 100U, "worker-a", 'e'); },
++        [&] { (void)claim(exhausted, 110U, "worker-a", 'f'); },
+         "exhausted",
+         "dispatch counter overflow was not rejected");
+ 
+diff --git a/tests/sync_replica_sqlite_owner_test.cpp b/tests/sync_replica_sqlite_owner_test.cpp
+index 436ffe9b72f0a5fd951012bcd3742391014d1b6f..1b0a4d88c55f24b132b9a14d4b91da722e10cb72 100644
+--- a/tests/sync_replica_sqlite_owner_test.cpp
++++ b/tests/sync_replica_sqlite_owner_test.cpp
+@@ -251,6 +251,27 @@ std::string legacy_v1_outbox_digest(
+     return digest.finish_hex();
+ }
+ 
++std::string previous_v2_outbox_digest(
++    const std::string& folder_id,
++    const std::vector<anonsync::SyncReplicaSqliteOutboxIntent>& outbox) {
++    anonsync::Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-outbox-v2");
++    test_append_framed(digest, folder_id);
++    digest.update(test_u64_be(static_cast<std::uint64_t>(outbox.size())));
++    for (const auto& intent : outbox) {
++        test_append_framed(digest, intent.destination_device_id);
++        test_append_framed(digest, intent.operation_id);
++        digest.update(test_u64_be(intent.enqueued_generation));
++        digest.update(test_u64_be(intent.lease.dispatch_attempts));
++        test_append_framed(digest, intent.lease.claim_id);
++        test_append_framed(digest, intent.lease.worker_id);
++        digest.update(test_u64_be(intent.lease.claimed_at_epoch));
++        digest.update(test_u64_be(intent.lease.lease_expires_at_epoch));
++        digest.update(test_u64_be(intent.lease.retry_not_before_epoch));
++    }
++    return digest.finish_hex();
++}
++
+ std::string legacy_v1_cutpoint_digest(const LegacyV1Meta& meta) {
+     anonsync::Sha256DigestBuilder digest;
+     digest.update("anonsync-sync-replica-sqlite-cutpoint-v1");
+@@ -290,6 +311,46 @@ std::string legacy_v1_cutpoint_digest(const LegacyV1Meta& meta) {
+     return digest.finish_hex();
+ }
+ 
++std::string previous_v2_cutpoint_digest(const LegacyV1Meta& meta) {
++    anonsync::Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-cutpoint-v2");
++    digest.update(test_u64_be(2U));
++    test_append_framed(digest, meta.folder_id);
++    test_append_framed(digest, meta.local_actor.device_id);
++    digest.update(test_u64_be(meta.local_actor.epoch));
++    digest.update(test_u64_be(meta.last_local_counter));
++    digest.update(test_u64_be(meta.state_generation));
++    digest.update(test_u64_be(meta.policy_generation));
++    digest.update(test_u64_be(meta.limits.model.max_operations));
++    digest.update(test_u64_be(meta.limits.model.max_context_entries));
++    digest.update(test_u64_be(meta.limits.model.max_predecessor_ids));
++    digest.update(test_u64_be(
++        meta.limits.model.max_canonical_operation_bytes));
++    digest.update(test_u64_be(
++        meta.limits.model.max_retained_canonical_bytes));
++    digest.update(test_u64_be(
++        meta.limits.model.max_retained_context_entries));
++    digest.update(test_u64_be(
++        meta.limits.model.max_retained_predecessor_ids));
++    digest.update(test_u64_be(meta.limits.max_outbox_intents));
++    digest.update(test_u64_be(meta.limits.max_outbox_destination_bytes));
++    digest.update(test_u64_be(meta.evidence_count));
++    digest.update(test_u64_be(meta.active_count));
++    digest.update(test_u64_be(meta.retained_canonical_bytes));
++    digest.update(test_u64_be(meta.retained_context_entries));
++    digest.update(test_u64_be(meta.retained_predecessor_ids));
++    digest.update(test_u64_be(meta.outbox_intent_count));
++    digest.update(test_u64_be(meta.outbox_destination_bytes));
++    digest.update(meta.local_actor_compromised ? std::string_view("1")
++                                               : std::string_view("0"));
++    test_append_framed(digest, meta.local_operation_digest);
++    test_append_framed(digest, meta.operation_set_digest);
++    test_append_framed(digest, meta.evidence_set_digest);
++    test_append_framed(digest, meta.visible_state_digest);
++    test_append_framed(digest, meta.outbox_digest);
++    return digest.finish_hex();
++}
++
+ void bind_test_u64_be(
+     sqlite3_stmt* statement,
+     int index,
+@@ -532,6 +593,155 @@ CREATE INDEX main.sync_replica_outbox_operation ON sync_replica_outbox(operation
+ }
+ 
+ 
++struct PreviousV2Fixture final {
++    SyncReplicaOperation operation;
++    anonsync::SyncReplicaSqliteOutboxIntent intent;
++};
++
++PreviousV2Fixture create_previous_v2_fixture(
++    SyncSqliteDb& db,
++    const std::string& folder,
++    const SyncReplicaActor& local,
++    const SyncReplicaSqliteOwnerLimits& fixture_limits,
++    const std::string& destination) {
++    const SyncReplicaOperation operation = create_legacy_v1_fixture(
++        db, folder, local, fixture_limits, destination);
++
++    anonsync::SyncReplicaModel model(folder, local, fixture_limits.model);
++    const SyncReplicaOperation rebuilt = model.create_local_file_or_throw(
++        "legacy/file.bin", 6U, anonsync::sha256_hex("legacy"));
++    if (rebuilt != operation) {
++        fail("previous-v2 fixture did not reconstruct its canonical operation");
++    }
++
++    anonsync::SyncReplicaOutboxLeaseState lease;
++    lease.dispatch_attempts = 1U;
++    lease.claim_id = anonsync::sha256_hex("previous-v2-live-claim");
++    lease.worker_id = "worker-previous-v2";
++    lease.claimed_at_epoch = 100U;
++    lease.lease_expires_at_epoch = 120U;
++    const anonsync::SyncReplicaSqliteOutboxIntent intent{
++        destination, operation.operation_id, 2U, lease};
++    const std::vector<anonsync::SyncReplicaSqliteOutboxIntent> outbox{intent};
++
++    LegacyV1Meta meta;
++    meta.folder_id = folder;
++    meta.local_actor = local;
++    meta.last_local_counter = model.last_local_counter();
++    meta.state_generation = 3U;
++    meta.policy_generation = 1U;
++    meta.limits = fixture_limits;
++    meta.evidence_count = static_cast<std::uint64_t>(model.evidence_count());
++    meta.active_count = static_cast<std::uint64_t>(model.operation_count());
++    meta.retained_canonical_bytes = model.retained_canonical_bytes();
++    meta.retained_context_entries = model.retained_context_entry_count();
++    meta.retained_predecessor_ids = model.retained_predecessor_id_count();
++    meta.outbox_intent_count = 1U;
++    meta.outbox_destination_bytes =
++        static_cast<std::uint64_t>(destination.size());
++    meta.local_actor_compromised = model.local_actor_compromised();
++    meta.local_operation_digest = legacy_v1_local_operation_digest(
++        folder, local, model.local_operation_ids());
++    meta.operation_set_digest = model.operation_set_digest();
++    meta.evidence_set_digest = model.evidence_set_digest();
++    meta.visible_state_digest = model.visible_state_digest();
++    meta.outbox_digest = previous_v2_outbox_digest(folder, outbox);
++    meta.cutpoint_digest = previous_v2_cutpoint_digest(meta);
++
++    exec(db, R"PREVIOUS_V2(
++CREATE TEMP TABLE sync_replica_previous_meta AS
++SELECT * FROM main.sync_replica_meta WHERE id=1;
++DROP INDEX main.sync_replica_outbox_operation;
++DROP TABLE main.sync_replica_outbox;
++DROP TABLE main.sync_replica_meta;
++CREATE TABLE main.sync_replica_meta(id INTEGER PRIMARY KEY CHECK(id=1),schema_version INTEGER NOT NULL CHECK(schema_version=2),folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),local_device_id TEXT NOT NULL CHECK(length(local_device_id) BETWEEN 1 AND 128),local_epoch_be BLOB NOT NULL CHECK(length(local_epoch_be)=8),last_local_counter_be BLOB NOT NULL CHECK(length(last_local_counter_be)=8),state_generation_be BLOB NOT NULL CHECK(length(state_generation_be)=8),policy_generation_be BLOB NOT NULL CHECK(length(policy_generation_be)=8),max_operations_be BLOB NOT NULL CHECK(length(max_operations_be)=8),max_context_entries_be BLOB NOT NULL CHECK(length(max_context_entries_be)=8),max_predecessor_ids_be BLOB NOT NULL CHECK(length(max_predecessor_ids_be)=8),max_canonical_operation_bytes_be BLOB NOT NULL CHECK(length(max_canonical_operation_bytes_be)=8),max_retained_canonical_bytes_be BLOB NOT NULL CHECK(length(max_retained_canonical_bytes_be)=8),max_retained_context_entries_be BLOB NOT NULL CHECK(length(max_retained_context_entries_be)=8),max_retained_predecessor_ids_be BLOB NOT NULL CHECK(length(max_retained_predecessor_ids_be)=8),max_outbox_intents_be BLOB NOT NULL CHECK(length(max_outbox_intents_be)=8),max_outbox_destination_bytes_be BLOB NOT NULL CHECK(length(max_outbox_destination_bytes_be)=8),evidence_count_be BLOB NOT NULL CHECK(length(evidence_count_be)=8),active_count_be BLOB NOT NULL CHECK(length(active_count_be)=8),retained_canonical_bytes_be BLOB NOT NULL CHECK(length(retained_canonical_bytes_be)=8),retained_context_entries_be BLOB NOT NULL CHECK(length(retained_context_entries_be)=8),retained_predecessor_ids_be BLOB NOT NULL CHECK(length(retained_predecessor_ids_be)=8),outbox_intent_count_be BLOB NOT NULL CHECK(length(outbox_intent_count_be)=8),outbox_destination_bytes_be BLOB NOT NULL CHECK(length(outbox_destination_bytes_be)=8),local_actor_compromised INTEGER NOT NULL CHECK(local_actor_compromised IN (0,1)),local_operation_digest TEXT NOT NULL CHECK(length(local_operation_digest)=64),operation_set_digest TEXT NOT NULL CHECK(length(operation_set_digest)=64),evidence_set_digest TEXT NOT NULL CHECK(length(evidence_set_digest)=64),visible_state_digest TEXT NOT NULL CHECK(length(visible_state_digest)=64),outbox_digest TEXT NOT NULL CHECK(length(outbox_digest)=64),cutpoint_digest TEXT NOT NULL CHECK(length(cutpoint_digest)=64)) STRICT;
++CREATE TABLE main.sync_replica_outbox(destination_device_id TEXT NOT NULL CHECK(length(destination_device_id) BETWEEN 1 AND 128),operation_id TEXT NOT NULL,enqueued_generation_be BLOB NOT NULL CHECK(length(enqueued_generation_be)=8),dispatch_attempts_be BLOB NOT NULL CHECK(length(dispatch_attempts_be)=8),claim_id TEXT NOT NULL CHECK(length(claim_id) IN (0,64)),worker_id TEXT NOT NULL CHECK(length(worker_id) BETWEEN 0 AND 128),claimed_at_epoch_be BLOB NOT NULL CHECK(length(claimed_at_epoch_be)=8),lease_expires_at_epoch_be BLOB NOT NULL CHECK(length(lease_expires_at_epoch_be)=8),retry_not_before_epoch_be BLOB NOT NULL CHECK(length(retry_not_before_epoch_be)=8),PRIMARY KEY(destination_device_id,operation_id),FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT;
++CREATE INDEX main.sync_replica_outbox_operation ON sync_replica_outbox(operation_id,destination_device_id);
++CREATE INDEX main.sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_before_epoch_be,lease_expires_at_epoch_be,destination_device_id,operation_id);
++)PREVIOUS_V2");
++
++    anonsync::SyncSqliteStmt meta_insert = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "INSERT INTO main.sync_replica_meta("
++        "id,schema_version,folder_id,local_device_id,local_epoch_be,"
++        "last_local_counter_be,state_generation_be,policy_generation_be,"
++        "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
++        "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
++        "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
++        "max_outbox_intents_be,max_outbox_destination_bytes_be,"
++        "evidence_count_be,active_count_be,retained_canonical_bytes_be,"
++        "retained_context_entries_be,retained_predecessor_ids_be,"
++        "outbox_intent_count_be,outbox_destination_bytes_be,"
++        "local_actor_compromised,local_operation_digest,operation_set_digest,"
++        "evidence_set_digest,visible_state_digest,outbox_digest,cutpoint_digest) "
++        "SELECT id,2,folder_id,local_device_id,local_epoch_be,"
++        "last_local_counter_be,?,policy_generation_be,max_operations_be,"
++        "max_context_entries_be,max_predecessor_ids_be,"
++        "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
++        "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
++        "max_outbox_intents_be,max_outbox_destination_bytes_be,"
++        "evidence_count_be,active_count_be,retained_canonical_bytes_be,"
++        "retained_context_entries_be,retained_predecessor_ids_be,"
++        "outbox_intent_count_be,outbox_destination_bytes_be,"
++        "local_actor_compromised,local_operation_digest,operation_set_digest,"
++        "evidence_set_digest,visible_state_digest,?,? "
++        "FROM temp.sync_replica_previous_meta WHERE id=1;",
++        "previous v2 meta prepare");
++    bind_test_u64_be(
++        meta_insert.stmt, 1, meta.state_generation,
++        "previous v2 bind state generation");
++    anonsync::sqlite_bind_text_or_throw(
++        meta_insert.stmt, 2, meta.outbox_digest,
++        "previous v2 bind outbox digest");
++    anonsync::sqlite_bind_text_or_throw(
++        meta_insert.stmt, 3, meta.cutpoint_digest,
++        "previous v2 bind cutpoint digest");
++    anonsync::sqlite_step_done_or_throw(
++        meta_insert.stmt, "previous v2 meta insert");
++
++    anonsync::SyncSqliteStmt outbox_insert =
++        anonsync::sqlite_prepare_or_throw(
++            db.db,
++            "INSERT INTO main.sync_replica_outbox("
++            "destination_device_id,operation_id,enqueued_generation_be,"
++            "dispatch_attempts_be,claim_id,worker_id,claimed_at_epoch_be,"
++            "lease_expires_at_epoch_be,retry_not_before_epoch_be)"
++            "VALUES(?,?,?,?,?,?,?,?,?);",
++            "previous v2 outbox prepare");
++    anonsync::sqlite_bind_text_or_throw(
++        outbox_insert.stmt, 1, intent.destination_device_id,
++        "previous v2 bind destination");
++    anonsync::sqlite_bind_text_or_throw(
++        outbox_insert.stmt, 2, intent.operation_id,
++        "previous v2 bind operation");
++    bind_test_u64_be(
++        outbox_insert.stmt, 3, intent.enqueued_generation,
++        "previous v2 bind enqueued generation");
++    bind_test_u64_be(
++        outbox_insert.stmt, 4, intent.lease.dispatch_attempts,
++        "previous v2 bind dispatch attempts");
++    anonsync::sqlite_bind_text_or_throw(
++        outbox_insert.stmt, 5, intent.lease.claim_id,
++        "previous v2 bind claim id");
++    anonsync::sqlite_bind_text_or_throw(
++        outbox_insert.stmt, 6, intent.lease.worker_id,
++        "previous v2 bind worker id");
++    bind_test_u64_be(
++        outbox_insert.stmt, 7, intent.lease.claimed_at_epoch,
++        "previous v2 bind claimed at");
++    bind_test_u64_be(
++        outbox_insert.stmt, 8, intent.lease.lease_expires_at_epoch,
++        "previous v2 bind lease expiry");
++    bind_test_u64_be(
++        outbox_insert.stmt, 9, intent.lease.retry_not_before_epoch,
++        "previous v2 bind retry not before");
++    anonsync::sqlite_step_done_or_throw(
++        outbox_insert.stmt, "previous v2 outbox insert");
++    exec(db, "DROP TABLE temp.sync_replica_previous_meta;");
++    return {operation, intent};
++}
++
++
+ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v1-migration");
+     const std::string folder = "folder-sqlite-v1-migration";
+@@ -578,13 +788,17 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+         require(scalar_u64_query(
+                     db,
+                     "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+-                    "migrated schema version") == 2U &&
++                    "migrated schema version") == 3U &&
+                     scalar_u64_query(
+                         db,
+                         "SELECT count(*) FROM main.sqlite_schema "
+                         "WHERE type='index' AND name='sync_replica_outbox_schedule';",
+-                        "migrated schedule index count") == 1U,
+-                "v1 migration did not publish the exact schema-v2 surface");
++                        "migrated schedule index count") == 1U &&
++                    scalar_count(db, "sync_replica_outbox_clock") == 1U &&
++                    migrated.outbox_time_high_water_epoch == 0U &&
++                    anonsync::is_lowercase_sha256_hex(
++                        migrated.outbox_clock_digest),
++                "v1 migration did not publish the exact schema-v3 surface");
+ 
+         const auto claim = owner.claim_next_outbox_or_throw(
+             "worker-v1-migration", 100U, 20U, destination);
+@@ -595,12 +809,13 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+                     claim->intent.lease.lease_expires_at_epoch == 120U &&
+                     anonsync::is_lowercase_sha256_hex(
+                         claim->intent.lease.claim_id),
+-                "migrated v1 intent was not immediately claimable under v2 authority");
++                "migrated v1 intent was not immediately claimable under v3 authority");
+         claimed = owner.snapshot_or_throw();
+         require(claimed.state_generation == 4U &&
+                     claimed.outbox.size() == 1U &&
++                    claimed.outbox_time_high_water_epoch == 100U &&
+                     claimed.outbox.front() == claim->intent,
+-                "claim after migration did not publish one exact v2 lease cutpoint");
++                "claim after migration did not publish one exact v3 lease cutpoint");
+     }
+ 
+     {
+@@ -619,7 +834,7 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+     }
+ }
+ 
+-void test_malformed_v1_is_not_laundered_into_v2() {
++void test_malformed_v1_is_not_laundered_into_v3() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v1-malformed");
+     const std::string folder = "folder-sqlite-v1-malformed";
+     const SyncReplicaActor local = actor("device-sqlite-v1-malformed", 907U);
+@@ -646,7 +861,7 @@ void test_malformed_v1_is_not_laundered_into_v2() {
+                     "SELECT count(*) FROM main.sqlite_schema "
+                     "WHERE type='index' AND name='sync_replica_outbox_schedule';",
+                     "failed migration schedule index count") == 0U,
+-            "failed v1 attestation partially published schema v2");
++            "failed v1 attestation partially published schema v3");
+ }
+ 
+ 
+@@ -685,6 +900,115 @@ SyncReplicaOperation child_operation(
+     return operation;
+ }
+ 
++void test_exact_v2_migration_preserves_live_receipt_and_seeds_clock() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-v2-migration");
++    const std::string folder = "folder-sqlite-v2-migration";
++    const SyncReplicaActor local = actor("device-sqlite-v2-migration", 911U);
++    const std::string destination = "device-sqlite-v2-peer";
++    const SyncReplicaSqliteOwnerLimits fixture_limits = limits(16U, 8U, 256U);
++    PreviousV2Fixture fixture;
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        fixture = create_previous_v2_fixture(
++            db, folder, local, fixture_limits, destination);
++        require(scalar_u64_query(
++                    db,
++                    "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
++                    "previous schema version") == 2U &&
++                    scalar_count(db, "sync_replica_operations") == 1U &&
++                    scalar_count(db, "sync_replica_outbox") == 1U &&
++                    scalar_u64_query(
++                        db,
++                        "SELECT count(*) FROM main.sqlite_schema "
++                        "WHERE type='table' AND "
++                        "name='sync_replica_outbox_clock';",
++                        "previous clock table count") == 0U,
++                "previous fixture did not expose one exact rev0871 cutpoint");
++    }
++
++    SyncReplicaSqliteSnapshot migrated;
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(999U, 999U, 9999U),
++            "exact v2 migration owner");
++        migrated = owner.snapshot_or_throw();
++        require(migrated.state_generation == 4U &&
++                    migrated.policy_generation == 1U &&
++                    migrated.limits == fixture_limits &&
++                    migrated.durable.operations ==
++                        std::vector<SyncReplicaOperation>{fixture.operation} &&
++                    migrated.outbox ==
++                        std::vector<anonsync::SyncReplicaSqliteOutboxIntent>{
++                            fixture.intent},
++                "v2 migration changed evidence, policy, or live receipt authority");
++        require(scalar_u64_query(
++                    db,
++                    "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
++                    "v2 migrated schema version") == 3U &&
++                    scalar_count(db, "sync_replica_outbox_clock") == 1U &&
++                    migrated.outbox_time_high_water_epoch ==
++                        fixture.intent.lease.claimed_at_epoch &&
++                    anonsync::is_lowercase_sha256_hex(
++                        migrated.outbox_clock_digest),
++                "v2 migration did not seed one canonical conservative time fence");
++    }
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(1U), "v2 migration restart owner");
++        require(owner.snapshot_or_throw() == migrated,
++                "restart lost exact v2 receipt authority after v3 migration");
++        require(owner.settle_outbox_or_throw(
++                    destination, fixture.operation.operation_id,
++                    fixture.intent.lease.claim_id, 110U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::Applied,
++                "live receipt imported from v2 could not settle after restart");
++        const SyncReplicaSqliteSnapshot settled = owner.snapshot_or_throw();
++        require(settled.state_generation == migrated.state_generation + 1U &&
++                    settled.outbox.empty() &&
++                    settled.outbox_time_high_water_epoch == 110U,
++                "v2 receipt settlement did not publish one exact v3 cutpoint");
++    }
++}
++
++void test_unreachable_v2_lease_is_not_laundered_into_v3() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-v2-unreachable");
++    const std::string folder = "folder-sqlite-v2-unreachable";
++    const SyncReplicaActor local = actor("device-sqlite-v2-unreachable", 919U);
++    SyncSqliteDb db = open_database(file.path);
++    (void)create_previous_v2_fixture(
++        db, folder, local, limits(16U),
++        "device-sqlite-v2-unreachable-peer");
++    exec(db,
++         "UPDATE main.sync_replica_outbox SET "
++         "claim_id='',worker_id='',claimed_at_epoch_be=zeroblob(8),"
++         "lease_expires_at_epoch_be=zeroblob(8),"
++         "retry_not_before_epoch_be=zeroblob(8);");
++
++    require_error(
++        [&] {
++            SyncReplicaSqliteOwner owner(
++                db.db, folder, local, limits(16U),
++                "unreachable v2 migration owner");
++        },
++        "without active or retry authority",
++        "unreachable v2 lease state was laundered into schema v3");
++    require(scalar_u64_query(
++                db,
++                "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
++                "failed v2 migration schema version") == 2U &&
++                scalar_u64_query(
++                    db,
++                    "SELECT count(*) FROM main.sqlite_schema "
++                    "WHERE type='table' AND name='sync_replica_outbox_clock';",
++                    "failed v2 migration clock table count") == 0U,
++            "failed v2 attestation partially published schema v3");
++}
++
++
+ void test_atomic_local_publication_and_single_copy_outbox() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-local");
+     const std::string folder = "folder-sqlite-local";
+@@ -781,7 +1105,7 @@ void test_atomic_local_publication_and_single_copy_outbox() {
+         require(owner.snapshot_or_throw() == settled,
+                 "restart did not restore the exact settled cutpoint");
+         const auto remaining = owner.claim_next_outbox_or_throw(
+-            "worker-local-c", 100U, 10U, "device-sqlite-peer-c");
++            "worker-local-c", 106U, 10U, "device-sqlite-peer-c");
+         require(remaining.has_value() && remaining->operation == operation,
+                 "restart lost the canonical payload behind an unsettled intent");
+     }
+@@ -813,38 +1137,45 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+         first_claim_id = first->intent.lease.claim_id;
+         const SyncReplicaSqliteSnapshot first_claim_snapshot =
+             owner.snapshot_or_throw();
+-        require(!owner.claim_next_outbox_or_throw(
+-                     "worker-receipt-b", 109U, 10U, destination)
+-                     .has_value() &&
+-                    owner.snapshot_or_throw() == first_claim_snapshot,
+-                "unexpired claim was stolen or no-op claim advanced generation");
++        require(first_claim_snapshot.outbox_time_high_water_epoch == 100U,
++                "first claim did not publish its durable time observation");
+ 
+         require(owner.renew_outbox_lease_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+                     105U, 10U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::Applied,
+                 "exact live receipt did not renew its durable deadline");
+-        renewed_snapshot = owner.snapshot_or_throw();
+-        require(renewed_snapshot.state_generation ==
++        const SyncReplicaSqliteSnapshot extended_snapshot =
++            owner.snapshot_or_throw();
++        require(extended_snapshot.state_generation ==
+                     first_claim_snapshot.state_generation + 1U &&
+-                    renewed_snapshot.outbox.size() == 1U &&
+-                    renewed_snapshot.outbox.front().lease.claim_id ==
++                    extended_snapshot.outbox_time_high_water_epoch == 105U &&
++                    extended_snapshot.outbox.size() == 1U &&
++                    extended_snapshot.outbox.front().lease.claim_id ==
+                         first_claim_id &&
+-                    renewed_snapshot.outbox.front().lease.worker_id ==
++                    extended_snapshot.outbox.front().lease.worker_id ==
+                         "worker-receipt-a" &&
+-                    renewed_snapshot.outbox.front().lease.dispatch_attempts ==
++                    extended_snapshot.outbox.front().lease.dispatch_attempts ==
+                         1U &&
+-                    renewed_snapshot.outbox.front().lease.claimed_at_epoch ==
++                    extended_snapshot.outbox.front().lease.claimed_at_epoch ==
+                         100U &&
+-                    renewed_snapshot.outbox.front().lease
++                    extended_snapshot.outbox.front().lease
+                             .lease_expires_at_epoch == 115U,
+                 "heartbeat changed attempt identity or failed to extend the deadline");
+         require(owner.renew_outbox_lease_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+                     106U, 5U) ==
+-                    SyncReplicaSqliteOutboxReceiptResult::LeaseAlreadyCovered &&
+-                    owner.snapshot_or_throw() == renewed_snapshot,
+-                "already-covered heartbeat advanced durable generation");
++                    SyncReplicaSqliteOutboxReceiptResult::LeaseAlreadyCovered,
++                "covered heartbeat did not preserve its current lease");
++        const SyncReplicaSqliteSnapshot covered_snapshot =
++            owner.snapshot_or_throw();
++        require(covered_snapshot.state_generation ==
++                    extended_snapshot.state_generation &&
++                    covered_snapshot.outbox == extended_snapshot.outbox &&
++                    covered_snapshot.outbox_time_high_water_epoch == 106U &&
++                    covered_snapshot.outbox_clock_digest !=
++                        extended_snapshot.outbox_clock_digest,
++                "covered heartbeat failed to publish only its clock observation");
+         require_error(
+             [&] {
+                 (void)owner.renew_outbox_lease_or_throw(
+@@ -854,7 +1185,7 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+             },
+             "1..86400",
+             "owner accepted an overlong heartbeat duration");
+-        require(owner.snapshot_or_throw() == renewed_snapshot,
++        require(owner.snapshot_or_throw() == covered_snapshot,
+                 "invalid heartbeat changed the durable cutpoint");
+         require_error(
+             [&] {
+@@ -866,7 +1197,7 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+             },
+             "fixed retry budget",
+             "owner accepted an unbounded retry delay");
+-        require(owner.snapshot_or_throw() == renewed_snapshot,
++        require(owner.snapshot_or_throw() == covered_snapshot,
+                 "invalid retry release changed the durable cutpoint");
+         require_error(
+             [&] {
+@@ -876,13 +1207,18 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+             },
+             "predates",
+             "owner accepted a matching receipt with a pre-claim clock");
+-        require(owner.snapshot_or_throw() == renewed_snapshot,
++        require(owner.snapshot_or_throw() == covered_snapshot,
+                 "clock-rollback settlement changed the durable cutpoint");
+         require(!owner.claim_next_outbox_or_throw(
+                      "worker-receipt-b", 114U, 10U, destination)
+-                     .has_value() &&
+-                    owner.snapshot_or_throw() == renewed_snapshot,
++                     .has_value(),
+                 "renewed lease was stolen before its exact deadline");
++        renewed_snapshot = owner.snapshot_or_throw();
++        require(renewed_snapshot.state_generation ==
++                    covered_snapshot.state_generation &&
++                    renewed_snapshot.outbox == covered_snapshot.outbox &&
++                    renewed_snapshot.outbox_time_high_water_epoch == 114U,
++                "no-ready claim changed history or failed to advance durable time");
+     }
+ 
+     {
+@@ -895,21 +1231,37 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+         require(owner.settle_outbox_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+                     115U) ==
+-                    SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim &&
+-                    owner.snapshot_or_throw() == renewed_snapshot,
++                    SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim,
+                 "expired receipt retained settlement authority at its deadline");
++        const SyncReplicaSqliteSnapshot expired_snapshot =
++            owner.snapshot_or_throw();
++        require(expired_snapshot.state_generation ==
++                    renewed_snapshot.state_generation &&
++                    expired_snapshot.outbox == renewed_snapshot.outbox &&
++                    expired_snapshot.outbox_time_high_water_epoch == 115U,
++                "expiry did not durably publish revocation without changing history");
+         require(owner.release_outbox_for_retry_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+                     115U, 130U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim &&
+-                    owner.snapshot_or_throw() == renewed_snapshot,
++                    owner.snapshot_or_throw() == expired_snapshot,
+                 "expired receipt retained retry-release authority");
+         require(owner.renew_outbox_lease_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+                     115U, 10U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim &&
+-                    owner.snapshot_or_throw() == renewed_snapshot,
++                    owner.snapshot_or_throw() == expired_snapshot,
+                 "expired receipt was revived by a heartbeat");
++        require_error(
++            [&] {
++                (void)owner.settle_outbox_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    114U);
++            },
++            "rolls back durable time",
++            "clock rollback revived a receipt after durable expiry");
++        require(owner.snapshot_or_throw() == expired_snapshot,
++                "rejected post-expiry rollback changed durable state");
+ 
+         const auto replacement = owner.claim_next_outbox_or_throw(
+             "worker-receipt-b", 115U, 10U, destination);
+@@ -950,9 +1302,15 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+                 "release did not preserve attempt history and durable backoff");
+         require(!owner.claim_next_outbox_or_throw(
+                      "worker-receipt-c", 129U, 10U, destination)
+-                     .has_value() &&
+-                    owner.snapshot_or_throw() == released,
+-                "retry backoff was bypassed or no-op claim changed state");
++                     .has_value(),
++                "retry backoff was bypassed");
++        const SyncReplicaSqliteSnapshot backoff_observed =
++            owner.snapshot_or_throw();
++        require(backoff_observed.state_generation ==
++                    released.state_generation &&
++                    backoff_observed.outbox == released.outbox &&
++                    backoff_observed.outbox_time_high_water_epoch == 129U,
++                "backoff observation changed history or failed to advance time");
+ 
+         const auto third = owner.claim_next_outbox_or_throw(
+             "worker-receipt-c", 130U, 10U, destination);
+@@ -1348,7 +1706,7 @@ void test_schema_contract_and_outbox_tamper_detection() {
+                     db.db, folder, local, limits(16U),
+                     "schema reopen owner");
+             },
+-            "does not match schema v2",
++            "does not match schema v3",
+             "partial durable schema was silently repaired or accepted");
+     }
+ }
+@@ -1410,6 +1768,77 @@ void test_exact_schema_attachment_and_precommit_reattestation() {
+             "owner did not recover after rolling back a silently mutated stage");
+ }
+ 
++
++void test_outbox_clock_precommit_reattestation_and_tamper() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-clock-guard");
++    const std::string folder = "folder-sqlite-clock-guard";
++    const SyncReplicaActor local = actor("device-sqlite-clock-guard", 1431U);
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "clock guard owner");
++    const SyncReplicaSqliteSnapshot baseline = owner.snapshot_or_throw();
++    require(baseline.outbox_time_high_water_epoch == 0U &&
++                anonsync::is_lowercase_sha256_hex(
++                    baseline.outbox_clock_digest),
++            "fresh owner did not expose one canonical zero clock fence");
++
++    exec(db,
++         "CREATE TEMP TABLE sync_replica_outbox_clock("
++         "id INTEGER PRIMARY KEY,high_water_epoch_be BLOB,clock_digest TEXT);"
++         "INSERT INTO temp.sync_replica_outbox_clock VALUES("
++         "1,x'ffffffffffffffff',"
++         "'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');");
++    require(owner.snapshot_or_throw() == baseline,
++            "TEMP clock shadow displaced main clock authority");
++
++    exec(db,
++         "CREATE TEMP TRIGGER silent_clock_digest_mutation "
++         "AFTER UPDATE ON main.sync_replica_outbox_clock "
++         "BEGIN UPDATE main.sync_replica_outbox_clock "
++         "SET clock_digest='0000000000000000000000000000000000000000000000000000000000000000' "
++         "WHERE id=NEW.id; END;");
++    require_error(
++        [&] {
++            (void)owner.claim_next_outbox_or_throw(
++                "worker-clock-guard", 100U, 10U);
++        },
++        "outbox clock attestation mismatch",
++        "TEMP-trigger clock mutation escaped staged re-attestation");
++    require(owner.snapshot_or_throw() == baseline,
++            "failed clock-only publication escaped transaction rollback");
++    exec(db, "DROP TRIGGER temp.silent_clock_digest_mutation;");
++
++    require(!owner.claim_next_outbox_or_throw(
++                 "worker-clock-guard", 100U, 10U)
++                 .has_value(),
++            "empty outbox unexpectedly returned a claim");
++    const SyncReplicaSqliteSnapshot observed = owner.snapshot_or_throw();
++    require(observed.state_generation == baseline.state_generation &&
++                observed.policy_generation == baseline.policy_generation &&
++                observed.durable == baseline.durable &&
++                observed.outbox == baseline.outbox &&
++                observed.outbox_time_high_water_epoch == 100U &&
++                observed.outbox_clock_digest != baseline.outbox_clock_digest,
++            "clock-only publication changed evidence or failed to advance time");
++    require_error(
++        [&] {
++            (void)owner.claim_next_outbox_or_throw(
++                "worker-clock-guard", 99U, 10U);
++        },
++        "rolls back durable time",
++        "no-ready scheduler path accepted a durable clock rollback");
++    require(owner.snapshot_or_throw() == observed,
++            "rejected scheduler rollback changed durable state");
++
++    exec(db,
++         "UPDATE main.sync_replica_outbox_clock "
++         "SET high_water_epoch_be=x'0000000000000065' WHERE id=1;");
++    require_error(
++        [&] { (void)owner.snapshot_or_throw(); },
++        "outbox clock attestation mismatch",
++        "direct durable clock tamper escaped digest attestation");
++}
++
+ void test_local_authority_mapping_digest() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-local-authority");
+     const std::string folder = "folder-sqlite-local-authority";
+@@ -1640,6 +2069,8 @@ constexpr std::string_view kReplicaClaimCrashHelper =
+     "--anonsync-replica-sqlite-owner-claim-crash-helper-v2";
+ constexpr std::string_view kReplicaRenewCrashHelper =
+     "--anonsync-replica-sqlite-owner-renew-crash-helper-v1";
++constexpr std::string_view kReplicaClockCrashHelper =
++    "--anonsync-replica-sqlite-owner-clock-crash-helper-v1";
+ constexpr std::string_view kReplicaCrashFolder = "folder-sqlite-crash";
+ constexpr std::string_view kReplicaCrashDevice = "device-sqlite-crash";
+ constexpr std::uint64_t kReplicaCrashEpoch = 1501U;
+@@ -1657,6 +2088,11 @@ constexpr std::string_view kReplicaRenewCrashDevice =
+ constexpr std::string_view kReplicaRenewCrashDestination =
+     "device-sqlite-renew-crash-peer";
+ constexpr std::uint64_t kReplicaRenewCrashEpoch = 1521U;
++constexpr std::string_view kReplicaClockCrashFolder =
++    "folder-sqlite-clock-crash";
++constexpr std::string_view kReplicaClockCrashDevice =
++    "device-sqlite-clock-crash";
++constexpr std::uint64_t kReplicaClockCrashEpoch = 1531U;
+ 
+ void crash_after_outbox_insert(
+     void*, int operation, const char*, const char* table_name,
+@@ -1803,6 +2239,54 @@ int run_replica_renew_crash_helper(int argc, char** argv) {
+     }
+ }
+ 
++
++void crash_after_outbox_clock_update(
++    void*, int operation, const char*, const char* table_name,
++    sqlite3_int64) {
++    if (operation == SQLITE_UPDATE && table_name != nullptr &&
++        std::strcmp(table_name, "sync_replica_outbox_clock") == 0) {
++        ::_exit(82);
++    }
++}
++
++int run_replica_clock_crash_helper(int argc, char** argv) {
++    try {
++        anonsync::test::verify_self_exec_child_boundary_or_throw();
++        if (argc != 3 || argv == nullptr || argv[1] == nullptr ||
++            argv[2] == nullptr ||
++            std::string_view(argv[1]) != kReplicaClockCrashHelper) {
++            throw std::runtime_error(
++                "invalid replica SQLite clock crash helper instruction");
++        }
++        const std::filesystem::path database_path(argv[2]);
++        const std::string filename = database_path.filename().string();
++        if (!database_path.is_absolute() ||
++            database_path != database_path.lexically_normal() ||
++            database_path.extension() != ".sqlite3" ||
++            filename.rfind("anonsync-replica-sqlite-owner-crash-", 0) != 0) {
++            throw std::runtime_error(
++                "replica SQLite clock crash helper path binding failed");
++        }
++
++        SyncSqliteDb db = open_database(database_path);
++        SyncReplicaSqliteOwner owner(
++            db.db, std::string(kReplicaClockCrashFolder),
++            actor(std::string(kReplicaClockCrashDevice),
++                  kReplicaClockCrashEpoch),
++            limits(16U), "clock crash self-exec owner");
++        auto borrow = db.db.borrow();
++        sqlite3_update_hook(
++            borrow.get(), &crash_after_outbox_clock_update, nullptr);
++        (void)owner.claim_next_outbox_or_throw(
++            "worker-clock-crash", 500U, 30U);
++        return 84;
++    } catch (const std::exception& error) {
++        std::cerr << "replica SQLite clock crash helper failed: "
++                  << error.what() << '\n';
++        return 83;
++    }
++}
++
+ void test_process_crash_before_commit_recovers_old_generation() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-crash");
+     const std::string folder(kReplicaCrashFolder);
+@@ -1883,6 +2367,49 @@ void test_process_crash_during_claim_recovers_unclaimed_cutpoint() {
+                 recovered_claim->intent.lease.dispatch_attempts == 1U,
+             "rolled-back claim consumed attempt authority or stranded the intent");
+ }
++void test_process_crash_during_clock_only_publication_recovers_old_fence() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-crash-clock");
++    const std::string folder(kReplicaClockCrashFolder);
++    const SyncReplicaActor local = actor(
++        std::string(kReplicaClockCrashDevice), kReplicaClockCrashEpoch);
++    SyncReplicaSqliteSnapshot baseline;
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U), "clock crash seed owner");
++        baseline = owner.snapshot_or_throw();
++        require(baseline.state_generation == 1U &&
++                    baseline.outbox.empty() &&
++                    baseline.outbox_time_high_water_epoch == 0U,
++                "clock crash seed was not one empty zero-fence cutpoint");
++    }
++
++    anonsync::test::SelfExecTestProcess child =
++        anonsync::test::spawn_self_exec_test_process_or_throw(
++            anonsync::test::current_self_executable_or_throw(),
++            {std::string(kReplicaClockCrashHelper), file.path.string()});
++    child.wait_for_exact_exit(
++        82, std::chrono::seconds(10),
++        "replica SQLite post-clock-update pre-commit crash helper");
++    require(true,
++            "child crashed at the intended post-clock-update/pre-commit frontier");
++
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "clock crash recovery owner");
++    require(owner.snapshot_or_throw() == baseline,
++            "SQLite recovery exposed a partial durable clock observation");
++    require(!owner.claim_next_outbox_or_throw(
++                 "worker-clock-recovery", 500U, 30U)
++                 .has_value(),
++            "empty recovered outbox unexpectedly returned a claim");
++    const SyncReplicaSqliteSnapshot observed = owner.snapshot_or_throw();
++    require(observed.state_generation == baseline.state_generation &&
++                observed.outbox.empty() &&
++                observed.outbox_time_high_water_epoch == 500U,
++            "recovered clock-only publication did not retry atomically");
++}
++
+ void test_process_crash_during_renewal_recovers_prior_deadline() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-crash-renew");
+     const std::string folder(kReplicaRenewCrashFolder);
+@@ -1954,6 +2481,10 @@ int main(int argc, char** argv) {
+         std::string_view(argv[1]) == kReplicaRenewCrashHelper) {
+         return run_replica_renew_crash_helper(argc, argv);
+     }
++    if (argc >= 2 && argv != nullptr && argv[1] != nullptr &&
++        std::string_view(argv[1]) == kReplicaClockCrashHelper) {
++        return run_replica_clock_crash_helper(argc, argv);
++    }
+ #endif
+     try {
+         if (argc != 1) {
+@@ -1961,7 +2492,9 @@ int main(int argc, char** argv) {
+                 "unexpected sync replica SQLite owner test arguments");
+         }
+         test_exact_v1_migration_preserves_evidence_and_outbox();
+-        test_malformed_v1_is_not_laundered_into_v2();
++        test_malformed_v1_is_not_laundered_into_v3();
++        test_exact_v2_migration_preserves_live_receipt_and_seeds_clock();
++        test_unreachable_v2_lease_is_not_laundered_into_v3();
+         test_atomic_local_publication_and_single_copy_outbox();
+         test_receipt_bound_reclaim_backoff_and_restart();
+         test_claim_precommit_reattestation_and_lease_tamper();
+@@ -1971,6 +2504,7 @@ int main(int argc, char** argv) {
+         test_transaction_failure_rolls_back_entire_cutpoint();
+         test_schema_contract_and_outbox_tamper_detection();
+         test_exact_schema_attachment_and_precommit_reattestation();
++        test_outbox_clock_precommit_reattestation_and_tamper();
+         test_local_authority_mapping_digest();
+         test_pending_dependency_restart_and_activation();
+         test_outbox_budget_precedes_local_mint();
+@@ -1978,6 +2512,7 @@ int main(int argc, char** argv) {
+ #ifdef __linux__
+         test_process_crash_before_commit_recovers_old_generation();
+         test_process_crash_during_claim_recovers_unclaimed_cutpoint();
++        test_process_crash_during_clock_only_publication_recovers_old_fence();
+         test_process_crash_during_renewal_recovers_prior_deadline();
+ #endif
+         std::cout << "sync replica SQLite owner tests passed: "
+diff --git a/tools/audit_sync_replica_outbox_lease.py b/tools/audit_sync_replica_outbox_lease.py
+index 6d620d39e1d50d308ba02cd7a728385b7c8b3db5..905f67b5688cbf82b447f5211dfdd27e0e86478c 100755
+--- a/tools/audit_sync_replica_outbox_lease.py
++++ b/tools/audit_sync_replica_outbox_lease.py
+@@ -57,7 +57,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-outbox-lease-audit-v2",
++        "format": "anonsync-sync-replica-outbox-lease-audit-v3",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -134,6 +134,23 @@ def main() -> int:
+         "fixed inputs are deterministic under tests while the owner supplies CSPRNG bytes",
+     )
+ 
++    high_water = function_body(
++        source, "advance_sync_replica_outbox_time_high_water_or_throw("
++    )
++    require(
++        "anti-rollback" in header
++        and "primitive, not a claim that caller-supplied epoch time is trustworthy" in header
++        and ordered(
++            high_water,
++            "observed_epoch == 0U",
++            "observed_epoch < current_high_water_epoch",
++            "rolls back durable time",
++            "return observed_epoch",
++        ),
++        "durable_time_fence_is_positive_monotonic_and_explicitly_not_a_clock",
++        "expiry observations cannot be undone while caller time remains a separate trust boundary",
++    )
++
+     validate = function_body(
+         source, "void validate_sync_replica_outbox_lease_state_or_throw("
+     )
+@@ -166,6 +183,13 @@ def main() -> int:
+         "never_dispatched_intent_cannot_carry_retry_history",
+         "backoff has a prior-attempt provenance requirement",
+     )
++    require(
++        "state.dispatch_attempts == 0U" in validate
++        and "state.retry_not_before_epoch == 0U" in validate
++        and "has dispatched history without active or retry authority" in validate,
++        "dispatched_history_requires_active_or_retry_authority",
++        "restart rejects the unreachable state that would otherwise become immediately claimable",
++    )
+ 
+     claimable = function_body(
+         source, "bool sync_replica_outbox_lease_is_claimable_at_or_throw("
+@@ -336,6 +360,8 @@ def main() -> int:
+                 "short claim entropy was accepted",
+                 "lease deadline overflow was accepted",
+                 "zero claim clock was accepted",
++                "durable time fence accepted rollback",
++                "dispatched history was accepted without a claim or retry fence",
+             )
+         ),
+         "runtime_covers_expiry_renewal_release_backoff_determinism_and_overflow",
+@@ -379,7 +405,7 @@ def main() -> int:
+         "claim, renewal, and retry release converge on one re-attested lease publication helper",
+     )
+     require(
+-        "revision_number >= 871" in verifier
++        "revision_number >= 872" in verifier
+         and all(
+             token in verifier
+             for token in (
+@@ -388,10 +414,11 @@ def main() -> int:
+                 "tests/sync_replica_outbox_lease_test.cpp",
+                 "tools/audit_sync_replica_outbox_lease.py",
+                 "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md",
++                "DURABLE_TIME_FENCE_AUDIT_rev0872.md",
+             )
+         ),
+-        "release_verifier_requires_the_live_receipt_authority_slice_from_rev0871",
+-        "a sealed revision cannot omit the policy, runtime, structural audit, or design record",
++        "release_verifier_requires_the_durable_time_authority_slice_from_rev0872",
++        "a sealed revision cannot omit the policy, clock fence, runtime, structural audit, or design record",
+     )
+ 
+     return emit(root, args.json, checks)
+diff --git a/tools/audit_sync_replica_sqlite_owner.py b/tools/audit_sync_replica_sqlite_owner.py
+index c53c8c18347de16b3c977b2fe250c31f170f0dab..cadc564be13d1dd5cd952766f7d0790eaab9837c 100755
+--- a/tools/audit_sync_replica_sqlite_owner.py
++++ b/tools/audit_sync_replica_sqlite_owner.py
+@@ -59,7 +59,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-sqlite-owner-audit-v3",
++        "format": "anonsync-sync-replica-sqlite-owner-audit-v4",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -174,16 +174,29 @@ def main() -> int:
+         "callers can distinguish missing, stale, expired, extended, and already-covered receipts",
+     )
+ 
++    require(
++        "outbox_time_high_water_epoch" in header
++        and "outbox_clock_digest" in header
++        and "Separate liveness authority" in header
++        and "must not roll back" in header
++        and "durably advances the time fence" in header,
++        "owner_api_exposes_separate_digest_bound_time_authority",
++        "liveness rollback protection is visible without relabeling it as evidence or trusted wall time",
++    )
++
+     schema = owner[owner.find("constexpr std::array<SchemaDefinition") :]
+     require(
+-        schema.count(") STRICT") >= 14
++        schema.count(") STRICT") >= 20
+         and "kLegacySchema" in schema
++        and "kPreviousSchema" in schema
+         and "kSchema" in schema
+         and "schema_version=1" in schema
+         and "schema_version=2" in schema
++        and "schema_version=3" in schema
++        and "sync_replica_outbox_clock" in schema
+         and "sync_replica_outbox_schedule" in schema,
+-        "owner_declares_exact_v1_and_v2_strict_schemas",
+-        "migration source and receipt-bearing destination schema are both exact contracts",
++        "owner_declares_exact_v1_v2_and_v3_strict_schemas",
++        "both migration sources and the clock-bearing destination are exact sqlite_schema contracts",
+     )
+     require(
+         all(
+@@ -197,7 +210,7 @@ def main() -> int:
+                 "retry_not_before_epoch_be",
+             )
+         ),
+-        "schema_v2_persists_complete_claim_and_backoff_state",
++        "schema_v2_and_v3_persist_complete_claim_and_backoff_state",
+         "restart cannot forget which attempt owns settlement authority",
+     )
+     read_schema = function_body(owner, "read_schema_objects_or_throw(")
+@@ -261,13 +274,15 @@ def main() -> int:
+     )
+ 
+     local_digest = function_body(owner, "local_operation_digest_or_throw(")
++    cutpoint_authority = function_body(owner, "void append_cutpoint_authority(")
++    versioned_cutpoint = function_body(owner, "versioned_cutpoint_digest_or_throw(")
+     cutpoint = function_body(owner, "[[nodiscard]] std::string cutpoint_digest_or_throw(")
+     load = function_body(owner, "load_state_for_schema_or_throw(")
+     require(
+         "anonsync-sync-replica-sqlite-local-authority-v1" in local_digest
+         and "local_actor.epoch" in local_digest
+         and "local_operation_ids" in local_digest
+-        and "meta.local_operation_digest" in cutpoint
++        and "meta.local_operation_digest" in cutpoint_authority
+         and "local operation authority digest mismatch" in load,
+         "local_counter_to_operation_authority_is_digest_bound_and_restored",
+         "same-dot fork substitution cannot preserve the durable cutpoint unnoticed",
+@@ -289,11 +304,27 @@ def main() -> int:
+         "outbox_digest_binds_every_receipt_and_schedule_field",
+         "claim replacement or backoff edits cannot preserve the structural seal",
+     )
++    clock_digest = function_body(owner, "outbox_clock_digest_or_throw(")
++    read_clock = function_body(owner, "read_outbox_clock_or_throw(")
++    update_clock = function_body(owner, "update_outbox_clock_exact_or_throw(")
++    require(
++        "anonsync-sync-replica-outbox-clock-v1" in clock_digest
++        and "folder_id" in clock_digest
++        and "local_actor.device_id" in clock_digest
++        and "local_actor.epoch" in clock_digest
++        and "high_water_epoch" in clock_digest
++        and "FROM main.sync_replica_outbox_clock" in read_clock
++        and "outbox clock attestation mismatch" in read_clock
++        and "WHERE id=1 AND high_water_epoch_be=? AND clock_digest=?" in update_clock
++        and "sqlite3_changes" in update_clock,
++        "clock_row_is_identity_bound_main_qualified_and_exactly_updated",
++        "TEMP shadowing, direct mutation, and lost exact-row authority fail closed",
++    )
++
+     require(
+         all(
+-            token in cutpoint
++            token in cutpoint_authority
+             for token in (
+-                "meta.schema_version",
+                 "meta.folder_id",
+                 "meta.local_actor.device_id",
+                 "meta.last_local_counter",
+@@ -306,9 +337,11 @@ def main() -> int:
+                 "meta.visible_state_digest",
+                 "meta.outbox_digest",
+             )
+-        ),
++        )
++        and "meta.schema_version" in versioned_cutpoint
++        and "anonsync-sync-replica-sqlite-cutpoint-v3" in cutpoint,
+         "cutpoint_seal_frames_schema_identity_policy_counters_and_digests",
+-        "casual/torn metadata edits cannot independently relabel a generation",
++        "one shared authority encoder prevents v2/v3 field drift while each domain binds its schema version",
+     )
+     require(
+         ordered(
+@@ -324,9 +357,11 @@ def main() -> int:
+             "verify_visible_or_throw",
+             "read_legacy_outbox_or_throw",
+             "read_outbox_or_throw",
++            "outbox_clock_migration_floor_or_throw",
++            "read_outbox_clock_or_throw",
+         ),
+         "restore_rederives_every_redundant_projection_from_exact_evidence",
+-        "schema, canonical bytes, parent graph, model state, views, and either outbox version are one read cutpoint",
++        "schema, canonical bytes, parent graph, model state, views, outbox, and clock authority are one read cutpoint",
+     )
+ 
+     staged = function_body(owner, "attest_and_commit_staged_cutpoint_or_throw(")
+@@ -335,6 +370,7 @@ def main() -> int:
+             staged,
+             "load_state_or_throw",
+             "observed.meta != expected_meta",
++            "observed.outbox_clock != expected_outbox_clock",
+             "observed.model.durable_state() != expected_model.durable_state()",
+             "observed.outbox != expected_outbox",
+             "require_write_authority_or_throw",
+@@ -344,25 +380,40 @@ def main() -> int:
+         "successful TEMP-trigger row mutation cannot be returned as a committed publication",
+     )
+ 
+-    migration = function_body(owner, "migrate_legacy_schema_or_throw(")
++    migration = function_body(owner, "migrate_prior_schema_or_throw(")
+     require(
+         ordered(
+             constructor,
+             "schema_matches(observed, kLegacySchema)",
+             "load_legacy_state_or_throw",
+-            "migrate_legacy_schema_or_throw",
++            "migrate_prior_schema_or_throw",
++            "schema_matches(observed, kPreviousSchema)",
++            "load_previous_state_or_throw",
++            "migrate_prior_schema_or_throw",
+         )
+         and ordered(
+             migration,
+-            "legacy.meta.schema_version != kLegacySchemaVersion",
++            "kLegacySchemaVersion",
++            "kPreviousSchemaVersion",
+             "DROP INDEX main.sync_replica_outbox_operation",
++            "sync_replica_outbox_clock",
+             "verify_schema_or_throw",
+             "meta_from_state_or_throw",
+             "insert_outbox_intents_or_throw",
++            "insert_outbox_clock_or_throw",
+             "attest_and_commit_staged_cutpoint_or_throw",
+         ),
+-        "legacy_migration_requires_full_v1_attestation_and_atomic_v2_publication",
+-        "malformed rev0869 state cannot be laundered by rebuilding metadata",
++        "prior_migration_requires_full_v1_or_v2_attestation_and_atomic_v3_publication",
++        "malformed rev0869 or rev0871 state cannot be laundered by rebuilding metadata",
++    )
++    migration_floor = function_body(owner, "outbox_clock_migration_floor_or_throw(")
++    require(
++        "intent.lease.claimed_at_epoch" in migration_floor
++        and "kSyncReplicaOutboxMaxRetryDelaySeconds" in migration_floor
++        and "strongest lower bound" in migration_floor
++        and "outbox clock predates retained lease authority" in load,
++        "migration_seeds_only_time_proven_by_prior_durable_lease_state",
++        "v2 lacks exact observation history, so v3 records a conservative reconstructible floor rather than inventing time",
+     )
+ 
+     for name, signature in (
+@@ -421,13 +472,15 @@ def main() -> int:
+             "SyncSqliteTransaction transaction",
+             "SyncSqliteTransactionMode::Immediate",
+             "load_state_or_throw",
++            "observe_outbox_time_or_throw",
+             "sync_replica_outbox_lease_is_claimable_at_or_throw",
++            "attest_and_commit_clock_observation_or_throw",
+             "claim_sync_replica_outbox_lease_or_throw",
+             "evidence_operation_by_id",
+             "publish_outbox_lease_update_or_throw",
+         ),
+         "claim_mints_one_fresh_receipt_with_entropy_before_writer_lock",
+-        "CSPRNG latency cannot hold SQLite's writer slot while the loaded cutpoint still binds the token",
++        "every valid scheduling observation is durable even when no intent is ready, while claim authority remains cutpoint-bound",
+     )
+     random_entropy = function_body(owner, "random_claim_entropy_or_throw(")
+     require(
+@@ -437,6 +490,20 @@ def main() -> int:
+         "claim_entropy_comes_from_a_checked_256_bit_csprng_read",
+         "receipt uniqueness is not derived solely from clocks or worker names",
+     )
++    observe_time = function_body(owner, "observe_outbox_time_or_throw(")
++    commit_clock = function_body(owner, "attest_and_commit_clock_observation_or_throw(")
++    require(
++        ordered(
++            observe_time,
++            "advance_sync_replica_outbox_time_high_water_or_throw",
++            "make_outbox_clock_or_throw",
++            "update_outbox_clock_exact_or_throw",
++        )
++        and "attest_and_commit_staged_cutpoint_or_throw" in commit_clock,
++        "time_observation_uses_pure_rollback_policy_and_full_staged_commit",
++        "clock-only changes are exact, restart-visible, and protected by the same precommit restore oracle",
++    )
++
+     exact_update = function_body(owner, "update_outbox_lease_exact_or_throw(")
+     exact_delete = function_body(owner, "delete_outbox_intent_exact_or_throw(")
+     require(
+@@ -495,12 +562,15 @@ def main() -> int:
+             "find_outbox_intent",
+             "SyncReplicaSqliteOutboxReceiptResult::IntentMissing",
+             "sync_replica_outbox_claim_status_at_or_throw",
+-            "sqlite_receipt_result_for_claim_status",
++            "SyncReplicaOutboxClaimStatus::Stale",
++            "observe_outbox_time_or_throw",
++            "SyncReplicaOutboxClaimStatus::Expired",
++            "attest_and_commit_clock_observation_or_throw",
+             "delete_outbox_intent_exact_or_throw",
+             "attest_and_commit_staged_cutpoint_or_throw",
+         ),
+         "settlement_requires_the_exact_current_unexpired_receipt",
+-        "a stale, released, or expired attempt cannot retire an unsettled intent",
++        "missing/stale receipts cannot ratchet time; matching expiry commits revocation before returning",
+     )
+     require(
+         ordered(
+@@ -510,14 +580,17 @@ def main() -> int:
+             "SyncSqliteTransactionMode::Immediate",
+             "find_outbox_intent",
+             "sync_replica_outbox_claim_status_at_or_throw",
+-            "sqlite_receipt_result_for_claim_status",
++            "SyncReplicaOutboxClaimStatus::Stale",
++            "observe_outbox_time_or_throw",
++            "SyncReplicaOutboxClaimStatus::Expired",
++            "attest_and_commit_clock_observation_or_throw",
+             "renew_sync_replica_outbox_lease_or_throw",
+             "renewed == previous",
+             "LeaseAlreadyCovered",
+             "publish_outbox_lease_update_or_throw",
+         ),
+-        "heartbeat_requires_live_receipt_and_avoids_covered_publications",
+-        "renewal cannot revive expiry, shorten a lease, or advance generation for an already-covered deadline",
++        "heartbeat_requires_live_receipt_and_publishes_covered_time_only",
++        "renewal cannot revive expiry or shorten a lease, and covered heartbeats advance only the separate clock fence",
+     )
+     require(
+         ordered(
+@@ -528,13 +601,17 @@ def main() -> int:
+             "SyncSqliteTransactionMode::Immediate",
+             "find_outbox_intent",
+             "sync_replica_outbox_claim_status_at_or_throw",
+-            "sqlite_receipt_result_for_claim_status",
++            "SyncReplicaOutboxClaimStatus::Stale",
++            "observe_outbox_time_or_throw",
++            "SyncReplicaOutboxClaimStatus::Expired",
++            "attest_and_commit_clock_observation_or_throw",
+             "release_sync_replica_outbox_lease_or_throw",
+             "publish_outbox_lease_update_or_throw",
+         ),
+-        "retry_release_requires_live_receipt_and_bounded_backoff",
+-        "retry scheduling is a fenced durable transition with an explicit maximum delay",
++        "retry_release_requires_live_receipt_bounded_backoff_and_monotonic_time",
++        "retry scheduling is an exact durable transition and expired authority is durably revoked",
+     )
++
+     require(
+         "acknowledge_outbox_or_throw" not in header
+         and "outbox_delivery_or_throw" not in header
+@@ -564,25 +641,29 @@ def main() -> int:
+             token in runtime
+             for token in (
+                 "test_exact_v1_migration_preserves_evidence_and_outbox",
+-                "test_malformed_v1_is_not_laundered_into_v2",
++                "test_malformed_v1_is_not_laundered_into_v3",
++                "test_exact_v2_migration_preserves_live_receipt_and_seeds_clock",
++                "test_unreachable_v2_lease_is_not_laundered_into_v3",
+                 "test_receipt_bound_reclaim_backoff_and_restart",
+-                "LeaseAlreadyCovered",
+-                "ExpiredClaim",
+-                "expired receipt retained settlement authority",
+-                "expired receipt was revived by a heartbeat",
++                "clock rollback revived a receipt after durable expiry",
++                "test_outbox_clock_precommit_reattestation_and_tamper",
++                "TEMP clock shadow displaced main clock authority",
++                "TEMP-trigger clock mutation escaped staged re-attestation",
++                "test_process_crash_during_clock_only_publication_recovers_old_fence",
++                "SQLite recovery exposed a partial durable clock observation",
+                 "worker-trigger-mutated",
+                 "worker-renew-trigger-mutated",
+                 "test_concurrent_claimers_mint_one_receipt",
+-                "crash_after_outbox_lease_update",
+                 "test_process_crash_during_claim_recovers_unclaimed_cutpoint",
+                 "test_process_crash_during_renewal_recovers_prior_deadline",
+                 "verify_self_exec_child_boundary_or_throw",
+                 "std::barrier start(2)",
+             )
+         ),
+-        "runtime_covers_migration_expiry_heartbeat_trigger_concurrency_restart_and_crash",
+-        "tests exercise live-receipt revocation and precommit corruption boundaries, not only delivery",
++        "runtime_covers_both_migrations_rollback_trigger_concurrency_restart_and_crash",
++        "tests pin durable time revocation and corruption boundaries in addition to live-receipt delivery",
+     )
++
+     require(
+         "anonsync_sync_replica_outbox_lease" in cmake
+         and "anonsync_sync_replica_outbox_lease_test" in cmake
+@@ -593,14 +674,15 @@ def main() -> int:
+         "CMake registers both authority layers and the process-crash test budget",
+     )
+     require(
+-        "revision_number >= 871" in verifier
++        "revision_number >= 872" in verifier
+         and "src/sync_replica_sqlite_owner.hpp" in verifier
+         and "src/sync_replica_sqlite_owner.cpp" in verifier
+         and "tests/sync_replica_sqlite_owner_test.cpp" in verifier
+         and "tools/audit_sync_replica_sqlite_owner.py" in verifier
+-        and "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md" in verifier,
+-        "release_verifier_keeps_the_rev0871_owner_slice_mandatory",
+-        "a sealed archive cannot omit the cutpoint owner, heartbeat audit, or structural audit",
++        and "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md" in verifier
++        and "DURABLE_TIME_FENCE_AUDIT_rev0872.md" in verifier,
++        "release_verifier_keeps_the_rev0872_clock_owner_slice_mandatory",
++        "a sealed archive cannot omit the cutpoint owner, clock audit, heartbeat audit, or structural audit",
+     )
+     require(
+         "INSERT OR" not in owner and "ON CONFLICT" not in owner,
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 91e6d16b767df347050cf027ecfe18b9bb1f581e..aa2dfc60730a101c9d9435fc6b30a1e6fc5f7522 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -449,6 +449,10 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         revision_scoped_required.update({
+             "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md",
+         })
++    if revision_number is not None and revision_number >= 872:
++        revision_scoped_required.update({
++            "DURABLE_TIME_FENCE_AUDIT_rev0872.md",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

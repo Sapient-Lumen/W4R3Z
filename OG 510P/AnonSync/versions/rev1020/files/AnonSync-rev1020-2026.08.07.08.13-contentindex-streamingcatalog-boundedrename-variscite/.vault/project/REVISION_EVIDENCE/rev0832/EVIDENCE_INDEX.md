@@ -1,0 +1,66 @@
+# Evidence index
+
+Files: **60**.
+
+| Path | Bytes | SHA-256 |
+|---|---:|---|
+| `ACTIVE_IMPLEMENTATION_PROJECTION.json` | 36595 | `9a9a8e128fdd08d3b0a0fb4c1f97e65ed65b85af19b53c9d09243efb48bce079` |
+| `AUDIT.md` | 3692 | `9a109b6fa370885115c0ed1685caab9c94e4994f54b662ab111a4e4ec5909ced` |
+| `CHANGESET.json` | 1218 | `39893d8e94a8464a1b983652d589c5f2fe7fb4feb205fbf478211821bb7846ec` |
+| `COMMANDS.tsv` | 1296 | `4e8c4cdcff4ad766e62b7abfc833805dca51587de8f5452131a2129026ccb44e` |
+| `LINEAGE.json` | 678 | `a20da9b46db3790cc10ddea3d7b4583eabccd51095c2937e8a622dd938ef31bc` |
+| `LINEAGE.md` | 683 | `5d6fa743297d9892d3572d074e1982b4047d641ebe1886e0baa58c8a4c5b4f73` |
+| `NEXT_WORK.md` | 1033 | `edb946640444e5e557ead66c89bd7ac6d244d5241e1804fc14a7201cdf470998` |
+| `RESEARCH.md` | 1592 | `3a6b638f9057feb7e9e61bc15ad9b84dd479005f9109a17447e47808931cde91` |
+| `SOURCE_DIFF_rev0831_to_rev0832.patch` | 163802 | `066e8abfc584a19ccb4064e1328c04a7ca7bce474a508a5361ad66431b6c6aed` |
+| `SOURCE_NAME_STATUS.txt` | 613 | `6d62ca352bb4a0922a13e3a494432e116ae6601ba9e07db9e916154af967609a` |
+| `SOURCE_NUMSTAT.txt` | 657 | `da532f93b8a667c751c4c274368670cbb41352f957faed7bf5aede74f324988f` |
+| `SOURCE_SHORTSTAT.txt` | 57 | `c2adcfee5377831f52f9dffad7354e35e049debca72e397b15b5a0cd16b3b6a5` |
+| `SOURCE_STAT.txt` | 1020 | `a610b5a1650623122186bbd0c53ff34231a90924135e7f8ed6ad7d9359c6cb82` |
+| `TOOLCHAIN.txt` | 355 | `1581efd8fda36dc573ee4304263d7e5d42946fb50a5373d73eb0c6b3b64b9f7c` |
+| `audits/audit_runtime_selftest_separation.json` | 1678 | `7288e3681dd606dede1cb44ddf98bf15b45f8996914a5f870e3e6c9e48863eda` |
+| `audits/audit_runtime_selftest_separation.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_self_exec_test_process.json` | 7691 | `2ffaa2672b723d02ce76dbe958710975c2b3987d8c8b3ef4ec2e2eed93ec219e` |
+| `audits/audit_self_exec_test_process.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_sqlite_process_authority.json` | 137804 | `9b86f7acffcd9e196e16d13030e64adf52e415e074fa37b25981b4688f4412bf` |
+| `audits/audit_sqlite_process_authority.log` | 137804 | `9b86f7acffcd9e196e16d13030e64adf52e415e074fa37b25981b4688f4412bf` |
+| `audits/audit_sqlite_replay_ledger_selftest_separation.json` | 5159 | `53a0c5db5a45694242fcc6f1a7b607cc868eccac52aea05a06200116be27e3dd` |
+| `audits/audit_sqlite_replay_ledger_selftest_separation.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_sqlite_scalar_extraction.json` | 7935 | `1b3dc5f8cfa83207a6663aba51775ed58906f932e7a40c35ca1d2fd6ee442ccb` |
+| `audits/audit_sqlite_scalar_extraction.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_sqlite_snapshot_seal.json` | 12247 | `02ff9d9c6c1f375cdc25122cce4886ce606dab49c070f9dcc398c266907a2b0e` |
+| `audits/audit_sqlite_snapshot_seal.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `audits/audit_sqlite_verification_budget.json` | 7903 | `0eb84b03f113504ecc96882845af16a93f356147e66492046bb17bbe3b76f177` |
+| `audits/audit_sqlite_verification_budget.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `defect/runtime-diagnostic-coownership.md` | 868 | `fd052afec9944f71ffc1cad4b915d9c2ff773772753bb1980723a06a25c413e1` |
+| `graph/dependency-graph-proof.json` | 10389 | `95dea80b1090131776864b3dfea6d55e2d105527dfa3cb921015a66590e353cf` |
+| `graph/dependency-graph-proof.md` | 3516 | `cefd70fee613d2ef19b81717f3937729038d5ac530d2aa86ad5b460ff7ebd7dd` |
+| `inventory/RAW_FORK_INVENTORY.json` | 6774 | `31bea2d27211efd124fde0b65107bbcbca512a4eca1fc51283837f640e78d895` |
+| `inventory/RAW_FORK_INVENTORY.md` | 4130 | `5e7259ffe87f144498f8e115b70e2dbc9fff4e78b7c1612613cc4ad7e8f1be38` |
+| `lineage/parent-archive.sha256` | 158 | `e84cd221bae4c39c5734ea332a8e9029331168928d98463b0556fb0d826daf7a` |
+| `lineage/parent-directory-verification.json` | 3676 | `efde079240b34d914569fa280d7666c7cba3a0d1ca7964326ecf49463d46c219` |
+| `lineage/parent-zip-verification.json` | 4166 | `a6c92364d34f034275e85d5153bc6d7111b5b27dead042d970919bd94901948b` |
+| `repository_metrics.json` | 2156 | `b627dbbe1730a7960610ceb74078f13f8796cd4016f05d210cfb3b2e29e69d78` |
+| `validation/VALIDATION_SUMMARY.json` | 3285 | `f661c4fec2767543bcc1f0e8a7cf60c456c756690abf64a7bc4d398846a5ec6c` |
+| `validation/captured-at.txt` | 26 | `7802b3114e54db35cc04362909864589cd9b523cc298740f158e7f0ee50d3c93` |
+| `validation/clang17-version.txt` | 110 | `ed9e259a44ed80f070035fc1870f20a7096705f80d1304724ecde55c9712c9f4` |
+| `validation/clang17-werror-restore-lock.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `validation/clang17-werror-selftest-corpus.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `validation/ctest-inventory-119.json` | 72130 | `53c3398463318fafb5e04f685ad99dabfbf38a1c63a7046e7e085f7514cd8bf3` |
+| `validation/ctest-inventory-119.txt` | 7327 | `b95bf5e6191ed9b8b1800a90991f1a6bb4fc17cf78d3578719289f3df88a5338` |
+| `validation/ctest-postclosure-001-020.log` | 3469 | `0ae238122e832721742786e3da68f273dad55a2c1f0fa959c5941d484320760f` |
+| `validation/ctest-postclosure-021-040.log` | 3625 | `9ee038a91a16d2d58850c418375b0e7f094ea0c676db8bdad2351a9b30c37d0b` |
+| `validation/ctest-postclosure-041-060.log` | 3653 | `4da58231043c20300927462b8f462cefde2dbbbfd05db0d7206e22d018aacb43` |
+| `validation/ctest-postclosure-061-080.log` | 3362 | `32d0da22176970cdcae0f0955f04ce94aee14d688babd3c53f4de38cdfd0a465` |
+| `validation/ctest-postclosure-081-100.log` | 3468 | `d56b8c6a17fa96683b3bc95a3183d214511843f33afbf52b02c3f0a3f196fb86` |
+| `validation/ctest-postclosure-101-119.log` | 3316 | `cfb6a2e73b7dfaa3969016e431c1c879e2925c5af5cded13fce73a91c9119486` |
+| `validation/final-dependency-closure-no-work.log` | 22 | `8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794` |
+| `validation/first-complete-gate-ownership-audit-finding.log` | 29113 | `8409284e1a488f1e4c4de81e5ad8cfb0624462348117593252db90ebb365ab26` |
+| `validation/focused-final-restore-corpus.log` | 971 | `f4234ea9a05270da9ffdc78ab9bfd7e19a5df4f366985c41e6d5b5bba8dd8598` |
+| `validation/gcc14-debug-all-target-build.log` | 19850 | `070c9b9ea52e49656cde6f6bb3728ea01614106634fc88eacae4286214052d71` |
+| `validation/gcc14-debug-configure.log` | 891 | `0b018815254090222fc30348b6561367b5e172f3eddc72af2daab21a5f06ef4d` |
+| `validation/gcc14-final-link-completion.log` | 346 | `f145d2962ba69b25f9b7223fe346c8e2502e2c8f9d766859d4e71fcb59d5411c` |
+| `validation/gcc14-owner-move-rebuild.log` | 6378 | `712b214e652da387d562978d31294c6020aca122dc4a3698d4a3255f4f894e45` |
+| `validation/restore-lock-stress-5.log` | 1120 | `edfda613fb94e7568b5746c15c844fa79581708d53b68ace23d82585cd9e241d` |
+| `validation/source-patch-compare.json` | 56574 | `94bf0a50a15acd7890598f5d51b526e85ec61ee0c0d7793aff2af5663874e0c9` |
+| `validation/write-gate-stress-5.log` | 1161 | `c235f9225b305015db7977537451203a70dfcd18686d266c5ae9c79f1066573a` |

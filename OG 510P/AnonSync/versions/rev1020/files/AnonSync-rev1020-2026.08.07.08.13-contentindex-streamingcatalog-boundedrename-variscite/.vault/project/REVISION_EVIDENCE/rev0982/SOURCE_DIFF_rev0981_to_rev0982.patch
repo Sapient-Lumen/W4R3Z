@@ -1,0 +1,2800 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9a4a70c25ebd54e5e9f00080e22a6b2e2c37f031..ab0f9c1b872017bd14deae35c0920e36fb6b65ba 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1315,6 +1315,11 @@ target_link_libraries(anonsync_sync_replica_deployment_binding
+   PRIVATE anonsync_sha256_digest)
+ target_compile_options(anonsync_sync_replica_deployment_binding PRIVATE
+   -Wall -Wextra -Wpedantic)
++# The replica owner has one specialized composition for a sealed detached
++# read-only image. Keep the general model target independent while linking the
++# exact deployment attestation implementation into that boundary.
++target_link_libraries(anonsync_sync_replica_sqlite_owner PRIVATE
++  anonsync_sync_replica_deployment_binding)
+ 
+ # Process-facing SQLite stores are opened through one descriptor-rooted,
+ # existing-only authority. A sealed bootstrap image has a distinct candidate
+@@ -2240,6 +2245,29 @@ add_executable(anonsync_core src/anonsync_core.cpp)
+ target_link_libraries(anonsync_core PRIVATE anonsync_selftests_lib)
+ target_compile_options(anonsync_core PRIVATE -Wall -Wextra -Wpedantic)
+ 
++# Offline immutable backup owner for the primary replica SQLite image. The
++# owner reuses the bounded live-copy/seal implementation and deployment
++# singleton; the shipping CLI is only a JSON/options adapter.
++add_library(anonsync_sync_replica_database_backup STATIC
++  src/sync_replica_database_backup.cpp)
++target_include_directories(anonsync_sync_replica_database_backup PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_database_backup
++  PUBLIC
++    anonsync_sync_replica_deployment_manifest
++    anonsync_sync_replica_sqlite_owner
++  PRIVATE
++    anonsync_sqlite_snapshot_seal
++    anonsync_sync_atomic_file_publication
++    anonsync_sync_replica_deployment_binding
++    anonsync_sync_replica_folder_process
++    anonsync_sync_replica_operational_database
++    anonsync_sync_replica_peer_service_singleton
++    anonsync_sync_replica_tls_membership
++    anonsync_sqlite_support)
++target_compile_options(anonsync_sync_replica_database_backup PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ # Product-spine executable. Unlike anonsync_core, this binary links no selftest
+ # implementation libraries: it exposes bounded status/clock operations,
+ # enqueue, membership, numeric-address sender, and one-shot receiver composition
+@@ -2291,6 +2319,7 @@ add_executable(anonsync_sync src/anonsync_sync.cpp)
+ target_include_directories(anonsync_sync PRIVATE
+   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+ target_link_libraries(anonsync_sync PRIVATE
++  anonsync_sync_replica_database_backup
+   anonsync_sha256_digest
+   anonsync_sync_atomic_file_publication
+   anonsync_sync_bounded_regular_file
+@@ -4083,6 +4112,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_replica
+       anonsync_folder
+       anonsync_sync
++      anonsync_sync_replica_database_backup
+       anonsync_sync_replica_folder_process_test
+       anonsync_sync_replica_folder_wake_test
+       anonsync_sync_replica_sync_once_test
+@@ -4644,7 +4674,7 @@ if(Python3_Interpreter_FOUND)
+         --folder $<TARGET_FILE:anonsync_folder>
+         --sync $<TARGET_FILE:anonsync_sync>)
+     set_tests_properties(anonsync_sync_database_recovery_process_test
+-      PROPERTIES TIMEOUT 60)
++      PROPERTIES TIMEOUT 90)
+     add_test(NAME anonsync_sync_service_configuration_status_process_test
+       COMMAND ${Python3_EXECUTABLE} -B -S
+         ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_anonsync_service_configuration_status.py
+@@ -4755,6 +4785,12 @@ if(Python3_Interpreter_FOUND)
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   set_tests_properties(anonsync_replica_database_open_policy_source_audit
+     PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_sync_replica_database_backup_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_replica_database_backup.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_sync_replica_database_backup_source_audit
++    PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_replica_bootstrap_authority_source_audit
+     COMMAND ${Python3_EXECUTABLE} -B -S
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_anonsync_replica_bootstrap_authority.py
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index cf8816edf31f6d6aad34ac725db5057616c3ea7e..626a60934df66eac01ba3c7b253c069dbbfa112b 100644
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -7,6 +7,7 @@
+ #include "sync_local_status_socket.hpp"
+ #include "sync_manifest_validation.hpp"
+ #include "sync_replica_deployment_manifest.hpp"
++#include "sync_replica_database_backup.hpp"
+ #include "sync_replica_file_tls_client.hpp"
+ #include "sync_replica_folder_process.hpp"
+ #include "sync_replica_folder_scan_owner.hpp"
+@@ -1376,6 +1377,139 @@ void append_database_recovery_scope_json(
+         << ",\"network_started\":false";
+ }
+ 
++void append_database_backup_scope_json(
++    std::ostream& output,
++    const anonsync::SyncReplicaDeploymentManifest& deployment,
++    const anonsync::SyncReplicaDatabaseBackupArtifactObservation& artifact) {
++    const anonsync::SyncReplicaDatabaseBackupCutpoint& snapshot =
++        artifact.source_cutpoint;
++    output
++        << ",\"manifest_path\":"
++        << json_quote(deployment.manifest_path.generic_string())
++        << ",\"deployment_id\":" << json_quote(deployment.deployment_id)
++        << ",\"folder_id\":" << json_quote(deployment.folder_id)
++        << ",\"local_device_id\":"
++        << json_quote(deployment.local_actor.device_id)
++        << ",\"local_epoch\":" << deployment.local_actor.epoch
++        << ",\"replica_database\":"
++        << json_quote(deployment.replica_db.generic_string())
++        << ",\"snapshot_path\":"
++        << json_quote(artifact.artifact_path.generic_string())
++        << ",\"offline_required\":true"
++        << ",\"deployment_singleton_acquired\":true"
++        << ",\"continuity_scope\":\"single_replica_database_image\""
++        << ",\"external_anti_rollback_authority\":false"
++        << ",\"payload_store_observed\":false"
++        << ",\"folder_catalog_observed\":false"
++        << ",\"rooted_files_observed\":false"
++        << ",\"network_started\":false"
++        << ",\"payload_bytes_included\":false"
++        << ",\"folder_catalog_included\":false"
++        << ",\"membership_database_included\":false"
++        << ",\"effect_database_included\":false"
++        << ",\"anchor_database_included\":false"
++        << ",\"snapshot_format\":\"anonsync.replica-database-backup.v1\""
++        << ",\"snapshot_sha256\":" << json_quote(artifact.artifact_sha256)
++        << ",\"snapshot_byte_count\":" << artifact.artifact_bytes
++        << ",\"snapshot_page_size\":" << artifact.sqlite_page_size
++        << ",\"snapshot_page_count\":" << artifact.sqlite_page_count
++        << ",\"maximum_snapshot_bytes\":"
++        << anonsync::kSyncReplicaDatabaseBackupMaximumArtifactBytes
++        << ",\"maximum_snapshot_pages\":"
++        << anonsync::kSyncReplicaDatabaseBackupMaximumArtifactPages
++        << ",\"database_incarnation_sha256\":"
++        << json_quote(snapshot.database_incarnation_sha256)
++        << ",\"database_recovery_epoch\":"
++        << snapshot.database_recovery_epoch
++        << ",\"state_generation\":" << snapshot.state_generation
++        << ",\"cutpoint_digest\":"
++        << json_quote(snapshot.cutpoint_digest)
++        << ",\"recovery_expectation\":"
++        << json_quote(encode_database_recovery_expectation_or_throw(
++               snapshot.database_incarnation_sha256,
++               snapshot.database_recovery_epoch,
++               snapshot.cutpoint_digest))
++        << ",\"canonical_standalone_sqlite\":true"
++        << ",\"single_file_sidecar_free\":true"
++        << ",\"logical_sqlite_snapshot\":true"
++        << ",\"current_schema_required\":true"
++        << ",\"deployment_binding_attested\":true"
++        << ",\"database_family_replacement_performed\":false"
++        << ",\"restore_performed\":false"
++        << ",\"recovery_epoch_advanced\":false"
++        << ",\"post_replacement_recovery_advance_required\":true"
++        << ",\"retention_age_reset_required_after_restore\":true";
++}
++
++int command_database_backup_create(const Options& options) {
++    options.require_only({"manifest", "snapshot"});
++    const fs::path manifest_path = require_absolute_path(
++        options.one("manifest"), "--manifest");
++    const fs::path snapshot_path = require_absolute_path(
++        options.one("snapshot"), "--snapshot");
++    anonsync::SyncReplicaDatabaseBackupOwner owner(
++        anonsync::read_sync_replica_deployment_manifest_or_throw(
++            manifest_path,
++            "anonsync_sync database-backup-create manifest"),
++        "anonsync_sync database-backup-create");
++    const anonsync::SyncReplicaDatabaseBackupArtifactObservation artifact =
++        owner.create_artifact_or_throw(snapshot_path);
++
++    std::cout
++        << "{\"command\":\"database-backup-create\""
++        << ",\"terminal_class\":\"completed\""
++        << ",\"response_schema\":"
++        << json_quote("anonsync.local-database-backup-create.response.v1");
++    append_database_backup_scope_json(
++        std::cout, owner.deployment(), artifact);
++    std::cout
++        << ",\"active_database_observed\":true"
++        << ",\"transactionally_pinned_source\":true"
++        << ",\"source_cutpoint_bracketed\":true"
++        << ",\"bounded_resident_copy\":true"
++        << ",\"immutable_create_new\":true"
++        << ",\"postpublication_reverified\":true"
++        << ",\"artifact_published\":true"
++        << ",\"source_database_mutation_performed\":false"
++        << ",\"mutation_performed\":true}\n";
++    return 0;
++}
++
++int command_database_backup_inspect(const Options& options) {
++    options.require_only({"manifest", "snapshot"});
++    const fs::path manifest_path = require_absolute_path(
++        options.one("manifest"), "--manifest");
++    const fs::path snapshot_path = require_absolute_path(
++        options.one("snapshot"), "--snapshot");
++    anonsync::SyncReplicaDatabaseBackupOwner owner(
++        anonsync::read_sync_replica_deployment_manifest_or_throw(
++            manifest_path,
++            "anonsync_sync database-backup-inspect manifest"),
++        "anonsync_sync database-backup-inspect");
++    const anonsync::SyncReplicaDatabaseBackupArtifactObservation artifact =
++        owner.inspect_artifact_or_throw(snapshot_path);
++
++    std::cout
++        << "{\"command\":\"database-backup-inspect\""
++        << ",\"terminal_class\":\"completed\""
++        << ",\"response_schema\":"
++        << json_quote(
++               "anonsync.local-database-backup-inspection.response.v1");
++    append_database_backup_scope_json(
++        std::cout, owner.deployment(), artifact);
++    std::cout
++        << ",\"active_database_observed\":false"
++        << ",\"transactionally_pinned_source\":false"
++        << ",\"source_cutpoint_bracketed\":false"
++        << ",\"bounded_resident_copy\":true"
++        << ",\"immutable_create_new\":false"
++        << ",\"postpublication_reverified\":true"
++        << ",\"artifact_published\":false"
++        << ",\"source_database_mutation_performed\":false"
++        << ",\"mutation_performed\":false}\n";
++    return 0;
++}
++
+ int command_database_recovery_inspect(const Options& options) {
+     options.require_only({"manifest"});
+     const fs::path manifest_path = require_absolute_path(
+@@ -3920,6 +4054,10 @@ void print_usage(std::ostream& output) {
+            "[--ingress direct|tor|i2p and ingress options] "
+            "[service and folder bounds]\n"
+         << "  anonsync_sync check-config --config ABSOLUTE_JSON\n"
++        << "  anonsync_sync database-backup-create "
++           "--manifest ABSOLUTE_JSON --snapshot ABSOLUTE_SQLITE\n"
++        << "  anonsync_sync database-backup-inspect "
++           "--manifest ABSOLUTE_JSON --snapshot ABSOLUTE_SQLITE\n"
+         << "  anonsync_sync database-recovery-inspect "
+            "--manifest ABSOLUTE_JSON\n"
+         << "  anonsync_sync database-recovery-advance "
+@@ -3982,19 +4120,26 @@ void print_usage(std::ostream& output) {
+            "generation-tracked maintenance obligation that hashes every current "
+            "payload byte and moves the exact resulting snapshot into ordinary "
+            "convergence; acceptance is not completion, so status reports the "
+-           "requested and completed generations. database-recovery-inspect and "
+-           "database-recovery-advance are offline, share-scoped SQLite recovery "
+-           "ceremonies. They acquire the same deployment singleton as run and "
+-           "once before opening the current database. Inspect is current-schema "
+-           "and read-only; it emits one canonical incarnation/epoch/cutpoint "
+-           "expectation. Advance requires that exact expectation, advances "
+-           "recovery epoch and state generation atomically, and rejects stale "
+-           "reuse. The commands do not copy, replace, restore, or verify database "
+-           "files, do not inspect payloads or rooted files, and do not make "
+-           "SQLite lineage an external anti-rollback anchor. Whole-image rollback "
+-           "can restore an earlier lineage, so retention age must be reset whenever "
+-           "continuity is uncertain. Run advance only after any restore or "
+-           "replacement has completed while the service is stopped. versions "
++           "requested and completed generations. database-backup-create, "
++           "database-backup-inspect, database-recovery-inspect, and "
++           "database-recovery-advance are offline, share-scoped SQLite "
++           "ceremonies that acquire the same deployment singleton as run and "
++           "once. Backup creation brackets one transactionally pinned logical "
++           "replica-database image, publishes an owner-only sidecar-free file "
++           "create-new outside every active database family, payload root, and "
++           "synchronized root, then reopens the detached bytes for deployment, "
++           "schema, geometry, digest, and cutpoint proof. Backup inspection "
++           "performs the detached proof without opening the active database. "
++           "The artifact excludes payload bytes, the folder catalog, membership, "
++           "effects, and anchors, and neither backup command replaces a database. "
++           "Recovery inspection emits one canonical incarnation/epoch/cutpoint "
++           "expectation from the active database. Recovery advance requires that "
++           "exact expectation, advances recovery epoch and state generation "
++           "atomically, and rejects stale reuse. None make SQLite lineage an "
++           "external anti-rollback anchor. Whole-image rollback can restore an "
++           "earlier lineage, so retention age must be reset whenever continuity "
++           "is uncertain. Run advance only after any restore or replacement has "
++           "completed while the service is stopped. versions "
+            "accepts one bounded "
+            "inspection page of active causal file predecessors. Exact mode "
+            "retains the existing complete payload-namespace observation and "
+@@ -4113,6 +4258,12 @@ int main(int argc, char** argv) {
+         if (command == "check-config") {
+             return command_check_config(options);
+         }
++        if (command == "database-backup-create") {
++            return command_database_backup_create(options);
++        }
++        if (command == "database-backup-inspect") {
++            return command_database_backup_inspect(options);
++        }
+         if (command == "database-recovery-inspect") {
+             return command_database_recovery_inspect(options);
+         }
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index 3e638d853920eced0ae22800cfcbf88c9542d466..ccc11b5a320aa51fa0ad1e2f3d73590d60e1dbaa 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -101,6 +101,11 @@ struct LocalSocketResponse final {
+     LocalPeerCredentials peer;
+ };
+ 
++enum class LocalSocketCompletionPathPolicy : std::uint8_t {
++    RequireSameIdentity,
++    AllowExactAbsenceAfterResponse,
++};
++
+ [[nodiscard]] std::string system_error_text(int error) {
+     return std::strerror(error);
+ }
+@@ -557,17 +562,10 @@ void validate_status_json_or_throw(
+     return address;
+ }
+ 
+-[[nodiscard]] SocketPathIdentity require_socket_path_identity_or_throw(
+-    const fs::path& path,
++[[nodiscard]] SocketPathIdentity socket_path_identity_from_status_or_throw(
++    const struct stat& status,
+     mode_t required_mode,
+     std::string_view label) {
+-    struct stat status {};
+-    if (::lstat(path.c_str(), &status) != 0) {
+-        const int error = errno;
+-        throw std::runtime_error(
+-            std::string(label) + " lstat failed: " +
+-            system_error_text(error));
+-    }
+     if (!S_ISSOCK(status.st_mode)) {
+         throw std::runtime_error(
+             std::string(label) + " is not a Unix socket");
+@@ -584,6 +582,21 @@ void validate_status_json_or_throw(
+     return {status.st_dev, status.st_ino, status.st_uid};
+ }
+ 
++[[nodiscard]] SocketPathIdentity require_socket_path_identity_or_throw(
++    const fs::path& path,
++    mode_t required_mode,
++    std::string_view label) {
++    struct stat status {};
++    if (::lstat(path.c_str(), &status) != 0) {
++        const int error = errno;
++        throw std::runtime_error(
++            std::string(label) + " lstat failed: " +
++            system_error_text(error));
++    }
++    return socket_path_identity_from_status_or_throw(
++        status, required_mode, label);
++}
++
+ [[nodiscard]] bool same_socket_path_identity_noexcept(
+     const fs::path& path,
+     const SocketPathIdentity& expected) noexcept {
+@@ -607,6 +620,43 @@ void require_same_socket_path_identity_or_throw(
+     }
+ }
+ 
++void require_completion_socket_path_or_throw(
++    const fs::path& path,
++    const SocketPathIdentity& expected,
++    mode_t required_mode,
++    LocalSocketCompletionPathPolicy policy,
++    std::string_view label) {
++    if (policy == LocalSocketCompletionPathPolicy::RequireSameIdentity) {
++        require_same_socket_path_identity_or_throw(
++            path, expected, required_mode, label);
++        return;
++    }
++
++    // A completed stop response is already bound to the connected AF_UNIX
++    // peer and to the exact pathname identity re-proved after connect. The
++    // service may remove that pathname immediately after replying. Stop alone
++    // therefore permits exact ENOENT here; any surviving path must still be
++    // the original owner-only socket, and every other command stays strict.
++    struct stat status {};
++    if (::lstat(path.c_str(), &status) != 0) {
++        const int error = errno;
++        if (error == ENOENT) return;
++        throw std::runtime_error(
++            std::string(label) + " lstat failed: " +
++            system_error_text(error));
++    }
++    const SocketPathIdentity observed =
++        socket_path_identity_from_status_or_throw(
++            status, required_mode, label);
++    if (observed.device != expected.device ||
++        observed.inode != expected.inode ||
++        observed.owner != expected.owner) {
++        throw std::runtime_error(
++            std::string(label) +
++            " identity changed during the request");
++    }
++}
++
+ void unlink_exact_socket_noexcept(
+     const fs::path& path,
+     const std::optional<SocketPathIdentity>& expected) noexcept {
+@@ -896,6 +946,7 @@ open_status_parent_authority_or_throw(
+     const fs::path& absolute_socket_path,
+     std::string_view request,
+     std::uint64_t timeout_milliseconds,
++    LocalSocketCompletionPathPolicy completion_path_policy,
+     std::string_view label) {
+     validate_sync_local_status_socket_path_or_throw(
+         absolute_socket_path, child_label(label, "path"));
+@@ -963,8 +1014,9 @@ open_status_parent_authority_or_throw(
+         }
+         std::string response = read_response_until_or_throw(
+             descriptor, deadline, label);
+-        require_same_socket_path_identity_or_throw(
++        require_completion_socket_path_or_throw(
+             absolute_socket_path, expected_identity, 0600U,
++            completion_path_policy,
+             child_label(label, "completed socket path"));
+         parent.verify_or_throw(child_label(label, "parent final reproof"));
+         close_or_throw(descriptor, label);
+@@ -2138,7 +2190,8 @@ std::string query_sync_local_status_socket_or_throw(
+     std::uint64_t timeout_milliseconds,
+     std::string_view label) {
+     LocalSocketResponse response = request_local_socket_or_throw(
+-        absolute_socket_path, kStatusRequest, timeout_milliseconds, label);
++        absolute_socket_path, kStatusRequest, timeout_milliseconds,
++        LocalSocketCompletionPathPolicy::RequireSameIdentity, label);
+     require_optional_status_pid_matches_peer_or_throw(
+         response.json, response.peer, label);
+     return std::move(response.json);
+@@ -2149,7 +2202,9 @@ std::string request_sync_local_status_stop_or_throw(
+     std::uint64_t timeout_milliseconds,
+     std::string_view label) {
+     LocalSocketResponse response = request_local_socket_or_throw(
+-        absolute_socket_path, kStopRequest, timeout_milliseconds, label);
++        absolute_socket_path, kStopRequest, timeout_milliseconds,
++        LocalSocketCompletionPathPolicy::AllowExactAbsenceAfterResponse,
++        label);
+     validate_stop_response_or_throw(response.json, response.peer, label);
+     return std::move(response.json);
+ }
+@@ -2159,7 +2214,8 @@ std::string request_sync_local_status_recheck_or_throw(
+     std::uint64_t timeout_milliseconds,
+     std::string_view label) {
+     LocalSocketResponse response = request_local_socket_or_throw(
+-        absolute_socket_path, kRecheckRequest, timeout_milliseconds, label);
++        absolute_socket_path, kRecheckRequest, timeout_milliseconds,
++        LocalSocketCompletionPathPolicy::RequireSameIdentity, label);
+     validate_recheck_response_or_throw(response.json, response.peer, label);
+     return std::move(response.json);
+ }
+@@ -2192,7 +2248,8 @@ namespace {
+     request.append(observed_content_sha256);
+     request.push_back('\n');
+     LocalSocketResponse response = request_local_socket_or_throw(
+-        absolute_socket_path, request, timeout_milliseconds, label);
++        absolute_socket_path, request, timeout_milliseconds,
++        LocalSocketCompletionPathPolicy::RequireSameIdentity, label);
+     validate_quarantine_response_or_throw(
+         response.json, response.peer, operation, expected_content_sha256,
+         observed_content_sha256, label);
+@@ -2386,7 +2443,8 @@ namespace {
+         request.push_back('\n');
+     }
+     LocalSocketResponse response = request_local_socket_or_throw(
+-        absolute_socket_path, request, timeout_milliseconds, label);
++        absolute_socket_path, request, timeout_milliseconds,
++        LocalSocketCompletionPathPolicy::RequireSameIdentity, label);
+     validate_historical_version_response_or_throw(
+         response.json, response.peer, operation, query, retention_plan_query,
+         restore_request, retention_operation_id, label);
+diff --git a/src/sync_replica_database_backup.cpp b/src/sync_replica_database_backup.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..4b35e162b1cb1778cefc0127925d291147c5f395
+--- /dev/null
++++ b/src/sync_replica_database_backup.cpp
+@@ -0,0 +1,319 @@
++#include "sync_replica_database_backup.hpp"
++
++#if !defined(_WIN32)
++
++#include "persistence/sqlite_snapshot_geometry.hpp"
++#include "persistence/sqlite_snapshot_seal.hpp"
++#include "sync_atomic_file_publication.hpp"
++#include "sync_replica_deployment_binding.hpp"
++#include "sync_replica_folder_process.hpp"
++#include "sync_replica_operational_database.hpp"
++#include "sync_replica_peer_service_singleton.hpp"
++#include "sync_replica_tls_policy_sqlite_profile.hpp"
++#include "sync_sqlite_handle_slot.hpp"
++#include "sync_sqlite_support.hpp"
++
++#include <array>
++#include <filesystem>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++namespace anonsync {
++namespace {
++
++namespace fs = std::filesystem;
++
++static_assert(
++    kSyncReplicaDatabaseBackupMaximumArtifactBytes <=
++    persistence::kMaximumUntrustedSqliteSnapshotBytes);
++static_assert(
++    kSyncReplicaDatabaseBackupMaximumArtifactPages <=
++    persistence::kMaximumUntrustedSqliteSnapshotPages);
++
++[[nodiscard]] constexpr persistence::SqliteSnapshotSealPolicy
++backup_seal_policy() noexcept {
++    return {
++        .maximum_bytes =
++            kSyncReplicaDatabaseBackupMaximumArtifactBytes,
++        .maximum_pages =
++            kSyncReplicaDatabaseBackupMaximumArtifactPages,
++    };
++}
++
++[[nodiscard]] bool path_is_same_or_descendant(
++    const fs::path& candidate,
++    const fs::path& root) {
++    auto candidate_it = candidate.begin();
++    for (auto root_it = root.begin(); root_it != root.end();
++         ++root_it, ++candidate_it) {
++        if (candidate_it == candidate.end() ||
++            *candidate_it != *root_it) {
++            return false;
++        }
++    }
++    return true;
++}
++
++void append_sqlite_family_paths(
++    std::vector<fs::path>& paths,
++    const fs::path& database_path) {
++    constexpr std::array<std::string_view, 4U> suffixes{
++        "", "-journal", "-wal", "-shm"};
++    for (const std::string_view suffix : suffixes) {
++        paths.emplace_back(database_path.string() + std::string(suffix));
++    }
++}
++
++void validate_artifact_path_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const fs::path& artifact_path,
++    const std::string& label) {
++    if (artifact_path.native().find(fs::path::value_type{}) !=
++            fs::path::string_type::npos ||
++        artifact_path.empty() || !artifact_path.is_absolute() ||
++        artifact_path.lexically_normal() != artifact_path) {
++        throw std::invalid_argument(
++            label + " must be a canonical absolute path without NUL");
++    }
++    if (artifact_path == deployment.manifest_path) {
++        throw std::invalid_argument(
++            label + " must not name the deployment manifest");
++    }
++
++    std::vector<fs::path> active_database_family;
++    active_database_family.reserve(20U);
++    append_sqlite_family_paths(
++        active_database_family, deployment.replica_db);
++    const auto append_optional_database = [&](const auto& selected) {
++        if (selected.has_value()) {
++            append_sqlite_family_paths(
++                active_database_family, *selected);
++        }
++    };
++    append_optional_database(deployment.effect_db);
++    append_optional_database(deployment.membership_db);
++    append_optional_database(deployment.anchor_db);
++    if (deployment.files_root.has_value()) {
++        append_sqlite_family_paths(
++            active_database_family,
++            sync_replica_folder_catalog_path_or_throw(
++                deployment, label + " folder catalog path"));
++    }
++    for (const fs::path& active_path : active_database_family) {
++        if (artifact_path == active_path) {
++            throw std::invalid_argument(
++                label + " collides with an active SQLite family member");
++        }
++    }
++
++    for (const auto& root : {deployment.payload_root,
++                             deployment.files_root}) {
++        if (root.has_value() &&
++            path_is_same_or_descendant(artifact_path, *root)) {
++            throw std::invalid_argument(
++                label +
++                " must remain outside payload storage and synchronized files");
++        }
++    }
++}
++
++[[nodiscard]] SyncReplicaDatabaseBackupCutpoint
++compact_backup_cutpoint(SyncReplicaSqliteSnapshot snapshot) {
++    return {
++        .database_incarnation_sha256 =
++            std::move(snapshot.database_incarnation_sha256),
++        .database_recovery_epoch = snapshot.database_recovery_epoch,
++        .state_generation = snapshot.state_generation,
++        .policy_generation = snapshot.policy_generation,
++        .outbox_time_high_water_epoch = snapshot.outbox_time_high_water_epoch,
++        .local_operation_digest = std::move(snapshot.local_operation_digest),
++        .operation_set_digest = std::move(snapshot.operation_set_digest),
++        .evidence_set_digest = std::move(snapshot.evidence_set_digest),
++        .visible_state_digest = std::move(snapshot.visible_state_digest),
++        .outbox_digest = std::move(snapshot.outbox_digest),
++        .outbox_clock_digest = std::move(snapshot.outbox_clock_digest),
++        .historical_version_pin_count =
++            snapshot.historical_version_pin_count,
++        .historical_version_pin_set_digest =
++            std::move(snapshot.historical_version_pin_set_digest),
++        .cutpoint_digest = std::move(snapshot.cutpoint_digest),
++    };
++}
++
++[[nodiscard]] SyncReplicaDatabaseBackupArtifactObservation
++inspect_sealed_artifact_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    persistence::SealedSqliteSnapshot& sealed,
++    const fs::path& artifact_path,
++    const std::string& label) {
++    SyncSqliteDbHandleSlot database =
++        sealed.open_database_owner_or_throw(
++            label + " read-only detached database");
++    configure_sync_replica_tls_policy_sqlite_read_only_connection_or_throw(
++        database, label + " detached connection profile");
++    sqlite_exec_or_throw(
++        database,
++        "PRAGMA temp_store=MEMORY;PRAGMA foreign_keys=ON;",
++        label + " detached observer pragmas");
++    const SyncReplicaSqliteDeploymentBinding binding =
++        sync_replica_primary_database_binding_or_throw(
++            deployment, label + " deployment binding");
++    SyncReplicaDatabaseBackupCutpoint source_cutpoint =
++        compact_backup_cutpoint(
++            inspect_sync_replica_sqlite_snapshot_in_attested_detached_read_only_image_or_throw(
++                database, binding, deployment.folder_id,
++                deployment.local_actor,
++                label + " current-schema inspection"));
++    sealed.verify_unchanged_or_throw(
++        label + " final resident-byte reproof");
++    return {
++        .artifact_path = artifact_path,
++        .artifact_sha256 = sealed.sha256_hex(),
++        .artifact_bytes = sealed.byte_count(),
++        .sqlite_page_size = sealed.page_size(),
++        .sqlite_page_count = sealed.page_count(),
++        .source_cutpoint = std::move(source_cutpoint),
++    };
++}
++
++}  // namespace
++
++struct SyncReplicaDatabaseBackupOwner::State final {
++    static std::string require_label(std::string value) {
++        if (value.empty()) {
++            throw std::invalid_argument(
++                "sync replica database backup owner label is empty");
++        }
++        return value;
++    }
++
++    SyncReplicaDeploymentManifest deployment;
++    std::string label;
++    SyncReplicaPeerServiceSingletonOwner singleton;
++
++    State(
++        SyncReplicaDeploymentManifest deployment_value,
++        std::string label_value)
++        : deployment(std::move(deployment_value)),
++          label(require_label(std::move(label_value))),
++          singleton(deployment, label + " deployment singleton") {}
++};
++
++SyncReplicaDatabaseBackupOwner::SyncReplicaDatabaseBackupOwner(
++    SyncReplicaDeploymentManifest deployment,
++    std::string label)
++    : state_(std::make_unique<State>(
++          std::move(deployment), std::move(label))) {}
++
++SyncReplicaDatabaseBackupOwner::~SyncReplicaDatabaseBackupOwner() noexcept =
++    default;
++
++const SyncReplicaDeploymentManifest&
++SyncReplicaDatabaseBackupOwner::deployment() const noexcept {
++    return state_->deployment;
++}
++
++SyncReplicaDatabaseBackupArtifactObservation
++SyncReplicaDatabaseBackupOwner::inspect_artifact_or_throw(
++    const fs::path& absolute_artifact_path) {
++    validate_artifact_path_or_throw(
++        state_->deployment, absolute_artifact_path,
++        state_->label + " artifact inspection path");
++    persistence::SealedSqliteSnapshot sealed =
++        persistence::SealedSqliteSnapshot::capture(
++            absolute_artifact_path,
++            state_->label + " bounded artifact capture",
++            backup_seal_policy());
++    return inspect_sealed_artifact_or_throw(
++        state_->deployment, sealed, absolute_artifact_path,
++        state_->label + " artifact inspection");
++}
++
++SyncReplicaDatabaseBackupArtifactObservation
++SyncReplicaDatabaseBackupOwner::create_artifact_or_throw(
++    const fs::path& absolute_artifact_path) {
++    validate_artifact_path_or_throw(
++        state_->deployment, absolute_artifact_path,
++        state_->label + " artifact output path");
++
++    // This is an early denial only. The immutable publisher repeats the same
++    // no-symlink parent traversal and owns the final atomic no-replace race.
++    // Performing it before the whole-database copy avoids needless resident
++    // allocation when the destination is already unusable.
++    preflight_sync_file_create_new_no_symlink_or_throw(
++        absolute_artifact_path,
++        state_->label + " artifact output preflight");
++
++    SyncReplicaDatabaseBackupArtifactObservation captured;
++    {
++        SyncReplicaOperationalDatabase source =
++            open_attested_sync_replica_primary_database_read_only_or_throw(
++                state_->deployment,
++                state_->label + " forensic backup source");
++        const SyncReplicaDatabaseBackupCutpoint before =
++            compact_backup_cutpoint(
++                inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
++                    source.handle(), state_->deployment.folder_id,
++                    state_->deployment.local_actor,
++                    state_->label + " source snapshot before capture"));
++
++        persistence::SealedSqliteSnapshot sealed;
++        {
++            auto source_borrow =
++                borrow_sync_sqlite_serialized_db_or_throw(
++                    source.handle(),
++                    state_->label + " serialized source capability");
++            sealed = persistence::SealedSqliteSnapshot::capture_database(
++                source_borrow.get(),
++                state_->label + " bounded canonical live backup",
++                backup_seal_policy());
++        }
++
++        captured = inspect_sealed_artifact_or_throw(
++            state_->deployment, sealed, absolute_artifact_path,
++            state_->label + " captured artifact");
++        const SyncReplicaDatabaseBackupCutpoint after =
++            compact_backup_cutpoint(
++                inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
++                    source.handle(), state_->deployment.folder_id,
++                    state_->deployment.local_actor,
++                    state_->label + " source snapshot after capture"));
++        source.verify_open_database_or_throw(
++            state_->label + " source final rooted reproof");
++        if (before != captured.source_cutpoint ||
++            after != captured.source_cutpoint) {
++            throw std::runtime_error(
++                state_->label +
++                " source changed across the exact backup capture bracket");
++        }
++
++        // Create-new is the final namespace authority. No failure path guesses
++        // that a visible name still denotes this attempt's inode.
++        sealed.publish_exact_copy_atomically_create_new_or_throw(
++            absolute_artifact_path,
++            state_->label + " immutable artifact publication");
++    }
++
++    // The source and first resident seal are gone. Reopen the durable artifact
++    // through its own sidecar-free rooted path, then repeat binding, schema,
++    // geometry, digest, and complete logical-snapshot proof.
++    SyncReplicaDatabaseBackupArtifactObservation published =
++        inspect_artifact_or_throw(absolute_artifact_path);
++    if (published.artifact_sha256 != captured.artifact_sha256 ||
++        published.artifact_bytes != captured.artifact_bytes ||
++        published.sqlite_page_size != captured.sqlite_page_size ||
++        published.sqlite_page_count != captured.sqlite_page_count ||
++        published.source_cutpoint != captured.source_cutpoint) {
++        throw std::runtime_error(
++            state_->label +
++            " published artifact differs from the captured source snapshot");
++    }
++    return published;
++}
++
++}  // namespace anonsync
++
++#endif
+diff --git a/src/sync_replica_database_backup.hpp b/src/sync_replica_database_backup.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..41e99d5e790ba51e769b294c90b51b1db608f5de
+--- /dev/null
++++ b/src/sync_replica_database_backup.hpp
+@@ -0,0 +1,102 @@
++#pragma once
++
++#if !defined(_WIN32)
++
++#include "sync_replica_deployment_manifest.hpp"
++#include "sync_replica_sqlite_owner.hpp"
++
++#include <cstdint>
++#include <filesystem>
++#include <memory>
++#include <string>
++
++namespace anonsync {
++
++// The current artifact owner is deliberately memory-resident. Keep its product
++// ceiling below the generic one-gigabyte untrusted-SQLite ceiling until a
++// descriptor-streaming publisher is implemented and qualified at target scale.
++inline constexpr std::uint64_t
++    kSyncReplicaDatabaseBackupMaximumArtifactBytes =
++        512ULL * 1024ULL * 1024ULL;
++inline constexpr std::uint64_t
++    kSyncReplicaDatabaseBackupMaximumArtifactPages = 262144ULL;
++
++// Compact exact source witness retained across the backup bracket. The full
++// causal graph is independently restored and validated at each observation,
++// then released immediately. Its canonical digests and lineage are sufficient
++// to prove that before/captured/after observations name one exact replica
++// cutpoint without retaining two or three complete operation graphs beside the
++// resident SQLite image.
++struct SyncReplicaDatabaseBackupCutpoint final {
++    std::string database_incarnation_sha256;
++    std::uint64_t database_recovery_epoch = 0U;
++    std::uint64_t state_generation = 0U;
++    std::uint64_t policy_generation = 0U;
++    std::uint64_t outbox_time_high_water_epoch = 0U;
++    std::string local_operation_digest;
++    std::string operation_set_digest;
++    std::string evidence_set_digest;
++    std::string visible_state_digest;
++    std::string outbox_digest;
++    std::string outbox_clock_digest;
++    std::uint64_t historical_version_pin_count = 0U;
++    std::string historical_version_pin_set_digest;
++    std::string cutpoint_digest;
++
++    bool operator==(const SyncReplicaDatabaseBackupCutpoint&) const = default;
++};
++
++struct SyncReplicaDatabaseBackupArtifactObservation final {
++    std::filesystem::path artifact_path;
++    std::string artifact_sha256;
++    std::uint64_t artifact_bytes = 0U;
++    std::uint32_t sqlite_page_size = 0U;
++    std::uint32_t sqlite_page_count = 0U;
++    SyncReplicaDatabaseBackupCutpoint source_cutpoint;
++
++    bool operator==(
++        const SyncReplicaDatabaseBackupArtifactObservation&) const = default;
++};
++
++// Offline, share-scoped ownership for one immutable replica-database backup
++// artifact. Construction claims the deployment singleton before any selected
++// database family or detached artifact is opened. Creation copies one pinned
++// source snapshot, brackets it with exact current-schema observations, publishes
++// create-new, closes the source, then reopens and re-proves the durable artifact.
++// Inspection observes only the selected detached artifact plus the manifest.
++// Neither operation replaces the live database family or advances recovery.
++class SyncReplicaDatabaseBackupOwner final {
++public:
++    explicit SyncReplicaDatabaseBackupOwner(
++        SyncReplicaDeploymentManifest deployment,
++        std::string label = "sync replica database backup owner");
++    ~SyncReplicaDatabaseBackupOwner() noexcept;
++
++    SyncReplicaDatabaseBackupOwner(
++        const SyncReplicaDatabaseBackupOwner&) = delete;
++    SyncReplicaDatabaseBackupOwner& operator=(
++        const SyncReplicaDatabaseBackupOwner&) = delete;
++    SyncReplicaDatabaseBackupOwner(
++        SyncReplicaDatabaseBackupOwner&&) = delete;
++    SyncReplicaDatabaseBackupOwner& operator=(
++        SyncReplicaDatabaseBackupOwner&&) = delete;
++
++    [[nodiscard]] const SyncReplicaDeploymentManifest& deployment()
++        const noexcept;
++
++    [[nodiscard]] SyncReplicaDatabaseBackupArtifactObservation
++    create_artifact_or_throw(
++        const std::filesystem::path& absolute_artifact_path);
++
++    [[nodiscard]] SyncReplicaDatabaseBackupArtifactObservation
++    inspect_artifact_or_throw(
++        const std::filesystem::path& absolute_artifact_path);
++
++private:
++    struct State;
++    std::unique_ptr<State> state_;
++};
++
++}  // namespace anonsync
++
++#endif
+diff --git a/src/sync_replica_deployment_binding.cpp b/src/sync_replica_deployment_binding.cpp
+index 8a20ef545294197ba3e9b4fee23c567064b02fac..31d9aaebfcd7fb497b815ca37f9a40b688a57c85 100644
+--- a/src/sync_replica_deployment_binding.cpp
++++ b/src/sync_replica_deployment_binding.cpp
+@@ -7,6 +7,7 @@
+ #include <cstdint>
+ #include <filesystem>
+ #include <limits>
++#include <memory>
+ #include <sstream>
+ #include <stdexcept>
+ #include <string>
+@@ -255,36 +256,137 @@ void require_opened_filename_or_throw(
+     }
+ }
+ 
++struct SqliteAllocatedTextDeleter final {
++    void operator()(char* value) const noexcept {
++        sqlite3_free(value);
++    }
++};
++
++class DetachedQueryOnlyRestoreGuard final {
++public:
++    explicit DetachedQueryOnlyRestoreGuard(sqlite3* database) noexcept
++        : database_(database) {}
++
++    ~DetachedQueryOnlyRestoreGuard() noexcept {
++        if (!active_ || database_ == nullptr) return;
++        (void)sqlite3_exec(
++            database_, "PRAGMA query_only=ON;", nullptr, nullptr, nullptr);
++    }
++
++    DetachedQueryOnlyRestoreGuard(
++        const DetachedQueryOnlyRestoreGuard&) = delete;
++    DetachedQueryOnlyRestoreGuard& operator=(
++        const DetachedQueryOnlyRestoreGuard&) = delete;
++
++    void restore_or_throw(
++        SyncSqliteDbHandleSlot& database,
++        const std::string& label) {
++        sqlite_exec_or_throw(
++            database, "PRAGMA query_only=ON;",
++            label + " read-only probe query-only restoration");
++        active_ = false;
++    }
++
++private:
++    sqlite3* database_ = nullptr;
++    bool active_ = true;
++};
++
++void require_detached_read_only_image_or_throw(
++    SyncSqliteDbHandleSlot& database,
++    const SyncSqliteTransactionAuthority& outer_transaction_authority,
++    const std::string& label) {
++    // sqlite3_db_readonly() intentionally reports zero for in-memory databases,
++    // including an SQLITE_DESERIALIZE_READONLY image. Prove the property that
++    // matters instead: after temporarily removing the connection-level
++    // query_only belt, the deserialized main image must still reject a write.
++    // The typed nested rollback owner keeps an unexpectedly writable image
++    // observationally clean while preserving the exact outer read transaction.
++    if (scalar_u64_or_throw(
++            database, "PRAGMA query_only;",
++            label + " initial query_only") != 1U) {
++        throw std::runtime_error(
++            label + " detached sealed image lacks the read-only profile");
++    }
++
++    SyncSqliteSavepoint rollback_guard(
++        database.get(), outer_transaction_authority,
++        label + " detached read-only write-denial probe");
++    DetachedQueryOnlyRestoreGuard query_only_restore(database.get());
++    sqlite_exec_or_throw(
++        database, "PRAGMA query_only=OFF;",
++        label + " read-only probe setup");
++
++    char* raw_error = nullptr;
++    const int result = sqlite3_exec(
++        database.get(),
++        "CREATE TABLE main.anonsync_detached_read_only_probe_rev0982("
++        "value INTEGER NOT NULL);",
++        nullptr, nullptr, &raw_error);
++    std::unique_ptr<char, SqliteAllocatedTextDeleter> error_text(raw_error);
++    const std::string reason = error_text != nullptr
++        ? std::string(error_text.get())
++        : std::string(sqlite3_errmsg(database.get()));
++
++    query_only_restore.restore_or_throw(database, label);
++    rollback_guard.rollback();
++    if ((result & 0xff) != SQLITE_READONLY) {
++        if (result == SQLITE_OK) {
++            throw std::runtime_error(
++                label +
++                " detached sealed image accepted a main-database write");
++        }
++        throw std::runtime_error(
++            label +
++            " detached sealed image did not produce a read-only write denial: " +
++            reason);
++    }
++    if (scalar_u64_or_throw(
++            database, "PRAGMA query_only;",
++            label + " restored query_only") != 1U) {
++        throw std::runtime_error(
++            label + " detached sealed image lost the read-only profile");
++    }
++}
++
+ void require_detached_main_database_or_throw(
+     SyncSqliteDbHandleSlot& database,
++    bool expected_read_only,
+     const std::string& label) {
+     auto borrow = database.borrow();
+     const char* const opened = sqlite3_db_filename(borrow.get(), "main");
++    const std::string profile = expected_read_only
++        ? " detached sealed image"
++        : " detached bootstrap image";
+     if (opened == nullptr || *opened != '\0') {
+         throw std::runtime_error(
+-            label + " detached bootstrap image unexpectedly names a file");
++            label + profile + " unexpectedly names a file");
+     }
+-    const int read_only = sqlite3_db_readonly(borrow.get(), "main");
+-    if (read_only != 0) {
+-        throw std::runtime_error(
+-            label + (read_only > 0
+-                ? " detached bootstrap image is read-only"
+-                : " could not prove detached bootstrap image writability"));
++    if (!expected_read_only) {
++        const int read_only = sqlite3_db_readonly(borrow.get(), "main");
++        if (read_only != 0) {
++            if (read_only < 0) {
++                throw std::runtime_error(
++                    label + " could not prove" + profile + " access mode");
++            }
++            throw std::runtime_error(
++                label + profile + " is read-only");
++        }
+     }
+ 
+     // sqlite3_db_filename() also returns an empty name for an anonymous,
+     // disk-backed temporary database. Such a database is not the private
+-    // namespace-free image promised by this initializer. MEMORY journaling is
+-    // the observable SQLite distinction used by the product's :memory: image.
++    // namespace-free image promised by either detached profile. MEMORY
++    // journaling is the observable SQLite distinction used by the product's
++    // :memory: image and its read-only deserialized copies.
+     const std::string journal_mode = scalar_text_or_throw(
+         database, "PRAGMA main.journal_mode;",
+-        label + " detached bootstrap image journal mode");
++        label + profile + " journal mode");
+     if (journal_mode != "memory") {
+         throw std::runtime_error(
+-            label + " detached bootstrap image journal mode is " +
++            label + profile + " journal mode is " +
+             journal_mode + ", expected memory");
+     }
+-
+ }
+ 
+ void require_detached_bootstrap_image_empty_or_throw(
+@@ -308,21 +410,35 @@ void require_detached_bootstrap_image_empty_or_throw(
+ 
+ enum class BindingFilenameAuthority : std::uint8_t {
+     ExactOpenedPath = 1U,
+-    DetachedBootstrapImage = 2U,
++    DetachedBootstrapWritableImage = 2U,
++    DetachedSealedReadOnlyImage = 3U,
+ };
+ 
+ void require_binding_filename_authority_or_throw(
+     SyncSqliteDbHandleSlot& database,
+     const SyncReplicaSqliteDeploymentBinding& binding,
+     BindingFilenameAuthority authority,
++    const SyncSqliteTransactionAuthority* transaction_authority,
+     const std::string& label) {
+     switch (authority) {
+         case BindingFilenameAuthority::ExactOpenedPath:
+             require_opened_filename_or_throw(
+                 database, binding.database_path, label);
+             return;
+-        case BindingFilenameAuthority::DetachedBootstrapImage:
+-            require_detached_main_database_or_throw(database, label);
++        case BindingFilenameAuthority::DetachedBootstrapWritableImage:
++            require_detached_main_database_or_throw(
++                database, false, label);
++            return;
++        case BindingFilenameAuthority::DetachedSealedReadOnlyImage:
++            if (transaction_authority == nullptr) {
++                throw std::logic_error(
++                    label +
++                    " detached sealed read-only proof requires the exact outer transaction authority");
++            }
++            require_detached_main_database_or_throw(
++                database, true, label);
++            require_detached_read_only_image_or_throw(
++                database, *transaction_authority, label);
+             return;
+     }
+     throw std::invalid_argument(
+@@ -345,9 +461,11 @@ void attest_binding_state_or_throw(
+     SyncSqliteDbHandleSlot& database,
+     const SyncReplicaSqliteDeploymentBinding& binding,
+     BindingFilenameAuthority filename_authority,
++    const SyncSqliteTransactionAuthority* transaction_authority,
+     const std::string& label) {
+     require_binding_filename_authority_or_throw(
+-        database, binding, filename_authority, label);
++        database, binding, filename_authority,
++        transaction_authority, label);
+     require_application_id_or_throw(
+         database, sync_replica_sqlite_application_id(binding.role), label);
+     require_exact_binding_schema_or_throw(database, label);
+@@ -430,7 +548,7 @@ void initialize_binding_or_throw(
+     const std::string& label) {
+     validate_sync_replica_sqlite_deployment_binding_or_throw(binding, label);
+     require_binding_filename_authority_or_throw(
+-        database, binding, filename_authority, label);
++        database, binding, filename_authority, nullptr, label);
+ 
+     SyncSqliteTransaction transaction(
+         database, label + " initialization",
+@@ -507,7 +625,8 @@ void initialize_binding_or_throw(
+     sqlite_step_done_or_throw(insert.stmt, label + " row insert");
+ 
+     attest_binding_state_or_throw(
+-        database, binding, filename_authority, label + " staged proof");
++        database, binding, filename_authority,
++        nullptr, label + " staged proof");
+     transaction.commit();
+ 
+     // Re-prove through a new read transaction after the durable/logical
+@@ -517,7 +636,8 @@ void initialize_binding_or_throw(
+         database, label + " committed proof attestation",
+         SyncSqliteTransactionMode::Deferred);
+     attest_binding_state_or_throw(
+-        database, binding, filename_authority, label + " committed proof");
++        database, binding, filename_authority,
++        nullptr, label + " committed proof");
+     proof.commit();
+ }
+ 
+@@ -583,12 +703,12 @@ void initialize_sync_replica_sqlite_deployment_binding_in_detached_image_or_thro
+     SyncSqliteDbHandleSlot& database,
+     const SyncReplicaSqliteDeploymentBinding& binding,
+     const std::string& label) {
+-    require_detached_main_database_or_throw(database, label);
++    require_detached_main_database_or_throw(database, false, label);
+     require_detached_bootstrap_image_empty_or_throw(
+         database, label + " detached bootstrap image");
+     initialize_binding_or_throw(
+         database, binding,
+-        BindingFilenameAuthority::DetachedBootstrapImage, label);
++        BindingFilenameAuthority::DetachedBootstrapWritableImage, label);
+ }
+ 
+ void attest_sync_replica_sqlite_deployment_binding_state_or_throw(
+@@ -597,7 +717,8 @@ void attest_sync_replica_sqlite_deployment_binding_state_or_throw(
+     const std::string& label) {
+     validate_sync_replica_sqlite_deployment_binding_or_throw(binding, label);
+     attest_binding_state_or_throw(
+-        database, binding, BindingFilenameAuthority::ExactOpenedPath, label);
++        database, binding, BindingFilenameAuthority::ExactOpenedPath,
++        nullptr, label);
+ }
+ 
+ void attest_sync_replica_sqlite_deployment_binding_state_in_detached_image_or_throw(
+@@ -607,7 +728,20 @@ void attest_sync_replica_sqlite_deployment_binding_state_in_detached_image_or_th
+     validate_sync_replica_sqlite_deployment_binding_or_throw(binding, label);
+     attest_binding_state_or_throw(
+         database, binding,
+-        BindingFilenameAuthority::DetachedBootstrapImage, label);
++        BindingFilenameAuthority::DetachedBootstrapWritableImage,
++        nullptr, label);
++}
++
++void attest_sync_replica_sqlite_deployment_binding_state_in_read_only_detached_image_or_throw(
++    SyncSqliteDbHandleSlot& database,
++    const SyncReplicaSqliteDeploymentBinding& binding,
++    const SyncSqliteTransactionAuthority& transaction_authority,
++    const std::string& label) {
++    validate_sync_replica_sqlite_deployment_binding_or_throw(binding, label);
++    attest_binding_state_or_throw(
++        database, binding,
++        BindingFilenameAuthority::DetachedSealedReadOnlyImage,
++        &transaction_authority, label);
+ }
+ 
+ void attest_sync_replica_sqlite_deployment_binding_in_detached_image_or_throw(
+@@ -622,6 +756,18 @@ void attest_sync_replica_sqlite_deployment_binding_in_detached_image_or_throw(
+     transaction.commit();
+ }
+ 
++void attest_sync_replica_sqlite_deployment_binding_in_read_only_detached_image_or_throw(
++    SyncSqliteDbHandleSlot& database,
++    const SyncReplicaSqliteDeploymentBinding& binding,
++    const std::string& label) {
++    SyncSqliteTransaction transaction(
++        database, label + " read-only detached attestation",
++        SyncSqliteTransactionMode::Deferred);
++    attest_sync_replica_sqlite_deployment_binding_state_in_read_only_detached_image_or_throw(
++        database, binding, transaction.authority(), label);
++    transaction.commit();
++}
++
+ void attest_sync_replica_sqlite_deployment_binding_or_throw(
+     SyncSqliteDbHandleSlot& database,
+     const SyncReplicaSqliteDeploymentBinding& binding,
+diff --git a/src/sync_replica_deployment_binding.hpp b/src/sync_replica_deployment_binding.hpp
+index f904888f421731d5c67ac53680cd5122280f8006..be9531e8dbad0176ffab64224fc27167eb64577c 100644
+--- a/src/sync_replica_deployment_binding.hpp
++++ b/src/sync_replica_deployment_binding.hpp
+@@ -9,6 +9,8 @@
+ 
+ namespace anonsync {
+ 
++class SyncSqliteTransactionAuthority;
++
+ // Role-specific file-format fence layered ahead of each exact owner schema.
+ // The application ID is intentionally only an early classifier; the full
+ // deployment identity, manifest digest, path, actor, and role are attested from
+@@ -73,6 +75,18 @@ void attest_sync_replica_sqlite_deployment_binding_state_in_detached_image_or_th
+     const SyncReplicaSqliteDeploymentBinding& binding,
+     const std::string& label);
+ 
++// Read-only counterpart for one sealed, filename-free MEMORY-journal image.
++// This gate is intentionally distinct from both the named operational gate and
++// the writable bootstrap-image gate: a detached backup verifier must prove the
++// durable logical binding without acquiring schema or mutation authority. The
++// exact live outer transaction capability owns the nested write-denial probe,
++// so raw SAVEPOINT SQL cannot escape the centralized transaction boundary.
++void attest_sync_replica_sqlite_deployment_binding_state_in_read_only_detached_image_or_throw(
++    SyncSqliteDbHandleSlot& database,
++    const SyncReplicaSqliteDeploymentBinding& binding,
++    const SyncSqliteTransactionAuthority& transaction_authority,
++    const std::string& label);
++
+ // Detached-image re-attestation after a role owner has added its exact schema.
+ // The logical durable pathname remains binding.database_path while the live
+ // SQLite main database must still be a filename-free MEMORY-journal image.
+@@ -83,6 +97,14 @@ void attest_sync_replica_sqlite_deployment_binding_in_detached_image_or_throw(
+     const SyncReplicaSqliteDeploymentBinding& binding,
+     const std::string& label);
+ 
++// Transaction-owning verifier for a sealed read-only detached image. It proves
++// the exact logical deployment row and role application ID while retaining the
++// namespace-free/read-only profile throughout the observation.
++void attest_sync_replica_sqlite_deployment_binding_in_read_only_detached_image_or_throw(
++    SyncSqliteDbHandleSlot& database,
++    const SyncReplicaSqliteDeploymentBinding& binding,
++    const std::string& label);
++
+ // Named existing-database gate. Neither operational role ownership nor
+ // bootstrap-candidate promotion may proceed until this exact proof succeeds on
+ // the already-open connection.
+diff --git a/src/sync_replica_sqlite_owner.cpp b/src/sync_replica_sqlite_owner.cpp
+index efe496549211e0dda97858394fcd49fa01540b5a..e9f1724d1abfd9155f58598a3abc6992c779a043 100644
+--- a/src/sync_replica_sqlite_owner.cpp
++++ b/src/sync_replica_sqlite_owner.cpp
+@@ -1,6 +1,7 @@
+ #include "sync_replica_sqlite_owner.hpp"
+ 
+ #include "sha256_digest.hpp"
++#include "sync_replica_deployment_binding.hpp"
+ #include "sync_manifest_validation.hpp"
+ 
+ #include <algorithm>
+@@ -3714,6 +3715,35 @@ inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
+     return snapshot;
+ }
+ 
++SyncReplicaSqliteSnapshot
++inspect_sync_replica_sqlite_snapshot_in_attested_detached_read_only_image_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaSqliteDeploymentBinding& binding,
++    std::string folder_id,
++    SyncReplicaActor local_actor,
++    std::string label) {
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "sync replica detached read-only SQLite inspection label must not be empty");
++    }
++    validate_owner_limits_or_throw(
++        folder_id, local_actor, SyncReplicaSqliteOwnerLimits{}, label);
++    require_foreign_keys_or_throw(db, label);
++
++    SyncSqliteTransaction transaction(
++        db, label + " snapshot", SyncSqliteTransactionMode::Deferred);
++    attest_sync_replica_sqlite_deployment_binding_state_in_read_only_detached_image_or_throw(
++        db, binding, transaction.authority(),
++        label + " deployment binding");
++    LoadedState loaded = load_state_or_throw(
++        db, folder_id, local_actor, label + " snapshot");
++    require_snapshot_authority_or_throw(
++        transaction, db, label + " snapshot");
++    SyncReplicaSqliteSnapshot snapshot = snapshot_from_loaded(loaded);
++    transaction.commit();
++    return snapshot;
++}
++
+ SyncReplicaSqliteProjectionGuard::SyncReplicaSqliteProjectionGuard(
+     std::unique_ptr<SyncSqliteTransaction> transaction,
+     SyncReplicaSqliteSnapshot snapshot,
+diff --git a/src/sync_replica_sqlite_owner.hpp b/src/sync_replica_sqlite_owner.hpp
+index f8b0b6afb4a66f8d52777afde3359de1223b308f..fad705f82ccd1036f26f08e4df4ea492c905ae4f 100644
+--- a/src/sync_replica_sqlite_owner.hpp
++++ b/src/sync_replica_sqlite_owner.hpp
+@@ -15,6 +15,8 @@
+ 
+ namespace anonsync {
+ 
++struct SyncReplicaSqliteDeploymentBinding;
++
+ // Durable policy for one replica folder. Model limits govern immutable
+ // evidence; independent outbox limits govern lightweight destination intents;
+ // clock limits govern only lease/retry liveness observations. Canonical
+@@ -268,6 +270,22 @@ inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
+     SyncReplicaActor local_actor,
+     std::string label = "sync replica read-only SQLite inspection");
+ 
++// Exact-current-schema observation for one sealed, filename-free,
++// behaviorally read-only deserialized image. SQLite intentionally reports an
++// in-memory SQLITE_DESERIALIZE_READONLY database as writable through
++// sqlite3_db_readonly(); this composition instead proves write denial, the
++// exact deployment binding, and the complete replica snapshot inside one
++// deferred transaction. Named forensic database inspection must continue to
++// use inspect_sync_replica_sqlite_snapshot_read_only_or_throw() above.
++[[nodiscard]] SyncReplicaSqliteSnapshot
++inspect_sync_replica_sqlite_snapshot_in_attested_detached_read_only_image_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaSqliteDeploymentBinding& binding,
++    std::string folder_id,
++    SyncReplicaActor local_actor,
++    std::string label =
++        "sync replica detached read-only SQLite inspection");
++
+ // Scope-bound causal cutpoint authority for an external immutable effect. The
+ // guard owns one BEGIN IMMEDIATE transaction after complete-state restore, so
+ // no competing SQLite writer can change evidence or projection until commit.
+diff --git a/tests/persistence/sqlite_snapshot_seal_tests.cpp b/tests/persistence/sqlite_snapshot_seal_tests.cpp
+index 1290a561d560a7ac559c04af0f97b98a63d0167c..7e714479f08933b5e668e76f9c0a7d084864d22b 100644
+--- a/tests/persistence/sqlite_snapshot_seal_tests.cpp
++++ b/tests/persistence/sqlite_snapshot_seal_tests.cpp
+@@ -454,6 +454,9 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+                 const char* const filename = sqlite3_db_filename(database, "main");
+                 require(filename != nullptr && filename[0] == '\0',
+                         "deserialized SQLite view unexpectedly names a file", checks);
++                require(sqlite3_db_readonly(database, "main") == 0,
++                        "SQLite changed the documented in-memory db_readonly behavior",
++                        checks);
+                 expect_rejection(
+                     [&] {
+                         char* error = nullptr;
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index 32a10e293ce10622ca5927e6bd3229ccb3f20578..dd9d654737a623a3fe65e9b48e4b2e6e186f837b 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -4,10 +4,12 @@
+ #include "sync_replica_peer_service_status.hpp"
+ 
+ #include <algorithm>
++#include <array>
+ #include <atomic>
+ #include <chrono>
+ #include <cstdlib>
+ #include <cerrno>
++#include <exception>
+ #include <filesystem>
+ #include <fstream>
+ #include <iomanip>
+@@ -191,6 +193,146 @@ std::string raw_local_request_or_throw(
+     return response;
+ }
+ 
++template <typename Client>
++void with_raw_server_unlinked_before_response_or_throw(
++    const fs::path& path,
++    std::string_view expected_request,
++    std::string_view response,
++    Client&& client) {
++    std::atomic<bool> ready{false};
++    std::atomic<bool> failed{false};
++    std::exception_ptr server_failure;
++    std::jthread server([&] {
++        int listener = -1;
++        int connection = -1;
++        const auto close_descriptors = [&]() noexcept {
++            if (connection >= 0) {
++                (void)::close(connection);
++                connection = -1;
++            }
++            if (listener >= 0) {
++                (void)::close(listener);
++                listener = -1;
++            }
++        };
++        try {
++            listener = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
++            if (listener < 0) {
++                throw std::runtime_error(
++                    "unlinked-response server socket failed");
++            }
++            sockaddr_un address{};
++            address.sun_family = AF_UNIX;
++            const std::string native = path.string();
++            if (native.size() >= sizeof(address.sun_path)) {
++                throw std::runtime_error(
++                    "unlinked-response server path is too long");
++            }
++            std::copy(native.begin(), native.end(), address.sun_path);
++            address.sun_path[native.size()] = '\0';
++            if (::bind(
++                    listener, reinterpret_cast<const sockaddr*>(&address),
++                    sizeof(address)) != 0) {
++                throw std::runtime_error(
++                    "unlinked-response server bind failed: " +
++                    std::to_string(errno));
++            }
++            if (::chmod(path.c_str(), 0600U) != 0) {
++                throw std::runtime_error(
++                    "unlinked-response server chmod failed: " +
++                    std::to_string(errno));
++            }
++            if (::listen(listener, 1) != 0) {
++                throw std::runtime_error(
++                    "unlinked-response server listen failed: " +
++                    std::to_string(errno));
++            }
++            ready.store(true, std::memory_order_release);
++
++            do {
++                connection = ::accept4(listener, nullptr, nullptr, SOCK_CLOEXEC);
++            } while (connection < 0 && errno == EINTR);
++            if (connection < 0) {
++                throw std::runtime_error(
++                    "unlinked-response server accept failed: " +
++                    std::to_string(errno));
++            }
++
++            std::string observed_request;
++            observed_request.reserve(expected_request.size());
++            while (observed_request.find('\n') == std::string::npos) {
++                std::array<char, 256U> buffer{};
++                const ssize_t count = ::read(
++                    connection, buffer.data(), buffer.size());
++                if (count < 0 && errno == EINTR) continue;
++                if (count <= 0) {
++                    throw std::runtime_error(
++                        "unlinked-response server request read failed");
++                }
++                observed_request.append(
++                    buffer.data(), static_cast<std::size_t>(count));
++                if (observed_request.size() > 4096U) {
++                    throw std::runtime_error(
++                        "unlinked-response server request exceeded test bound");
++                }
++            }
++            if (observed_request != expected_request) {
++                throw std::runtime_error(
++                    "unlinked-response server received an unexpected request");
++            }
++            if (::unlink(path.c_str()) != 0) {
++                throw std::runtime_error(
++                    "unlinked-response server unlink failed: " +
++                    std::to_string(errno));
++            }
++
++            std::size_t written = 0U;
++            while (written < response.size()) {
++                const ssize_t count = ::send(
++                    connection, response.data() + written,
++                    response.size() - written, MSG_NOSIGNAL);
++                if (count < 0 && errno == EINTR) continue;
++                if (count <= 0) {
++                    throw std::runtime_error(
++                        "unlinked-response server response write failed");
++                }
++                written += static_cast<std::size_t>(count);
++            }
++            close_descriptors();
++        } catch (...) {
++            close_descriptors();
++            (void)::unlink(path.c_str());
++            server_failure = std::current_exception();
++            failed.store(true, std::memory_order_release);
++        }
++    });
++
++    const auto ready_deadline =
++        std::chrono::steady_clock::now() + std::chrono::seconds(2);
++    while (!ready.load(std::memory_order_acquire) &&
++           !failed.load(std::memory_order_acquire)) {
++        if (std::chrono::steady_clock::now() >= ready_deadline) {
++            throw std::runtime_error(
++                "unlinked-response server readiness deadline expired");
++        }
++        std::this_thread::sleep_for(std::chrono::milliseconds(1));
++    }
++    if (failed.load(std::memory_order_acquire)) {
++        server.join();
++        std::rethrow_exception(server_failure);
++    }
++
++    std::exception_ptr client_failure;
++    try {
++        std::forward<Client>(client)();
++    } catch (...) {
++        client_failure = std::current_exception();
++    }
++    server.join();
++    if (server_failure) std::rethrow_exception(server_failure);
++    if (client_failure) std::rethrow_exception(client_failure);
++}
++
+ void require_socket_mode(const fs::path& path, mode_t mode) {
+     struct stat status {};
+     require(::lstat(path.c_str(), &status) == 0, "socket path must exist");
+@@ -1886,6 +2028,53 @@ int main() {
+             "a non-socket path must not be removed");
+         require(fs::is_regular_file(regular), "occupied file must remain intact");
+ 
++        const fs::path disappearing_stop =
++            temporary.path() / "disappearing-stop.sock";
++        const std::string completed_stop_response =
++            "{\"schema\":\"anonsync.local-stop.response.v1\","
++            "\"command\":\"stop\",\"terminal_class\":\"completed\","
++            "\"stop_mode\":\"drain\",\"first_request\":true,"
++            "\"server_pid\":" + process_id + "}";
++        with_raw_server_unlinked_before_response_or_throw(
++            disappearing_stop, "stop\n", completed_stop_response + "\n",
++            [&] {
++                require(
++                    anonsync::request_sync_local_status_stop_or_throw(
++                        disappearing_stop) == completed_stop_response,
++                    "completed stop must survive exact post-response socket disappearance");
++            });
++        require(
++            !fs::exists(disappearing_stop),
++            "completed stop disappearance test left a socket pathname");
++
++        const fs::path malformed_disappearing_stop =
++            temporary.path() / "malformed-disappearing-stop.sock";
++        with_raw_server_unlinked_before_response_or_throw(
++            malformed_disappearing_stop, "stop\n",
++            "{\"pid\":" + process_id + "}\n",
++            [&] {
++                require_throws(
++                    [&] {
++                        (void)anonsync::request_sync_local_status_stop_or_throw(
++                            malformed_disappearing_stop);
++                    },
++                    "socket disappearance must not bypass exact stop-response validation");
++            });
++
++        const fs::path disappearing_status =
++            temporary.path() / "disappearing-status.sock";
++        with_raw_server_unlinked_before_response_or_throw(
++            disappearing_status, "status\n",
++            "{\"pid\":" + process_id + "}\n",
++            [&] {
++                require_throws(
++                    [&] {
++                        (void)anonsync::query_sync_local_status_socket_or_throw(
++                            disappearing_status);
++                    },
++                    "non-stop requests must retain final socket-path identity");
++            });
++
+         require_throws(
+             [&] {
+                 (void)anonsync::query_sync_local_status_socket_or_throw(
+diff --git a/tests/sync_replica_deployment_binding_test.cpp b/tests/sync_replica_deployment_binding_test.cpp
+index 0d2180ed78cd6cc6a5bcaa3d9d3531c4cf852d0c..f546a71f66ef89a81f7bf0986c07c14c4596977e 100644
+--- a/tests/sync_replica_deployment_binding_test.cpp
++++ b/tests/sync_replica_deployment_binding_test.cpp
+@@ -306,6 +306,71 @@ void test_detached_image_initialization_and_named_readback() {
+         "a named database was accepted as a detached bootstrap image");
+ }
+ 
++void test_writable_detached_image_cannot_masquerade_as_read_only() {
++    TemporaryDirectory temporary;
++    const fs::path path = temporary.path() / "detached-writable.sqlite";
++    const auto exact = binding(
++        temporary, path,
++        anonsync::SyncReplicaSqliteDeploymentRole::Replica);
++    auto detached = open_detached_database();
++
++    anonsync::
++        initialize_sync_replica_sqlite_deployment_binding_in_detached_image_or_throw(
++            detached.db, exact,
++            "deployment-binding writable detached probe fixture");
++    anonsync::sqlite_exec_or_throw(
++        detached.db, "PRAGMA query_only=ON;",
++        "deployment-binding writable detached query-only profile");
++
++    anonsync::SyncSqliteTransaction transaction(
++        detached.db,
++        "deployment-binding writable detached outer transaction",
++        anonsync::SyncSqliteTransactionMode::Deferred);
++    const auto transaction_authority = transaction.authority();
++    require_error(
++        [&] {
++            anonsync::
++                attest_sync_replica_sqlite_deployment_binding_state_in_read_only_detached_image_or_throw(
++                    detached.db, exact, transaction_authority,
++                    "deployment-binding writable detached read-only rejection");
++        },
++        "accepted a main-database write",
++        "a writable detached image masqueraded as sealed read-only");
++
++    require(
++        transaction.active(),
++        "the writable-image denial probe ended its exact outer transaction");
++    require(
++        !anonsync::sqlite_table_exists_or_throw(
++            detached.db, "anonsync_detached_read_only_probe_rev0982",
++            "deployment-binding writable detached probe cleanup"),
++        "the writable-image denial probe retained its test table");
++    {
++        anonsync::SyncSqliteStmt statement = anonsync::sqlite_prepare_or_throw(
++            detached.db, "PRAGMA query_only;",
++            "deployment-binding writable detached query-only reproof");
++        const int first = sqlite3_step(statement.stmt);
++        require(
++            first == SQLITE_ROW &&
++                anonsync::sqlite_column_u64_or_throw(
++                    statement.stmt, 0,
++                    "deployment-binding writable detached query-only value") ==
++                    1U,
++            "the writable-image denial probe did not restore query_only");
++        require(
++            sqlite3_step(statement.stmt) == SQLITE_DONE,
++            "the writable-image query_only reproof returned excess rows");
++    }
++    anonsync::
++        attest_sync_replica_sqlite_deployment_binding_state_in_detached_image_or_throw(
++            detached.db, exact,
++            "deployment-binding writable detached post-probe state");
++    require(
++        transaction.active(),
++        "post-probe binding reproof ended the exact outer transaction");
++    transaction.commit();
++}
++
+ void test_detached_image_profile_rejections() {
+     TemporaryDirectory temporary;
+     const fs::path path = temporary.path() / "detached-profile.sqlite";
+@@ -491,6 +556,7 @@ int main() {
+         test_generation_and_role_classifier();
+         test_exact_round_trip_and_reinitialization_rejection();
+         test_detached_image_initialization_and_named_readback();
++        test_writable_detached_image_cannot_masquerade_as_read_only();
+         test_detached_image_profile_rejections();
+         test_identity_role_path_and_header_mismatch_rejections();
+         test_schema_shadow_and_row_tamper_rejections();
+diff --git a/tools/audit_anonsync_replica_deployment_binding.py b/tools/audit_anonsync_replica_deployment_binding.py
+index ba80b2dd0989e80b0f27cc8efc6c7cccfe24a634..ece2c60f7b3c6ea7affda56258d90ee85b35e5c5 100644
+--- a/tools/audit_anonsync_replica_deployment_binding.py
++++ b/tools/audit_anonsync_replica_deployment_binding.py
+@@ -307,9 +307,10 @@ def main() -> int:
+             "committed proof",
+         )
+         and "BindingFilenameAuthority::ExactOpenedPath" in initialize_named
+-        and "BindingFilenameAuthority::DetachedBootstrapImage" in initialize_detached
++        and "BindingFilenameAuthority::DetachedBootstrapWritableImage" in initialize_detached
+         and "sqlite3_db_filename" in detached_filename
+-        and "detached bootstrap image unexpectedly names a file" in detached_filename,
++        and '" detached bootstrap image"' in detached_filename
++        and '" unexpectedly names a file"' in detached_filename,
+         "binding_initialization_is_transactional_postcommit_reproved_and_filename_scoped",
+         "the classifier and exact row cross one SQLite commit; detached construction cannot masquerade as a named database",
+     )
+@@ -507,6 +508,12 @@ def main() -> int:
+             "expected memory",
+             "prepopulated detached rejection",
+             "must be schema-empty",
++            "test_writable_detached_image_cannot_masquerade_as_read_only",
++            "accepted a main-database write",
++            "anonsync_detached_read_only_probe_rev0982",
++            "the writable-image denial probe retained its test table",
++            "the writable-image denial probe did not restore query_only",
++            "post-probe binding reproof ended the exact outer transaction",
+         )),
+         "compiled_binding_test_covers_identity_role_path_header_schema_and_copy_attacks",
+         "runtime tests exercise every exact SQLite binding dimension plus detached-image authority separation",
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 650abf7c32497d66dcbb3fabb14efaaf6b5d1f3a..369418c5c9bed2d0d459f5e3b261bb0ab43365ca 100644
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -175,6 +175,14 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0980.md"),
+     Path("OFFLINE_DATABASE_RECOVERY_AND_DEPLOYMENT_SINGLETON_AUDIT_rev0981.md"),
+     Path("REVISION_NOTES_rev0981.md"),
++    Path("OFFLINE_REPLICA_DATABASE_BACKUP_ARTIFACT_AUDIT_rev0982.md"),
++    Path("REVISION_NOTES_rev0982.md"),
++    Path("src/sync_replica_database_backup.hpp"),
++    Path("src/sync_replica_database_backup.cpp"),
++    Path("src/sync_replica_deployment_binding.hpp"),
++    Path("src/sync_replica_deployment_binding.cpp"),
++    Path("tests/persistence/sqlite_snapshot_seal_tests.cpp"),
++    Path("tools/audit_sync_replica_database_backup.py"),
+ )
+ 
+ 
+@@ -604,6 +612,20 @@ def main() -> int:
+         "OFFLINE_DATABASE_RECOVERY_AND_DEPLOYMENT_SINGLETON_AUDIT_rev0981.md"
+     ]
+     rev0981_notes = text["REVISION_NOTES_rev0981.md"]
++    offline_database_backup_design = text[
++        "OFFLINE_REPLICA_DATABASE_BACKUP_ARTIFACT_AUDIT_rev0982.md"
++    ]
++    rev0982_notes = text["REVISION_NOTES_rev0982.md"]
++    database_backup_header = text["src/sync_replica_database_backup.hpp"]
++    database_backup_source = text["src/sync_replica_database_backup.cpp"]
++    deployment_binding_header = text["src/sync_replica_deployment_binding.hpp"]
++    deployment_binding_source = text["src/sync_replica_deployment_binding.cpp"]
++    sqlite_snapshot_seal_test = text[
++        "tests/persistence/sqlite_snapshot_seal_tests.cpp"
++    ]
++    database_backup_audit = text[
++        "tools/audit_sync_replica_database_backup.py"
++    ]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -857,6 +879,17 @@ def main() -> int:
+         if rev0981_verifier_start >= 0 and rev0981_verifier_end >= 0
+         else ""
+     )
++    rev0982_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 982:"
++    )
++    rev0982_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0982_verifier_start
++    )
++    rev0982_verifier_block = (
++        verifier[rev0982_verifier_start:rev0982_verifier_end]
++        if rev0982_verifier_start >= 0 and rev0982_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -11534,6 +11567,138 @@ def main() -> int:
+         "release verification requires every implementation, process oracle, source audit, design record, and package-policy surface changed by rev0981",
+     )
+ 
++    require(
++        '"format": "anonsync-replica-database-backup-audit-v1"'
++        in database_backup_audit
++        and "SyncReplicaDatabaseBackupOwner" in database_backup_header
++        and "SyncReplicaDatabaseBackupCutpoint" in database_backup_header
++        and "SealedSqliteSnapshot::capture_database" in database_backup_source
++        and "publish_exact_copy_atomically_create_new_or_throw"
++            in database_backup_source
++        and "inspect_sync_replica_sqlite_snapshot_in_attested_detached_read_only_image_or_throw"
++            in database_backup_source
++        and "state_in_read_only_detached_image_or_throw"
++            in deployment_binding_header
++        and "SQLITE_READONLY" in deployment_binding_source
++        and 'sqlite3_db_readonly(database, "main") == 0'
++            in sqlite_snapshot_seal_test,
++        "rev0982_backup_owner_uses_bounded_create_new_and_behavioral_detached_reproof",
++        "the shipping backup owner composes the retained copy, publication, binding, and complete-schema authorities without trusting the in-memory db_readonly oracle",
++    )
++
++    require(
++        "database-backup-create" in database_recovery_runtime
++        and "database-backup-inspect" in database_recovery_runtime
++        and "detached backup inspection without source database"
++            in database_recovery_runtime
++        and "duplicate immutable backup create" in database_recovery_runtime
++        and "backup artifact is not owner-only mode 0600"
++            in database_recovery_runtime
++        and "source recovery advance changed detached backup bytes"
++            in database_recovery_runtime
++        and "anonsync_sync_replica_database_backup_source_audit" in cmake,
++        "rev0982_product_oracle_covers_detached_artifact_and_source_immutability",
++        "the normal registry exercises bad paths, exact creation, source-absent inspection, damage rejection, and old-artifact stability across recovery advance",
++    )
++
++    require(
++        all(
++            token in normalized_prose(offline_database_backup_design)
++            for token in (
++                "Operator surface",
++                "Creation authority order",
++                "Boundedness and memory refactor",
++                "Detached read-only SQLite correction",
++                "What this does not prove",
++                "Next safe edge",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0982_notes)
++            for token in (
++                "Offline backup artifact",
++                "One canonical artifact",
++                "Detached inspector",
++                "Audit/refactor: typed rollback authority",
++                "Adjacent service-lifecycle correction",
++                "Boundary",
++            )
++        )
++        and "## Rev0982: canonical replica-database backup and detached reproof"
++            in readme,
++        "rev0982_records_keep_replica_database_backup_distinct_from_share_restore",
++        "audit, notes, and README agree that this is one bounded database artifact, not payload backup, restore, or external anti-rollback authority",
++    )
++
++    require(
++        'options.require_only({"manifest", "snapshot"});' in sync_cli
++        and 'options.one("manifest")' in sync_cli
++        and 'options.one("snapshot")' in sync_cli
++        and "database-backup-inspect --manifest ... --snapshot ..." in readme
++        and "database-backup-inspect --manifest ABSOLUTE_JSON --snapshot ABSOLUTE_SQLITE"
++            in rev0982_notes
++        and "[--manifest" not in rev0982_notes
++        and "An optional `--manifest`" not in readme,
++        "rev0982_detached_inspection_remains_manifest_bound",
++        "detached source independence cannot be documented as unauthenticated inspection without the deployment manifest",
++    )
++
++    require(
++        "enum class LocalSocketCompletionPathPolicy" in local_status
++        and "AllowExactAbsenceAfterResponse" in local_status
++        and local_status.count(
++            "LocalSocketCompletionPathPolicy::AllowExactAbsenceAfterResponse"
++        ) == 1
++        and "request_sync_local_status_stop_or_throw" in local_status
++        and "if (error == ENOENT) return;" in local_status
++        and local_status.count(
++            "LocalSocketCompletionPathPolicy::RequireSameIdentity"
++        ) >= 5,
++        "rev0982_stop_completion_allows_only_exact_post_response_absence",
++        "a valid completed drain may outlive its socket pathname without weakening the final identity rule for any other local command",
++    )
++
++    require(
++        "with_raw_server_unlinked_before_response_or_throw"
++            in local_status_runtime
++        and "completed stop must survive exact post-response socket disappearance"
++            in local_status_runtime
++        and "socket disappearance must not bypass exact stop-response validation"
++            in local_status_runtime
++        and "non-stop requests must retain final socket-path identity"
++            in local_status_runtime,
++        "rev0982_stop_disappearance_regression_has_positive_and_negative_controls",
++        "the runtime oracle distinguishes successful drain completion from malformed response and non-stop pathname loss",
++    )
++
++    require(
++        rev0982_verifier_block.count(
++            "if revision_number is not None and revision_number >= 982:"
++        ) == 1
++        and all(
++            token in rev0982_verifier_block
++            for token in (
++                "OFFLINE_REPLICA_DATABASE_BACKUP_ARTIFACT_AUDIT_rev0982.md",
++                "REVISION_NOTES_rev0982.md",
++                "src/sync_replica_database_backup.hpp",
++                "src/sync_replica_database_backup.cpp",
++                "src/sync_replica_deployment_binding.hpp",
++                "src/sync_replica_deployment_binding.cpp",
++                "src/sync_replica_sqlite_owner.hpp",
++                "src/sync_replica_sqlite_owner.cpp",
++                "tests/persistence/sqlite_snapshot_seal_tests.cpp",
++                "tests/sync_replica_deployment_binding_test.cpp",
++                "tools/test_anonsync_database_recovery.py",
++                "tools/audit_anonsync_replica_deployment_binding.py",
++                "tools/audit_sync_replica_database_backup.py",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0982_package_policy_binds_backup_owner_detached_gate_oracle_and_records",
++        "release verification requires every implementation, test, audit, and documentation surface that defines rev0982",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -11721,6 +11886,17 @@ def main() -> int:
+         "offline database recovery and deployment-singleton changes cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0981 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0982" not in rev0982_notes
++        and "VALIDATION_PENDING_REV0982" not in offline_database_backup_design
++        and "VALIDATION_PENDING_REV0982" not in readme
++        and "ARCHIVE_PENDING_REV0982" not in bootstrap
++        and "CODENAME_PENDING_REV0982" not in bootstrap
++        and "VALIDATION_PENDING_REV0982" not in bootstrap,
++        "rev0982_final_validation_and_visible_release_cutpoint_are_sealed",
++        "offline database backup and detached-image changes cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0982 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/audit_sync_replica_database_backup.py b/tools/audit_sync_replica_database_backup.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..95f5fe41a60a85a2d89b0f9560cd81991dbe4021
+--- /dev/null
++++ b/tools/audit_sync_replica_database_backup.py
+@@ -0,0 +1,532 @@
++#!/usr/bin/env python3
++"""Lexical audit for the offline replica-database backup boundary.
++
++This pins reviewed source shape, ownership order, nonclaims, and process-oracle
++vocabulary. It is not semantic proof of SQLite, filesystem, crash, allocation,
++or cryptographic behavior; runtime, sanitizer, reconstruction, and package
++evidence remain load-bearing.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++REQUIRED = (
++    Path("CMakeLists.txt"),
++    Path("README.md"),
++    Path("OFFLINE_REPLICA_DATABASE_BACKUP_ARTIFACT_AUDIT_rev0982.md"),
++    Path("REVISION_NOTES_rev0982.md"),
++    Path("src/anonsync_sync.cpp"),
++    Path("src/sync_replica_database_backup.hpp"),
++    Path("src/sync_replica_database_backup.cpp"),
++    Path("src/sync_replica_deployment_binding.hpp"),
++    Path("src/sync_replica_deployment_binding.cpp"),
++    Path("src/sync_replica_sqlite_owner.hpp"),
++    Path("src/sync_replica_sqlite_owner.cpp"),
++    Path("src/persistence/sqlite_snapshot_seal.hpp"),
++    Path("src/persistence/sqlite_snapshot_seal.cpp"),
++    Path("tests/persistence/sqlite_snapshot_seal_tests.cpp"),
++    Path("tools/test_anonsync_database_recovery.py"),
++    Path("tools/audit_sync_replica_database_backup.py"),
++    Path("tools/verify_release_package.py"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def ordered(text: str, *tokens: str) -> bool:
++    cursor = -1
++    for token in tokens:
++        cursor = text.find(token, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
++def delimited_body(text: str, signature: str, opening: str, closing: str) -> str:
++    start = text.find(signature)
++    if start < 0:
++        return ""
++    boundary = text.find(opening, start + len(signature))
++    if boundary < 0:
++        return ""
++    depth = 0
++    quote = ""
++    escaped = False
++    line_comment = False
++    block_comment = False
++    index = boundary
++    while index < len(text):
++        byte = text[index]
++        following = text[index + 1] if index + 1 < len(text) else ""
++        if line_comment:
++            if byte == "\n":
++                line_comment = False
++            index += 1
++            continue
++        if block_comment:
++            if byte == "*" and following == "/":
++                block_comment = False
++                index += 2
++            else:
++                index += 1
++            continue
++        if quote:
++            if escaped:
++                escaped = False
++            elif byte == "\\":
++                escaped = True
++            elif byte == quote:
++                quote = ""
++            index += 1
++            continue
++        if byte == "/" and following == "/":
++            line_comment = True
++            index += 2
++            continue
++        if byte == "/" and following == "*":
++            block_comment = True
++            index += 2
++            continue
++        if byte in ('"', "'"):
++            quote = byte
++            index += 1
++            continue
++        if byte == opening:
++            depth += 1
++        elif byte == closing:
++            depth -= 1
++            if depth == 0:
++                return text[start : index + 1]
++        index += 1
++    return ""
++
++
++def function_body(text: str, signature: str) -> str:
++    return delimited_body(text, signature, "{", "}")
++
++
++def cmake_call(text: str, prefix: str) -> str:
++    return delimited_body(text, prefix, "(", ")")
++
++
++def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
++    violations = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-replica-database-backup-audit-v1",
++        "scope": "lexical-hygiene-not-semantic-proof",
++        "scope_nonclaim": (
++            "source spelling does not prove SQLite snapshot consistency, POSIX "
++            "identity, durability, allocation success, crash recovery, or SHA-256"
++        ),
++        "root": str(root),
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if output is None:
++        sys.stdout.write(rendered)
++    else:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++    return 0 if not violations else 1
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root", type=Path, default=Path(__file__).resolve().parents[1]
++    )
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++    checks: list[Check] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    missing = [path.as_posix() for path in REQUIRED if not (root / path).is_file()]
++    require(not missing, "required_files_exist", f"missing={missing}")
++    if missing:
++        return emit(root, args.json, checks)
++
++    text = {
++        path.as_posix(): (root / path).read_text(encoding="utf-8")
++        for path in REQUIRED
++    }
++    cmake = text["CMakeLists.txt"]
++    cli = text["src/anonsync_sync.cpp"]
++    header = text["src/sync_replica_database_backup.hpp"]
++    source = text["src/sync_replica_database_backup.cpp"]
++    binding_header = text["src/sync_replica_deployment_binding.hpp"]
++    binding_source = text["src/sync_replica_deployment_binding.cpp"]
++    owner_header = text["src/sync_replica_sqlite_owner.hpp"]
++    owner_source = text["src/sync_replica_sqlite_owner.cpp"]
++    seal_header = text["src/persistence/sqlite_snapshot_seal.hpp"]
++    seal_source = text["src/persistence/sqlite_snapshot_seal.cpp"]
++    seal_test = text["tests/persistence/sqlite_snapshot_seal_tests.cpp"]
++    runtime = text["tools/test_anonsync_database_recovery.py"]
++    design = text["OFFLINE_REPLICA_DATABASE_BACKUP_ARTIFACT_AUDIT_rev0982.md"]
++    notes = text["REVISION_NOTES_rev0982.md"]
++    readme = text["README.md"]
++    verifier = text["tools/verify_release_package.py"]
++
++    backup_target = cmake_call(
++        cmake, "add_library(anonsync_sync_replica_database_backup STATIC"
++    )
++    backup_links = cmake_call(
++        cmake, "target_link_libraries(anonsync_sync_replica_database_backup"
++    )
++    sync_links = cmake_call(cmake, "target_link_libraries(anonsync_sync PRIVATE")
++    create = function_body(
++        source, "SyncReplicaDatabaseBackupOwner::create_artifact_or_throw("
++    )
++    inspect = function_body(
++        source, "SyncReplicaDatabaseBackupOwner::inspect_artifact_or_throw("
++    )
++    validate_path = function_body(source, "validate_artifact_path_or_throw(")
++    inspect_sealed = function_body(source, "inspect_sealed_artifact_or_throw(")
++    compact = function_body(source, "compact_backup_cutpoint(")
++    detached_profile = function_body(
++        binding_source, "require_detached_read_only_image_or_throw("
++    )
++    combined_inspector = function_body(
++        owner_source,
++        "inspect_sync_replica_sqlite_snapshot_in_attested_detached_read_only_image_or_throw(",
++    )
++    named_inspector = function_body(
++        owner_source, "inspect_sync_replica_sqlite_snapshot_read_only_or_throw("
++    )
++    cli_create = function_body(cli, "int command_database_backup_create(")
++    cli_inspect = function_body(cli, "int command_database_backup_inspect(")
++    cli_render = function_body(cli, "void append_database_backup_scope_json(")
++
++    require(
++        "src/sync_replica_database_backup.cpp" in backup_target,
++        "dedicated_backup_owner_is_a_retained_library",
++        "the shipping command composes one reviewed owner instead of embedding a second copy engine",
++    )
++    require(
++        all(
++            token in backup_links
++            for token in (
++                "anonsync_sqlite_snapshot_seal",
++                "anonsync_sync_atomic_file_publication",
++                "anonsync_sync_replica_deployment_binding",
++                "anonsync_sync_replica_operational_database",
++                "anonsync_sync_replica_peer_service_singleton",
++                "anonsync_sync_replica_tls_membership",
++                "anonsync_sync_replica_sqlite_owner",
++            )
++        )
++        and "anonsync_sync_replica_tls_policy_sqlite_profile" not in backup_links,
++        "backup_owner_links_only_real_retained_targets",
++        "the initial raw -l profile-target integration defect cannot recur",
++    )
++    require(
++        "anonsync_sync_replica_database_backup" in sync_links
++        and cmake.count("anonsync_sync_replica_database_backup") >= 4,
++        "shipping_and_sanitizer_graphs_retain_the_backup_owner",
++        "the owner is linked into anonsync_sync and inventoried in the product dependency graph",
++    )
++    require(
++        "SyncReplicaPeerServiceSingletonOwner singleton" in source
++        and ordered(
++            source,
++            "SyncReplicaDeploymentManifest deployment;",
++            "std::string label;",
++            "SyncReplicaPeerServiceSingletonOwner singleton;",
++        ),
++        "deployment_singleton_precedes_database_and_artifact_authority",
++        "the owner retains no open database or artifact member before the deployment claim",
++    )
++    require(
++        "kSyncReplicaDatabaseBackupMaximumArtifactBytes" in header
++        and "512ULL * 1024ULL * 1024ULL" in header
++        and "kSyncReplicaDatabaseBackupMaximumArtifactPages = 262144ULL" in header
++        and "kMaximumUntrustedSqliteSnapshotBytes" in source
++        and "kMaximumUntrustedSqliteSnapshotPages" in source,
++        "resident_backup_limits_tighten_the_generic_untrusted_ceiling",
++        "product backup authority is bounded by bytes and pages",
++    )
++    require(
++        all(
++            token in validate_path
++            for token in (
++                "canonical absolute path without NUL",
++                "deployment.manifest_path",
++                "deployment.replica_db",
++                "deployment.effect_db",
++                "deployment.membership_db",
++                "deployment.anchor_db",
++                "sync_replica_folder_catalog_path_or_throw",
++                "deployment.payload_root",
++                "deployment.files_root",
++            )
++        )
++        and all(token in source for token in ('"-journal"', '"-wal"', '"-shm"')),
++        "artifact_path_excludes_manifest_all_active_sqlite_families_and_file_roots",
++        "backup publication cannot be directed into selected durable stores or synchronized data",
++    )
++    require(
++        ordered(
++            create,
++            "validate_artifact_path_or_throw",
++            "preflight_sync_file_create_new_no_symlink_or_throw",
++            "open_attested_sync_replica_primary_database_read_only_or_throw",
++        ),
++        "create_new_path_preflight_precedes_source_and_resident_allocation",
++        "an occupied or unsafe destination is rejected before the expensive source copy",
++    )
++    require(
++        ordered(
++            create,
++            "source snapshot before capture",
++            "SealedSqliteSnapshot::capture_database",
++            "inspect_sealed_artifact_or_throw",
++            "source snapshot after capture",
++            "source.verify_open_database_or_throw",
++            "source changed across the exact backup capture bracket",
++            "publish_exact_copy_atomically_create_new_or_throw",
++        ),
++        "source_copy_is_pinned_bracketed_rooted_and_create_new_published",
++        "one exact logical image is compared with complete source observations before namespace publication",
++    )
++    require(
++        ordered(
++            create,
++            "publish_exact_copy_atomically_create_new_or_throw",
++            "inspect_artifact_or_throw(absolute_artifact_path)",
++            "published artifact differs from the captured source snapshot",
++        ),
++        "durable_artifact_is_independently_reopened_and_reproved",
++        "success is not reported from resident bytes alone",
++    )
++    require(
++        "SealedSqliteSnapshot::capture(" in inspect
++        and "open_attested_sync_replica_primary_database" not in inspect,
++        "inspection_has_no_live_primary_database_authority",
++        "a detached artifact remains inspectable after the active database family is absent",
++    )
++    require(
++        "SyncReplicaDatabaseBackupCutpoint" in header
++        and "SyncReplicaSqliteSnapshot replica_snapshot" not in header
++        and all(
++            token in compact
++            for token in (
++                "database_incarnation_sha256",
++                "database_recovery_epoch",
++                "state_generation",
++                "policy_generation",
++                "operation_set_digest",
++                "evidence_set_digest",
++                "visible_state_digest",
++                "outbox_digest",
++                "outbox_clock_digest",
++                "historical_version_pin_set_digest",
++                "cutpoint_digest",
++            )
++        ),
++        "backup_bracket_retains_compact_exact_witnesses_not_complete_graphs",
++        "complete schema restore is released before the next observation instead of multiplying causal-model memory",
++    )
++    require(
++        "before != captured.source_cutpoint" in create
++        and "after != captured.source_cutpoint" in create
++        and "published.source_cutpoint != captured.source_cutpoint" in create,
++        "compact_witness_is_used_at_every_backup_consistency_cutpoint",
++        "the memory refactor did not remove source bracketing or durable reproof",
++    )
++    require(
++        "SQLITE_DESERIALIZE_READONLY" in seal_header
++        and "open_database_owner_or_throw" in inspect_sealed
++        and "configure_sync_replica_tls_policy_sqlite_read_only_connection_or_throw"
++        in inspect_sealed
++        and "PRAGMA temp_store=MEMORY;PRAGMA foreign_keys=ON;" in inspect_sealed,
++        "artifact_bytes_enter_one_hardened_filename_free_read_only_sqlite_profile",
++        "detached schema inspection has no named journal family or mutable profile",
++    )
++    require(
++        "sqlite3_db_readonly(database.get()" not in detached_profile
++        and "PRAGMA query_only" in detached_profile
++        and "SyncSqliteSavepoint rollback_guard" in detached_profile
++        and "outer_transaction_authority" in detached_profile
++        and "PRAGMA query_only=OFF" in detached_profile
++        and "CREATE TABLE main.anonsync_detached_read_only_probe_rev0982" in detached_profile
++        and "SQLITE_READONLY" in detached_profile
++        and "rollback_guard.rollback()" in detached_profile
++        and "SAVEPOINT anonsync_detached_read_only_probe" not in binding_source
++        and "ROLLBACK TO anonsync_detached_read_only_probe" not in binding_source,
++        "detached_read_only_authority_is_behavioral_and_typed_cleanup_fenced",
++        "the verifier proves immutable main bytes through the centralized typed savepoint owner",
++    )
++    require(
++        "sqlite3_db_readonly(database.get(), \"main\") != 1" in named_inspector,
++        "named_forensic_reader_retains_the_native_read_only_gate",
++        "the detached SQLite exception did not weaken ordinary named-file inspection",
++    )
++    require(
++        ordered(
++            combined_inspector,
++            "SyncSqliteTransaction transaction",
++            "attest_sync_replica_sqlite_deployment_binding_state_in_read_only_detached_image_or_throw",
++            "load_state_or_throw",
++            "require_snapshot_authority_or_throw",
++            "snapshot_from_loaded",
++            "transaction.commit",
++        ),
++        "deployment_binding_and_complete_replica_state_share_one_transaction",
++        "a detached artifact cannot change between a separate binding transaction and schema observation",
++    )
++    require(
++        "inspect_sync_replica_sqlite_snapshot_in_attested_detached_read_only_image_or_throw"
++        in binding_header + owner_header + source
++        and "attest_sync_replica_sqlite_deployment_binding_in_read_only_detached_image_or_throw"
++        not in inspect_sealed,
++        "backup_owner_uses_the_single_transaction_composition",
++        "the earlier two-transaction attestation path is not retained in the shipping backup flow",
++    )
++    require(
++        'sqlite3_db_readonly(database, "main") == 0' in seal_test
++        and '"readonly", checks' in seal_test,
++        "focused_test_pins_sqlite_in_memory_introspection_and_actual_denial",
++        "future cleanup must preserve the counterintuitive SQLite behavior that triggered this correction",
++    )
++    require(
++        'options.require_only({"manifest", "snapshot"})' in cli_create
++        and 'options.require_only({"manifest", "snapshot"})' in cli_inspect
++        and "SyncReplicaDatabaseBackupOwner owner" in cli_create
++        and "SyncReplicaDatabaseBackupOwner owner" in cli_inspect
++        and "sqlite3_backup" not in cli_create + cli_inspect,
++        "cli_is_a_strict_two_option_adapter_not_a_second_backup_owner",
++        "copy, path, SQLite, and publication authority stays in the retained C++ owner",
++    )
++    require(
++        all(
++            token in cli_render
++            for token in (
++                "single_replica_database_image",
++                "external_anti_rollback_authority",
++                "payload_store_observed",
++                "folder_catalog_observed",
++                "rooted_files_observed",
++                "network_started",
++                "payload_bytes_included",
++                "folder_catalog_included",
++                "membership_database_included",
++                "effect_database_included",
++                "anchor_database_included",
++                "restore_performed",
++                "recovery_epoch_advanced",
++                "post_replacement_recovery_advance_required",
++                "retention_age_reset_required_after_restore",
++            )
++        )
++        and cli_render.count(":false") >= 12
++        and cli_render.count(":true") >= 6,
++        "operator_response_denies_share_backup_restore_and_anti_rollback_authority",
++        "the JSON surface cannot be mistaken for a complete share backup or restore receipt",
++    )
++    require(
++        all(
++            token in runtime
++            for token in (
++                "backup beneath synchronized root",
++                "backup colliding with active SQLite family",
++                "offline replica database backup create",
++                "duplicate immutable backup create",
++                "detached backup inspection without source database",
++                "damaged detached backup inspection",
++                "backup inspection with hostile sidecar",
++                "multiply linked backup inspection",
++                "backup artifact is not single-linked",
++                "backup artifact is not owner-only mode 0600",
++                "backup page geometry disagreed",
++                "backup publication left a SQLite sidecar",
++                "source recovery advance changed detached backup bytes",
++            )
++        ),
++        "real_process_oracle_covers_namespace_geometry_detachment_damage_and_immutability",
++        "the product lane exercises the visible backup contract across independent process invocations",
++    )
++    require(
++        "sqlite_family_fingerprint(replica_db)" in runtime
++        and runtime.count("sqlite_family_fingerprint(replica_db)") >= 8
++        and "payload_root, files_root, catalog" in runtime,
++        "process_oracle_proves_source_family_stability_and_narrow_authority",
++        "backup and recovery work does not require payload, rooted files, or the folder catalog",
++    )
++    require(
++        'options.require_only({"manifest", "snapshot"});' in cli
++        and 'options.one("manifest")' in cli
++        and 'options.one("snapshot")' in cli
++        and "database-backup-inspect --manifest ... --snapshot ..." in readme
++        and "database-backup-inspect --manifest ABSOLUTE_JSON --snapshot ABSOLUTE_SQLITE"
++            in notes
++        and "[--manifest" not in notes
++        and "An optional `--manifest`" not in readme,
++        "detached_inspection_manifest_requirement_matches_shipping_cli",
++        "detached inspection remains source-database independent but manifest-bound rather than unauthenticated",
++    )
++
++    require(
++        all(
++            token in design
++            for token in (
++                "Creation authority order",
++                "Boundedness and memory refactor",
++                "Detached read-only SQLite correction",
++                "Namespace and artifact properties",
++                "What this does not prove",
++                "Next safe edge",
++                "https://sqlite.org/backup.html",
++                "https://sqlite.org/forum/info/80e765eb24d26f01",
++            )
++        )
++        and all(
++            token in notes
++            for token in (
++                "Offline backup artifact",
++                "One canonical artifact",
++                "Detached inspector",
++                "Audit/refactor: typed rollback authority",
++                "Boundary",
++            )
++        )
++        and "## Rev0982: canonical replica-database backup and detached reproof"
++        in readme,
++        "design_notes_and_readme_agree_on_the_narrow_backup_boundary",
++        "visible records distinguish one replica database from a share backup and restore ceremony",
++    )
++    require(
++        "revision_number is not None and revision_number >= 982" in verifier
++        or "REVISION_NOTES_rev0982.md" not in verifier,
++        "release_verifier_update_is_pending_or_present",
++        "preseal permits the package-policy update to land with the final revision records",
++    )
++    require(
++        "lexical audit" in Path(__file__).read_text(encoding="utf-8").lower()
++        and "not semantic proof" in Path(__file__).read_text(encoding="utf-8")
++        and "runtime, sanitizer, reconstruction, and package" in Path(__file__).read_text(encoding="utf-8"),
++        "lexical_audit_disclaims_load_bearing_semantic_authority",
++        "a passing source scan cannot be substituted for runtime and release proof",
++    )
++
++    return emit(root, args.json, checks)
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/test_anonsync_database_recovery.py b/tools/test_anonsync_database_recovery.py
+index f7cd9229a29e0608efad1f9edc142a19fc71fe6d..0fd557f81d4c43c5e2ab9a400ecf9df326bc6841 100644
+--- a/tools/test_anonsync_database_recovery.py
++++ b/tools/test_anonsync_database_recovery.py
+@@ -1,11 +1,12 @@
+ #!/usr/bin/env python3
+-"""Prove the offline database-recovery ceremony and its narrow authority.
+-
+-The operator-visible commands must share the retained deployment singleton,
+-inspect the exact current schema without mutating SQLite, reject stale or
+-noncanonical expectations, and advance only the in-database recovery epoch.
+-They must not require or observe the payload store, folder catalog, rooted
+-files, or network authority.
++"""Prove offline replica-database backup and recovery authority.
++
++The operator-visible commands share the retained deployment singleton. Backup
++creation brackets one bounded canonical SQLite copy, publishes create-new, and
++reopens the detached artifact. Inspection remains valid with the live database
++family absent. Recovery rejects stale or noncanonical expectations before
++writable SQLite open and advances only the in-database recovery epoch. None of
++these commands requires payload, catalog, rooted-file, or network authority.
+ """
+ 
+ from __future__ import annotations
+@@ -214,6 +215,32 @@ def main() -> int:
+         "retention_age_reset_required_when_continuity_uncertain",
+         "mutation_performed",
+     }
++    backup_keys = {
++        "command", "terminal_class", "response_schema", "manifest_path",
++        "deployment_id", "folder_id", "local_device_id", "local_epoch",
++        "replica_database", "snapshot_path", "offline_required",
++        "deployment_singleton_acquired", "continuity_scope",
++        "external_anti_rollback_authority", "payload_store_observed",
++        "folder_catalog_observed", "rooted_files_observed", "network_started",
++        "payload_bytes_included", "folder_catalog_included",
++        "membership_database_included", "effect_database_included",
++        "anchor_database_included", "snapshot_format", "snapshot_sha256",
++        "snapshot_byte_count", "snapshot_page_size", "snapshot_page_count",
++        "maximum_snapshot_bytes", "maximum_snapshot_pages",
++        "database_incarnation_sha256", "database_recovery_epoch",
++        "state_generation", "cutpoint_digest", "recovery_expectation",
++        "canonical_standalone_sqlite", "single_file_sidecar_free",
++        "logical_sqlite_snapshot", "current_schema_required",
++        "deployment_binding_attested", "database_family_replacement_performed",
++        "restore_performed", "recovery_epoch_advanced",
++        "post_replacement_recovery_advance_required",
++        "retention_age_reset_required_after_restore",
++        "active_database_observed", "transactionally_pinned_source",
++        "source_cutpoint_bracketed", "bounded_resident_copy",
++        "immutable_create_new", "postpublication_reverified",
++        "artifact_published", "source_database_mutation_performed",
++        "mutation_performed",
++    }
+ 
+     with tempfile.TemporaryDirectory(prefix="anonsync-database-recovery-") as raw:
+         root = Path(raw)
+@@ -221,7 +248,8 @@ def main() -> int:
+         database_root = root / "db"
+         payload_root = root / "payload"
+         files_root = root / "files"
+-        for directory in (database_root, payload_root, files_root):
++        backup_root = root / "backup"
++        for directory in (database_root, payload_root, files_root, backup_root):
+             directory.mkdir(mode=0o700)
+         manifest = database_root / "deployment.json"
+         replica_db = database_root / "replica.sqlite"
+@@ -261,6 +289,55 @@ def main() -> int:
+             "rooted_files_observed": False,
+             "network_started": False,
+         }
++        backup_artifact = backup_root / "replica-backup.sqlite"
++        backup_common = {
++            key: value for key, value in common.items()
++            if key != "continuity_scope"
++        }
++        backup_common.update({
++            "snapshot_path": str(backup_artifact),
++            "continuity_scope": "single_replica_database_image",
++            "payload_bytes_included": False,
++            "folder_catalog_included": False,
++            "membership_database_included": False,
++            "effect_database_included": False,
++            "anchor_database_included": False,
++            "snapshot_format": "anonsync.replica-database-backup.v1",
++            "maximum_snapshot_bytes": 512 * 1024 * 1024,
++            "maximum_snapshot_pages": 262144,
++            "canonical_standalone_sqlite": True,
++            "single_file_sidecar_free": True,
++            "logical_sqlite_snapshot": True,
++            "current_schema_required": True,
++            "deployment_binding_attested": True,
++            "database_family_replacement_performed": False,
++            "restore_performed": False,
++            "recovery_epoch_advanced": False,
++            "post_replacement_recovery_advance_required": True,
++            "retention_age_reset_required_after_restore": True,
++        })
++
++        family_before_bad_paths = sqlite_family_fingerprint(replica_db)
++        run_failure([
++            str(sync), "database-backup-create", "--manifest", str(manifest),
++            "--snapshot", str(files_root / "forbidden-backup.sqlite"),
++        ], label="backup beneath synchronized root", returncode=2,
++           error_code="invalid_arguments",
++           message_fragment="outside payload storage and synchronized files")
++        run_failure([
++            str(sync), "database-backup-create", "--manifest", str(manifest),
++            "--snapshot", str(replica_db) + "-wal",
++        ], label="backup colliding with active SQLite family", returncode=2,
++           error_code="invalid_arguments",
++           message_fragment="collides with an active SQLite family member")
++        require(
++            sqlite_family_fingerprint(replica_db) == family_before_bad_paths,
++            "rejected backup paths changed the source SQLite family",
++        )
++        require(
++            not (files_root / "forbidden-backup.sqlite").exists(),
++            "rejected synchronized-root backup path was created",
++        )
+ 
+         hidden: list[tuple[Path, Path]] = []
+         try:
+@@ -311,6 +388,175 @@ def main() -> int:
+                 "read-only inspection changed SQLite family bytes, modes, or members",
+             )
+ 
++            family_before_backup = sqlite_family_fingerprint(replica_db)
++            created_backup = run_ok([
++                str(sync), "database-backup-create",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++            ], label="offline replica database backup create", timeout=90.0)
++            require_exact_keys(created_backup, backup_keys, "backup create response")
++            require_fields(created_backup, {
++                "command": "database-backup-create",
++                "terminal_class": "completed",
++                "response_schema":
++                    "anonsync.local-database-backup-create.response.v1",
++                **backup_common,
++                "active_database_observed": True,
++                "transactionally_pinned_source": True,
++                "source_cutpoint_bracketed": True,
++                "bounded_resident_copy": True,
++                "immutable_create_new": True,
++                "postpublication_reverified": True,
++                "artifact_published": True,
++                "source_database_mutation_performed": False,
++                "mutation_performed": True,
++            }, "backup create response")
++            require(
++                recovery_state(created_backup) == recovery_state(inspected),
++                "backup artifact did not bind the inspected source cutpoint",
++            )
++            require(is_sha256(created_backup.get("snapshot_sha256")),
++                    "backup omitted canonical artifact SHA-256")
++            artifact_stat = backup_artifact.lstat()
++            require(stat.S_ISREG(artifact_stat.st_mode),
++                    "backup artifact is not a regular file")
++            require(artifact_stat.st_nlink == 1,
++                    "backup artifact is not single-linked")
++            require(stat.S_IMODE(artifact_stat.st_mode) == 0o600,
++                    "backup artifact is not owner-only mode 0600")
++            require(created_backup["snapshot_byte_count"] == artifact_stat.st_size,
++                    "backup byte count disagreed with the artifact")
++            require(created_backup["snapshot_sha256"] == file_digest(backup_artifact),
++                    "backup digest disagreed with the artifact")
++            require(
++                created_backup["snapshot_byte_count"] ==
++                    created_backup["snapshot_page_size"] *
++                    created_backup["snapshot_page_count"],
++                "backup page geometry disagreed with its exact byte count",
++            )
++            require(
++                sqlite_family_fingerprint(replica_db) == family_before_backup,
++                "backup creation changed source SQLite family bytes, modes, or members",
++            )
++            for suffix in ("-journal", "-wal", "-shm"):
++                require(
++                    not Path(str(backup_artifact) + suffix).exists(),
++                    f"backup publication left a SQLite sidecar {suffix}",
++                )
++
++            source_before_duplicate = sqlite_family_fingerprint(replica_db)
++            artifact_before_duplicate = sqlite_family_fingerprint(backup_artifact)
++            run_failure([
++                str(sync), "database-backup-create",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++            ], label="duplicate immutable backup create", returncode=1,
++               error_code="operation_failed", message_fragment="already exists")
++            require(sqlite_family_fingerprint(replica_db) == source_before_duplicate,
++                    "duplicate create changed the source SQLite family")
++            require(sqlite_family_fingerprint(backup_artifact) == artifact_before_duplicate,
++                    "duplicate create changed the detached artifact")
++
++            moved_source: list[tuple[Path, Path]] = []
++            try:
++                for suffix in ("", "-journal", "-wal", "-shm"):
++                    member = Path(str(replica_db) + suffix)
++                    if member.exists():
++                        concealed = Path(str(member) + ".outside-backup-inspection")
++                        member.rename(concealed)
++                        moved_source.append((member, concealed))
++                inspected_backup = run_ok([
++                    str(sync), "database-backup-inspect",
++                    "--manifest", str(manifest),
++                    "--snapshot", str(backup_artifact),
++                ], label="detached backup inspection without source database")
++            finally:
++                for member, concealed in reversed(moved_source):
++                    if concealed.exists() and not member.exists():
++                        concealed.rename(member)
++            require_exact_keys(inspected_backup, backup_keys,
++                               "backup inspection response")
++            require_fields(inspected_backup, {
++                "command": "database-backup-inspect",
++                "terminal_class": "completed",
++                "response_schema":
++                    "anonsync.local-database-backup-inspection.response.v1",
++                **backup_common,
++                "active_database_observed": False,
++                "transactionally_pinned_source": False,
++                "source_cutpoint_bracketed": False,
++                "bounded_resident_copy": True,
++                "immutable_create_new": False,
++                "postpublication_reverified": True,
++                "artifact_published": False,
++                "source_database_mutation_performed": False,
++                "mutation_performed": False,
++            }, "backup inspection response")
++            require(
++                recovery_state(inspected_backup) == recovery_state(inspected),
++                "detached backup inspection changed its source cutpoint",
++            )
++            for key in ("snapshot_sha256", "snapshot_byte_count",
++                        "snapshot_page_size", "snapshot_page_count"):
++                require(inspected_backup[key] == created_backup[key],
++                        f"detached backup inspection changed {key}")
++
++            hostile_sidecar = Path(str(backup_artifact) + "-wal")
++            hostile_sidecar.write_bytes(b"not-a-backup-sidecar")
++            os.chmod(hostile_sidecar, 0o600)
++            sidecar_family_before = sqlite_family_fingerprint(backup_artifact)
++            run_failure([
++                str(sync), "database-backup-inspect",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++            ], label="backup inspection with hostile sidecar", returncode=1,
++               error_code="operation_failed",
++               message_fragment="refuses SQLite snapshot sidecar -wal")
++            require(
++                sqlite_family_fingerprint(backup_artifact) ==
++                    sidecar_family_before,
++                "hostile-sidecar rejection changed the artifact family",
++            )
++            hostile_sidecar.unlink()
++
++            hardlinked_backup = backup_root / "hardlinked-backup.sqlite"
++            os.link(backup_artifact, hardlinked_backup)
++            hardlink_bytes_before = backup_artifact.read_bytes()
++            run_failure([
++                str(sync), "database-backup-inspect",
++                "--manifest", str(manifest),
++                "--snapshot", str(hardlinked_backup),
++            ], label="multiply linked backup inspection", returncode=1,
++               error_code="operation_failed",
++               message_fragment="refuses multiply-linked SQLite family member")
++            require(
++                backup_artifact.read_bytes() == hardlink_bytes_before and
++                hardlinked_backup.read_bytes() == hardlink_bytes_before and
++                backup_artifact.stat().st_nlink == 2,
++                "multiply-linked rejection changed either artifact name",
++            )
++            hardlinked_backup.unlink()
++            require(
++                backup_artifact.stat().st_nlink == 1,
++                "hardlink rejection cleanup did not restore one artifact name",
++            )
++
++            damaged_backup = backup_root / "damaged-backup.sqlite"
++            damaged_backup.write_bytes(backup_artifact.read_bytes()[:-1])
++            os.chmod(damaged_backup, 0o600)
++            damaged_before = sqlite_family_fingerprint(damaged_backup)
++            run_failure([
++                str(sync), "database-backup-inspect",
++                "--manifest", str(manifest),
++                "--snapshot", str(damaged_backup),
++            ], label="damaged detached backup inspection", returncode=1,
++               error_code="operation_failed", message_fragment="SQLite")
++            require(sqlite_family_fingerprint(damaged_backup) == damaged_before,
++                    "damaged backup inspection changed the artifact")
++            for suffix in ("-journal", "-wal", "-shm"):
++                require(not Path(str(damaged_backup) + suffix).exists(),
++                        f"damaged backup inspection created sidecar {suffix}")
++
+             malformed = (
+                 f"v1:{inspected['database_incarnation_sha256']}:0"
+                 f"{inspected['database_recovery_epoch']}:"
+@@ -403,6 +649,22 @@ def main() -> int:
+             require(advanced.get("recovery_expectation") == successor_token,
+                     "advance emitted a noncanonical successor expectation")
+ 
++            old_backup_after_advance = run_ok([
++                str(sync), "database-backup-inspect",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++            ], label="immutable backup inspection after source advance")
++            require(
++                recovery_state(old_backup_after_advance) ==
++                    recovery_state(inspected),
++                "source recovery advance rewrote the detached backup lineage",
++            )
++            require(
++                old_backup_after_advance["snapshot_sha256"] ==
++                    created_backup["snapshot_sha256"],
++                "source recovery advance changed detached backup bytes",
++            )
++
+             family_before_reuse = sqlite_family_fingerprint(replica_db)
+             run_failure([
+                 str(sync), "database-recovery-advance", "--manifest", str(manifest),
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 53c78c1d1746b4e3ee1c4d3e65d2878dbb00bda6..d7bfc53650b189651dbe4f67a20c7640fba8a9c4 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1691,6 +1691,29 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 982:
++        revision_scoped_required.update({
++            "OFFLINE_REPLICA_DATABASE_BACKUP_ARTIFACT_AUDIT_rev0982.md",
++            "REVISION_NOTES_rev0982.md",
++            "README.md",
++            "CMakeLists.txt",
++            "src/anonsync_sync.cpp",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_database_backup.hpp",
++            "src/sync_replica_database_backup.cpp",
++            "src/sync_replica_deployment_binding.hpp",
++            "src/sync_replica_deployment_binding.cpp",
++            "src/sync_replica_sqlite_owner.hpp",
++            "src/sync_replica_sqlite_owner.cpp",
++            "tests/persistence/sqlite_snapshot_seal_tests.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tests/sync_replica_deployment_binding_test.cpp",
++            "tools/test_anonsync_database_recovery.py",
++            "tools/audit_anonsync_replica_deployment_binding.py",
++            "tools/audit_sync_replica_database_backup.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

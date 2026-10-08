@@ -1,0 +1,1 @@
+print("AnonSync rev0145: added diagnostic tie-set arbitration, fact authorship buckets, local-web history witness, and durable confirmation specs; refreshed README/status/product direction/architecture/roadmap/sources.")

@@ -1,0 +1,2344 @@
+diff --git a/CALLBACK_AUTHORITY_BOUNDARY_AUDIT_rev0890.md b/CALLBACK_AUTHORITY_BOUNDARY_AUDIT_rev0890.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..93dfd01bdb032ec276e06663d52de94fe750d956
+--- /dev/null
++++ b/CALLBACK_AUTHORITY_BOUNDARY_AUDIT_rev0890.md
+@@ -0,0 +1,208 @@
++# Callback authority boundary audit — rev0890
++
++## Question
++
++Where can arbitrary caller code execute while AnonSync owns a socket, TLS
++session, SQLite transaction, exact outbox claim, filesystem publication
++frontier, or other authority-bearing capability?
++
++Callbacks are not inherently wrong. They become dangerous when their execution
++is hidden inside a critical authority scope whose invariants the callback can
++invalidate, whose locks it can re-enter, or whose ambiguity frontier it can
++cross. This audit inventories the remaining `std::function` surfaces in
++production source and distinguishes runtime application callbacks from explicit
++selftest seams.
++
++The accompanying `tools/audit_authority_callback_boundaries.py` is lexical
++hygiene only. It makes inventory drift visible; it cannot discover indirect
++calls, prove callback purity, or establish reentrancy safety.
++
++## Inventory at rev0890
++
++The exact production-source `std::function` inventory is deliberately small:
++
++| Surface | Role | Authority while invoked | Rev0890 disposition |
++|---|---|---|---|
++| `SyncReplicaFilePayloadSource` | obtains bytes for one already-claimed file operation | durable outbox lease exists; no SQLite writer guard and no network write | retained with explicit post-callback channel and exact-claim reproof |
++| `PendingReportAfterVerificationHook` | deterministic race interposition | read-only SQLite verification transaction | selftest-only entry; production passes an empty hook |
++| peer-ingress `require` callables | assertion sink for embedded selftests | selftest execution only | retained; names and declarations remain explicitly selftest-scoped |
++| SQLite authorizer C function pointer | SQLite policy callback | SQLite statement compilation/execution under the owner | retained as reviewed C ABI policy mechanism, not application `std::function` |
++
++The rev0889 TLS membership resolver was the only application authorization
++callback executed after a live mutual-TLS handshake and immediately before
++minting an authenticated delivery channel. Rev0890 removes it.
++
++## Removed: live TLS membership callback
++
++The previous callback accepted the observed peer SPKI and returned an optional
++actor. The accepted-session owner did not own its backing state, execution time,
++locks, side effects, or reentrancy. Comment-level synchronization requirements
++could not make the call pure.
++
++It is replaced by `SyncReplicaTlsMembershipSnapshot`, a validated canonical set
++retained as const shared state and copied into the server by value. Lookup is an
++exact `lower_bound` search. Unknown pins return no actor. No AnonSync membership
++callback runs at the post-handshake authorization frontier.
++
++This wording is intentionally narrow. OpenSSL can invoke callbacks configured on
++the caller-owned `SSL_CTX` while performing the TLS handshake. Those callbacks
++belong to the TLS trust configuration and remain subject to the server API's
++lifetime and mutation-serialization contract.
++
++## Retained: payload source callback
++
++`SyncReplicaFilePayloadSource` remains an application callback because the
++sender service needs bytes corresponding to the canonical file operation. Its
++current ordering is materially safer than the removed membership callback:
++
++1. validate the live opaque channel authority;
++2. copy its public descriptive context;
++3. acquire one durable outbox claim/lease;
++4. invoke the payload source;
++5. revalidate the original live channel immediately after callback return;
++6. on any callback or revalidation failure, exact-release the claim under local
++   retry policy;
++7. acquire the exact SQLite dispatch guard for that claim;
++8. revalidate the channel again inside the bounded construction frontier;
++9. construct and validate the request/frame/digest;
++10. commit and release the guard; and
++11. only later allow TLS dispatch.
++
++No payload callback and no network I/O occurs while the SQLite writer guard is
++held. A callback that releases, expires, or otherwise invalidates the claim is
++caught by exact guard acquisition. A callback that invalidates the transport is
++caught before the guard and again inside construction.
++
++### Residual debt
++
++The callback is still trusted local code:
++
++- its execution time is not bounded;
++- its temporary memory and I/O are not bounded by the service;
++- it can delay a durable outbox lease;
++- it can re-enter unrelated application APIs;
++- it can observe the complete operation; and
++- its returned string can require a large allocation before protocol validation
++  rejects an oversized payload.
++
++The maximum canonical payload size bounds accepted output, not the callback's
++internal work. A production daemon should eventually replace this with a
++narrower payload capability: for example, an immutable content-addressed handle
++whose size and digest are pre-attested, plus a bounded reader owned by the
++transport worker. That would separate payload acquisition from arbitrary caller
++execution and permit quotas, cancellation, streaming, and backpressure without
++holding an outbox lease across opaque code.
++
++This is recommended future work, not part of rev0890.
++
++## Retained: SQLite report selftest interposition
++
++`PendingReportAfterVerificationHook` runs between full ledger verification and
++the report query while one read transaction is active. Its purpose is to force a
++concurrent writer schedule and prove that verification and projection share one
++SQLite snapshot.
++
++The normal production function calls the implementation with an empty hook. The
++callback-bearing entry is named `sqlite_effect_pending_report_json_for_selftest`
++and declared only in `sqlite_replay_ledger_selftest_bridge.hpp`. Existing source
++audits require this separation.
++
++This is acceptable as a test seam, but still a maintenance hazard because the
++implementation lives in a production translation unit. It must never be exposed
++through the ordinary public ledger API or supplied by product code. A future
++refactor could move the interposition mechanism behind a test-only compiled
++adapter, but doing so inside the already monolithic replay-ledger translation
++unit would have high build and regression cost. The current explicit bridge and
++inventory audit provide a smaller guard.
++
++## Retained: peer-ingress selftest assertion sinks
++
++The `std::function<void(bool, const std::string&)>` arguments in peer-ingress
++claim, wire, and lifecycle sources are assertion sinks for embedded selftests.
++Their function names contain `selftests`; they are not parameters to production
++claim, wire decode, retention, or settlement operations.
++
++The pattern is old and contributes to production/test coupling. Long term, these
++embedded selftests should move into ordinary test translation units with a tiny
++assertion helper, reducing the giant production compilation surface. Rev0890
++does not perform that broad migration because it would touch large legacy
++translation units and obscure the high-value membership correction.
++
++## SQLite authorizer callback
++
++`SqliteAuthorizerCallback` is a raw C ABI function pointer required by
++`sqlite3_set_authorizer`. It is not a caller-supplied application lambda. The
++RAII owner installs reviewed policy callbacks and controls their lifetime around
++SQLite operations.
++
++This callback still carries serious authority: SQLite invokes it during statement
++preparation and some execution paths. It should remain nonallocating where
++possible, avoid re-entering the same database, and never call untrusted product
++code. Existing authorizer-owner audits and tests remain the load-bearing
++validation; the new inventory merely classifies it separately from
++`std::function` seams.
++
++## Refactor result
++
++Rev0890 improves both authority shape and build shape:
++
++- the TLS server API no longer includes `<functional>`;
++- no membership resolver type or callback remains;
++- one small, independently compiled membership implementation source is added to
++  the existing server library rather than creating another static-library target;
++- the server takes immutable membership by value;
++- exact policy digest/epoch/count are included in terminal results;
++- the accepted socket is explicitly re-proved after lookup; and
++- two CTest source audits now fail if the callback returns or the reviewed
++  callback inventory drifts.
++
++Adding the source to the existing semantic owner avoids worsening the cube's
++already excessive target count. It gives incremental compilation a separate
++translation unit without creating another link-time layer.
++
++## Design rule extracted from the audit
++
++For future AnonSync code:
++
++> Arbitrary callback execution must finish before entering an authority-critical
++> transaction, stream reservation, first-byte frontier, filesystem publication
++> cutpoint, or authenticated-session authorization step. When a callback is
++> unavoidable, copy only descriptive context into it, bound or classify its
++> resource use, and re-attest every exact capability and durable generation
++> afterward before progress.
++
++A re-attestation can detect contradiction; it cannot undo side effects. For
++membership, settlement policy, revocation, and effect authorization, immutable
++validated values are preferable to callbacks.
++
++## Audit limitations
++
++The lexical inventory can be bypassed by templates, function pointers, virtual
++calls, C callbacks, lambdas passed through `auto`, macros, dynamic loading, or
++indirect calls not spelled `std::function`. It does not prove execution order at
++runtime or identify every possible reentrant operation.
++
++The inventory should therefore be treated as a change detector. Compiled tests,
++thread/process affinity, move-only capability ownership, exact SQLite guards,
++sanitizers, and code review remain the semantic evidence.
++
++## Remaining recommendations
++
++1. Replace `SyncReplicaFilePayloadSource` with a bounded immutable payload handle
++   or reader capability in the production service path.
++2. Move peer-ingress embedded selftests out of production translation units to
++   reduce compile time and callback vocabulary in shipped code.
++3. Move SQLite race interposition into a test-only adapter when the replay-ledger
++   monolith is next decomposed.
++4. Add a durable membership configuration owner that publishes immutable
++   snapshots and never exposes its transaction/lock scope to a session callback.
++5. Keep OpenSSL context callbacks documented as part of the TLS trust stack and
++   avoid mutating their configuration while accepted sessions are active.
++
++## Nonclaims
++
++This audit does not prove callback purity, total absence of indirect callbacks,
++reentrancy safety, lock freedom, bounded execution, or hostile same-process
++isolation. Rev0890 proves only the concrete removal of the live AnonSync
++membership resolver and the reviewed fences around the remaining explicit
++`std::function` surfaces.
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d3dee8d41ff4822e51da2b39d1661ec556b3189e..f9f6285848d0e336698b43827efd10a184cec4a6 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1219,9 +1219,11 @@ target_compile_options(anonsync_sync_replica_file_tls_exchange PRIVATE
+ 
+ # First accepted-session owner for the causal file-delivery path. It binds one
+ # exact listening socket, atomically accepts a nonblocking+CLOEXEC child, drives
+-# a bounded TLS handshake, resolves verified SPKI membership, transfers the
+-# channel into one receiver session, and closes the child at every terminal cutpoint.
++# a bounded TLS handshake, resolves verified SPKI membership from immutable
++# value-owned state, transfers the channel into one receiver session, and closes
++# the child at every terminal cutpoint.
+ set(ANONSYNC_SYNC_REPLICA_FILE_TLS_SERVER_SOURCE
++  src/sync_replica_tls_membership_snapshot.cpp
+   src/sync_replica_file_tls_server.cpp)
+ add_library(anonsync_sync_replica_file_tls_server STATIC
+   ${ANONSYNC_SYNC_REPLICA_FILE_TLS_SERVER_SOURCE})
+@@ -3437,6 +3439,18 @@ if(Python3_Interpreter_FOUND)
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   set_tests_properties(anonsync_sync_file_tls_server_source_audit
+     PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_sync_tls_membership_snapshot_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_tls_membership_snapshot.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_sync_tls_membership_snapshot_source_audit
++    PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_authority_callback_boundaries_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_authority_callback_boundaries.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_authority_callback_boundaries_source_audit
++    PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_sync_tls_transport_anchor_source_audit
+     COMMAND ${Python3_EXECUTABLE} -B -S
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_tls_transport_anchor.py
+diff --git a/README.md b/README.md
+index d51bc56d0ca1de4d4e55d6e3034b2307820575f7..41953ee7ee69d3101e9fca1f8d20190ae8a68afb 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# AnonSync rev0889
++# AnonSync rev0890
+ 
+ AnonSync is an **evidence-authorized, crash-consistent, bounded convergence
+ engine under construction**. Its mission is not ordinary file copying. It turns
+@@ -13,6 +13,40 @@ state.
+ > silently acquire more authority than the exact validated evidence and cutpoint
+ > that created it.
+ 
++## Rev0890: immutable membership authority at the live TLS frontier
++
++Rev0889 completed the first accepted TCP/mutual-TLS/file-delivery session but
++left the final certificate-key-to-actor decision in a caller-supplied
++`std::function`. That callback ran after cryptographic authentication while the
++accepted descriptor and `SSL` object were live, immediately before application
++authority was minted. A comment requiring stable backing state could not make
++arbitrary callback code pure, bounded, or non-reentrant.
++
++Rev0890 replaces that seam with `SyncReplicaTlsMembershipSnapshot`: a validated,
++canonical, immutable value for one folder, local actor, positive policy epoch,
++and complete exact SPKI-to-actor set. It sorts and deduplicates pins, permits
++explicit multi-pin rotation overlap, rejects receiver-device reflection, caps
++entry count, and binds the complete set to a domain-separated digest. The server
++takes the snapshot by value, checks its service identity before `accept4`, uses
++pure exact lookup after verified SPKI derivation, re-proves the accepted socket
++before channel construction, and records policy epoch/count/digest in every
++terminal result.
++
++Real TLS tests now cover canonical digesting, malformed and duplicate policy,
++moved-from misuse, cross-folder/cross-actor pre-accept rejection, valid-certificate
++unknown-member rejection, and complete publication/receipt/settlement under the
++exact snapshot. Two source audits guard the immutable composition and inventory
++every remaining explicit callback boundary. OpenSSL trust callbacks remain part
++of the caller-owned handshake configuration; the removed callback is the
++separate AnonSync post-handshake membership decision.
++
++The deep analyses are in
++`TLS_IMMUTABLE_MEMBERSHIP_SNAPSHOT_AUDIT_rev0890.md` and
++`CALLBACK_AUTHORITY_BOUNDARY_AUDIT_rev0890.md`. The next required authority is a
++durable, provenance-checked, anti-rollback membership configuration owner that
++publishes these snapshots only after commit. Revision scope and nonclaims are in
++`REVISION_NOTES_rev0890.md`.
++
+ ## Rev0889: pre-byte accepted TLS authority and exclusive one-run receiver
+ 
+ Rev0888 completed exact nonblocking request/receipt framing once a caller had
+diff --git a/REVISION_NOTES_rev0890.md b/REVISION_NOTES_rev0890.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..8cd101d06c15f870b5fcedadeb13dc5800db90de
+--- /dev/null
++++ b/REVISION_NOTES_rev0890.md
+@@ -0,0 +1,214 @@
++# AnonSync revision notes — rev0890
++
++## Revision theme
++
++Rev0890 removes arbitrary application membership code from the live accepted-
++TLS authorization frontier. The rev0889 server derived a verified peer SPKI and
++then invoked a caller-owned `std::function` to decide its actor epoch. That seam
++borrowed mutable backing state and allowed unbounded, reentrant code to execute
++while one accepted descriptor and `SSL` object were live immediately before
++application authority was minted.
++
++The replacement is a validated, canonical, immutable
++`SyncReplicaTlsMembershipSnapshot` retained by value through the one-shot
++session. It binds one folder, local actor, positive policy epoch, complete sorted
++SPKI-to-actor set, entry count, and versioned structural digest. Unknown pins are
++rejected without a callback. Cross-folder or cross-actor configuration is
++rejected before accept authority is spent. Every terminal server result carries
++the exact snapshot epoch, count, and digest used.
++
++The revision also audits every explicit `std::function` in production source,
++keeps the payload callback behind its existing post-callback channel and exact-
++claim fences, distinguishes selftest interposition from product APIs, and adds
++ordinary CTest inventory guards. The new implementation source is compiled into
++the existing TLS-server library rather than adding another target to the already
++fragmented build graph.
++
++## Parent
++
++The exact parent handoff is:
++
++`AnonSync-rev0889-2026.07.23.07.25-acceptedsession-deviceisolation-v3rollback-copyfrontier.zip`
++
++The parent archive digest and exact parent-relative delta are recorded in
++`REVISION_EVIDENCE/rev0890/LINEAGE.json` and `LINEAGE.md`.
++
++## Production C++ changes
++
++### Immutable TLS membership authority
++
++Added:
++
++- `src/sync_replica_tls_membership_snapshot.hpp`
++- `src/sync_replica_tls_membership_snapshot.cpp`
++
++`SyncReplicaTlsMembershipSnapshot` validates and retains:
++
++- one canonical folder ID;
++- one canonical local actor and positive actor epoch;
++- one positive caller-owned policy epoch;
++- at most 65,536 entries;
++- exact lowercase SHA-256 SPKI pins;
++- exact peer actors; and
++- a versioned digest over the complete canonical set.
++
++Entries are sorted by SPKI. Duplicate pins are rejected. Distinct pins may map
++to the same actor to represent an explicit key-rotation overlap. A pin mapping
++to the receiver's own `device_id` is rejected. The complete state is private and
++retained as `std::shared_ptr<const State>`; copies share const state, and moved-
++from wrappers are inactive.
++
++The snapshot digest is domain separated and length framed. It binds folder,
++local actor, policy epoch, entry count, and every sorted pin/actor pair. It is
++structural evidence, not a signature or anti-rollback mechanism.
++
++### Accepted-session API and ordering
++
++Extended:
++
++- `src/sync_replica_file_tls_server.hpp`
++- `src/sync_replica_file_tls_server.cpp`
++
++Removed:
++
++- `SyncReplicaTlsPeerActorResolver`
++- the `<functional>` dependency in the server header; and
++- the post-handshake application membership callback.
++
++The one-shot server now takes `SyncReplicaTlsMembershipSnapshot` by value. It
++proves snapshot/service folder and local-actor identity before `accept4`, records
++snapshot policy epoch/count/digest in the result, performs exact immutable lookup
++after verified SPKI derivation, rejects unknown peers, re-proves accepted socket
++lifetime and `O_NONBLOCK`/`FD_CLOEXEC` policy after lookup, and only then mints
++the authenticated channel.
++
++OpenSSL callbacks configured on the caller-owned `SSL_CTX` may still execute as
++part of the handshake trust stack. Rev0890 removes the separate AnonSync
++membership callback at the post-handshake authorization frontier; it does not
++claim callback-free OpenSSL internals.
++
++### Build-graph restraint
++
++Extended:
++
++- `CMakeLists.txt`
++
++The membership implementation is a separate translation unit so changes do not
++force recompilation of the 500-line accepted-session source. It is included in
++the existing `anonsync_sync_replica_file_tls_server` library rather than adding
++another static library and link action. This is a small corrective response to
++the cube's existing target proliferation.
++
++## Runtime coverage
++
++Extended:
++
++- `tests/sync_replica_tls_transport_test.cpp`
++
++New compiled coverage includes:
++
++- canonical membership digest independent of input order;
++- exact SPKI lookup and unknown-pin rejection;
++- two key pins mapping to one actor during rotation overlap;
++- policy epoch participation in the digest;
++- moved-from snapshot rejection;
++- zero policy epoch and over-ceiling membership rejection;
++- noncanonical SPKI rejection;
++- duplicate SPKI rejection;
++- receiver-device reflection rejection;
++- malformed lookup rejection;
++- folder and local-actor scope mismatch;
++- pre-accept mismatch with unchanged SQLite/effect state;
++- reuse of the same listener by the correct snapshot after mismatch;
++- accept-timeout result binding to the exact snapshot;
++- certificate-valid, membership-unknown rejection binding to the empty
++  snapshot; and
++- full TCP/mutual-TLS/file publication/receipt/sender settlement and canonical
++  convergence binding to the exact authorizing snapshot.
++
++## Audit and refactor work
++
++Added:
++
++- `tools/audit_sync_tls_membership_snapshot.py`
++- `tools/audit_authority_callback_boundaries.py`
++- `TLS_IMMUTABLE_MEMBERSHIP_SNAPSHOT_AUDIT_rev0890.md`
++- `CALLBACK_AUTHORITY_BOUNDARY_AUDIT_rev0890.md`
++
++Extended:
++
++- `tools/audit_sync_file_tls_server.py`
++- `tools/verify_release_package.py`
++
++The server audit is advanced to format v4 and now requires pre-accept snapshot
++scope binding, immutable lookup, post-membership socket reproof, result evidence,
++and absence of the retired callback surface.
++
++The callback audit records the exact `std::function` inventory. It distinguishes:
++
++- the removed TLS membership callback;
++- the retained payload-source callback, which completes before SQLite writer
++  guard acquisition and is followed by channel and exact-claim re-attestation;
++- a production-empty SQLite report hook exposed only through a selftest bridge;
++- peer-ingress selftest assertion sinks; and
++- the separately owned SQLite C authorizer callback.
++
++Both audits explicitly disclaim semantic proof. Their role is to detect source-
++shape and inventory drift while compiled tests, independent compilers,
++sanitizers, stress, and package verification carry behavioral evidence.
++
++## Research
++
++Primary sources reviewed for this revision are recorded in
++`TLS_IMMUTABLE_MEMBERSHIP_SNAPSHOT_AUDIT_rev0890.md` and
++`REVISION_EVIDENCE/rev0890/RESEARCH.md`. They include OpenSSL 3.5 peer-
++verification and peer-certificate documentation, RFC 5280 application-specific
++certificate restrictions, RFC 9001's application-dependent peer-authentication
++requirements, and RFC 9525's separation of service identity from certificate-
++path validation.
++
++## Validation
++
++Final validation results are bound under:
++
++- `REVISION_EVIDENCE/rev0890/validation/VALIDATION_SUMMARY.json`
++- `REVISION_EVIDENCE/rev0890/AUDIT.md`
++- `RELEASE_GATE.json`
++
++The handoff archive is published only after the final staged directory and the
++immutable ZIP independently pass the release package verifier.
++
++## Remaining priority work
++
++The next authority implementation should be a durable membership configuration
++owner that validates provenance, persists a monotonic generation and prior-
++digest chain, reconstructs the complete set on restart, defines revocation and
++rotation overlap, and publishes immutable snapshots only after durable commit.
++The current positive `policy_epoch` is deliberately not represented as rollback
++protection.
++
++The highest remaining callback debt is `SyncReplicaFilePayloadSource`. It is
++carefully fenced but still arbitrary local code whose execution and temporary
++resource use are unbounded while a durable outbox lease exists. A bounded
++content-addressed payload handle or reader capability should replace it in the
++production service path.
++
++In parallel, the project still needs bounded concurrent accept/handshake/session
++ownership, peer/folder admission, total disk accounting, fair staging,
++reclamation, compaction/rejoin policy, and a production executable that makes
++the newer causal SQLite/TLS path—not the legacy stack—the user-visible authority.
++
++## Nonclaims
++
++Rev0890 does not claim durable enrollment, signed membership updates,
++revocation, key recovery, policy freshness, rollback protection, a production
++daemon, internet deployment safety, hostile same-process isolation, fair
++scheduling, staged-payload reclamation, exactly-once network delivery,
++anonymity, unlinkability, traffic-analysis resistance, formal verification, or
++externally trusted build provenance.
++
++It proves a narrower executable slice in this cloudtainer: canonical membership
++can be validated and frozen before accept, used by value without an arbitrary
++post-handshake membership callback, scoped to the exact receiver service,
++attributed in every terminal result, and composed with the existing one-shot
++mutual-TLS, durable file-effect, exact receipt, and sender-settlement path.
+diff --git a/TLS_IMMUTABLE_MEMBERSHIP_SNAPSHOT_AUDIT_rev0890.md b/TLS_IMMUTABLE_MEMBERSHIP_SNAPSHOT_AUDIT_rev0890.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c2e79888bff3b415ea64d4397c5aa82aaee4187a
+--- /dev/null
++++ b/TLS_IMMUTABLE_MEMBERSHIP_SNAPSHOT_AUDIT_rev0890.md
+@@ -0,0 +1,305 @@
++# Immutable TLS membership snapshot authority audit — rev0890
++
++## Mission connection
++
++AnonSync's transport is not allowed to turn a cryptographically valid peer into
++an authorized replica by implication. TLS establishes a protected session and
++provides peer-authentication evidence under the configured trust policy. The
++application still owns the narrower decision that one exact peer key is allowed
++to act as one exact AnonSync actor epoch in one exact folder.
++
++That distinction is central to the project:
++
++> authentication evidence is an input to authority; it is not authority by
++> itself.
++
++Rev0889 introduced the first accepted-session owner, but represented the final
++SPKI-to-actor decision as a caller-supplied `std::function`. Rev0890 replaces
++that live callback with a validated immutable value. The change is small in
++surface area and large in authority impact: after the TLS handshake completes,
++no arbitrary AnonSync membership code runs while the accepted child, `SSL`
++object, and pre-request authorization frontier are live.
++
++OpenSSL callbacks configured on `SSL_CTX` can still run as part of the caller-
++owned TLS trust stack during handshake. Rev0890 does not claim otherwise. It
++removes the separate application membership callback that rev0889 invoked *after*
++cryptographic peer authentication and immediately before constructing durable
++application authority.
++
++## The rev0889 defect
++
++The sealed rev0889 path performed this sequence:
++
++1. atomically accept and own a nonblocking, close-on-exec child;
++2. create an `SSL` object and complete mutual TLS;
++3. re-prove accepted-socket lifetime and mutable descriptor policy;
++4. derive the peer certificate's exact lowercase SHA-256 SPKI digest;
++5. invoke an arbitrary caller-owned membership resolver;
++6. copy its returned `SyncReplicaActor`; and
++7. construct an authenticated channel and receiver session.
++
++The callback was documented as synchronous and required stable backing state,
++but those requirements were not owned or mechanically enforced by the accepted-
++session object. More importantly, the callback itself was arbitrary in-process
++code at the narrowest authority frontier. It could:
++
++- mutate process-visible descriptor or TLS configuration state;
++- re-enter file-delivery or durable-owner APIs;
++- block indefinitely while the accepted child and `SSL` lifetime remained held;
++- throw after nonlocal side effects;
++- race a mutable membership map despite the comment-level contract; or
++- accidentally couple authorization to unrelated locks, allocation, logging,
++  network, or configuration activity.
++
++The rev0889 source proceeded directly from callback return to authenticated-
++channel construction. It did not compare the accepted socket lifetime and
++policy across that callback. Adding only a post-callback reproof would have
++caught some observable descriptor contradictions, but it would not undo
++reentrant durable effects, lock inversion, unbounded blocking, mutation of other
++service state, or a membership decision made from a racing map. Reproof is not
++purity.
++
++The correction is therefore architectural: remove the callback from this
++frontier.
++
++## New immutable authority value
++
++`SyncReplicaTlsMembershipSnapshot` owns one complete authorization set for:
++
++- one exact `folder_id`;
++- one exact local `SyncReplicaActor`;
++- one positive caller-owned `policy_epoch`; and
++- zero or more exact lowercase SHA-256 SPKI-to-actor mappings.
++
++Construction performs complete validation before publishing shared state:
++
++- folder and actor identifiers must be canonical portable sync IDs;
++- actor epochs and `policy_epoch` must be positive;
++- membership count is capped at 65,536 entries before per-entry processing;
++- every SPKI must be exactly canonical lowercase SHA-256 hex;
++- the receiver's own `device_id` cannot be authorized as a peer;
++- entries are sorted by SPKI;
++- duplicate SPKIs are rejected, even if their actor values happen to match; and
++- the complete canonical set is bound to a versioned SHA-256 digest.
++
++Multiple distinct SPKI pins may map to the same actor. This deliberately permits
++a bounded key-rotation overlap. One SPKI can map to only one actor, preventing
++ambiguous authorization.
++
++The state is private and retained as `std::shared_ptr<const State>`. The public
++wrapper has no mutation API. Copies retain the same const state; moves
++invalidate the source wrapper. The server takes the wrapper by value, so its
++session scope has an independent lifetime handle without borrowing a mutable map
++or callback from the caller.
++
++This is C++ object-level immutability, not a claim that hostile code in the same
++address space cannot corrupt memory. AnonSync does not treat mutually hostile
++components within one process as a security boundary.
++
++## Canonical digest
++
++The snapshot digest uses the domain:
++
++```text
++anonsync:sync-replica-tls-membership-snapshot:v1
++```
++
++Every variable-length field is prefixed by one big-endian unsigned 64-bit
++length. Counts and epochs are encoded as big-endian unsigned 64-bit values. The
++digest binds, in order:
++
++1. the versioned domain;
++2. folder ID;
++3. local device ID and actor epoch;
++4. policy epoch;
++5. canonical entry count; and
++6. each sorted SPKI, peer device ID, and peer actor epoch.
++
++Caller insertion order therefore cannot alter the digest. Folder, receiver,
++policy epoch, pin, actor, and count changes do alter it. The digest is retained
++in every `SyncReplicaFileTlsServerResult`, together with policy epoch and entry
++count, including accept timeout and preauthentication terminal results.
++
++This digest is structural evidence and an operator/debugging anchor. It is not a
++signature, certificate, authorization token, freshness proof, or rollback
++barrier. A malicious or stale configuration source can still construct a valid
++snapshot for an obsolete policy epoch. The future durable membership owner must
++provide anti-rollback and provenance separately.
++
++## Accepted-session ordering
++
++The server now executes this authority order:
++
++1. validate the session label and `SSL_CTX` pointer;
++2. prove that the snapshot's folder and local actor exactly match the selected
++   file-delivery service;
++3. copy snapshot epoch/count/digest into the result;
++4. spend listener authority and accept one child;
++5. complete the bounded mutual-TLS handshake;
++6. re-prove accepted-socket lifetime, `O_NONBLOCK`, and `FD_CLOEXEC`;
++7. derive the exact peer SPKI;
++8. perform a pure binary search in the immutable snapshot;
++9. reject an unknown pin before constructing application authority;
++10. re-prove the same accepted socket and mutable policy after lookup; and
++11. construct the authenticated channel and one-run receiver session.
++
++The pre-accept service-identity check prevents a snapshot for another folder or
++receiver actor from consuming even listener authority. Compiled tests make both
++mismatches, then use the same listener with the correct snapshot and reach the
++normal accept timeout. This proves that configuration mismatch is a pre-accept
++cutpoint rather than an accepted-child failure.
++
++The post-membership socket reproof is retained even though lookup is now pure.
++It makes the boundary explicit and protects future maintenance from silently
++inserting mutable work between authorization and channel construction.
++
++## Failure and evidence matrix
++
++| Condition | Accepted child | TLS complete | Peer authorized | Durable service | Result membership evidence |
++|---|---:|---:|---:|---:|---:|
++| snapshot/service mismatch | no | no | no | no | exception before result |
++| accept deadline | no | no | no | no | exact snapshot bound |
++| silent or malformed handshake | yes | no | no | no | exact snapshot bound |
++| valid certificate, unknown SPKI | yes | yes | no | no | exact empty/nonmatching snapshot bound |
++| mapped SPKI | yes | yes | yes | one bounded conversation | exact snapshot bound |
++| durable effect, receipt timeout | yes | yes | yes | effect retained | exact snapshot bound |
++| complete receipt | yes | yes | yes | effect retained; sender may settle | exact snapshot bound |
++
++Unknown membership is not represented as handshake failure. A certificate can be
++cryptographically valid under the TLS trust policy and still be unauthorized by
++AnonSync. `PeerUnauthorized` preserves that distinction.
++
++## Compiled coverage
++
++The focused real-TLS executable now checks:
++
++- canonical digest independence from caller entry order;
++- exact lookup and unknown-pin rejection;
++- multiple pins mapping to one actor during rotation overlap;
++- policy epoch participation in the digest;
++- moved-from snapshot invalidation;
++- zero policy epoch rejection;
++- entry-count hard-ceiling rejection;
++- noncanonical SPKI rejection;
++- duplicate SPKI rejection;
++- local-device reflection rejection;
++- malformed lookup rejection;
++- folder and local-actor scope mismatch;
++- pre-accept mismatch with unchanged durable state and reusable listener;
++- accept timeout carrying exact snapshot evidence;
++- valid-certificate/unknown-member rejection carrying the empty snapshot;
++- complete TCP/TLS/request/publication/receipt/settlement carrying the exact
++  authorizing snapshot; and
++- unchanged canonical evidence convergence at the receiver and sender.
++
++The lexical audits explicitly disclaim semantic proof. Their purpose is to make
++removal of the snapshot source, reintroduction of the callback type, loss of
++pre-accept scope binding, or reordering of the reviewed frontier visible in
++ordinary CTest.
++
++## Standards and implementation research
++
++The design follows a separation already present in the standards ecosystem:
++
++- OpenSSL 3.5 documents that in server mode `SSL_VERIFY_PEER` requests and checks
++  a client certificate, while `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` makes absence
++  fatal. That is TLS certificate verification policy, not AnonSync actor
++  authorization.
++- OpenSSL separately documents that merely obtaining a peer certificate does
++  not indicate its verification state; the application must inspect the
++  verification result. Rev0889/0890 already do peer-profile validation before
++  deriving the SPKI.
++- RFC 5280 states that a certification path valid under the baseline algorithm
++  may still be inappropriate for a particular application and permits the
++  application to further limit valid paths. AnonSync's exact SPKI membership is
++  an application authorization restriction layered after TLS validation.
++- RFC 9001 states that peer-authentication requirements depend on the application
++  protocol and deployment, and that client-authentication requirements vary by
++  application. This supports keeping replica membership in AnonSync rather than
++  treating generic CA validity as replica enrollment.
++- RFC 9525 further separates service-identity matching from certification-path
++  validity. It is primarily about server service identity, not AnonSync's
++  client-device membership, but reinforces the broader lesson that certificate
++  processing has distinct layers.
++
++Primary sources reviewed on 2026-07-23:
++
++- https://docs.openssl.org/3.5/man3/SSL_CTX_set_verify/
++- https://docs.openssl.org/3.5/man3/SSL_get_peer_certificate/
++- https://www.rfc-editor.org/info/rfc5280
++- https://www.rfc-editor.org/info/rfc9001
++- https://www.rfc-editor.org/info/rfc9525
++
++## Rejected alternatives
++
++### Keep the callback and re-prove afterward
++
++Rejected. This catches only observable capability mutation. It cannot erase
++reentrant side effects, bound execution, prevent lock inversion, or make a
++racing backing map immutable.
++
++### Hold a mutex around a mutable membership map
++
++Rejected for the live accepted-session seam. It imports lock lifetime and
++potential blocking into authentication, does not produce a stable policy digest,
++and makes every session depend on mutable global ownership. A configuration
++owner may use locks while *building* the next snapshot, then publish the frozen
++value.
++
++### Put actor identity in a certificate subject field
++
++Rejected as the only authorization source. Certificate naming and path validity
++are not the complete AnonSync enrollment policy, and a generic trusted CA must
++not automatically authorize every certificate it can validate. Exact key pins
++also keep the current implementation's actor mapping explicit.
++
++### Make `policy_epoch` imply freshness
++
++Rejected. A number supplied by the same untrusted or rollback-prone source as the
++entries cannot prove that it is current. Freshness needs durable monotonic state,
++provenance, and a defined recovery model.
++
++### Copy the full map into every accepted session
++
++Rejected. Canonical construction already freezes the set. A const shared state
++keeps per-session copy cost bounded while preserving exact lifetime and avoiding
++a new mutable global dependency.
++
++## Remaining work and speculation
++
++The next production membership owner should likely be a durable, versioned
++configuration state machine rather than a mutable daemon map. One plausible
++shape is:
++
++1. validate a signed or otherwise authenticated membership update;
++2. bind folder, local actor, prior policy digest, new monotonic generation,
++   complete entry set, and administrative reason;
++3. commit it under one SQLite writer transaction;
++4. reconstruct and attest the complete current set on restart;
++5. publish a new immutable snapshot only after durable commit; and
++6. retain old snapshot generations long enough to explain in-flight session
++   authorization and rejected stale configuration.
++
++That is a design direction, not an implemented claim. The project still needs
++explicit enrollment, revocation, key-compromise response, rotation overlap
++expiry, device recovery, administrator identity, signed update provenance,
++offline-device policy, and rollback handling.
++
++SPKI pinning also creates stable linkability. Even with payload confidentiality,
++a long-lived key and recurring network endpoint are observable identifiers. Key
++rotation and relays may reduce some linkability but do not create anonymity.
++AnonSync should continue to avoid claiming privacy properties that its membership
++and transport metadata do not deliver.
++
++## Nonclaims
++
++Rev0890 does not provide a durable membership database, signed enrollment,
++certificate revocation, actor-key recovery, policy freshness, rollback
++protection, global concurrent-session limits, hostile same-process isolation,
++anonymity, unlinkability, or externally trusted build provenance.
++
++It proves a narrower property in this cloudtainer: one complete canonical
++SPKI-to-actor set can be validated and frozen before accept, retained by value
++through a one-shot TLS session, used without an arbitrary post-handshake
++membership callback, attributed in every terminal result, and composed with the
++existing durable receiver and exact receipt path.
+diff --git a/src/sync_replica_file_tls_server.cpp b/src/sync_replica_file_tls_server.cpp
+index 8e06a1896e2e4650a481306a31e1229033239024..ead6db90fe33b53cdc8bd9aa7bcc9602cae79501 100644
+--- a/src/sync_replica_file_tls_server.cpp
++++ b/src/sync_replica_file_tls_server.cpp
+@@ -386,7 +386,7 @@ serve_one_sync_replica_file_delivery_tls_session_or_throw(
+     SyncReplicaFileDeliveryService& service,
+     SyncReplicaFileTlsServerListener& listener,
+     SSL_CTX* server_context,
+-    const SyncReplicaTlsPeerActorResolver& resolve_peer_actor,
++    SyncReplicaTlsMembershipSnapshot membership,
+     const SyncReplicaFileTlsServerDeadlines& deadlines,
+     const std::string& label) {
+     if (label.empty()) {
+@@ -396,11 +396,14 @@ serve_one_sync_replica_file_delivery_tls_session_or_throw(
+     if (server_context == nullptr) {
+         throw std::invalid_argument(label + " server SSL context is null");
+     }
+-    if (!resolve_peer_actor) {
+-        throw std::invalid_argument(label + " peer actor resolver is empty");
+-    }
++    membership.require_service_identity_or_throw(
++        service.folder_id(), service.local_actor(),
++        label + " membership pre-accept");
+ 
+     SyncReplicaFileTlsServerResult result;
++    result.membership_policy_epoch = membership.policy_epoch();
++    result.membership_entry_count = membership.entry_count();
++    result.membership_snapshot_digest = membership.snapshot_digest();
+ #ifdef __linux__
+     AcceptOutcome accepted = accept_one_until_or_throw(
+         listener, deadlines.accept, label + " accept");
+@@ -470,12 +473,20 @@ serve_one_sync_replica_file_delivery_tls_session_or_throw(
+     }
+     result.peer_spki_sha256 = peer_spki;
+     std::optional<SyncReplicaActor> peer_actor =
+-        resolve_peer_actor(peer_spki);
++        membership.resolve_peer_or_throw(
++            peer_spki, label + " immutable membership lookup");
+     if (!peer_actor.has_value()) {
+         result.disposition =
+             SyncReplicaFileTlsServerDisposition::PeerUnauthorized;
+         return result;
+     }
++    // Membership lookup is now a pure search over immutable shared state. Reprove
++    // the original accepted lifetime and mutable descriptor policy before
++    // retaining that authorization in an authenticated channel.
++    require_sync_stream_socket_nonblocking_or_throw(
++        accepted_identity, label + " post-membership accepted socket");
++    require_sync_stream_socket_close_on_exec_or_throw(
++        accepted_identity, label + " post-membership accepted socket");
+     result.peer_actor = *peer_actor;
+ 
+     {
+diff --git a/src/sync_replica_file_tls_server.hpp b/src/sync_replica_file_tls_server.hpp
+index 74af679d63b3beb9a430d921f53bcfb02d058c9d..1956207dacca7d0a3d87990ffa80ec88aed9a12a 100644
+--- a/src/sync_replica_file_tls_server.hpp
++++ b/src/sync_replica_file_tls_server.hpp
+@@ -2,12 +2,12 @@
+ 
+ #include "sync_process_incarnation.hpp"
+ #include "sync_replica_file_tls_exchange.hpp"
++#include "sync_replica_tls_membership_snapshot.hpp"
+ #include "sync_socket_readiness_identity.hpp"
+ #include "sync_thread_incarnation.hpp"
+ 
+ #include <chrono>
+ #include <cstdint>
+-#include <functional>
+ #include <optional>
+ #include <string>
+ #include <string_view>
+@@ -61,13 +61,6 @@ observe_sync_replica_file_tls_server_listener_or_throw(
+     int descriptor,
+     const std::string& label = "sync replica file TLS server listener");
+ 
+-// Membership authority maps the exact verified peer SPKI observed on a fresh
+-// TLS session to one actor epoch. Returning nullopt rejects the peer before any
+-// request byte can reach durable receiver authority. The observed SPKI itself
+-// becomes the exact pin passed to the authenticated-channel constructor.
+-using SyncReplicaTlsPeerActorResolver =
+-    std::function<std::optional<SyncReplicaActor>(std::string_view)>;
+-
+ struct SyncReplicaFileTlsServerDeadlines final {
+     std::chrono::steady_clock::time_point accept;
+     std::chrono::steady_clock::time_point handshake;
+@@ -107,6 +100,9 @@ struct SyncReplicaFileTlsServerResult final {
+     bool accepted = false;
+     bool accepted_socket_policy_verified = false;
+     bool handshake_complete = false;
++    std::uint64_t membership_policy_epoch = 0U;
++    std::uint64_t membership_entry_count = 0U;
++    std::string membership_snapshot_digest;
+     std::uint64_t accept_attempts = 0U;
+     std::uint64_t handshake_attempts = 0U;
+     std::uint64_t shutdown_attempts = 0U;
+@@ -124,7 +120,7 @@ struct SyncReplicaFileTlsServerResult final {
+ //   exact listener capability
+ //     -> atomic nonblocking+CLOEXEC accept
+ //     -> bounded TLS 1.3 mutual-authentication handshake
+-//     -> exact SPKI-to-actor membership resolution
++//     -> immutable exact SPKI-to-actor membership snapshot resolution
+ //     -> authenticated channel capability
+ //     -> one exclusive move-only receiver session
+ //     -> one bounded durable file-delivery conversation
+@@ -137,8 +133,10 @@ struct SyncReplicaFileTlsServerResult final {
+ // file service callback. Request/receipt semantics are inherited exactly from
+ // SyncReplicaFileTlsReceiverSession and its one-conversation exchange. The caller must
+ // keep server_context configured and alive and must serialize its mutation for
+-// the duration of this call; resolve_peer_actor is likewise invoked synchronously
+-// on the capability-owning thread and must not race its backing membership state.
++// the duration of this call. membership is taken by value and retains immutable
++// shared state, so no caller-supplied membership callback or mutable membership
++// map runs at the post-handshake authorization frontier. OpenSSL callbacks
++// configured on server_context remain part of the caller-owned TLS trust stack.
+ //
+ // After ReceiptSent, this owner attempts OpenSSL's one-shot fast shutdown. The
+ // application protocol has an unambiguous complete receipt record and admits no
+@@ -151,7 +149,7 @@ serve_one_sync_replica_file_delivery_tls_session_or_throw(
+     SyncReplicaFileDeliveryService& service,
+     SyncReplicaFileTlsServerListener& listener,
+     SSL_CTX* server_context,
+-    const SyncReplicaTlsPeerActorResolver& resolve_peer_actor,
++    SyncReplicaTlsMembershipSnapshot membership,
+     const SyncReplicaFileTlsServerDeadlines& deadlines,
+     const std::string& label = "sync replica file TLS server session");
+ 
+diff --git a/src/sync_replica_tls_membership_snapshot.cpp b/src/sync_replica_tls_membership_snapshot.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..c5d35f10b5e712020b34a3beccaf950842fe610c
+--- /dev/null
++++ b/src/sync_replica_tls_membership_snapshot.cpp
+@@ -0,0 +1,225 @@
++#include "sync_replica_tls_membership_snapshot.hpp"
++
++#include "sha256_digest.hpp"
++#include "sync_manifest_validation.hpp"
++
++#include <algorithm>
++#include <array>
++#include <limits>
++#include <stdexcept>
++#include <string>
++#include <utility>
++
++namespace anonsync {
++namespace {
++
++constexpr std::string_view kSnapshotDigestDomain =
++    "anonsync:sync-replica-tls-membership-snapshot:v1";
++
++void append_u64(Sha256DigestBuilder& digest, std::uint64_t value) {
++    std::array<char, 8U> encoded{};
++    for (std::size_t index = 0U; index < encoded.size(); ++index) {
++        const unsigned int shift =
++            static_cast<unsigned int>((encoded.size() - index - 1U) * 8U);
++        encoded[index] = static_cast<char>((value >> shift) & 0xffU);
++    }
++    digest.update(std::string_view(encoded.data(), encoded.size()));
++}
++
++void append_string(Sha256DigestBuilder& digest, std::string_view value) {
++    if (value.size() > std::numeric_limits<std::uint64_t>::max()) {
++        throw std::overflow_error(
++            "sync replica TLS membership field size exceeds uint64 range");
++    }
++    append_u64(digest, static_cast<std::uint64_t>(value.size()));
++    digest.update(value);
++}
++
++void append_actor(
++    Sha256DigestBuilder& digest,
++    const SyncReplicaActor& actor) {
++    append_string(digest, actor.device_id);
++    append_u64(digest, actor.epoch);
++}
++
++void validate_actor_or_throw(
++    const SyncReplicaActor& actor,
++    std::string_view label) {
++    if (!sync_id_is_valid(actor.device_id) || actor.epoch == 0U) {
++        throw std::invalid_argument(
++            std::string(label) + " actor identity is invalid");
++    }
++}
++
++[[nodiscard]] std::string snapshot_digest_or_throw(
++    std::string_view folder_id,
++    const SyncReplicaActor& local_actor,
++    std::uint64_t policy_epoch,
++    const std::vector<SyncReplicaTlsMembershipEntry>& entries) {
++    Sha256DigestBuilder digest;
++    append_string(digest, kSnapshotDigestDomain);
++    append_string(digest, folder_id);
++    append_actor(digest, local_actor);
++    append_u64(digest, policy_epoch);
++    append_u64(digest, static_cast<std::uint64_t>(entries.size()));
++    for (const auto& entry : entries) {
++        append_string(digest, entry.spki_sha256);
++        append_actor(digest, entry.actor);
++    }
++    return digest.finish_hex();
++}
++
++}  // namespace
++
++struct SyncReplicaTlsMembershipSnapshot::State final {
++    std::string folder_id;
++    SyncReplicaActor local_actor;
++    std::uint64_t policy_epoch = 0U;
++    std::vector<SyncReplicaTlsMembershipEntry> entries;
++    std::string snapshot_digest;
++};
++
++SyncReplicaTlsMembershipSnapshot::SyncReplicaTlsMembershipSnapshot(
++    std::string folder_id,
++    SyncReplicaActor local_actor,
++    std::uint64_t policy_epoch,
++    std::vector<SyncReplicaTlsMembershipEntry> entries,
++    std::string label) {
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "sync replica TLS membership snapshot label must not be empty");
++    }
++    if (!sync_id_is_valid(folder_id)) {
++        throw std::invalid_argument(
++            label + " folder_id is not a lowercase portable sync id");
++    }
++    validate_actor_or_throw(local_actor, label + " local");
++    if (policy_epoch == 0U) {
++        throw std::invalid_argument(
++            label + " policy_epoch must be positive");
++    }
++    if (entries.size() > kSyncReplicaTlsMembershipMaxEntries) {
++        throw std::length_error(
++            label + " entry count exceeds the configured hard ceiling");
++    }
++
++    for (const auto& entry : entries) {
++        if (!is_lowercase_sha256_hex(entry.spki_sha256)) {
++            throw std::invalid_argument(
++                label + " member SPKI is not lowercase SHA-256");
++        }
++        validate_actor_or_throw(entry.actor, label + " member");
++        if (entry.actor.device_id == local_actor.device_id) {
++            throw std::invalid_argument(
++                label + " cannot authorize the receiver's own device_id");
++        }
++    }
++
++    std::sort(
++        entries.begin(), entries.end(),
++        [](const SyncReplicaTlsMembershipEntry& left,
++           const SyncReplicaTlsMembershipEntry& right) {
++            return left.spki_sha256 < right.spki_sha256;
++        });
++    const auto duplicate = std::adjacent_find(
++        entries.begin(), entries.end(),
++        [](const SyncReplicaTlsMembershipEntry& left,
++           const SyncReplicaTlsMembershipEntry& right) {
++            return left.spki_sha256 == right.spki_sha256;
++        });
++    if (duplicate != entries.end()) {
++        throw std::invalid_argument(
++            label + " contains duplicate SPKI membership authority");
++    }
++
++    auto state = std::make_shared<State>();
++    state->folder_id = std::move(folder_id);
++    state->local_actor = std::move(local_actor);
++    state->policy_epoch = policy_epoch;
++    state->entries = std::move(entries);
++    state->snapshot_digest = snapshot_digest_or_throw(
++        state->folder_id, state->local_actor, state->policy_epoch,
++        state->entries);
++    state_ = std::move(state);
++}
++
++const SyncReplicaTlsMembershipSnapshot::State&
++SyncReplicaTlsMembershipSnapshot::require_state_or_throw(
++    std::string_view label) const {
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "sync replica TLS membership operation label must not be empty");
++    }
++    if (!state_) {
++        throw std::logic_error(
++            std::string(label) + " membership snapshot is inactive");
++    }
++    return *state_;
++}
++
++const std::string& SyncReplicaTlsMembershipSnapshot::folder_id() const {
++    return require_state_or_throw("sync replica TLS membership folder")
++        .folder_id;
++}
++
++const SyncReplicaActor& SyncReplicaTlsMembershipSnapshot::local_actor() const {
++    return require_state_or_throw("sync replica TLS membership local actor")
++        .local_actor;
++}
++
++std::uint64_t SyncReplicaTlsMembershipSnapshot::policy_epoch() const {
++    return require_state_or_throw("sync replica TLS membership policy epoch")
++        .policy_epoch;
++}
++
++std::uint64_t SyncReplicaTlsMembershipSnapshot::entry_count() const {
++    const State& state =
++        require_state_or_throw("sync replica TLS membership entry count");
++    return static_cast<std::uint64_t>(state.entries.size());
++}
++
++const std::string& SyncReplicaTlsMembershipSnapshot::snapshot_digest() const {
++    return require_state_or_throw("sync replica TLS membership digest")
++        .snapshot_digest;
++}
++
++std::optional<SyncReplicaActor>
++SyncReplicaTlsMembershipSnapshot::resolve_peer_or_throw(
++    std::string_view spki_sha256,
++    std::string_view label) const {
++    const State& state = require_state_or_throw(label);
++    if (!is_lowercase_sha256_hex(spki_sha256)) {
++        throw std::invalid_argument(
++            std::string(label) + " SPKI is not lowercase SHA-256");
++    }
++    const auto found = std::lower_bound(
++        state.entries.begin(), state.entries.end(), spki_sha256,
++        [](const SyncReplicaTlsMembershipEntry& entry,
++           std::string_view pin) {
++            return entry.spki_sha256 < pin;
++        });
++    if (found == state.entries.end() ||
++        found->spki_sha256 != spki_sha256) {
++        return std::nullopt;
++    }
++    return found->actor;
++}
++
++void SyncReplicaTlsMembershipSnapshot::require_service_identity_or_throw(
++    std::string_view folder_id,
++    const SyncReplicaActor& local_actor,
++    std::string_view label) const {
++    const State& state = require_state_or_throw(label);
++    if (!sync_id_is_valid(folder_id)) {
++        throw std::invalid_argument(
++            std::string(label) + " service folder_id is invalid");
++    }
++    validate_actor_or_throw(local_actor, std::string(label) + " service local");
++    if (state.folder_id != folder_id || state.local_actor != local_actor) {
++        throw std::invalid_argument(
++            std::string(label) +
++            " membership snapshot does not match receiver service identity");
++    }
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_replica_tls_membership_snapshot.hpp b/src/sync_replica_tls_membership_snapshot.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..3542e27258f2a20e74a6f0e3091c607acc5760fc
+--- /dev/null
++++ b/src/sync_replica_tls_membership_snapshot.hpp
+@@ -0,0 +1,89 @@
++#pragma once
++
++#include "sync_replica_model.hpp"
++
++#include <cstdint>
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <vector>
++
++namespace anonsync {
++
++// One exact certificate-key authorization in an immutable receiver membership
++// snapshot. Multiple SPKI pins may intentionally map to the same actor during a
++// bounded key-rotation overlap, but one SPKI can map to only one actor.
++struct SyncReplicaTlsMembershipEntry final {
++    std::string spki_sha256;
++    SyncReplicaActor actor;
++
++    bool operator==(const SyncReplicaTlsMembershipEntry&) const = default;
++};
++
++inline constexpr std::uint64_t kSyncReplicaTlsMembershipMaxEntries = 65536U;
++
++// Immutable, cheaply copyable membership authority for one receiver actor and
++// one folder. Construction validates and canonically sorts the complete mapping,
++// rejects duplicate SPKI authority, and binds the exact set to a versioned
++// SHA-256 digest. The shared state is const after construction; accepted-session
++// code takes this wrapper by value so no caller-supplied membership callback or mutable backing map
++// remains live between TLS authentication and application-byte admission.
++//
++// policy_epoch is caller-owned configuration versioning. It is bound into the
++// snapshot digest but is not itself rollback protection; a durable configuration
++// owner must decide which epoch is current before constructing this value.
++class SyncReplicaTlsMembershipSnapshot final {
++public:
++    SyncReplicaTlsMembershipSnapshot(
++        std::string folder_id,
++        SyncReplicaActor local_actor,
++        std::uint64_t policy_epoch,
++        std::vector<SyncReplicaTlsMembershipEntry> entries,
++        std::string label = "sync replica TLS membership snapshot");
++
++    SyncReplicaTlsMembershipSnapshot(
++        const SyncReplicaTlsMembershipSnapshot&) noexcept = default;
++    SyncReplicaTlsMembershipSnapshot& operator=(
++        const SyncReplicaTlsMembershipSnapshot&) noexcept = default;
++    SyncReplicaTlsMembershipSnapshot(
++        SyncReplicaTlsMembershipSnapshot&&) noexcept = default;
++    SyncReplicaTlsMembershipSnapshot& operator=(
++        SyncReplicaTlsMembershipSnapshot&&) noexcept = default;
++    ~SyncReplicaTlsMembershipSnapshot() noexcept = default;
++
++    [[nodiscard]] bool active() const noexcept {
++        return static_cast<bool>(state_);
++    }
++
++    [[nodiscard]] const std::string& folder_id() const;
++    [[nodiscard]] const SyncReplicaActor& local_actor() const;
++    [[nodiscard]] std::uint64_t policy_epoch() const;
++    [[nodiscard]] std::uint64_t entry_count() const;
++    [[nodiscard]] const std::string& snapshot_digest() const;
++
++    // Returns the actor mapped by one exact lowercase SHA-256 SPKI pin, or
++    // nullopt when the authenticated key is not a member of this snapshot.
++    // Malformed pins are rejected rather than normalized.
++    [[nodiscard]] std::optional<SyncReplicaActor> resolve_peer_or_throw(
++        std::string_view spki_sha256,
++        std::string_view label = "sync replica TLS membership lookup") const;
++
++    // Proves that this snapshot was authored for the exact file-delivery
++    // service selected by the accepted-session owner. This check is pure and
++    // runs before accept authority is spent.
++    void require_service_identity_or_throw(
++        std::string_view folder_id,
++        const SyncReplicaActor& local_actor,
++        std::string_view label) const;
++
++private:
++    struct State;
++
++    [[nodiscard]] const State& require_state_or_throw(
++        std::string_view label) const;
++
++    std::shared_ptr<const State> state_;
++};
++
++}  // namespace anonsync
+diff --git a/tests/sync_replica_tls_transport_test.cpp b/tests/sync_replica_tls_transport_test.cpp
+index f7fa752343bcfd0891f69c2beaf14aa6f1eb0658..fbd507a9b540adcf3045d899ca604674fe1be738 100644
+--- a/tests/sync_replica_tls_transport_test.cpp
++++ b/tests/sync_replica_tls_transport_test.cpp
+@@ -4761,6 +4761,143 @@ void test_tls_channel_retains_ssl_and_fences_affinity(
+ #endif
+ }
+ 
++void test_tls_membership_snapshot_value_authority(
++    const anonsync::SyncReplicaActor& sender_actor,
++    const anonsync::SyncReplicaActor& receiver_actor,
++    const std::string& sender_pin) {
++    const std::string folder = "folder-tls-membership-snapshot";
++    const anonsync::SyncReplicaActor second_peer{
++        "device-tls-membership-second-peer", 9303U};
++    const std::string rotation_pin =
++        anonsync::sha256_hex("membership rotation overlap key");
++    const std::string second_peer_pin =
++        anonsync::sha256_hex("membership independent peer key");
++    const std::string unknown_pin =
++        anonsync::sha256_hex("membership unknown key");
++
++    const std::vector<anonsync::SyncReplicaTlsMembershipEntry> entries{
++        {second_peer_pin, second_peer},
++        {sender_pin, sender_actor},
++        {rotation_pin, sender_actor},
++    };
++    const anonsync::SyncReplicaTlsMembershipSnapshot snapshot(
++        folder, receiver_actor, 41U, entries,
++        "TLS membership canonical snapshot");
++    const anonsync::SyncReplicaTlsMembershipSnapshot reordered(
++        folder, receiver_actor, 41U,
++        {
++            {rotation_pin, sender_actor},
++            {second_peer_pin, second_peer},
++            {sender_pin, sender_actor},
++        },
++        "TLS membership reordered snapshot");
++
++    require(
++        snapshot.active() && snapshot.folder_id() == folder &&
++            snapshot.local_actor() == receiver_actor &&
++            snapshot.policy_epoch() == 41U && snapshot.entry_count() == 3U &&
++            anonsync::is_lowercase_sha256_hex(snapshot.snapshot_digest()),
++        "immutable TLS membership snapshot lost canonical identity metadata");
++    require(
++        snapshot.snapshot_digest() == reordered.snapshot_digest(),
++        "immutable TLS membership digest depended on caller entry order");
++    require(
++        snapshot.resolve_peer_or_throw(sender_pin) == sender_actor &&
++            snapshot.resolve_peer_or_throw(rotation_pin) == sender_actor &&
++            snapshot.resolve_peer_or_throw(second_peer_pin) == second_peer &&
++            !snapshot.resolve_peer_or_throw(unknown_pin).has_value(),
++        "immutable TLS membership lookup lost exact SPKI-to-actor authority");
++
++    const anonsync::SyncReplicaTlsMembershipSnapshot newer_policy(
++        folder, receiver_actor, 42U, entries,
++        "TLS membership newer policy snapshot");
++    require(
++        newer_policy.snapshot_digest() != snapshot.snapshot_digest(),
++        "immutable TLS membership digest omitted policy epoch");
++
++    auto copied = snapshot;
++    auto moved = std::move(copied);
++    require(
++        !copied.active() && moved.active() &&
++            moved.snapshot_digest() == snapshot.snapshot_digest(),
++        "immutable TLS membership move duplicated or lost snapshot authority");
++    require_error(
++        [&] { (void)copied.entry_count(); }, "inactive",
++        "moved-from TLS membership snapshot remained usable");
++
++    require_error(
++        [&] {
++            (void)anonsync::SyncReplicaTlsMembershipSnapshot(
++                folder, receiver_actor, 0U, entries,
++                "TLS membership zero policy epoch");
++        },
++        "policy_epoch must be positive",
++        "TLS membership snapshot accepted an unversioned policy");
++    require_error(
++        [&] {
++            std::vector<anonsync::SyncReplicaTlsMembershipEntry> oversized(
++                static_cast<std::size_t>(
++                    anonsync::kSyncReplicaTlsMembershipMaxEntries + 1U));
++            (void)anonsync::SyncReplicaTlsMembershipSnapshot(
++                folder, receiver_actor, 43U, std::move(oversized),
++                "TLS membership oversized snapshot");
++        },
++        "entry count exceeds the configured hard ceiling",
++        "TLS membership snapshot accepted an unbounded entry set");
++    require_error(
++        [&] {
++            std::string uppercase_pin = sender_pin;
++            uppercase_pin.front() = 'A';
++            (void)anonsync::SyncReplicaTlsMembershipSnapshot(
++                folder, receiver_actor, 43U,
++                {{uppercase_pin, sender_actor}},
++                "TLS membership uppercase SPKI");
++        },
++        "not lowercase SHA-256",
++        "TLS membership snapshot normalized a noncanonical SPKI pin");
++    require_error(
++        [&] {
++            (void)anonsync::SyncReplicaTlsMembershipSnapshot(
++                folder, receiver_actor, 43U,
++                {{sender_pin, sender_actor}, {sender_pin, second_peer}},
++                "TLS membership duplicate SPKI");
++        },
++        "duplicate SPKI membership authority",
++        "TLS membership snapshot admitted conflicting duplicate SPKI authority");
++    require_error(
++        [&] {
++            (void)anonsync::SyncReplicaTlsMembershipSnapshot(
++                folder, receiver_actor, 43U,
++                {{sender_pin,
++                  {receiver_actor.device_id, receiver_actor.epoch + 1U}}},
++                "TLS membership reflected local device");
++        },
++        "receiver's own device_id",
++        "TLS membership snapshot authorized the receiver as its own peer");
++    require_error(
++        [&] {
++            (void)snapshot.resolve_peer_or_throw(
++                "not-a-pin", "TLS membership malformed lookup");
++        },
++        "not lowercase SHA-256",
++        "TLS membership lookup normalized malformed authenticated evidence");
++    require_error(
++        [&] {
++            snapshot.require_service_identity_or_throw(
++                "folder-tls-membership-wrong", receiver_actor,
++                "TLS membership wrong folder");
++        },
++        "does not match receiver service identity",
++        "TLS membership snapshot crossed folder authority");
++    require_error(
++        [&] {
++            snapshot.require_service_identity_or_throw(
++                folder, second_peer, "TLS membership wrong local actor");
++        },
++        "does not match receiver service identity",
++        "TLS membership snapshot crossed local actor authority");
++}
++
+ void test_file_tls_server_session_owner(
+     SSL_CTX* client_context,
+     SSL_CTX* server_context,
+@@ -4845,12 +4982,84 @@ void test_file_tls_server_session_owner(
+     const auto baseline_receiver = receiver.snapshot_or_throw();
+     const auto baseline_effect = effect.snapshot_or_throw();
+ 
+-    const auto resolve_sender = [&](std::string_view spki)
+-        -> std::optional<anonsync::SyncReplicaActor> {
+-        if (spki == sender_pin) return sender_actor;
+-        return std::nullopt;
++    const anonsync::SyncReplicaTlsMembershipSnapshot sender_membership(
++        folder, receiver_actor, 1201U, {{sender_pin, sender_actor}},
++        "TLS server sender membership");
++    const anonsync::SyncReplicaTlsMembershipSnapshot empty_membership(
++        folder, receiver_actor, 1202U, {},
++        "TLS server empty membership");
++    const auto result_binds_membership = [](
++        const anonsync::SyncReplicaFileTlsServerResult& result,
++        const anonsync::SyncReplicaTlsMembershipSnapshot& membership) {
++        return result.membership_policy_epoch == membership.policy_epoch() &&
++               result.membership_entry_count == membership.entry_count() &&
++               result.membership_snapshot_digest ==
++                   membership.snapshot_digest();
+     };
+ 
++    // Service identity is checked against the immutable snapshot before accept
++    // authority is spent. Both mismatches leave the same listener usable by the
++    // correct snapshot, proving this is a pre-accept configuration cutpoint.
++    {
++        LoopbackListener socket = make_loopback_listener_fixture();
++        auto listener = anonsync::
++            observe_sync_replica_file_tls_server_listener_or_throw(
++                socket.descriptor.get(),
++                "TLS server membership preaccept listener");
++        const anonsync::SyncReplicaTlsMembershipSnapshot wrong_folder(
++            "folder-file-tls-server-wrong", receiver_actor, 1203U,
++            {{sender_pin, sender_actor}},
++            "TLS server wrong-folder membership");
++        const anonsync::SyncReplicaActor wrong_local_actor{
++            "device-file-tls-server-wrong-local", 1204U};
++        const anonsync::SyncReplicaTlsMembershipSnapshot wrong_local(
++            folder, wrong_local_actor, 1204U, {{sender_pin, sender_actor}},
++            "TLS server wrong-local membership");
++        const auto now = std::chrono::steady_clock::now();
++        const anonsync::SyncReplicaFileTlsServerDeadlines deadlines{
++            now + std::chrono::milliseconds(25),
++            now + std::chrono::seconds(1),
++            now + std::chrono::seconds(1),
++            now + std::chrono::seconds(1),
++            now + std::chrono::seconds(1),
++        };
++        require_error(
++            [&] {
++                (void)anonsync::
++                    serve_one_sync_replica_file_delivery_tls_session_or_throw(
++                        receiver_service, listener, server_context,
++                        wrong_folder, deadlines,
++                        "TLS server wrong-folder preaccept");
++            },
++            "does not match receiver service identity",
++            "TLS server accepted cross-folder membership authority");
++        require_error(
++            [&] {
++                (void)anonsync::
++                    serve_one_sync_replica_file_delivery_tls_session_or_throw(
++                        receiver_service, listener, server_context,
++                        wrong_local, deadlines,
++                        "TLS server wrong-local preaccept");
++            },
++            "does not match receiver service identity",
++            "TLS server accepted cross-actor membership authority");
++        const auto result = anonsync::
++            serve_one_sync_replica_file_delivery_tls_session_or_throw(
++                receiver_service, listener, server_context,
++                sender_membership, deadlines,
++                "TLS server valid membership after mismatch");
++        require(
++            result.disposition == anonsync::
++                    SyncReplicaFileTlsServerDisposition::
++                        AcceptDeadlineExpired &&
++                result_binds_membership(result, sender_membership),
++            "TLS membership mismatch spent or replaced listener authority");
++        require(
++            receiver.snapshot_or_throw() == baseline_receiver &&
++                effect.snapshot_or_throw() == baseline_effect,
++            "TLS membership preaccept mismatch reached durable authority");
++    }
++
+     // Capability use re-proves mutable listener policy, and an ordinary
+     // moved-from wrapper is rejected before the process fail-stop guard. Neither
+     // local misuse can reach accept or durable receiver authority.
+@@ -4874,7 +5083,7 @@ void test_file_tls_server_session_owner(
+                 (void)anonsync::
+                     serve_one_sync_replica_file_delivery_tls_session_or_throw(
+                         receiver_service, listener, server_context,
+-                        resolve_sender, deadlines,
++                        sender_membership, deadlines,
+                         "TLS server post-mint inheritable listener");
+             },
+             "inheritable across exec",
+@@ -4887,7 +5096,7 @@ void test_file_tls_server_session_owner(
+                 (void)anonsync::
+                     serve_one_sync_replica_file_delivery_tls_session_or_throw(
+                         receiver_service, listener, server_context,
+-                        resolve_sender, deadlines,
++                        sender_membership, deadlines,
+                         "TLS server post-mint blocking listener");
+             },
+             "is not nonblocking",
+@@ -4900,7 +5109,7 @@ void test_file_tls_server_session_owner(
+                 (void)anonsync::
+                     serve_one_sync_replica_file_delivery_tls_session_or_throw(
+                         receiver_service, listener, server_context,
+-                        resolve_sender, deadlines,
++                        sender_membership, deadlines,
+                         "TLS server moved-from listener use");
+             },
+             "listener capability is inactive",
+@@ -4929,7 +5138,7 @@ void test_file_tls_server_session_owner(
+         };
+         const auto result = anonsync::
+             serve_one_sync_replica_file_delivery_tls_session_or_throw(
+-                receiver_service, listener, server_context, resolve_sender,
++                receiver_service, listener, server_context, sender_membership,
+                 deadlines, "TLS server accept-timeout session");
+         require(
+             result.disposition == anonsync::
+@@ -4939,8 +5148,9 @@ void test_file_tls_server_session_owner(
+                 !result.receive.has_value() &&
+                 result.shutdown_disposition == anonsync::
+                     SyncReplicaFileTlsServerShutdownDisposition::NotAttempted &&
+-                result.accept_attempts > 0U,
+-            "TLS server accept timeout fabricated session progress");
++                result.accept_attempts > 0U &&
++                result_binds_membership(result, sender_membership),
++            "TLS server accept timeout fabricated session or membership progress");
+         require(receiver.snapshot_or_throw() == baseline_receiver &&
+                     effect.snapshot_or_throw() == baseline_effect,
+                 "TLS server accept timeout reached durable receiver authority");
+@@ -4971,7 +5181,7 @@ void test_file_tls_server_session_owner(
+         try {
+             result = anonsync::
+                 serve_one_sync_replica_file_delivery_tls_session_or_throw(
+-                    receiver_service, listener, server_context, resolve_sender,
++                    receiver_service, listener, server_context, sender_membership,
+                     {
+                         now + std::chrono::seconds(1),
+                         now + std::chrono::milliseconds(30),
+@@ -5036,7 +5246,7 @@ void test_file_tls_server_session_owner(
+         try {
+             result = anonsync::
+                 serve_one_sync_replica_file_delivery_tls_session_or_throw(
+-                    receiver_service, listener, server_context, resolve_sender,
++                    receiver_service, listener, server_context, sender_membership,
+                     {
+                         now + std::chrono::seconds(2),
+                         now + std::chrono::seconds(2),
+@@ -5093,10 +5303,7 @@ void test_file_tls_server_session_owner(
+             result = anonsync::
+                 serve_one_sync_replica_file_delivery_tls_session_or_throw(
+                     receiver_service, listener, server_context,
+-                    [](std::string_view)
+-                        -> std::optional<anonsync::SyncReplicaActor> {
+-                        return std::nullopt;
+-                    },
++                    empty_membership,
+                     {
+                         now + std::chrono::seconds(2),
+                         now + std::chrono::seconds(2),
+@@ -5120,8 +5327,9 @@ void test_file_tls_server_session_owner(
+                 !result.peer_actor.has_value() &&
+                 !result.receive.has_value() &&
+                 result.shutdown_disposition == anonsync::
+-                    SyncReplicaFileTlsServerShutdownDisposition::NotAttempted,
+-            "TLS server authorized a certificate-valid unmapped peer");
++                    SyncReplicaFileTlsServerShutdownDisposition::NotAttempted &&
++                result_binds_membership(result, empty_membership),
++            "TLS server authorized or misattributed a certificate-valid unmapped peer");
+         require(receiver.snapshot_or_throw() == baseline_receiver &&
+                     effect.snapshot_or_throw() == baseline_effect,
+                 "TLS server unauthorized peer reached durable receiver authority");
+@@ -5214,7 +5422,7 @@ void test_file_tls_server_session_owner(
+         try {
+             result = anonsync::
+                 serve_one_sync_replica_file_delivery_tls_session_or_throw(
+-                    receiver_service, listener, server_context, resolve_sender,
++                    receiver_service, listener, server_context, sender_membership,
+                     {
+                         now + std::chrono::seconds(5),
+                         now + std::chrono::seconds(5),
+@@ -5248,8 +5456,9 @@ void test_file_tls_server_session_owner(
+                          CloseNotifySent ||
+                  result.shutdown_disposition == anonsync::
+                      SyncReplicaFileTlsServerShutdownDisposition::Complete) &&
+-                result.shutdown_attempts > 0U,
+-            "TLS server did not preserve accepted-session terminal cutpoints");
++                result.shutdown_attempts > 0U &&
++                result_binds_membership(result, sender_membership),
++            "TLS server did not preserve accepted-session terminal cutpoints and membership evidence");
+         require(
+             sender_settled &&
+                 read_binary_file(workspace.files / relative_path) == payload,
+@@ -5335,6 +5544,8 @@ void test_mutual_tls13_delivery() {
+         client_context.get(), server_context.get(), sender_actor,
+         receiver_actor, sender_pin, receiver_pin);
+ 
++    test_tls_membership_snapshot_value_authority(
++        sender_actor, receiver_actor, sender_pin);
+     test_file_tls_server_session_owner(
+         client_context.get(), server_context.get(), sender_actor,
+         receiver_actor, sender_pin, receiver_pin);
+diff --git a/tools/audit_authority_callback_boundaries.py b/tools/audit_authority_callback_boundaries.py
+new file mode 100755
+index 0000000000000000000000000000000000000000..af52ba43feba04c45b0ef8c2607b3de5d168ee98
+--- /dev/null
++++ b/tools/audit_authority_callback_boundaries.py
+@@ -0,0 +1,252 @@
++#!/usr/bin/env python3
++"""Lexical hygiene inventory for callbacks near authority-bearing operations.
++
++This audit classifies reviewed callback surfaces and their source-order fences.
++It deliberately does not claim to prove callback purity, reentrancy safety,
++transaction isolation, bounded execution, transport liveness, or absence of
++indirect calls. Compiled adversarial tests and architectural ownership rules
++carry those semantic obligations.
++"""
++from __future__ import annotations
++
++import json
++import re
++import sys
++from pathlib import Path
++
++
++def body(text: str, marker: str) -> str:
++    start = text.find(marker)
++    if start < 0:
++        return ""
++    brace = text.find("{", start)
++    if brace < 0:
++        return ""
++    depth = 0
++    for index in range(brace, len(text)):
++        if text[index] == "{":
++            depth += 1
++        elif text[index] == "}":
++            depth -= 1
++            if depth == 0:
++                return text[start : index + 1]
++    return ""
++
++
++def ordered(text: str, *tokens: str) -> bool:
++    position = 0
++    for token in tokens:
++        position = text.find(token, position)
++        if position < 0:
++            return False
++        position += len(token)
++    return True
++
++
++def main() -> int:
++    root = Path(__file__).resolve().parents[1]
++    paths = {
++        "file_header": root / "src/sync_replica_file_delivery_service.hpp",
++        "file_source": root / "src/sync_replica_file_delivery_service.cpp",
++        "tls_header": root / "src/sync_replica_file_tls_server.hpp",
++        "tls_source": root / "src/sync_replica_file_tls_server.cpp",
++        "membership_header": root / "src/sync_replica_tls_membership_snapshot.hpp",
++        "membership_source": root / "src/sync_replica_tls_membership_snapshot.cpp",
++        "ledger": root / "src/sqlite_replay_ledger.cpp",
++        "ledger_bridge": root / "src/sqlite_replay_ledger_selftest_bridge.hpp",
++        "peer_claim_header": root / "src/sync_peer_ingress_claim.hpp",
++        "peer_claim_source": root / "src/sync_peer_ingress_claim.cpp",
++        "peer_wire_header": root / "src/sync_peer_ingress_wire.hpp",
++        "peer_wire_source": root / "src/sync_peer_ingress_wire.cpp",
++        "peer_lifecycle": root / "src/sync_peer_ingress_lifecycle.cpp",
++        "authorizer": root / "src/persistence/sqlite_authorizer_owner.hpp",
++        "runtime": root / "tests/sync_replica_tls_transport_test.cpp",
++        "cmake": root / "CMakeLists.txt",
++        "verifier": root / "tools/verify_release_package.py",
++    }
++    missing = sorted(
++        str(path.relative_to(root)) for path in paths.values() if not path.is_file()
++    )
++    text = {
++        name: path.read_text(encoding="utf-8") if path.is_file() else ""
++        for name, path in paths.items()
++    }
++    checks: list[dict[str, object]] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append({
++            "check_id": check_id,
++            "passed": bool(condition),
++            "detail": detail,
++        })
++
++    require(not missing, "required_files_exist", f"missing={missing}")
++
++    function_occurrences: dict[str, int] = {}
++    for path in sorted((root / "src").rglob("*")):
++        if path.suffix not in {".cpp", ".hpp"}:
++            continue
++        count = path.read_text(encoding="utf-8").count("std::function")
++        if count:
++            function_occurrences[str(path.relative_to(root))] = count
++    expected_occurrences = {
++        "src/sqlite_replay_ledger.cpp": 2,
++        "src/sqlite_replay_ledger_selftest_bridge.hpp": 1,
++        "src/sync_peer_ingress_claim.cpp": 1,
++        "src/sync_peer_ingress_claim.hpp": 1,
++        "src/sync_peer_ingress_lifecycle.cpp": 1,
++        "src/sync_peer_ingress_wire.cpp": 1,
++        "src/sync_peer_ingress_wire.hpp": 1,
++        "src/sync_replica_file_delivery_service.hpp": 1,
++    }
++    require(
++        function_occurrences == expected_occurrences,
++        "std_function_inventory_is_exact_and_reviewed",
++        f"actual={function_occurrences}",
++    )
++
++    tls_text = (
++        text["tls_header"] + text["tls_source"] +
++        text["membership_header"] + text["membership_source"]
++    )
++    require(
++        "std::function" not in tls_text
++        and "SyncReplicaTlsPeerActorResolver" not in tls_text
++        and "resolve_peer_actor" not in tls_text,
++        "live_authenticated_server_has_no_membership_callback",
++        "certificate-to-actor lookup cannot re-enter arbitrary membership code",
++    )
++    require(
++        "std::shared_ptr<const State> state_" in text["membership_header"]
++        and "SyncReplicaTlsMembershipSnapshot membership" in text["tls_header"],
++        "tls_membership_is_value_owned_const_state",
++        "the accepted-session owner retains immutable lookup authority by value",
++    )
++
++    claim = body(
++        text["file_source"],
++        "SyncReplicaFileDeliveryService::claim_next_request_or_throw(",
++    )
++    require(
++        ordered(
++            claim,
++            "const SyncReplicaDeliveryChannelContext channel =",
++            "claim_next_outbox_for_delivery_or_throw",
++            "payload = payload_source(claim->operation)",
++            "validate_channel_or_throw(",
++            "release_claim_after_pre_dispatch_failure_or_throw",
++            "guard_outbox_claim_for_dispatch_or_throw",
++        ),
++        "payload_callback_is_followed_by_channel_and_claim_reproof",
++        "arbitrary payload code cannot directly cross the writer cutpoint",
++    )
++    guard_suffix = claim[claim.find("guard_outbox_claim_for_dispatch_or_throw"):]
++    require(
++        "No caller callback or" in guard_suffix
++        and "network I/O is permitted while the SQLite writer capability is held" in guard_suffix
++        and "payload_source(" not in guard_suffix,
++        "payload_callback_does_not_run_under_sqlite_writer_guard",
++        "the durable serialization window contains only reviewed construction",
++    )
++    require(
++        "bounded execution" not in text["file_header"]
++        and "SyncReplicaFilePayloadSource" in text["file_header"],
++        "payload_callback_remains_explicit_local_trust_debt",
++        "the interface does not falsely promise callback timing or resource bounds",
++    )
++
++    ledger = text["ledger"]
++    pending_impl = body(ledger, "std::string sqlite_effect_pending_report_json_impl(")
++    production_pending = body(ledger, "std::string sqlite_effect_pending_report_json(")
++    selftest_pending = body(
++        ledger,
++        "std::string sqlite_effect_pending_report_json_for_selftest(",
++    )
++    require(
++        "PendingReportAfterVerificationHook" in pending_impl
++        and "if (after_verification) after_verification();" in pending_impl
++        and "return sqlite_effect_pending_report_json_impl(ledger_path, {});" in production_pending,
++        "sqlite_interposition_hook_is_empty_on_production_entry",
++        "normal report generation cannot inject caller code into its read transaction",
++    )
++    require(
++        "after_verification" in selftest_pending
++        and "for_selftest" in text["ledger_bridge"]
++        and "sqlite_effect_pending_report_json_for_selftest" in text["ledger_bridge"],
++        "sqlite_interposition_hook_is_named_and_declared_selftest_only",
++        "the deliberate race-test seam is not presented as a production API",
++    )
++
++    peer_text = (
++        text["peer_claim_header"] + text["peer_claim_source"] +
++        text["peer_wire_header"] + text["peer_wire_source"] +
++        text["peer_lifecycle"]
++    )
++    function_lines = [
++        line.strip() for line in peer_text.splitlines() if "std::function" in line
++    ]
++    require(
++        len(function_lines) == 5
++        and "run_sync_peer_ingress_lifecycle_selftests" in text["peer_lifecycle"]
++        and "run_peer_transport_ingress_claim_generation_selftests" in text["peer_claim_header"]
++        and "run_peer_transport_ingress_wire_codec_selftests" in text["peer_wire_header"],
++        "peer_ingress_std_functions_are_selftest_assertion_sinks",
++        "production peer-ingress state transitions do not accept caller callbacks",
++    )
++    require(
++        "using SqliteAuthorizerCallback = int (*)" in text["authorizer"]
++        and "sqlite3_set_authorizer" in text["authorizer"],
++        "sqlite_authorizer_callback_is_typed_as_c_abi_policy_hook",
++        "the database authorizer is distinguished from application std::function seams",
++    )
++
++    runtime_tokens = (
++        "immutable TLS membership digest depended on caller entry order",
++        "TLS membership preaccept mismatch reached durable authority",
++        "TLS server authorized or misattributed a certificate-valid unmapped peer",
++    )
++    require(
++        all(token in text["runtime"] for token in runtime_tokens),
++        "removed_tls_callback_has_compiled_replacement_matrix",
++        "value lookup and no-mutation outcomes are exercised by real TLS tests",
++    )
++    require(
++        text["cmake"].count("anonsync_authority_callback_boundaries_source_audit") >= 2,
++        "callback_inventory_is_registered_with_ctest",
++        "the reviewed callback set cannot drift silently in ordinary validation",
++    )
++    require(
++        "tools/audit_authority_callback_boundaries.py" in text["verifier"],
++        "release_verifier_requires_callback_inventory",
++        "a sealed revision cannot omit the audit after changing callback authority",
++    )
++    require(
++        "Lexical hygiene inventory" in (__doc__ or "")
++        and "does not claim to prove" in (__doc__ or ""),
++        "audit_disclaims_semantic_authority",
++        "source vocabulary is not represented as behavioral proof",
++    )
++
++    passed = all(bool(check["passed"]) for check in checks)
++    result = {
++        "format": "anonsync-authority-callback-boundaries-source-audit-v1",
++        "scope": "lexical-inventory-not-semantic-proof",
++        "scope_nonclaim": (
++            "source vocabulary and inventory do not prove callback purity, "
++            "reentrancy safety, bounded execution, or transaction semantics"
++        ),
++        "root": str(root),
++        "passed": passed,
++        "passed_checks": sum(bool(check["passed"]) for check in checks),
++        "total_checks": len(checks),
++        "checks": checks,
++        "violations": [
++            check["check_id"] for check in checks if not check["passed"]
++        ],
++    }
++    print(json.dumps(result, indent=2, sort_keys=True))
++    return 0 if passed else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/audit_sync_file_tls_server.py b/tools/audit_sync_file_tls_server.py
+index cbb8a4695663bdb58dd7e7e1d0f5790d35f62672..fdd16283d5b84a70311d17456cff01445df00364 100755
+--- a/tools/audit_sync_file_tls_server.py
++++ b/tools/audit_sync_file_tls_server.py
+@@ -47,6 +47,8 @@ def main() -> int:
+     paths = {
+         "header": root / "src/sync_replica_file_tls_server.hpp",
+         "source": root / "src/sync_replica_file_tls_server.cpp",
++        "membership_header": root / "src/sync_replica_tls_membership_snapshot.hpp",
++        "membership_source": root / "src/sync_replica_tls_membership_snapshot.cpp",
+         "poll_header": root / "src/sync_stream_socket_deadline_poll.hpp",
+         "poll_source": root / "src/sync_stream_socket_deadline_poll.cpp",
+         "socket_header": root / "src/sync_socket_readiness_identity.hpp",
+@@ -77,6 +79,8 @@ def main() -> int:
+     require(not missing, "required_files_exist", f"missing={missing}")
+     header = text["header"]
+     source = text["source"]
++    membership_header = text["membership_header"]
++    membership_source = text["membership_source"]
+     poll_header = text["poll_header"]
+     poll_source = text["poll_source"]
+     socket_header = text["socket_header"]
+@@ -105,9 +109,20 @@ def main() -> int:
+     require(
+         "keep server_context configured and alive" in header
+         and "serialize its mutation" in header
+-        and "must not race its backing membership state" in header,
++        and "membership is taken by value" in header
++        and "no caller-supplied membership callback" in header
++        and "mutable membership" in header
++        and "map runs at the post-handshake authorization frontier" in header,
+         "context_and_membership_dependencies_have_stability_contract",
+-        "non-owned TLS and authorization dependencies cannot mutate under the session",
++        "non-owned TLS context remains stable and authorization is immutable value state",
++    )
++    require(
++        "SyncReplicaTlsPeerActorResolver" not in header + source
++        and "std::function" not in header + source
++        and "resolve_peer_actor" not in header + source
++        and "std::shared_ptr<const State> state_" in membership_header,
++        "live_session_membership_has_no_arbitrary_callback",
++        "post-handshake authorization cannot re-enter caller membership code",
+     )
+     require(
+         all(token in header for token in (
+@@ -236,19 +251,39 @@ def main() -> int:
+         "accepted_socket_is_proved_before_handshake",
+         "SSL cannot inherit an unproved blocking or exec-inheritable child",
+     )
++    require(
++        ordered(
++            serve,
++            "membership.require_service_identity_or_throw",
++            "membership.snapshot_digest()",
++            "accept_one_until_or_throw",
++        ),
++        "membership_identity_is_bound_before_accept",
++        "cross-folder or cross-actor configuration cannot spend listener authority",
++    )
+     require(
+         ordered(
+             serve,
+             "sync_replica_tls_peer_spki_sha256_or_throw",
+-            "resolve_peer_actor(peer_spki)",
++            "membership.resolve_peer_or_throw",
+             "PeerUnauthorized",
++            "post-membership accepted socket",
+             "authenticate_sync_replica_tls13_channel_or_throw",
+             "SyncReplicaFileTlsReceiverSession receiver_session",
+             "receiver_session.run_or_throw()",
+         ),
+-        "verified_spki_membership_precedes_durable_receiver",
++        "verified_spki_immutable_membership_precedes_durable_receiver",
+         "certificate validity alone never authorizes an actor or request",
+     )
++    require(
++        all(token in serve for token in (
++            "membership_policy_epoch",
++            "membership_entry_count",
++            "membership_snapshot_digest",
++        )),
++        "session_result_retains_exact_membership_evidence",
++        "terminal diagnostics identify the immutable policy snapshot used",
++    )
+     require(
+         "SyncReplicaFileTlsReceiverSession receiver_session" in serve
+         and "std::move(channel)" in serve
+@@ -332,6 +367,9 @@ def main() -> int:
+         "TLS server listener accepted blocking accept authority",
+         "TLS server listener accepted exec-inheritable authority",
+         "TLS server listener accepted a non-listening stream socket",
++        "TLS membership snapshot crossed folder authority",
++        "TLS membership snapshot crossed local actor authority",
++        "TLS membership preaccept mismatch reached durable authority",
+         "TLS server spent a listener after FD_CLOEXEC mutation",
+         "TLS server spent a listener after O_NONBLOCK mutation",
+         "TLS server moved-from listener reached process fail-stop authority",
+@@ -340,7 +378,7 @@ def main() -> int:
+         "TLS server handshake timeout reached durable receiver authority",
+         "TLS server rejected plaintext reached durable receiver authority",
+         "TLS server unauthorized peer reached durable receiver authority",
+-        "TLS server did not preserve accepted-session terminal cutpoints",
++        "TLS server did not preserve accepted-session terminal cutpoints and membership evidence",
+         "TLS server accepted session did not converge canonical evidence",
+     )
+     require(
+@@ -362,6 +400,7 @@ def main() -> int:
+     )
+     require(
+         "anonsync_sync_replica_file_tls_server" in cmake
++        and "src/sync_replica_tls_membership_snapshot.cpp" in cmake
+         and "anonsync_sync_stream_socket_deadline_poll" in cmake
+         and cmake.count("anonsync_sync_file_tls_server_source_audit") >= 2,
+         "production_and_audit_targets_are_registered",
+@@ -371,6 +410,8 @@ def main() -> int:
+         all(token in verifier for token in (
+             "src/sync_replica_file_tls_server.hpp",
+             "src/sync_replica_file_tls_server.cpp",
++            "src/sync_replica_tls_membership_snapshot.hpp",
++            "src/sync_replica_tls_membership_snapshot.cpp",
+             "src/sync_stream_socket_deadline_poll.hpp",
+             "src/sync_stream_socket_deadline_poll.cpp",
+             "tools/audit_sync_file_tls_server.py",
+@@ -387,7 +428,7 @@ def main() -> int:
+ 
+     passed = all(bool(check["passed"]) for check in checks)
+     result = {
+-        "format": "anonsync-file-tls-server-source-audit-v3",
++        "format": "anonsync-file-tls-server-source-audit-v4",
+         "scope": "lexical-hygiene-not-semantic-proof",
+         "scope_nonclaim": (
+             "source vocabulary and order do not prove kernel, OpenSSL, "
+diff --git a/tools/audit_sync_tls_membership_snapshot.py b/tools/audit_sync_tls_membership_snapshot.py
+new file mode 100755
+index 0000000000000000000000000000000000000000..2f63381c974ed6daa399bc73bcd6d77c3df4b82c
+--- /dev/null
++++ b/tools/audit_sync_tls_membership_snapshot.py
+@@ -0,0 +1,281 @@
++#!/usr/bin/env python3
++"""Lexical hygiene audit for immutable TLS membership snapshot authority.
++
++This audit inventories reviewed source shape, canonicalization vocabulary, and
++composition order. It deliberately does not claim to prove C++ immutability,
++hash collision resistance, authorization correctness, concurrency safety,
++OpenSSL peer identity, or durable policy rollback protection. Compiled tests,
++independent toolchains, and a future durable configuration owner carry those
++semantic obligations.
++"""
++from __future__ import annotations
++
++import json
++import sys
++from pathlib import Path
++
++
++def body(text: str, marker: str) -> str:
++    start = text.find(marker)
++    if start < 0:
++        return ""
++    brace = text.find("{", start)
++    if brace < 0:
++        return ""
++    depth = 0
++    for index in range(brace, len(text)):
++        if text[index] == "{":
++            depth += 1
++        elif text[index] == "}":
++            depth -= 1
++            if depth == 0:
++                return text[start : index + 1]
++    return ""
++
++
++def ordered(text: str, *tokens: str) -> bool:
++    position = 0
++    for token in tokens:
++        position = text.find(token, position)
++        if position < 0:
++            return False
++        position += len(token)
++    return True
++
++
++def main() -> int:
++    root = Path(__file__).resolve().parents[1]
++    paths = {
++        "header": root / "src/sync_replica_tls_membership_snapshot.hpp",
++        "source": root / "src/sync_replica_tls_membership_snapshot.cpp",
++        "server_header": root / "src/sync_replica_file_tls_server.hpp",
++        "server_source": root / "src/sync_replica_file_tls_server.cpp",
++        "runtime": root / "tests/sync_replica_tls_transport_test.cpp",
++        "cmake": root / "CMakeLists.txt",
++        "verifier": root / "tools/verify_release_package.py",
++    }
++    missing = sorted(
++        str(path.relative_to(root)) for path in paths.values() if not path.is_file()
++    )
++    text = {
++        name: path.read_text(encoding="utf-8") if path.is_file() else ""
++        for name, path in paths.items()
++    }
++    checks: list[dict[str, object]] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append({
++            "check_id": check_id,
++            "passed": bool(condition),
++            "detail": detail,
++        })
++
++    require(not missing, "required_files_exist", f"missing={missing}")
++    header = text["header"]
++    source = text["source"]
++    server_header = text["server_header"]
++    server_source = text["server_source"]
++    runtime = text["runtime"]
++    cmake = text["cmake"]
++    verifier = text["verifier"]
++
++    snapshot_class = body(header, "class SyncReplicaTlsMembershipSnapshot final")
++    require(
++        bool(snapshot_class)
++        and "std::shared_ptr<const State> state_" in snapshot_class
++        and "active() const noexcept" in snapshot_class,
++        "snapshot_retains_const_shared_state",
++        "copies share only state hidden behind a const pointee",
++    )
++    require(
++        "std::function" not in header + source + server_header + server_source
++        and "SyncReplicaTlsPeerActorResolver" not in header + server_header
++        and "resolve_peer_actor" not in server_source,
++        "membership_path_contains_no_arbitrary_membership_callback",
++        "post-handshake membership authorization is pure value lookup",
++    )
++    require(
++        "policy_epoch is caller-owned configuration versioning" in header
++        and "not itself rollback protection" in header
++        and "durable configuration" in header,
++        "policy_epoch_nonclaim_is_explicit",
++        "digest versioning is not misrepresented as durable rollback defense",
++    )
++
++    constructor = body(
++        source,
++        "SyncReplicaTlsMembershipSnapshot::SyncReplicaTlsMembershipSnapshot(",
++    )
++    require(
++        ordered(
++            constructor,
++            "sync_id_is_valid(folder_id)",
++            "validate_actor_or_throw(local_actor",
++            "policy_epoch == 0U",
++            "entries.size() > kSyncReplicaTlsMembershipMaxEntries",
++        ),
++        "constructor_bounds_identity_epoch_and_count",
++        "invalid service identity and unbounded membership fail before retention",
++    )
++    require(
++        ordered(
++            constructor,
++            "is_lowercase_sha256_hex(entry.spki_sha256)",
++            "validate_actor_or_throw(entry.actor",
++            "entry.actor.device_id == local_actor.device_id",
++            "std::sort(",
++            "std::adjacent_find(",
++            "duplicate SPKI membership authority",
++        ),
++        "entries_are_validated_sorted_and_deduplicated",
++        "one canonical SPKI maps to at most one actor",
++    )
++    require(
++        "kSyncReplicaTlsMembershipMaxEntries = 65536U" in header
++        and "std::length_error" in constructor,
++        "snapshot_has_explicit_entry_ceiling",
++        "configuration input cannot allocate an unbounded membership set",
++    )
++
++    digest = body(source, "std::string snapshot_digest_or_throw(")
++    require(
++        "anonsync:sync-replica-tls-membership-snapshot:v1" in source
++        and ordered(
++            digest,
++            "kSnapshotDigestDomain",
++            "folder_id",
++            "local_actor",
++            "policy_epoch",
++            "entries.size()",
++            "entry.spki_sha256",
++            "entry.actor",
++        ),
++        "digest_is_domain_separated_and_binds_complete_snapshot",
++        "folder, receiver, epoch, count, pins, and actors are committed",
++    )
++    require(
++        "std::array<char, 8U> encoded" in source
++        and "append_u64(digest, static_cast<std::uint64_t>(value.size()))" in source
++        and "digest.update(value)" in source,
++        "digest_fields_are_length_prefixed_with_fixed_width_counts",
++        "concatenation boundaries are canonical and architecture independent",
++    )
++
++    lookup = body(source, "SyncReplicaTlsMembershipSnapshot::resolve_peer_or_throw(")
++    require(
++        ordered(
++            lookup,
++            "is_lowercase_sha256_hex(spki_sha256)",
++            "std::lower_bound(",
++            "found->spki_sha256 != spki_sha256",
++            "return found->actor",
++        ),
++        "lookup_requires_exact_canonical_pin",
++        "unknown or malformed authenticated evidence cannot alias membership",
++    )
++    identity = body(
++        source,
++        "SyncReplicaTlsMembershipSnapshot::require_service_identity_or_throw(",
++    )
++    require(
++        "state.folder_id != folder_id" in identity
++        and "state.local_actor != local_actor" in identity,
++        "snapshot_is_scoped_to_exact_service_identity",
++        "one membership value cannot cross folder or local actor authority",
++    )
++
++    serve = body(
++        server_source,
++        "serve_one_sync_replica_file_delivery_tls_session_or_throw(",
++    )
++    require(
++        "SyncReplicaTlsMembershipSnapshot membership" in server_header
++        and "SyncReplicaTlsMembershipSnapshot membership" in serve,
++        "server_takes_snapshot_by_value",
++        "accepted-session scope retains its own immutable snapshot handle",
++    )
++    require(
++        ordered(
++            serve,
++            "membership.require_service_identity_or_throw",
++            "membership.snapshot_digest()",
++            "accept_one_until_or_throw",
++            "sync_replica_tls_peer_spki_sha256_or_throw",
++            "membership.resolve_peer_or_throw",
++            "post-membership accepted socket",
++            "authenticate_sync_replica_tls13_channel_or_throw",
++        ),
++        "snapshot_identity_lookup_and_socket_reproof_are_ordered",
++        "authorization is bound before application channel construction",
++    )
++    require(
++        all(token in server_header + serve for token in (
++            "membership_policy_epoch",
++            "membership_entry_count",
++            "membership_snapshot_digest",
++        )),
++        "server_result_exposes_snapshot_evidence",
++        "operators can attribute every terminal disposition to one policy value",
++    )
++
++    runtime_tokens = (
++        "immutable TLS membership digest depended on caller entry order",
++        "immutable TLS membership lookup lost exact SPKI-to-actor authority",
++        "immutable TLS membership digest omitted policy epoch",
++        "moved-from TLS membership snapshot remained usable",
++        "TLS membership snapshot admitted conflicting duplicate SPKI authority",
++        "TLS membership snapshot authorized the receiver as its own peer",
++        "TLS membership preaccept mismatch reached durable authority",
++        "TLS server authorized or misattributed a certificate-valid unmapped peer",
++        "TLS server did not preserve accepted-session terminal cutpoints and membership evidence",
++    )
++    require(
++        all(token in runtime for token in runtime_tokens),
++        "compiled_runtime_matrix_covers_snapshot_and_composition",
++        "canonicalization, misuse, rejection, and terminal success have executable tests",
++    )
++    require(
++        "src/sync_replica_tls_membership_snapshot.cpp" in cmake
++        and cmake.count("anonsync_sync_tls_membership_snapshot_source_audit") >= 2,
++        "implementation_and_audit_are_registered",
++        "ordinary builds and CTest retain the new authority surface",
++    )
++    require(
++        all(token in verifier for token in (
++            "src/sync_replica_tls_membership_snapshot.hpp",
++            "src/sync_replica_tls_membership_snapshot.cpp",
++            "tools/audit_sync_tls_membership_snapshot.py",
++        )),
++        "release_verifier_requires_snapshot_surface",
++        "a sealed revision cannot silently omit implementation or hygiene audit",
++    )
++    require(
++        "Lexical hygiene audit" in (__doc__ or "")
++        and "does not claim to prove" in (__doc__ or ""),
++        "audit_disclaims_semantic_authority",
++        "source vocabulary is not represented as runtime proof",
++    )
++
++    passed = all(bool(check["passed"]) for check in checks)
++    result = {
++        "format": "anonsync-tls-membership-snapshot-source-audit-v1",
++        "scope": "lexical-hygiene-not-semantic-proof",
++        "scope_nonclaim": (
++            "source vocabulary and order do not prove authorization, hashing, "
++            "concurrency, OpenSSL, or durable rollback semantics"
++        ),
++        "root": str(root),
++        "passed": passed,
++        "passed_checks": sum(bool(check["passed"]) for check in checks),
++        "total_checks": len(checks),
++        "checks": checks,
++        "violations": [
++            check["check_id"] for check in checks if not check["passed"]
++        ],
++    }
++    print(json.dumps(result, indent=2, sort_keys=True))
++    return 0 if passed else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index a6896b82f002bfd49bb52afdc4ad41ca36c998b0..9ba586e07855a67fbc93ad338146282b64b27ddf 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -664,6 +664,20 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "FILE_EFFECT_DEVICE_ISOLATION_MIGRATION_AUDIT_rev0889.md",
+             "REVISION_NOTES_rev0889.md",
+         })
++    if revision_number is not None and revision_number >= 890:
++        revision_scoped_required.update({
++            "src/sync_replica_tls_membership_snapshot.hpp",
++            "src/sync_replica_tls_membership_snapshot.cpp",
++            "src/sync_replica_file_tls_server.hpp",
++            "src/sync_replica_file_tls_server.cpp",
++            "tests/sync_replica_tls_transport_test.cpp",
++            "tools/audit_sync_tls_membership_snapshot.py",
++            "tools/audit_authority_callback_boundaries.py",
++            "tools/audit_sync_file_tls_server.py",
++            "TLS_IMMUTABLE_MEMBERSHIP_SNAPSHOT_AUDIT_rev0890.md",
++            "CALLBACK_AUTHORITY_BOUNDARY_AUDIT_rev0890.md",
++            "REVISION_NOTES_rev0890.md",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

@@ -1,0 +1,1 @@
+print("AnonSync rev0147: added approval-memory material-change / reapproval-clock and shareable-artifact head-register / warning-surface specs, and refreshed top-level doctrine for current heads over folklore.")

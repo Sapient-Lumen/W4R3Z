@@ -1,0 +1,3607 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 919a01e64f4b9771346c1876eec6de304476cb5d..26306fa6b9ecb69cbbd8cf3f9f37fa3d2bf85961 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2250,7 +2250,8 @@ target_compile_options(anonsync_core PRIVATE -Wall -Wextra -Wpedantic)
+ # singleton; the shipping CLI is only a JSON/options adapter.
+ add_library(anonsync_sync_replica_database_backup STATIC
+   src/sync_replica_database_backup.cpp
+-  src/sync_replica_database_replacement.cpp)
++  src/sync_replica_database_replacement.cpp
++  src/sync_replica_database_replacement_receipt.cpp)
+ target_include_directories(anonsync_sync_replica_database_backup PUBLIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+ target_link_libraries(anonsync_sync_replica_database_backup
+@@ -2260,7 +2261,9 @@ target_link_libraries(anonsync_sync_replica_database_backup
+   PRIVATE
+     anonsync_sqlite_snapshot_seal
+     anonsync_sqlite_live_backup
++    anonsync_sha256_digest
+     anonsync_sync_atomic_file_publication
++    anonsync_sync_bounded_regular_file
+     anonsync_sync_replica_deployment_binding
+     anonsync_sync_replica_folder_process
+     anonsync_sync_replica_operational_database
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index 4eb1afaf3ee6d6e5567bc8ca8154eb13c473c581..cb223ec8464c9110095428f7c526818dc50b6ab4 100644
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -1514,13 +1514,15 @@ int command_database_backup_inspect(const Options& options) {
+ 
+ int command_database_recovery_replace(const Options& options) {
+     options.require_only(
+-        {"manifest", "snapshot", "rollback", "expected-current"});
++        {"manifest", "snapshot", "rollback", "receipt", "expected-current"});
+     const fs::path manifest_path = require_absolute_path(
+         options.one("manifest"), "--manifest");
+     const fs::path snapshot_path = require_absolute_path(
+         options.one("snapshot"), "--snapshot");
+     const fs::path rollback_path = require_absolute_path(
+         options.one("rollback"), "--rollback");
++    const fs::path receipt_path = require_absolute_path(
++        options.one("receipt"), "--receipt");
+     const DatabaseRecoveryExpectation expected =
+         decode_database_recovery_expectation_or_throw(
+             options.one("expected-current"));
+@@ -1536,8 +1538,8 @@ int command_database_recovery_replace(const Options& options) {
+             "anonsync_sync database-recovery-replace manifest"),
+         "anonsync_sync database-recovery-replace");
+     const anonsync::SyncReplicaDatabaseReplacementResult result =
+-        owner.replace_or_throw(
+-            snapshot_path, rollback_path,
++        owner.replace_or_resume_or_throw(
++            snapshot_path, rollback_path, receipt_path,
+             {
+                 expected.database_incarnation_sha256,
+                 expected.database_recovery_epoch,
+@@ -1548,13 +1550,18 @@ int command_database_recovery_replace(const Options& options) {
+             result.final_cutpoint.database_incarnation_sha256,
+             result.final_cutpoint.database_recovery_epoch,
+             result.final_cutpoint.cutpoint_digest);
++    const bool mutation_performed =
++        result.receipt_created_this_invocation ||
++        result.rollback_published_this_invocation ||
++        result.database_replacement_performed_this_invocation ||
++        result.recovery_epoch_advanced_this_invocation;
+ 
+     std::cout
+         << "{\"command\":\"database-recovery-replace\""
+         << ",\"terminal_class\":\"completed\""
+         << ",\"response_schema\":"
+         << json_quote(
+-               "anonsync.local-database-recovery-replacement.response.v1");
++               "anonsync.local-database-recovery-replacement.response.v3");
+     append_database_recovery_scope_json(std::cout, owner.deployment());
+     std::cout
+         << ",\"candidate_snapshot_path\":"
+@@ -1577,6 +1584,28 @@ int command_database_recovery_replace(const Options& options) {
+         << result.rollback_artifact.sqlite_page_size
+         << ",\"rollback_snapshot_page_count\":"
+         << result.rollback_artifact.sqlite_page_count
++        << ",\"replacement_receipt_path\":"
++        << json_quote(result.receipt_path.generic_string())
++        << ",\"replacement_receipt_action_sha256\":"
++        << json_quote(result.receipt_action_sha256)
++        << ",\"replacement_receipt_record_sha256\":"
++        << json_quote(result.receipt_record_sha256)
++        << ",\"replacement_entry_stage\":"
++        << json_quote(
++               anonsync::sync_replica_database_replacement_entry_stage_name(
++                   result.entry_stage))
++        << ",\"replacement_receipt_preexisting\":"
++        << json_bool(result.receipt_preexisting)
++        << ",\"replacement_receipt_created_this_invocation\":"
++        << json_bool(result.receipt_created_this_invocation)
++        << ",\"rollback_artifact_published_this_invocation\":"
++        << json_bool(result.rollback_published_this_invocation)
++        << ",\"logical_database_replacement_performed_this_invocation\":"
++        << json_bool(result.database_replacement_performed_this_invocation)
++        << ",\"recovery_epoch_advanced_this_invocation\":"
++        << json_bool(result.recovery_epoch_advanced_this_invocation)
++        << ",\"idempotent_reproof_only\":"
++        << json_bool(result.idempotent_reproof_only)
+         << ",\"expected_current_recovery_expectation\":"
+         << json_quote(expected_encoded)
+         << ",\"displaced_database_incarnation_sha256\":"
+@@ -1614,20 +1643,35 @@ int command_database_recovery_replace(const Options& options) {
+         << result.maximum_reported_remaining_pages
+         << ",\"candidate_validated_before_mutation\":true"
+         << ",\"candidate_deployment_binding_attested\":true"
++        << ",\"replacement_receipt_immutable\":true"
++        << ",\"replacement_receipt_effect_authority\":false"
++        << ",\"progress_classified_from_active_database\":true"
+         << ",\"rollback_artifact_create_new\":true"
+         << ",\"rollback_artifact_postpublication_reverified\":true"
+         << ",\"rollback_represents_displaced_logical_database\":true"
+         << ",\"raw_sqlite_family_byte_identity_preserved\":false"
+         << ",\"descriptor_rooted_writable_destination\":true"
+         << ",\"sqlite_destination_transaction\":true"
+-        << ",\"logical_database_replacement_performed\":true"
++        << ",\"logical_database_replacement_complete\":true"
++        << ",\"logical_database_replacement_performed\":"
++        << json_bool(result.database_replacement_performed_this_invocation)
+         << ",\"restored_cutpoint_reproved_before_advance\":true"
+-        << ",\"recovery_epoch_advanced\":true"
++        << ",\"recovery_epoch_advanced\":"
++        << json_bool(result.recovery_epoch_advanced_this_invocation)
++        << ",\"recovery_epoch_advance_complete\":true"
+         << ",\"final_database_reopened_and_reproved\":true"
++        << ",\"final_candidate_artifact_path_reproved\":"
++        << json_bool(result.final_candidate_path_reproved)
++        << ",\"final_rollback_artifact_path_reproved\":"
++        << json_bool(result.final_rollback_path_reproved)
++        << ",\"final_artifact_reproof_bracketed_by_database_cutpoint\":true"
++        << ",\"artifact_pathnames_continuously_reserved\":false"
++        << ",\"noncooperating_same_uid_artifact_replacement_excluded\":false"
+         << ",\"retention_age_reset_by_exact_source_change\":true"
+         << ",\"payload_store_replacement_performed\":false"
+         << ",\"other_database_replacement_performed\":false"
+-        << ",\"mutation_performed\":true}\n";
++        << ",\"mutation_performed\":" << json_bool(mutation_performed)
++        << "}\n";
+     return 0;
+ }
+ 
+@@ -4181,7 +4225,7 @@ void print_usage(std::ostream& output) {
+            "--manifest ABSOLUTE_JSON --snapshot ABSOLUTE_SQLITE\n"
+         << "  anonsync_sync database-recovery-replace "
+            "--manifest ABSOLUTE_JSON --snapshot ABSOLUTE_SQLITE "
+-           "--rollback ABSOLUTE_SQLITE "
++           "--rollback ABSOLUTE_SQLITE --receipt ABSOLUTE_RECEIPT "
+            "--expected-current v1:INCARNATION:EPOCH:CUTPOINT\n"
+         << "  anonsync_sync database-recovery-inspect "
+            "--manifest ABSOLUTE_JSON\n"
+@@ -4259,10 +4303,16 @@ void print_usage(std::ostream& output) {
+            "The artifact excludes payload bytes, the folder catalog, membership, "
+            "effects, and anchors, and neither backup command replaces a database. "
+            "Recovery replacement validates one detached artifact before mutation, "
+-           "publishes the displaced logical database create-new as a rollback "
+-           "artifact, replaces the descriptor-rooted active database through "
+-           "SQLite's bounded destination transaction, advances the restored "
+-           "recovery epoch, and reopens the resulting deployment before success. "
++           "publishes one bounded immutable create-new action receipt and the "
++           "displaced logical database as a create-new rollback artifact, then "
++           "classifies restart progress only from the active database's exact "
++           "cutpoint. It admits only the displaced database, the candidate "
++           "awaiting epoch advance, or the candidate's exact recovery successor; "
++           "unknown continuity fails closed. It replaces the descriptor-rooted "
++           "active database through SQLite's bounded destination transaction, "
++           "advances the restored recovery epoch when still pending, and reopens "
++           "the resulting deployment, rollback artifact, candidate, and receipt "
++           "before success. The receipt is immutable evidence, not effect authority. "
+            "Recovery inspection emits one canonical incarnation/epoch/cutpoint "
+            "expectation from the active database. Recovery advance requires that "
+            "exact expectation, advances recovery epoch and state generation "
+diff --git a/src/sync_replica_database_artifact_internal.hpp b/src/sync_replica_database_artifact_internal.hpp
+index 7fdf08e9f66352dde8c7f607f2b8449ab838421f..472ac6f6fe9833bf1dc87b01d033f70cbc115604 100644
+--- a/src/sync_replica_database_artifact_internal.hpp
++++ b/src/sync_replica_database_artifact_internal.hpp
+@@ -13,11 +13,13 @@
+ #include "sync_sqlite_support.hpp"
+ 
+ #include <array>
++#include <exception>
+ #include <filesystem>
+ #include <limits>
+ #include <stdexcept>
+ #include <string>
+ #include <string_view>
++#include <system_error>
+ #include <utility>
+ #include <vector>
+ 
+@@ -89,6 +91,20 @@ backup_seal_policy() noexcept {
+     };
+ }
+ 
++// Shared optional-open classifier. Exact ENOENT/not-found is absence; every
++// other failed observation preserves the original open/capture diagnostic.
++inline void require_exact_path_absence_or_rethrow(
++    const fs::path& path,
++    const std::exception_ptr& original_failure) {
++    std::error_code status_error;
++    const fs::file_status status = fs::symlink_status(path, status_error);
++    if ((status_error &&
++         status_error != std::errc::no_such_file_or_directory) ||
++        (!status_error && status.type() != fs::file_type::not_found)) {
++        std::rethrow_exception(original_failure);
++    }
++}
++
+ [[nodiscard]] inline bool path_is_same_or_descendant(
+     const fs::path& candidate,
+     const fs::path& root) {
+diff --git a/src/sync_replica_database_replacement.cpp b/src/sync_replica_database_replacement.cpp
+index a1968f6819650e805f17d9af306041d471e3ed3f..e84e2a96f502d85e9c3c38e502e99744a6db9850 100644
+--- a/src/sync_replica_database_replacement.cpp
++++ b/src/sync_replica_database_replacement.cpp
+@@ -4,15 +4,18 @@
+ 
+ #include "persistence/sqlite_live_backup.hpp"
+ #include "persistence/sqlite_snapshot_seal.hpp"
+-#include "sync_atomic_file_publication.hpp"
+ #include "sync_replica_database_artifact_internal.hpp"
++#include "sync_replica_database_replacement_receipt_internal.hpp"
+ #include "sync_replica_operational_database.hpp"
+ #include "sync_replica_peer_service_singleton.hpp"
+ #include "sync_replica_tls_policy_sqlite_profile.hpp"
+ #include "sync_sqlite_handle_slot.hpp"
+ #include "sync_sqlite_support.hpp"
+ 
++#include <exception>
+ #include <filesystem>
++#include <limits>
++#include <optional>
+ #include <stdexcept>
+ #include <string>
+ #include <utility>
+@@ -21,9 +24,15 @@ namespace anonsync {
+ 
+ namespace fs = std::filesystem;
+ namespace artifact_detail = sync_replica_database_artifact_detail;
++namespace replacement_detail = sync_replica_database_replacement_detail;
+ 
+ namespace {
+ 
++struct SealedArtifact final {
++    persistence::SealedSqliteSnapshot seal;
++    SyncReplicaDatabaseBackupArtifactObservation observation;
++};
++
+ void require_expectation_or_throw(
+     const SyncReplicaDatabaseReplacementExpectation& expectation,
+     const std::string& label) {
+@@ -50,17 +59,181 @@ void require_expected_current_or_throw(
+     }
+ }
+ 
+-void require_same_artifact_or_throw(
+-    const SyncReplicaDatabaseBackupArtifactObservation& expected,
+-    const SyncReplicaDatabaseBackupArtifactObservation& observed,
++[[nodiscard]] SyncReplicaDatabaseBackupCutpoint inspect_active_cutpoint_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const std::string& label) {
++    SyncReplicaOperationalDatabase active =
++        open_attested_sync_replica_primary_database_read_only_or_throw(
++            deployment, label + " forensic source");
++    SyncReplicaDatabaseBackupCutpoint cutpoint =
++        artifact_detail::compact_backup_cutpoint(
++            inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
++                active.handle(), deployment.folder_id,
++                deployment.local_actor, label + " snapshot"));
++    active.verify_open_database_or_throw(label + " rooted reproof");
++    return cutpoint;
++}
++
++[[nodiscard]] SealedArtifact capture_displaced_database_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const fs::path& rollback_path,
++    const SyncReplicaDatabaseReplacementExpectation& expected_current,
++    const SyncReplicaDatabaseBackupArtifactObservation& candidate,
++    const std::string& label) {
++    SyncReplicaOperationalDatabase active_source =
++        open_attested_sync_replica_primary_database_read_only_or_throw(
++            deployment, label + " forensic source");
++    const SyncReplicaDatabaseBackupCutpoint before =
++        artifact_detail::compact_backup_cutpoint(
++            inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
++                active_source.handle(), deployment.folder_id,
++                deployment.local_actor, label + " snapshot before capture"));
++    require_expected_current_or_throw(before, expected_current, label);
++
++    persistence::SealedSqliteSnapshot rollback_seal;
++    {
++        auto active_borrow = borrow_sync_sqlite_serialized_db_or_throw(
++            active_source.handle(), label + " serialized source capability");
++        rollback_seal = persistence::SealedSqliteSnapshot::capture_database(
++            active_borrow.get(), label + " bounded database capture",
++            artifact_detail::backup_seal_policy());
++    }
++    SyncReplicaDatabaseBackupArtifactObservation rollback =
++        artifact_detail::inspect_sealed_artifact_or_throw(
++            deployment, rollback_seal, rollback_path,
++            label + " detached rollback inspection");
++    const SyncReplicaDatabaseBackupCutpoint after =
++        artifact_detail::compact_backup_cutpoint(
++            inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
++                active_source.handle(), deployment.folder_id,
++                deployment.local_actor, label + " snapshot after capture"));
++    active_source.verify_open_database_or_throw(
++        label + " final rooted reproof");
++    if (before != rollback.source_cutpoint ||
++        after != rollback.source_cutpoint) {
++        throw std::runtime_error(
++            label + " database changed across rollback capture");
++    }
++    if (candidate.sqlite_page_size != rollback.sqlite_page_size) {
++        throw std::runtime_error(
++            label + " candidate page size differs from the displaced database");
++    }
++    return {
++        .seal = std::move(rollback_seal),
++        .observation = std::move(rollback),
++    };
++}
++
++[[nodiscard]] SealedArtifact inspect_required_artifact_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const fs::path& artifact_path,
++    const std::string& label) {
++    persistence::SealedSqliteSnapshot seal =
++        persistence::SealedSqliteSnapshot::capture(
++            artifact_path, label + " capture",
++            artifact_detail::backup_seal_policy());
++    SyncReplicaDatabaseBackupArtifactObservation observation =
++        artifact_detail::inspect_sealed_artifact_or_throw(
++            deployment, seal, artifact_path, label + " validation");
++    return {
++        .seal = std::move(seal),
++        .observation = std::move(observation),
++    };
++}
++
++[[nodiscard]] std::optional<SealedArtifact>
++inspect_existing_artifact_if_present_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const fs::path& artifact_path,
++    const std::string& label) {
++    try {
++        return inspect_required_artifact_or_throw(
++            deployment, artifact_path, label);
++    } catch (...) {
++        const std::exception_ptr capture_failure = std::current_exception();
++        artifact_detail::require_exact_path_absence_or_rethrow(
++            artifact_path, capture_failure);
++        artifact_detail::preflight_artifact_output_family_create_new_or_throw(
++            artifact_path, label + " absent artifact preflight");
++        return std::nullopt;
++    }
++}
++
++void require_representable_recovery_successor_or_throw(
++    const SyncReplicaDatabaseBackupCutpoint& candidate,
++    const std::string& label) {
++    if (candidate.database_recovery_epoch ==
++            std::numeric_limits<std::uint64_t>::max() ||
++        candidate.state_generation ==
++            std::numeric_limits<std::uint64_t>::max()) {
++        throw std::invalid_argument(
++            label +
++            " candidate has no representable recovery successor; this invocation "
++            "will not publish a new replacement receipt, rollback artifact, "
++            "or database effect");
++    }
++}
++
++void require_unambiguous_restart_states_or_throw(
++    const SyncReplicaDatabaseBackupCutpoint& candidate,
++    const SyncReplicaDatabaseBackupCutpoint& displaced,
++    const std::string& label) {
++    require_representable_recovery_successor_or_throw(candidate, label);
++    if (candidate == displaced) {
++        throw std::invalid_argument(
++            label +
++            " candidate and displaced database cutpoints are identical; "
++            "the receipt cannot distinguish pre-copy from post-copy state");
++    }
++    if (artifact_detail::recovery_successor_matches(candidate, displaced)) {
++        throw std::invalid_argument(
++            label +
++            " displaced database is already the candidate's exact recovery "
++            "successor; replacement completion would be ambiguous");
++    }
++}
++
++[[nodiscard]] SyncReplicaDatabaseReplacementEntryStage
++classify_entry_stage_or_throw(
++    const SyncReplicaDatabaseBackupCutpoint& active,
++    const SyncReplicaDatabaseBackupCutpoint& displaced,
++    const SyncReplicaDatabaseBackupCutpoint& candidate,
+     const std::string& label) {
+-    if (expected != observed) {
+-        throw std::runtime_error(label + " durable artifact changed");
++    if (active == displaced) {
++        return SyncReplicaDatabaseReplacementEntryStage::
++            DisplacedDatabaseCurrent;
+     }
++    if (active == candidate) {
++        return SyncReplicaDatabaseReplacementEntryStage::
++            CandidateInstalledEpochPending;
++    }
++    if (artifact_detail::recovery_successor_matches(candidate, active)) {
++        return SyncReplicaDatabaseReplacementEntryStage::RecoveryEpochAdvanced;
++    }
++    throw std::runtime_error(
++        label +
++        " active database is neither the displaced state, the exact "
++        "candidate awaiting recovery-epoch advance, nor the candidate's exact "
++        "recovery successor; continuity is unknown");
+ }
+ 
+ }  // namespace
+ 
++const char* sync_replica_database_replacement_entry_stage_name(
++    SyncReplicaDatabaseReplacementEntryStage stage) noexcept {
++    switch (stage) {
++        case SyncReplicaDatabaseReplacementEntryStage::
++            DisplacedDatabaseCurrent:
++            return "displaced_database_current";
++        case SyncReplicaDatabaseReplacementEntryStage::
++            CandidateInstalledEpochPending:
++            return "candidate_installed_epoch_pending";
++        case SyncReplicaDatabaseReplacementEntryStage::RecoveryEpochAdvanced:
++            return "recovery_epoch_advanced";
++    }
++    return "unknown";
++}
++
+ struct SyncReplicaDatabaseReplacementOwner::State final {
+     static std::string require_label(std::string value) {
+         if (value.empty()) {
+@@ -97,9 +270,10 @@ SyncReplicaDatabaseReplacementOwner::deployment() const noexcept {
+ }
+ 
+ SyncReplicaDatabaseReplacementResult
+-SyncReplicaDatabaseReplacementOwner::replace_or_throw(
++SyncReplicaDatabaseReplacementOwner::replace_or_resume_or_throw(
+     const fs::path& absolute_candidate_artifact_path,
+     const fs::path& absolute_rollback_artifact_path,
++    const fs::path& absolute_receipt_path,
+     const SyncReplicaDatabaseReplacementExpectation& expected_current) {
+     require_expectation_or_throw(expected_current, state_->label);
+     artifact_detail::validate_artifact_path_or_throw(
+@@ -112,17 +286,24 @@ SyncReplicaDatabaseReplacementOwner::replace_or_throw(
+         absolute_candidate_artifact_path,
+         absolute_rollback_artifact_path,
+         state_->label + " candidate and rollback");
++    replacement_detail::validate_external_receipt_path_or_throw(
++        state_->deployment, absolute_candidate_artifact_path,
++        absolute_rollback_artifact_path, absolute_receipt_path,
++        state_->label + " external action receipt path");
++
++    std::optional<replacement_detail::ReplacementReceipt> receipt =
++        replacement_detail::read_replacement_receipt_if_present_or_throw(
++            absolute_receipt_path, state_->label + " action receipt");
++    const bool receipt_preexisting = receipt.has_value();
++    if (!receipt_preexisting) {
++        // Reject deterministic rollback-family conflicts before retaining as
++        // much as two complete SQLite images in memory. The immutable receipt
++        // and rollback are still re-proved immediately before publication.
++        artifact_detail::preflight_artifact_output_family_create_new_or_throw(
++            absolute_rollback_artifact_path,
++            state_->label + " rollback output preflight");
++    }
+ 
+-    // Reject an unavailable rollback family before retaining as much as the
+-    // full candidate artifact in memory. This is non-mutating; complete
+-    // candidate validation still occurs before any namespace publication.
+-    artifact_detail::preflight_artifact_output_family_create_new_or_throw(
+-        absolute_rollback_artifact_path,
+-        state_->label + " rollback output preflight");
+-
+-    // Complete candidate validation occurs before any namespace mutation. The
+-    // retained seal is the exact source capability later copied into SQLite; a
+-    // pathname substitution after this point cannot change the selected bytes.
+     persistence::SealedSqliteSnapshot candidate_seal =
+         persistence::SealedSqliteSnapshot::capture(
+             absolute_candidate_artifact_path,
+@@ -133,102 +314,147 @@ SyncReplicaDatabaseReplacementOwner::replace_or_throw(
+             state_->deployment, candidate_seal,
+             absolute_candidate_artifact_path,
+             state_->label + " candidate validation");
++    // A replacement action must have one exactly representable terminal
++    // recovery successor. Reject overflow before the first receipt, rollback,
++    // or database effect can become durable.
++    require_representable_recovery_successor_or_throw(
++        candidate.source_cutpoint, state_->label);
++
++    bool receipt_created_this_invocation = false;
++    bool rollback_published_this_invocation = false;
++    bool database_replacement_performed_this_invocation = false;
++    bool recovery_epoch_advanced_this_invocation = false;
++    persistence::SqliteLiveBackupEvidence replacement_evidence;
+ 
+-    SyncReplicaDatabaseBackupArtifactObservation rollback_captured;
+-    {
+-        SyncReplicaOperationalDatabase active_source =
+-            open_attested_sync_replica_primary_database_read_only_or_throw(
+-                state_->deployment,
+-                state_->label + " displaced database forensic source");
+-        const SyncReplicaDatabaseBackupCutpoint before =
+-            artifact_detail::compact_backup_cutpoint(
+-                inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
+-                    active_source.handle(), state_->deployment.folder_id,
+-                    state_->deployment.local_actor,
+-                    state_->label + " displaced snapshot before capture"));
+-        require_expected_current_or_throw(
+-            before, expected_current, state_->label);
+-
+-        persistence::SealedSqliteSnapshot rollback_seal;
+-        {
+-            auto active_borrow = borrow_sync_sqlite_serialized_db_or_throw(
+-                active_source.handle(),
+-                state_->label + " displaced serialized source capability");
+-            rollback_seal =
+-                persistence::SealedSqliteSnapshot::capture_database(
+-                    active_borrow.get(),
+-                    state_->label + " bounded displaced database capture",
+-                    artifact_detail::backup_seal_policy());
+-        }
+-        rollback_captured =
+-            artifact_detail::inspect_sealed_artifact_or_throw(
+-                state_->deployment, rollback_seal,
++    std::optional<SealedArtifact> rollback =
++        inspect_existing_artifact_if_present_or_throw(
++            state_->deployment, absolute_rollback_artifact_path,
++            state_->label + " rollback artifact");
++    replacement_detail::ReplacementReceiptObservation receipt_observation;
++
++    if (receipt_preexisting) {
++        replacement_detail::require_replacement_receipt_selection_matches_or_throw(
++            *receipt, state_->deployment,
++            absolute_candidate_artifact_path,
++            absolute_rollback_artifact_path,
++            absolute_receipt_path, expected_current, candidate,
++            state_->label + " action receipt");
++        if (rollback.has_value()) {
++            replacement_detail::require_replacement_receipt_artifact_matches_or_throw(
++                receipt->rollback, rollback->observation, "rollback",
++                state_->label + " action receipt");
++        } else {
++            // Receipt-only restart: the rollback can be reconstructed only
++            // while the active database remains the exact displaced state.
++            SealedArtifact displaced = capture_displaced_database_or_throw(
++                state_->deployment, absolute_rollback_artifact_path,
++                expected_current, candidate,
++                state_->label + " resumed displaced database");
++            replacement_detail::require_replacement_receipt_artifact_matches_or_throw(
++                receipt->rollback, displaced.observation, "rollback",
++                state_->label + " action receipt");
++            (void)replacement_detail::reprove_replacement_receipt_or_throw(
++                absolute_receipt_path, *receipt,
++                state_->label + " pre-rollback receipt reproof");
++            artifact_detail::preflight_artifact_output_family_create_new_or_throw(
+                 absolute_rollback_artifact_path,
+-                state_->label + " displaced rollback artifact");
+-        const SyncReplicaDatabaseBackupCutpoint after =
+-            artifact_detail::compact_backup_cutpoint(
+-                inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
+-                    active_source.handle(), state_->deployment.folder_id,
+-                    state_->deployment.local_actor,
+-                    state_->label + " displaced snapshot after capture"));
+-        active_source.verify_open_database_or_throw(
+-            state_->label + " displaced source final rooted reproof");
+-        if (before != rollback_captured.source_cutpoint ||
+-            after != rollback_captured.source_cutpoint) {
+-            throw std::runtime_error(
+                 state_->label +
+-                " displaced database changed across rollback capture");
++                    " resumed rollback final prepublication reproof");
++            displaced.seal.publish_exact_copy_atomically_create_new_or_throw(
++                absolute_rollback_artifact_path,
++                state_->label + " resumed rollback artifact publication");
++            rollback_published_this_invocation = true;
+         }
+-        if (candidate.sqlite_page_size !=
+-            rollback_captured.sqlite_page_size) {
++    } else {
++        if (rollback.has_value()) {
+             throw std::runtime_error(
+                 state_->label +
+-                " candidate page size differs from the active database");
++                " rollback artifact appeared without an immutable receipt");
+         }
+-
+-        // Candidate validation plus the displaced-database capture can be
+-        // long-running. Repeat the complete rollback-family denial at the last
+-        // non-mutating cutpoint before create-new publication.
++        SealedArtifact displaced = capture_displaced_database_or_throw(
++            state_->deployment, absolute_rollback_artifact_path,
++            expected_current, candidate,
++            state_->label + " displaced database");
++        require_unambiguous_restart_states_or_throw(
++            candidate.source_cutpoint, displaced.observation.source_cutpoint,
++            state_->label);
++        receipt = replacement_detail::make_replacement_receipt_or_throw(
++            state_->deployment, absolute_candidate_artifact_path,
++            absolute_rollback_artifact_path, absolute_receipt_path,
++            expected_current, candidate, displaced.observation,
++            state_->label + " action receipt");
++
++        // Durable immutable intent precedes the first rollback or database
++        // effect. A crash after this cutpoint is classified only from exact
++        // current database and artifact state; the receipt is never updated.
++        receipt_observation =
++            replacement_detail::publish_replacement_receipt_create_new_or_throw(
++                absolute_receipt_path, *receipt,
++                state_->label + " immutable action receipt");
++        receipt_created_this_invocation = true;
+         artifact_detail::preflight_artifact_output_family_create_new_or_throw(
+             absolute_rollback_artifact_path,
+-            state_->label +
+-                " rollback output final prepublication reproof");
+-        rollback_seal.publish_exact_copy_atomically_create_new_or_throw(
++            state_->label + " rollback output final prepublication reproof");
++        displaced.seal.publish_exact_copy_atomically_create_new_or_throw(
+             absolute_rollback_artifact_path,
+             state_->label + " immutable rollback artifact publication");
++        rollback_published_this_invocation = true;
+     }
+ 
+-    // The active forensic connection and resident rollback seal are gone.
+-    // Reopen the rollback bytes independently before any active replacement.
+-    persistence::SealedSqliteSnapshot published_rollback_seal =
+-        persistence::SealedSqliteSnapshot::capture(
+-            absolute_rollback_artifact_path,
+-            state_->label + " durable rollback artifact capture",
+-            artifact_detail::backup_seal_policy());
+-    const SyncReplicaDatabaseBackupArtifactObservation rollback_published =
+-        artifact_detail::inspect_sealed_artifact_or_throw(
+-            state_->deployment, published_rollback_seal,
+-            absolute_rollback_artifact_path,
+-            state_->label + " durable rollback artifact verification");
+-    require_same_artifact_or_throw(
+-        rollback_captured, rollback_published,
+-        state_->label + " rollback postpublication reproof");
++    if (!receipt.has_value()) {
++        throw std::logic_error(
++            state_->label + " replacement receipt admission is incomplete");
++    }
+ 
+-    persistence::SqliteLiveBackupEvidence replacement_evidence;
+-    SyncReplicaDatabaseBackupCutpoint restored_cutpoint;
+-    SyncReplicaDatabaseBackupCutpoint final_cutpoint;
+-    {
+-        SyncSqliteDbHandleSlot candidate_database =
+-            candidate_seal.open_database_owner_or_throw(
+-                state_->label + " replacement source database");
+-        configure_sync_replica_tls_policy_sqlite_read_only_connection_or_throw(
+-            candidate_database,
+-            state_->label + " replacement source read-only profile");
+-        sqlite_exec_or_throw(
+-            candidate_database,
+-            "PRAGMA temp_store=MEMORY;PRAGMA foreign_keys=ON;",
+-            state_->label + " replacement source pragmas");
++    // Release the resident displaced snapshot before independently reopening
++    // the durable rollback. Candidate + displaced and candidate + rollback are
++    // each bounded pairs; the ceremony never retains all three complete images
++    // at once merely to prove create-new publication.
++    if (!rollback.has_value()) {
++        rollback = inspect_existing_artifact_if_present_or_throw(
++            state_->deployment, absolute_rollback_artifact_path,
++            state_->label + " durable rollback artifact");
++        if (!rollback.has_value()) {
++            throw std::logic_error(
++                state_->label + " rollback publication vanished");
++        }
++        replacement_detail::require_replacement_receipt_artifact_matches_or_throw(
++            receipt->rollback, rollback->observation, "rollback",
++            state_->label + " action receipt");
++    }
++
++    receipt_observation =
++        replacement_detail::reprove_replacement_receipt_or_throw(
++            absolute_receipt_path, *receipt,
++            state_->label + " admitted action receipt reproof");
+ 
++    if (candidate.sqlite_page_size != rollback->observation.sqlite_page_size) {
++        throw std::runtime_error(
++            state_->label +
++            " candidate page size differs from the displaced database");
++    }
++    require_unambiguous_restart_states_or_throw(
++        candidate.source_cutpoint, rollback->observation.source_cutpoint,
++        state_->label);
++    (void)replacement_detail::reprove_replacement_receipt_or_throw(
++        absolute_receipt_path, *receipt,
++        state_->label + " pre-database-effect receipt reproof");
++
++    const SyncReplicaDatabaseBackupCutpoint active_at_entry =
++        inspect_active_cutpoint_or_throw(
++            state_->deployment,
++            state_->label + " active replacement classification");
++    const SyncReplicaDatabaseReplacementEntryStage entry_stage =
++        classify_entry_stage_or_throw(
++            active_at_entry, rollback->observation.source_cutpoint,
++            candidate.source_cutpoint, state_->label);
++
++    SyncReplicaDatabaseBackupCutpoint restored_cutpoint =
++        candidate.source_cutpoint;
++    SyncReplicaDatabaseBackupCutpoint final_cutpoint = active_at_entry;
++
++    if (entry_stage !=
++        SyncReplicaDatabaseReplacementEntryStage::RecoveryEpochAdvanced) {
+         SyncReplicaOperationalDatabase active_destination =
+             open_attested_sync_replica_primary_database_or_throw(
+                 state_->deployment,
+@@ -237,28 +463,50 @@ SyncReplicaDatabaseReplacementOwner::replace_or_throw(
+             active_destination.handle(), state_->deployment.folder_id,
+             state_->deployment.local_actor, SyncReplicaSqliteOwnerLimits{},
+             state_->label + " replacement replica owner");
+-        const SyncReplicaDatabaseBackupCutpoint active_before =
++        const SyncReplicaDatabaseBackupCutpoint writable_entry =
+             artifact_detail::compact_backup_cutpoint(
+                 replica_owner.snapshot_or_throw());
+-        if (active_before != rollback_published.source_cutpoint) {
++        const SyncReplicaDatabaseBackupCutpoint& expected_writable_entry =
++            entry_stage == SyncReplicaDatabaseReplacementEntryStage::
++                               DisplacedDatabaseCurrent
++                ? rollback->observation.source_cutpoint
++                : candidate.source_cutpoint;
++        if (writable_entry != expected_writable_entry) {
+             throw std::runtime_error(
+                 state_->label +
+-                " active database changed after rollback publication");
++                " active database changed between forensic classification "
++                "and writable admission");
+         }
+ 
+-        {
+-            auto destination_borrow =
+-                borrow_sync_sqlite_serialized_db_or_throw(
+-                    active_destination.handle(),
+-                    state_->label + " writable destination capability");
+-            auto candidate_borrow = borrow_sync_sqlite_serialized_db_or_throw(
++        if (entry_stage == SyncReplicaDatabaseReplacementEntryStage::
++                               DisplacedDatabaseCurrent) {
++            SyncSqliteDbHandleSlot candidate_database =
++                candidate_seal.open_database_owner_or_throw(
++                    state_->label + " replacement source database");
++            configure_sync_replica_tls_policy_sqlite_read_only_connection_or_throw(
++                candidate_database,
++                state_->label + " replacement source read-only profile");
++            sqlite_exec_or_throw(
+                 candidate_database,
+-                state_->label + " detached candidate capability");
+-            replacement_evidence =
+-                persistence::replace_sqlite_live_database_bounded_or_throw(
+-                    destination_borrow.get(), candidate_borrow.get(),
+-                    state_->label + " bounded logical database replacement",
+-                    artifact_detail::backup_seal_policy());
++                "PRAGMA temp_store=MEMORY;PRAGMA foreign_keys=ON;",
++                state_->label + " replacement source pragmas");
++            {
++                auto destination_borrow =
++                    borrow_sync_sqlite_serialized_db_or_throw(
++                        active_destination.handle(),
++                        state_->label + " writable destination capability");
++                auto candidate_borrow =
++                    borrow_sync_sqlite_serialized_db_or_throw(
++                        candidate_database,
++                        state_->label + " detached candidate capability");
++                replacement_evidence =
++                    persistence::replace_sqlite_live_database_bounded_or_throw(
++                        destination_borrow.get(), candidate_borrow.get(),
++                        state_->label +
++                            " bounded logical database replacement",
++                        artifact_detail::backup_seal_policy());
++            }
++            database_replacement_performed_this_invocation = true;
+         }
+ 
+         active_destination.verify_open_database_or_throw(
+@@ -271,11 +519,15 @@ SyncReplicaDatabaseReplacementOwner::replace_or_throw(
+                 " restored database differs from the validated candidate");
+         }
+ 
++        (void)replacement_detail::reprove_replacement_receipt_or_throw(
++            absolute_receipt_path, *receipt,
++            state_->label + " pre-recovery-epoch receipt reproof");
+         const SyncReplicaSqliteDatabaseRecoveryEpochResult advanced =
+             replica_owner.advance_database_recovery_epoch_or_throw(
+                 restored_cutpoint.database_incarnation_sha256,
+                 restored_cutpoint.database_recovery_epoch,
+                 restored_cutpoint.cutpoint_digest);
++        recovery_epoch_advanced_this_invocation = true;
+         final_cutpoint = artifact_detail::compact_backup_cutpoint(
+             replica_owner.snapshot_or_throw());
+         if (!artifact_detail::recovery_successor_matches(
+@@ -296,44 +548,115 @@ SyncReplicaDatabaseReplacementOwner::replace_or_throw(
+             state_->label + " final writable deployment reproof");
+     }
+ 
+-    // Close the writable destination, then independently reopen the current
+-    // deployment through the forensic profile. Success is based on durable
+-    // current-schema state, not only the connection that performed replacement.
++    // Close any writable destination, then bracket final receipt and artifact
++    // pathname observations with two independent current-database cutpoints.
++    // Resident candidate and rollback images are released before reopening the
++    // selected names, preserving the bounded two-image memory contract.
++    const SyncReplicaDatabaseBackupCutpoint durable_final_before_artifacts =
++        inspect_active_cutpoint_or_throw(
++            state_->deployment,
++            state_->label +
++                " final forensic deployment reproof before artifacts");
++    if (durable_final_before_artifacts != final_cutpoint) {
++        throw std::runtime_error(
++            state_->label +
++            " final reopened database differs from the committed result");
++    }
++
++    receipt_observation =
++        replacement_detail::reprove_replacement_receipt_or_throw(
++            absolute_receipt_path, *receipt,
++            state_->label + " pre-final-artifact receipt reproof");
++
++    candidate_seal = {};
++    rollback->seal = {};
++
++    SyncReplicaDatabaseBackupArtifactObservation durable_candidate;
+     {
+-        SyncReplicaOperationalDatabase final_database =
+-            open_attested_sync_replica_primary_database_read_only_or_throw(
+-                state_->deployment,
+-                state_->label + " final forensic deployment reproof");
+-        const SyncReplicaDatabaseBackupCutpoint durable_final =
+-            artifact_detail::compact_backup_cutpoint(
+-                inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
+-                    final_database.handle(), state_->deployment.folder_id,
+-                    state_->deployment.local_actor,
+-                    state_->label + " final durable snapshot"));
+-        final_database.verify_open_database_or_throw(
+-            state_->label + " final forensic rooted reproof");
+-        if (durable_final != final_cutpoint) {
++        SealedArtifact reopened_candidate =
++            inspect_required_artifact_or_throw(
++                state_->deployment, absolute_candidate_artifact_path,
++                state_->label + " final candidate pathname reproof");
++        replacement_detail::require_replacement_receipt_artifact_matches_or_throw(
++            receipt->candidate, reopened_candidate.observation, "candidate",
++            state_->label + " final action receipt");
++        if (reopened_candidate.observation != candidate) {
+             throw std::runtime_error(
+                 state_->label +
+-                " final reopened database differs from the committed result");
++                " final candidate artifact differs from the admitted "
++                "candidate");
+         }
++        durable_candidate = reopened_candidate.observation;
+     }
+-    candidate_seal.verify_unchanged_or_throw(
+-        state_->label + " final candidate capability reproof");
+-    published_rollback_seal.verify_unchanged_or_throw(
+-        state_->label + " final rollback capability reproof");
++
++    SyncReplicaDatabaseBackupArtifactObservation durable_rollback;
++    {
++        SealedArtifact reopened_rollback =
++            inspect_required_artifact_or_throw(
++                state_->deployment, absolute_rollback_artifact_path,
++                state_->label + " final rollback pathname reproof");
++        replacement_detail::require_replacement_receipt_artifact_matches_or_throw(
++            receipt->rollback, reopened_rollback.observation, "rollback",
++            state_->label + " final action receipt");
++        if (reopened_rollback.observation != rollback->observation) {
++            throw std::runtime_error(
++                state_->label +
++                " final rollback artifact differs from the admitted "
++                "rollback");
++        }
++        durable_rollback = reopened_rollback.observation;
++    }
++
++    receipt_observation =
++        replacement_detail::reprove_replacement_receipt_or_throw(
++            absolute_receipt_path, *receipt,
++            state_->label + " final immutable receipt reproof");
++
++    const SyncReplicaDatabaseBackupCutpoint durable_final_after_artifacts =
++        inspect_active_cutpoint_or_throw(
++            state_->deployment,
++            state_->label +
++                " final forensic deployment reproof after artifacts");
++    if (durable_final_after_artifacts != final_cutpoint) {
++        throw std::runtime_error(
++            state_->label +
++                " final database changed across artifact pathname reproof");
++    }
++
++    // The deployment singleton excludes cooperating AnonSync owners. These
++    // sequential pathname observations are not a continuous reservation of
++    // candidate, rollback, or receipt names against a noncooperating same-UID
++    // process; success reports that limitation explicitly.
+ 
+     return {
+-        .candidate_artifact = candidate,
+-        .rollback_artifact = rollback_published,
+-        .displaced_cutpoint = rollback_published.source_cutpoint,
++        .candidate_artifact = std::move(durable_candidate),
++        .rollback_artifact = std::move(durable_rollback),
++        .displaced_cutpoint = rollback->observation.source_cutpoint,
+         .restored_cutpoint = std::move(restored_cutpoint),
+         .final_cutpoint = std::move(final_cutpoint),
++        .receipt_path = receipt_observation.receipt_path,
++        .receipt_action_sha256 = receipt_observation.action_sha256,
++        .receipt_record_sha256 = receipt_observation.record_sha256,
++        .entry_stage = entry_stage,
+         .backup_step_calls = replacement_evidence.step_calls,
+         .maximum_reported_page_count =
+             replacement_evidence.maximum_reported_page_count,
+         .maximum_reported_remaining_pages =
+             replacement_evidence.maximum_reported_remaining_pages,
++        .receipt_preexisting = receipt_preexisting,
++        .receipt_created_this_invocation =
++            receipt_created_this_invocation,
++        .rollback_published_this_invocation =
++            rollback_published_this_invocation,
++        .database_replacement_performed_this_invocation =
++            database_replacement_performed_this_invocation,
++        .recovery_epoch_advanced_this_invocation =
++            recovery_epoch_advanced_this_invocation,
++        .idempotent_reproof_only =
++            entry_stage == SyncReplicaDatabaseReplacementEntryStage::
++                               RecoveryEpochAdvanced,
++        .final_candidate_path_reproved = true,
++        .final_rollback_path_reproved = true,
+     };
+ }
+ 
+diff --git a/src/sync_replica_database_replacement.hpp b/src/sync_replica_database_replacement.hpp
+index 3683563a6bc1d4f0021edc0c430c645177c4672f..546348fe441ad20f9d19b944e41ed2a36e235d8b 100644
+--- a/src/sync_replica_database_replacement.hpp
++++ b/src/sync_replica_database_replacement.hpp
+@@ -15,29 +15,54 @@ struct SyncReplicaDatabaseReplacementExpectation final {
+     std::string database_incarnation_sha256;
+     std::uint64_t database_recovery_epoch = 0U;
+     std::string cutpoint_digest;
++
++    bool operator==(
++        const SyncReplicaDatabaseReplacementExpectation&) const = default;
++};
++
++enum class SyncReplicaDatabaseReplacementEntryStage {
++    DisplacedDatabaseCurrent,
++    CandidateInstalledEpochPending,
++    RecoveryEpochAdvanced,
+ };
+ 
++[[nodiscard]] const char* sync_replica_database_replacement_entry_stage_name(
++    SyncReplicaDatabaseReplacementEntryStage stage) noexcept;
++
+ struct SyncReplicaDatabaseReplacementResult final {
+     SyncReplicaDatabaseBackupArtifactObservation candidate_artifact;
+     SyncReplicaDatabaseBackupArtifactObservation rollback_artifact;
+     SyncReplicaDatabaseBackupCutpoint displaced_cutpoint;
+     SyncReplicaDatabaseBackupCutpoint restored_cutpoint;
+     SyncReplicaDatabaseBackupCutpoint final_cutpoint;
++    std::filesystem::path receipt_path;
++    std::string receipt_action_sha256;
++    std::string receipt_record_sha256;
++    SyncReplicaDatabaseReplacementEntryStage entry_stage =
++        SyncReplicaDatabaseReplacementEntryStage::DisplacedDatabaseCurrent;
+     std::uint64_t backup_step_calls = 0U;
+     std::uint64_t maximum_reported_page_count = 0U;
+     std::uint64_t maximum_reported_remaining_pages = 0U;
++    bool receipt_preexisting = false;
++    bool receipt_created_this_invocation = false;
++    bool rollback_published_this_invocation = false;
++    bool database_replacement_performed_this_invocation = false;
++    bool recovery_epoch_advanced_this_invocation = false;
++    bool idempotent_reproof_only = false;
++    bool final_candidate_path_reproved = false;
++    bool final_rollback_path_reproved = false;
+ };
+ 
+ // Separate offline authority for replacing the primary replica database from
+ // one already-created immutable backup artifact. Construction claims the same
+ // deployment singleton used by run, once, backup, and recovery commands before
+-// any database family or artifact is opened. The candidate is completely
+-// detached-verified before mutation. The exact displaced logical database is
+-// then published create-new as a canonical rollback artifact, the candidate is
+-// copied into the existing descriptor-rooted writable SQLite family under
+-// SQLite's own destination transaction, and the restored cutpoint is advanced
+-// through the existing exact recovery-epoch transition before success returns.
+-// It does not restore payload bytes or any other deployment database.
++// any database family, artifact, or action receipt is opened. One bounded,
++// immutable, create-new receipt binds the exact selected action before the first
++// rollback or database effect. Restart progress is classified from the active
++// database's exact logical cutpoint, never from a mutable receipt stage. The
++// owner admits only the exact displaced database, the exact candidate awaiting
++// recovery-epoch advance, or the candidate's exact recovery successor. It does
++// not restore payload bytes or any other deployment database.
+ class SyncReplicaDatabaseReplacementOwner final {
+ public:
+     explicit SyncReplicaDatabaseReplacementOwner(
+@@ -57,9 +82,11 @@ public:
+     [[nodiscard]] const SyncReplicaDeploymentManifest& deployment()
+         const noexcept;
+ 
+-    [[nodiscard]] SyncReplicaDatabaseReplacementResult replace_or_throw(
++    [[nodiscard]] SyncReplicaDatabaseReplacementResult
++    replace_or_resume_or_throw(
+         const std::filesystem::path& absolute_candidate_artifact_path,
+         const std::filesystem::path& absolute_rollback_artifact_path,
++        const std::filesystem::path& absolute_receipt_path,
+         const SyncReplicaDatabaseReplacementExpectation& expected_current);
+ 
+ private:
+diff --git a/src/sync_replica_database_replacement_receipt.cpp b/src/sync_replica_database_replacement_receipt.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..c048fc47fba0c1045490f15e35cfb7fef8655818
+--- /dev/null
++++ b/src/sync_replica_database_replacement_receipt.cpp
+@@ -0,0 +1,588 @@
++#include "sync_replica_database_replacement_receipt_internal.hpp"
++
++#if !defined(_WIN32)
++
++#include "sha256_digest.hpp"
++#include "sync_atomic_file_publication.hpp"
++#include "sync_bounded_regular_file.hpp"
++#include "sync_replica_database_artifact_internal.hpp"
++
++#include <charconv>
++#include <cstdint>
++#include <exception>
++#include <filesystem>
++#include <limits>
++#include <span>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <system_error>
++#include <utility>
++
++namespace anonsync::sync_replica_database_replacement_detail {
++
++namespace fs = std::filesystem;
++namespace artifact_detail = sync_replica_database_artifact_detail;
++using namespace std::literals;
++
++namespace {
++
++constexpr std::string_view kReceiptMagic =
++    "anonsync:replica-database-replacement-receipt:v1"sv;
++constexpr std::string_view kReceiptPathDigestDomain =
++    "anonsync:replica-database-replacement-receipt:path:v1\0"sv;
++constexpr std::string_view kReceiptActionDigestDomain =
++    "anonsync:replica-database-replacement-receipt:action:v1\0"sv;
++constexpr std::string_view kReceiptRecordDigestDomain =
++    "anonsync:replica-database-replacement-receipt:record:v1\0"sv;
++static_assert(kReceiptPathDigestDomain.back() == '\0');
++static_assert(kReceiptActionDigestDomain.back() == '\0');
++static_assert(kReceiptRecordDigestDomain.back() == '\0');
++constexpr std::uint64_t kMaximumReceiptBytes = 8U * 1024U;
++
++[[noreturn]] void receipt_invalid(
++    const std::string& label,
++    const std::string& reason) {
++    throw std::runtime_error(label + " replacement receipt " + reason);
++}
++
++[[nodiscard]] std::string path_digest(const fs::path& path) {
++    Sha256DigestBuilder digest;
++    digest.update(kReceiptPathDigestDomain);
++    digest.update(path.generic_string());
++    return digest.finish_hex();
++}
++
++void append_field(
++    std::string& output,
++    std::string_view name,
++    std::string_view value) {
++    if (name.empty() || name.find_first_of("=\r\n") != std::string_view::npos ||
++        value.find_first_of("\r\n") != std::string_view::npos) {
++        throw std::logic_error(
++            "replacement receipt canonical field contains a delimiter");
++    }
++    output.append(name);
++    output.push_back('=');
++    output.append(value);
++    output.push_back('\n');
++}
++
++void append_u64(
++    std::string& output,
++    std::string_view name,
++    std::uint64_t value) {
++    append_field(output, name, std::to_string(value));
++}
++
++void append_cutpoint_fields(
++    std::string& output,
++    std::string_view prefix,
++    const SyncReplicaDatabaseBackupCutpoint& cutpoint) {
++    const std::string p(prefix);
++    append_field(output, p + "_database_incarnation_sha256",
++                 cutpoint.database_incarnation_sha256);
++    append_u64(output, p + "_database_recovery_epoch",
++               cutpoint.database_recovery_epoch);
++    append_u64(output, p + "_state_generation", cutpoint.state_generation);
++    append_u64(output, p + "_policy_generation", cutpoint.policy_generation);
++    append_u64(output, p + "_outbox_time_high_water_epoch",
++               cutpoint.outbox_time_high_water_epoch);
++    append_field(output, p + "_local_operation_digest",
++                 cutpoint.local_operation_digest);
++    append_field(output, p + "_operation_set_digest",
++                 cutpoint.operation_set_digest);
++    append_field(output, p + "_evidence_set_digest",
++                 cutpoint.evidence_set_digest);
++    append_field(output, p + "_visible_state_digest",
++                 cutpoint.visible_state_digest);
++    append_field(output, p + "_outbox_digest", cutpoint.outbox_digest);
++    append_field(output, p + "_outbox_clock_digest",
++                 cutpoint.outbox_clock_digest);
++    append_u64(output, p + "_historical_version_pin_count",
++               cutpoint.historical_version_pin_count);
++    append_field(output, p + "_historical_version_pin_set_digest",
++                 cutpoint.historical_version_pin_set_digest);
++    append_field(output, p + "_cutpoint_digest", cutpoint.cutpoint_digest);
++}
++
++void append_artifact_fields(
++    std::string& output,
++    std::string_view prefix,
++    const ReplacementReceiptArtifact& artifact) {
++    const std::string p(prefix);
++    append_field(output, p + "_artifact_sha256", artifact.artifact_sha256);
++    append_u64(output, p + "_artifact_bytes", artifact.artifact_bytes);
++    append_u64(output, p + "_sqlite_page_size", artifact.sqlite_page_size);
++    append_u64(output, p + "_sqlite_page_count", artifact.sqlite_page_count);
++    append_cutpoint_fields(output, p, artifact.source_cutpoint);
++}
++
++[[nodiscard]] ReplacementReceiptArtifact receipt_artifact(
++    const SyncReplicaDatabaseBackupArtifactObservation& observed) {
++    return {
++        .artifact_sha256 = observed.artifact_sha256,
++        .artifact_bytes = observed.artifact_bytes,
++        .sqlite_page_size = observed.sqlite_page_size,
++        .sqlite_page_count = observed.sqlite_page_count,
++        .source_cutpoint = observed.source_cutpoint,
++    };
++}
++
++void require_digest(
++    std::string_view value,
++    std::string_view field,
++    const std::string& label) {
++    if (!is_lowercase_sha256_hex(value)) {
++        receipt_invalid(label, std::string(field) + " digest is invalid");
++    }
++}
++
++void validate_cutpoint(
++    const SyncReplicaDatabaseBackupCutpoint& cutpoint,
++    std::string_view prefix,
++    const std::string& label) {
++    require_digest(cutpoint.database_incarnation_sha256,
++                   std::string(prefix) + " database incarnation", label);
++    if (cutpoint.database_recovery_epoch == 0U) {
++        receipt_invalid(label,
++                        std::string(prefix) + " recovery epoch is zero");
++    }
++    for (const auto& [name, value] : {
++             std::pair<std::string_view, const std::string&>{
++                 "local operation", cutpoint.local_operation_digest},
++             {"operation set", cutpoint.operation_set_digest},
++             {"evidence set", cutpoint.evidence_set_digest},
++             {"visible state", cutpoint.visible_state_digest},
++             {"outbox", cutpoint.outbox_digest},
++             {"outbox clock", cutpoint.outbox_clock_digest},
++             {"historical version pin set",
++              cutpoint.historical_version_pin_set_digest},
++             {"cutpoint", cutpoint.cutpoint_digest},
++         }) {
++        require_digest(value, std::string(prefix) + " " + std::string(name),
++                       label);
++    }
++}
++
++void validate_artifact(
++    const ReplacementReceiptArtifact& artifact,
++    std::string_view prefix,
++    const std::string& label) {
++    require_digest(artifact.artifact_sha256,
++                   std::string(prefix) + " artifact", label);
++    if (artifact.artifact_bytes == 0U || artifact.sqlite_page_size == 0U ||
++        artifact.sqlite_page_count == 0U ||
++        artifact.artifact_bytes !=
++            static_cast<std::uint64_t>(artifact.sqlite_page_size) *
++                static_cast<std::uint64_t>(artifact.sqlite_page_count)) {
++        receipt_invalid(label,
++                        std::string(prefix) + " artifact geometry is invalid");
++    }
++    validate_cutpoint(artifact.source_cutpoint, prefix, label);
++}
++
++[[nodiscard]] std::string immutable_receipt_fields(
++    const ReplacementReceipt& receipt) {
++    std::string output;
++    output.reserve(4096U);
++    append_field(output, "deployment_id", receipt.deployment_id);
++    append_field(output, "manifest_digest", receipt.manifest_digest);
++    append_field(output, "manifest_path_sha256",
++                 receipt.manifest_path_sha256);
++    append_field(output, "replica_database_path_sha256",
++                 receipt.replica_database_path_sha256);
++    append_field(output, "candidate_path_sha256",
++                 receipt.candidate_path_sha256);
++    append_field(output, "rollback_path_sha256",
++                 receipt.rollback_path_sha256);
++    append_field(output, "receipt_path_sha256", receipt.receipt_path_sha256);
++    append_field(output, "expected_database_incarnation_sha256",
++                 receipt.expected_current.database_incarnation_sha256);
++    append_u64(output, "expected_database_recovery_epoch",
++               receipt.expected_current.database_recovery_epoch);
++    append_field(output, "expected_cutpoint_digest",
++                 receipt.expected_current.cutpoint_digest);
++    append_artifact_fields(output, "candidate", receipt.candidate);
++    append_artifact_fields(output, "rollback", receipt.rollback);
++    return output;
++}
++
++[[nodiscard]] std::string action_digest(
++    const ReplacementReceipt& receipt) {
++    Sha256DigestBuilder digest;
++    digest.update(kReceiptActionDigestDomain);
++    digest.update(immutable_receipt_fields(receipt));
++    return digest.finish_hex();
++}
++
++void validate_receipt(
++    const ReplacementReceipt& receipt,
++    const std::string& label) {
++    if (!is_lowercase_sha256_hex(receipt.deployment_id) ||
++        !is_lowercase_sha256_hex(receipt.manifest_digest)) {
++        receipt_invalid(label, "deployment binding is invalid");
++    }
++    for (const auto& [name, value] : {
++             std::pair<std::string_view, const std::string&>{
++                 "manifest path", receipt.manifest_path_sha256},
++             {"replica database path", receipt.replica_database_path_sha256},
++             {"candidate path", receipt.candidate_path_sha256},
++             {"rollback path", receipt.rollback_path_sha256},
++             {"receipt path", receipt.receipt_path_sha256},
++         }) {
++        require_digest(value, name, label);
++    }
++    require_digest(receipt.expected_current.database_incarnation_sha256,
++                   "expected database incarnation", label);
++    if (receipt.expected_current.database_recovery_epoch == 0U) {
++        receipt_invalid(label, "expected recovery epoch is zero");
++    }
++    require_digest(receipt.expected_current.cutpoint_digest,
++                   "expected cutpoint", label);
++    validate_artifact(receipt.candidate, "candidate", label);
++    validate_artifact(receipt.rollback, "rollback", label);
++    require_digest(receipt.action_sha256, "action", label);
++    if (action_digest(receipt) != receipt.action_sha256) {
++        receipt_invalid(label, "action digest is inconsistent");
++    }
++}
++
++[[nodiscard]] std::string serialize_receipt(
++    const ReplacementReceipt& receipt,
++    const std::string& label) {
++    validate_receipt(receipt, label);
++    std::string encoded;
++    encoded.reserve(6144U);
++    encoded.append(kReceiptMagic);
++    encoded.push_back('\n');
++    encoded.append(immutable_receipt_fields(receipt));
++    append_field(encoded, "action_sha256", receipt.action_sha256);
++    Sha256DigestBuilder digest;
++    digest.update(kReceiptRecordDigestDomain);
++    digest.update(encoded);
++    append_field(encoded, "record_sha256", digest.finish_hex());
++    if (encoded.size() > kMaximumReceiptBytes) {
++        throw std::length_error(label + " replacement receipt exceeds 8 KiB");
++    }
++    return encoded;
++}
++
++class LineCursor final {
++public:
++    LineCursor(std::string_view bytes, std::string label)
++        : bytes_(bytes), label_(std::move(label)) {
++        if (bytes_.empty() || bytes_.back() != '\n' ||
++            bytes_.find('\r') != std::string_view::npos ||
++            bytes_.find('\0') != std::string_view::npos) {
++            receipt_invalid(label_, "framing is invalid");
++        }
++    }
++
++    [[nodiscard]] std::string take_line() {
++        const std::size_t end = bytes_.find('\n', position_);
++        if (end == std::string_view::npos) {
++            receipt_invalid(label_, "is truncated");
++        }
++        std::string line(bytes_.substr(position_, end - position_));
++        position_ = end + 1U;
++        return line;
++    }
++
++    [[nodiscard]] std::string take_field(std::string_view expected_name) {
++        const std::string line = take_line();
++        const std::string prefix = std::string(expected_name) + "=";
++        if (!line.starts_with(prefix)) {
++            receipt_invalid(label_,
++                            "field order changed at " +
++                                std::string(expected_name));
++        }
++        return line.substr(prefix.size());
++    }
++
++    [[nodiscard]] std::uint64_t take_u64(std::string_view name) {
++        const std::string value = take_field(name);
++        if (value.empty() || (value.size() > 1U && value.front() == '0')) {
++            receipt_invalid(label_,
++                            std::string(name) + " integer is noncanonical");
++        }
++        std::uint64_t parsed = 0U;
++        const auto result = std::from_chars(
++            value.data(), value.data() + value.size(), parsed);
++        if (result.ec != std::errc{} ||
++            result.ptr != value.data() + value.size()) {
++            receipt_invalid(label_, std::string(name) + " integer is invalid");
++        }
++        return parsed;
++    }
++
++    [[nodiscard]] bool exhausted() const noexcept {
++        return position_ == bytes_.size();
++    }
++
++private:
++    std::string_view bytes_;
++    std::string label_;
++    std::size_t position_ = 0U;
++};
++
++[[nodiscard]] SyncReplicaDatabaseBackupCutpoint parse_cutpoint(
++    LineCursor& cursor,
++    std::string_view prefix) {
++    const std::string p(prefix);
++    SyncReplicaDatabaseBackupCutpoint out;
++    out.database_incarnation_sha256 =
++        cursor.take_field(p + "_database_incarnation_sha256");
++    out.database_recovery_epoch =
++        cursor.take_u64(p + "_database_recovery_epoch");
++    out.state_generation = cursor.take_u64(p + "_state_generation");
++    out.policy_generation = cursor.take_u64(p + "_policy_generation");
++    out.outbox_time_high_water_epoch =
++        cursor.take_u64(p + "_outbox_time_high_water_epoch");
++    out.local_operation_digest =
++        cursor.take_field(p + "_local_operation_digest");
++    out.operation_set_digest = cursor.take_field(p + "_operation_set_digest");
++    out.evidence_set_digest = cursor.take_field(p + "_evidence_set_digest");
++    out.visible_state_digest = cursor.take_field(p + "_visible_state_digest");
++    out.outbox_digest = cursor.take_field(p + "_outbox_digest");
++    out.outbox_clock_digest = cursor.take_field(p + "_outbox_clock_digest");
++    out.historical_version_pin_count =
++        cursor.take_u64(p + "_historical_version_pin_count");
++    out.historical_version_pin_set_digest =
++        cursor.take_field(p + "_historical_version_pin_set_digest");
++    out.cutpoint_digest = cursor.take_field(p + "_cutpoint_digest");
++    return out;
++}
++
++[[nodiscard]] ReplacementReceiptArtifact parse_artifact(
++    LineCursor& cursor,
++    std::string_view prefix,
++    const std::string& label) {
++    const std::string p(prefix);
++    ReplacementReceiptArtifact out;
++    out.artifact_sha256 = cursor.take_field(p + "_artifact_sha256");
++    out.artifact_bytes = cursor.take_u64(p + "_artifact_bytes");
++    const std::uint64_t page_size = cursor.take_u64(p + "_sqlite_page_size");
++    const std::uint64_t page_count = cursor.take_u64(p + "_sqlite_page_count");
++    if (page_size > std::numeric_limits<std::uint32_t>::max() ||
++        page_count > std::numeric_limits<std::uint32_t>::max()) {
++        receipt_invalid(label, p + " SQLite geometry overflows");
++    }
++    out.sqlite_page_size = static_cast<std::uint32_t>(page_size);
++    out.sqlite_page_count = static_cast<std::uint32_t>(page_count);
++    out.source_cutpoint = parse_cutpoint(cursor, p);
++    return out;
++}
++
++[[nodiscard]] ReplacementReceipt parse_receipt(
++    std::string_view bytes,
++    const std::string& label,
++    std::string* record_sha256_out) {
++    if (bytes.size() > kMaximumReceiptBytes) {
++        receipt_invalid(label, "exceeds 8 KiB");
++    }
++    LineCursor cursor(bytes, label);
++    if (cursor.take_line() != kReceiptMagic) {
++        receipt_invalid(label, "magic is invalid");
++    }
++    ReplacementReceipt receipt;
++    receipt.deployment_id = cursor.take_field("deployment_id");
++    receipt.manifest_digest = cursor.take_field("manifest_digest");
++    receipt.manifest_path_sha256 = cursor.take_field("manifest_path_sha256");
++    receipt.replica_database_path_sha256 =
++        cursor.take_field("replica_database_path_sha256");
++    receipt.candidate_path_sha256 = cursor.take_field("candidate_path_sha256");
++    receipt.rollback_path_sha256 = cursor.take_field("rollback_path_sha256");
++    receipt.receipt_path_sha256 = cursor.take_field("receipt_path_sha256");
++    receipt.expected_current.database_incarnation_sha256 =
++        cursor.take_field("expected_database_incarnation_sha256");
++    receipt.expected_current.database_recovery_epoch =
++        cursor.take_u64("expected_database_recovery_epoch");
++    receipt.expected_current.cutpoint_digest =
++        cursor.take_field("expected_cutpoint_digest");
++    receipt.candidate = parse_artifact(cursor, "candidate", label);
++    receipt.rollback = parse_artifact(cursor, "rollback", label);
++    receipt.action_sha256 = cursor.take_field("action_sha256");
++    const std::string record_sha256 = cursor.take_field("record_sha256");
++    if (!cursor.exhausted()) {
++        receipt_invalid(label, "contains trailing fields");
++    }
++    require_digest(record_sha256, "record", label);
++
++    const std::size_t record_line_bytes =
++        std::string("record_sha256=").size() + record_sha256.size() + 1U;
++    if (bytes.size() < record_line_bytes) {
++        receipt_invalid(label, "record framing underflowed");
++    }
++    Sha256DigestBuilder digest;
++    digest.update(kReceiptRecordDigestDomain);
++    digest.update(bytes.substr(0U, bytes.size() - record_line_bytes));
++    if (digest.finish_hex() != record_sha256) {
++        receipt_invalid(label, "checksum is invalid");
++    }
++    validate_receipt(receipt, label);
++    if (serialize_receipt(receipt, label) != bytes) {
++        receipt_invalid(label, "encoding is noncanonical");
++    }
++    if (record_sha256_out != nullptr) *record_sha256_out = record_sha256;
++    return receipt;
++}
++
++[[nodiscard]] std::pair<ReplacementReceipt, ReplacementReceiptObservation>
++read_receipt_or_throw(
++    const fs::path& receipt_path,
++    const std::string& label) {
++    const std::string bytes =
++        read_sync_bounded_private_regular_file_no_symlink_or_throw(
++            receipt_path, kMaximumReceiptBytes, label);
++    std::string record_sha256;
++    ReplacementReceipt receipt = parse_receipt(bytes, label, &record_sha256);
++    return {
++        receipt,
++        {
++            .receipt_path = receipt_path,
++            .action_sha256 = receipt.action_sha256,
++            .record_sha256 = std::move(record_sha256),
++            .byte_count = static_cast<std::uint64_t>(bytes.size()),
++        },
++    };
++}
++
++[[nodiscard]] bool receipt_path_collides_with_family(
++    const fs::path& receipt_path,
++    const fs::path& artifact_path) {
++    for (const fs::path& member :
++         artifact_detail::sqlite_artifact_family_paths(artifact_path)) {
++        if (receipt_path == member) return true;
++    }
++    return false;
++}
++
++}  // namespace
++
++void validate_external_receipt_path_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const fs::path& candidate_path,
++    const fs::path& rollback_path,
++    const fs::path& receipt_path,
++    const std::string& label) {
++    artifact_detail::validate_artifact_path_or_throw(
++        deployment, receipt_path, label);
++    if (receipt_path_collides_with_family(receipt_path, candidate_path) ||
++        receipt_path_collides_with_family(receipt_path, rollback_path)) {
++        throw std::invalid_argument(
++            label + " collides with a selected SQLite artifact family");
++    }
++}
++
++ReplacementReceipt make_replacement_receipt_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const fs::path& candidate_path,
++    const fs::path& rollback_path,
++    const fs::path& receipt_path,
++    const SyncReplicaDatabaseReplacementExpectation& expected_current,
++    const SyncReplicaDatabaseBackupArtifactObservation& candidate,
++    const SyncReplicaDatabaseBackupArtifactObservation& rollback,
++    const std::string& label) {
++    ReplacementReceipt receipt{
++        .deployment_id = deployment.deployment_id,
++        .manifest_digest = deployment.manifest_digest,
++        .manifest_path_sha256 = path_digest(deployment.manifest_path),
++        .replica_database_path_sha256 = path_digest(deployment.replica_db),
++        .candidate_path_sha256 = path_digest(candidate_path),
++        .rollback_path_sha256 = path_digest(rollback_path),
++        .receipt_path_sha256 = path_digest(receipt_path),
++        .expected_current = expected_current,
++        .candidate = receipt_artifact(candidate),
++        .rollback = receipt_artifact(rollback),
++        .action_sha256 = {},
++    };
++    receipt.action_sha256 = action_digest(receipt);
++    validate_receipt(receipt, label);
++    return receipt;
++}
++
++std::optional<ReplacementReceipt>
++read_replacement_receipt_if_present_or_throw(
++    const fs::path& receipt_path,
++    const std::string& label) {
++    try {
++        return read_receipt_or_throw(receipt_path, label).first;
++    } catch (...) {
++        const std::exception_ptr read_failure = std::current_exception();
++        artifact_detail::require_exact_path_absence_or_rethrow(
++            receipt_path, read_failure);
++        preflight_sync_file_create_new_no_symlink_or_throw(
++            receipt_path, label + " absent receipt preflight");
++        return std::nullopt;
++    }
++}
++
++ReplacementReceiptObservation
++publish_replacement_receipt_create_new_or_throw(
++    const fs::path& receipt_path,
++    const ReplacementReceipt& receipt,
++    const std::string& label) {
++    const std::string encoded = serialize_receipt(receipt, label);
++    write_sync_file_atomically_create_new_no_symlink_or_throw(
++        receipt_path,
++        std::span<const unsigned char>(
++            reinterpret_cast<const unsigned char*>(encoded.data()),
++            encoded.size()),
++        label + " publication");
++    return reprove_replacement_receipt_or_throw(
++        receipt_path, receipt, label + " postpublication reproof");
++}
++
++ReplacementReceiptObservation reprove_replacement_receipt_or_throw(
++    const fs::path& receipt_path,
++    const ReplacementReceipt& expected,
++    const std::string& label) {
++    auto [observed, observation] = read_receipt_or_throw(receipt_path, label);
++    if (observed != expected) {
++        receipt_invalid(label, "changed");
++    }
++    return observation;
++}
++
++void require_replacement_receipt_selection_matches_or_throw(
++    const ReplacementReceipt& receipt,
++    const SyncReplicaDeploymentManifest& deployment,
++    const fs::path& candidate_path,
++    const fs::path& rollback_path,
++    const fs::path& receipt_path,
++    const SyncReplicaDatabaseReplacementExpectation& expected_current,
++    const SyncReplicaDatabaseBackupArtifactObservation& candidate,
++    const std::string& label) {
++    if (receipt.deployment_id != deployment.deployment_id ||
++        receipt.manifest_digest != deployment.manifest_digest ||
++        receipt.manifest_path_sha256 != path_digest(deployment.manifest_path) ||
++        receipt.replica_database_path_sha256 !=
++            path_digest(deployment.replica_db) ||
++        receipt.candidate_path_sha256 != path_digest(candidate_path) ||
++        receipt.rollback_path_sha256 != path_digest(rollback_path) ||
++        receipt.receipt_path_sha256 != path_digest(receipt_path) ||
++        receipt.expected_current.database_incarnation_sha256 !=
++            expected_current.database_incarnation_sha256 ||
++        receipt.expected_current.database_recovery_epoch !=
++            expected_current.database_recovery_epoch ||
++        receipt.expected_current.cutpoint_digest !=
++            expected_current.cutpoint_digest ||
++        receipt.candidate != receipt_artifact(candidate)) {
++        receipt_invalid(label, "does not match the selected action");
++    }
++}
++
++void require_replacement_receipt_artifact_matches_or_throw(
++    const ReplacementReceiptArtifact& expected,
++    const SyncReplicaDatabaseBackupArtifactObservation& observed,
++    const std::string& artifact_name,
++    const std::string& label) {
++    if (expected != receipt_artifact(observed)) {
++        receipt_invalid(label, artifact_name + " artifact changed");
++    }
++}
++
++}  // namespace anonsync::sync_replica_database_replacement_detail
++
++#endif
+diff --git a/src/sync_replica_database_replacement_receipt_internal.hpp b/src/sync_replica_database_replacement_receipt_internal.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..e842753e74e996bfc813ec128a1c664a78bfb667
+--- /dev/null
++++ b/src/sync_replica_database_replacement_receipt_internal.hpp
+@@ -0,0 +1,101 @@
++#pragma once
++
++#if !defined(_WIN32)
++
++#include "sync_replica_database_replacement.hpp"
++
++#include <cstdint>
++#include <filesystem>
++#include <optional>
++#include <string>
++
++namespace anonsync::sync_replica_database_replacement_detail {
++
++struct ReplacementReceiptArtifact final {
++    std::string artifact_sha256;
++    std::uint64_t artifact_bytes = 0U;
++    std::uint32_t sqlite_page_size = 0U;
++    std::uint32_t sqlite_page_count = 0U;
++    SyncReplicaDatabaseBackupCutpoint source_cutpoint;
++
++    bool operator==(const ReplacementReceiptArtifact&) const = default;
++};
++
++struct ReplacementReceipt final {
++    std::string deployment_id;
++    std::string manifest_digest;
++    std::string manifest_path_sha256;
++    std::string replica_database_path_sha256;
++    std::string candidate_path_sha256;
++    std::string rollback_path_sha256;
++    std::string receipt_path_sha256;
++    SyncReplicaDatabaseReplacementExpectation expected_current;
++    ReplacementReceiptArtifact candidate;
++    ReplacementReceiptArtifact rollback;
++    std::string action_sha256;
++
++    bool operator==(const ReplacementReceipt&) const = default;
++};
++
++struct ReplacementReceiptObservation final {
++    std::filesystem::path receipt_path;
++    std::string action_sha256;
++    std::string record_sha256;
++    std::uint64_t byte_count = 0U;
++
++    bool operator==(const ReplacementReceiptObservation&) const = default;
++};
++
++void validate_external_receipt_path_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const std::filesystem::path& candidate_path,
++    const std::filesystem::path& rollback_path,
++    const std::filesystem::path& receipt_path,
++    const std::string& label);
++
++[[nodiscard]] ReplacementReceipt make_replacement_receipt_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const std::filesystem::path& candidate_path,
++    const std::filesystem::path& rollback_path,
++    const std::filesystem::path& receipt_path,
++    const SyncReplicaDatabaseReplacementExpectation& expected_current,
++    const SyncReplicaDatabaseBackupArtifactObservation& candidate,
++    const SyncReplicaDatabaseBackupArtifactObservation& rollback,
++    const std::string& label);
++
++[[nodiscard]] std::optional<ReplacementReceipt>
++read_replacement_receipt_if_present_or_throw(
++    const std::filesystem::path& receipt_path,
++    const std::string& label);
++
++[[nodiscard]] ReplacementReceiptObservation
++publish_replacement_receipt_create_new_or_throw(
++    const std::filesystem::path& receipt_path,
++    const ReplacementReceipt& receipt,
++    const std::string& label);
++
++[[nodiscard]] ReplacementReceiptObservation
++reprove_replacement_receipt_or_throw(
++    const std::filesystem::path& receipt_path,
++    const ReplacementReceipt& expected,
++    const std::string& label);
++
++void require_replacement_receipt_selection_matches_or_throw(
++    const ReplacementReceipt& receipt,
++    const SyncReplicaDeploymentManifest& deployment,
++    const std::filesystem::path& candidate_path,
++    const std::filesystem::path& rollback_path,
++    const std::filesystem::path& receipt_path,
++    const SyncReplicaDatabaseReplacementExpectation& expected_current,
++    const SyncReplicaDatabaseBackupArtifactObservation& candidate,
++    const std::string& label);
++
++void require_replacement_receipt_artifact_matches_or_throw(
++    const ReplacementReceiptArtifact& expected,
++    const SyncReplicaDatabaseBackupArtifactObservation& observed,
++    const std::string& artifact_name,
++    const std::string& label);
++
++}  // namespace anonsync::sync_replica_database_replacement_detail
++
++#endif
+diff --git a/tools/audit_sync_bounded_regular_file.py b/tools/audit_sync_bounded_regular_file.py
+index 4d888e0b64473a863589714d2599a81765ec8716..40952513d7a39120684524b30179a3e7da3f9b6c 100644
+--- a/tools/audit_sync_bounded_regular_file.py
++++ b/tools/audit_sync_bounded_regular_file.py
+@@ -28,6 +28,7 @@ REQUIRED = (
+     Path("src/sync_replica_peer_service_provisioning.cpp"),
+     Path("src/sync_replica_bootstrap_record.cpp"),
+     Path("src/sync_replica_deployment_manifest.cpp"),
++    Path("src/sync_replica_database_replacement_receipt.cpp"),
+     Path("tests/sync_bounded_regular_file_test.cpp"),
+     Path("tests/sync_bounded_regular_file_syscall_test.cpp"),
+     Path("tools/audit_sync_bounded_regular_file.py"),
+@@ -145,6 +146,9 @@ def main() -> int:
+     ]
+     bootstrap_record = text[Path("src/sync_replica_bootstrap_record.cpp")]
+     deployment_manifest = text[Path("src/sync_replica_deployment_manifest.cpp")]
++    replacement_receipt = text[
++        Path("src/sync_replica_database_replacement_receipt.cpp")
++    ]
+     runtime_test = text[Path("tests/sync_bounded_regular_file_test.cpp")]
+     syscall_test = text[Path("tests/sync_bounded_regular_file_syscall_test.cpp")]
+     verifier = text[Path("tools/verify_release_package.py")]
+@@ -217,6 +221,7 @@ def main() -> int:
+             "src/sync_linked_peer_pairing.cpp": 3,
+             "src/sync_replica_peer_service_configuration.cpp": 3,
+             "src/sync_replica_peer_service_provisioning.cpp": 1,
++            "src/sync_replica_database_replacement_receipt.cpp": 1,
+             "src/sync_bounded_regular_file.cpp": 1,
+             "src/sync_bounded_regular_file.hpp": 1,
+         },
+@@ -243,10 +248,11 @@ def main() -> int:
+                 (service_provisioning, 0, 1),
+                 (bootstrap_record, 1, 0),
+                 (deployment_manifest, 1, 0),
++                (replacement_receipt, 0, 1),
+             )
+         ),
+         "all_consumers_use_the_owned_header_and_explicit_policy",
+-        "generic documents use ordinary bounded reads while route/service configuration uses the private-file contract for I2P identity, owner-only configuration, and TLS private keys",
++        "generic documents use ordinary bounded reads while route/service configuration, TLS private keys, and immutable replacement receipts use the private-file contract",
+     )
+     require(
+         len(header.splitlines()) <= 48
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index b316a922a55a329950906e3831523e8b25278b68..a89de7cf11cef944d4665c0cf82c8efd30b31b47 100644
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -193,6 +193,10 @@ REQUIRED = (
+     Path("tests/persistence/sqlite_live_backup_tests.cpp"),
+     Path("tools/audit_sqlite_live_backup.py"),
+     Path("tools/audit_sync_replica_database_replacement.py"),
++    Path("IMMUTABLE_DATABASE_REPLACEMENT_RECEIPT_AUDIT_rev0984.md"),
++    Path("REVISION_NOTES_rev0984.md"),
++    Path("src/sync_replica_database_replacement_receipt_internal.hpp"),
++    Path("src/sync_replica_database_replacement_receipt.cpp"),
+ )
+ 
+ 
+@@ -661,6 +665,16 @@ def main() -> int:
+     database_replacement_audit = text[
+         "tools/audit_sync_replica_database_replacement.py"
+     ]
++    immutable_database_replacement_receipt_design = text[
++        "IMMUTABLE_DATABASE_REPLACEMENT_RECEIPT_AUDIT_rev0984.md"
++    ]
++    rev0984_notes = text["REVISION_NOTES_rev0984.md"]
++    database_replacement_receipt_header = text[
++        "src/sync_replica_database_replacement_receipt_internal.hpp"
++    ]
++    database_replacement_receipt_source = text[
++        "src/sync_replica_database_replacement_receipt.cpp"
++    ]
+     sqlite_live_backup_audit = text[
+         "tools/audit_sqlite_live_backup.py"
+     ]
+@@ -939,6 +953,17 @@ def main() -> int:
+         if rev0983_verifier_start >= 0 and rev0983_verifier_end >= 0
+         else ""
+     )
++    rev0984_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 984:"
++    )
++    rev0984_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0984_verifier_start
++    )
++    rev0984_verifier_block = (
++        verifier[rev0984_verifier_start:rev0984_verifier_end]
++        if rev0984_verifier_start >= 0 and rev0984_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -11751,37 +11776,43 @@ def main() -> int:
+     require(
+         "class SyncReplicaDatabaseReplacementOwner final"
+             in database_replacement_header
+-        and "replace_or_throw" in database_replacement_header
+-        and "replace_or_throw" not in database_backup_header
+-        and "sync_replica_database_artifact_internal.hpp"
+-            in database_backup_source
+-        and "sync_replica_database_artifact_internal.hpp"
++        and "replace_or_resume_or_throw" in database_replacement_header
++        and "replace_or_resume_or_throw" not in database_backup_header
++        and "sync_replica_database_replacement_receipt_internal.hpp"
+             in database_replacement_source
++        and "sync_replica_database_artifact_internal.hpp"
++            in database_replacement_receipt_source
+         and "sqlite3_backup_init" not in database_replacement_source
+         and "sqlite3_backup_step" not in database_replacement_source
+         and "replace_sqlite_live_database_bounded_or_throw"
+             in database_replacement_source,
+-        "rev0983_replacement_is_separate_and_reuses_one_bounded_copy_owner",
+-        "immutable backup creation remains non-destructive while named replacement composes the retained SQLite page-copy protocol",
++        "rev0984_replacement_is_separate_and_reuses_shared_receipt_and_copy_owners",
++        "immutable backup creation remains non-destructive while resume composes reviewed hashing, publication, and SQLite-copy protocols",
+     )
+ 
+     require(
+         ordered(
+             database_replacement_source,
++            "read_replacement_receipt_if_present_or_throw",
+             "rollback output preflight",
+             "bounded candidate capture",
+             "candidate validation",
+-            "displaced snapshot before capture",
+-            "require_expected_current_or_throw(",
++            "require_representable_recovery_successor_or_throw",
++            "capture_displaced_database_or_throw",
++            "publish_replacement_receipt_create_new_or_throw",
+             "immutable rollback artifact publication",
+-            "durable rollback artifact verification",
++            "pre-database-effect receipt reproof",
++            "active replacement classification",
+             "replace_sqlite_live_database_bounded_or_throw",
+-            "restored database differs from the validated candidate",
+             "advance_database_recovery_epoch_or_throw",
+-            "final forensic deployment reproof",
++            "final forensic deployment reproof before artifacts",
++            "final candidate pathname reproof",
++            "final rollback pathname reproof",
++            "final immutable receipt reproof",
++            "final forensic deployment reproof after artifacts",
+         ),
+-        "rev0983_replacement_orders_candidate_rollback_restore_epoch_and_reopen",
+-        "the destructive ceremony validates before mutation, preserves displaced state, advances lineage, and independently reopens before success",
++        "rev0984_replacement_orders_receipt_rollback_classifier_effects_and_reopen",
++        "the immutable receipt precedes effects while exact active database state alone classifies restart progress",
+     )
+ 
+     require(
+@@ -11831,58 +11862,73 @@ def main() -> int:
+ 
+     require(
+         "database-recovery-replace" in sync_cli
+-        and "anonsync.local-database-recovery-replacement.response.v1"
++        and "anonsync.local-database-recovery-replacement.response.v3"
+             in sync_cli
+-        and "stale database replacement expectation"
++        and "RECEIPT_ACTION_DOMAIN" in database_recovery_runtime
++        and "completed database replacement replay"
++            in database_recovery_runtime
++        and "candidate-installed replacement resume"
++            in database_recovery_runtime
++        and "receipt-only database replacement resume"
++            in database_recovery_runtime
++        and "unknown replacement continuity"
+             in database_recovery_runtime
+-        and "stale replacement published a rollback artifact"
++        and "missing rollback after completed replacement"
+             in database_recovery_runtime
+-        and "rollback artifact did not preserve the displaced logical database"
++        and "changed candidate artifact pathname"
+             in database_recovery_runtime
+-        and "replacement did not durably restore and advance the candidate"
++        and "changed rollback artifact pathname"
+             in database_recovery_runtime
+-        and "payload_store_replacement_performed" in sync_cli
+-        and "other_database_replacement_performed" in sync_cli,
+-        "rev0983_process_oracle_proves_stale_denial_rollback_and_exact_successor",
+-        "the shipping command is exercised across independent processes while unrelated roots remain outside authority",
++        and "final candidate pathname replacement race"
++            in database_recovery_runtime
++        and "SIGSTOP" in database_recovery_runtime
++        and "candidate artifact changed" in database_recovery_runtime
++        and "final candidate pathname reproof resume"
++            in database_recovery_runtime
++        and "replacement_receipt_effect_authority" in sync_cli
++        and "final_candidate_artifact_path_reproved" in sync_cli
++        and "final_rollback_artifact_path_reproved" in sync_cli
++        and "noncooperating_same_uid_artifact_replacement_excluded" in sync_cli
++        and "payload_store_replacement_performed" in sync_cli,
++        "rev0984_process_oracle_proves_receipt_integrity_and_exact_crash_resume",
++        "the shipping process path independently recomputes receipt digests and exercises every admitted and denied restart state",
+     )
+ 
+     require(
+         all(
+-            token in normalized_prose(offline_database_replacement_design)
++            token in normalized_prose(immutable_database_replacement_receipt_design)
+             for token in (
+-                "Authority order",
+-                "Why logical SQLite replacement, not raw family rename",
+-                "Rollback meaning",
+-                "Crash boundary",
+-                "Retention-age boundary",
+-                "does not claim an external durable action receipt",
++                "One immutable receipt, not a mutable stage journal",
++                "Exact restart classifier",
++                "Effect order and reproof",
++                "Executable crash-cutpoint proof",
++                "not a signature",
+             )
+         )
+         and all(
+-            token in normalized_prose(rev0983_notes)
++            token in normalized_prose(rev0984_notes)
+             for token in (
+-                "Offline database replacement",
+-                "Audit/refactor",
+-                "terminal",
+-                "Boundary",
++                "C++ product move", "Audit/refactor", "Explicit boundaries",
++                "536/536", "262/262",
++                "AnonSync-rev0984-2026.08.03.12.22-"
++                "receiptresume-pathreproof-successorfence-grandidierite.zip",
+             )
+         )
+-        and "## Rev0983: offline logical database replacement with rollback"
++        and "## Rev0984: immutable receipt and exact database-replacement resume"
+             in readme,
+-        "rev0983_records_logical_rollback_crash_and_nonclaim_boundaries",
+-        "design, notes, and README distinguish one primary-database recovery ceremony from raw-family or whole-share restore",
++        "rev0984_records_immutable_receipt_classifier_and_nonclaim_boundaries",
++        "design, notes, and README distinguish restart evidence from effect authority and complete-share restore",
+     )
+ 
+     require(
+         "anonsync_sync_replica_database_replacement_source_audit" in cmake
+-        and '"format": "anonsync-replica-database-replacement-audit-v1"'
++        and '"format": "anonsync-replica-database-replacement-audit-v3"'
+             in database_replacement_audit
+         and "lexical-hygiene-not-semantic-proof"
+             in database_replacement_audit
+         and "private_capture_and_named_replacement_share_one_copy_loop"
+             in sqlite_live_backup_audit,
+-        "rev0983_source_audits_are_registered_and_disclaim_semantic_authority",
++        "rev0984_source_audits_are_registered_and_disclaim_semantic_authority",
+         "the normal registry binds implementation shape without substituting lexical checks for runtime or package proof",
+     )
+ 
+@@ -11912,6 +11958,30 @@ def main() -> int:
+         "a sealed archive cannot omit any authority, regression, documentation, or package-policy surface defining the replacement ceremony",
+     )
+ 
++    require(
++        rev0984_verifier_block.count(
++            "if revision_number is not None and revision_number >= 984:"
++        ) == 1
++        and all(
++            token in rev0984_verifier_block
++            for token in (
++                "IMMUTABLE_DATABASE_REPLACEMENT_RECEIPT_AUDIT_rev0984.md",
++                "REVISION_NOTES_rev0984.md",
++                "src/sync_replica_database_artifact_internal.hpp",
++                "src/sync_replica_database_replacement.hpp",
++                "src/sync_replica_database_replacement.cpp",
++                "src/sync_replica_database_replacement_receipt_internal.hpp",
++                "src/sync_replica_database_replacement_receipt.cpp",
++                "tools/test_anonsync_database_recovery.py",
++                "tools/audit_sync_replica_database_replacement.py",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0984_package_policy_binds_receipt_resume_oracle_audits_and_records",
++        "a sealed archive cannot omit any authority, regression, documentation, or package-policy surface defining crash resume",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -12122,6 +12192,22 @@ def main() -> int:
+         "offline logical replacement cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0983 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0984" not in rev0984_notes
++        and "ARCHIVE_PENDING_REV0984" not in rev0984_notes
++        and "VALIDATION_PENDING_REV0984"
++            not in immutable_database_replacement_receipt_design
++        and "ARCHIVE_PENDING_REV0984"
++            not in immutable_database_replacement_receipt_design
++        and "VALIDATION_PENDING_REV0984" not in readme
++        and "ARCHIVE_PENDING_REV0984" not in readme
++        and "ARCHIVE_PENDING_REV0984" not in bootstrap
++        and "CODENAME_PENDING_REV0984" not in bootstrap
++        and "VALIDATION_PENDING_REV0984" not in bootstrap,
++        "rev0984_final_validation_and_visible_release_cutpoint_are_sealed",
++        "immutable receipt resume cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0984 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/audit_sync_replica_database_replacement.py b/tools/audit_sync_replica_database_replacement.py
+index d0d7d55a0019e93dee434c88875388d0352d7f3a..47c400f5b4d1540ed43b361fc6d34cbe66615711 100644
+--- a/tools/audit_sync_replica_database_replacement.py
++++ b/tools/audit_sync_replica_database_replacement.py
+@@ -17,17 +17,17 @@ from pathlib import Path
+ REQUIRED = (
+     Path("CMakeLists.txt"),
+     Path("README.md"),
+-    Path("OFFLINE_REPLICA_DATABASE_REPLACEMENT_AUDIT_rev0983.md"),
+-    Path("REVISION_NOTES_rev0983.md"),
++    Path("IMMUTABLE_DATABASE_REPLACEMENT_RECEIPT_AUDIT_rev0984.md"),
++    Path("REVISION_NOTES_rev0984.md"),
+     Path("src/anonsync_sync.cpp"),
+     Path("src/sync_replica_database_backup.hpp"),
+-    Path("src/sync_replica_database_backup.cpp"),
+     Path("src/sync_replica_database_artifact_internal.hpp"),
+     Path("src/sync_replica_database_replacement.hpp"),
+     Path("src/sync_replica_database_replacement.cpp"),
++    Path("src/sync_replica_database_replacement_receipt_internal.hpp"),
++    Path("src/sync_replica_database_replacement_receipt.cpp"),
+     Path("src/persistence/sqlite_live_backup.hpp"),
+     Path("src/persistence/sqlite_live_backup.cpp"),
+-    Path("tests/persistence/sqlite_live_backup_tests.cpp"),
+     Path("tools/test_anonsync_database_recovery.py"),
+     Path("tools/verify_release_package.py"),
+ )
+@@ -103,7 +103,7 @@ def delimited_body(text: str, signature: str, opening: str, closing: str) -> str
+         elif byte == closing:
+             depth -= 1
+             if depth == 0:
+-                return text[start : index + 1]
++                return text[start:index + 1]
+         index += 1
+     return ""
+ 
+@@ -116,11 +116,31 @@ def cmake_call(text: str, prefix: str) -> str:
+     return delimited_body(text, prefix, "(", ")")
+ 
+ 
++def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
++    violations = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-replica-database-replacement-audit-v3",
++        "scope": "lexical-hygiene-not-semantic-proof",
++        "root": str(root),
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if output is None:
++        sys.stdout.write(rendered)
++    else:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++    return 0 if not violations else 1
++
++
+ def main() -> int:
+     parser = argparse.ArgumentParser()
+-    parser.add_argument(
+-        "--root", type=Path, default=Path(__file__).resolve().parents[1]
+-    )
++    parser.add_argument("--root", type=Path,
++                        default=Path(__file__).resolve().parents[1])
+     parser.add_argument("--json", type=Path)
+     args = parser.parse_args()
+     root = args.root.resolve()
+@@ -134,322 +154,410 @@ def main() -> int:
+     if missing:
+         return emit(root, args.json, checks)
+ 
+-    text = {
+-        path.as_posix(): (root / path).read_text(encoding="utf-8")
+-        for path in REQUIRED
+-    }
++    text = {path.as_posix(): (root / path).read_text(encoding="utf-8")
++            for path in REQUIRED}
+     cmake = text["CMakeLists.txt"]
+     cli = text["src/anonsync_sync.cpp"]
+     backup_header = text["src/sync_replica_database_backup.hpp"]
+     helper = text["src/sync_replica_database_artifact_internal.hpp"]
+     header = text["src/sync_replica_database_replacement.hpp"]
+     source = text["src/sync_replica_database_replacement.cpp"]
++    receipt_header = text["src/sync_replica_database_replacement_receipt_internal.hpp"]
++    receipt = text["src/sync_replica_database_replacement_receipt.cpp"]
+     live_header = text["src/persistence/sqlite_live_backup.hpp"]
+     live_source = text["src/persistence/sqlite_live_backup.cpp"]
+-    live_test = text["tests/persistence/sqlite_live_backup_tests.cpp"]
+     process_test = text["tools/test_anonsync_database_recovery.py"]
+     readme = text["README.md"]
+-    bootstrap_path = root.parent.parent / "BOOTSTRAPROSE.md"
+-    bootstrap = (
+-        bootstrap_path.read_text(encoding="utf-8")
+-        if bootstrap_path.is_file()
+-        else ""
+-    )
+-    design = text["OFFLINE_REPLICA_DATABASE_REPLACEMENT_AUDIT_rev0983.md"]
+-    notes = text["REVISION_NOTES_rev0983.md"]
++    design = text["IMMUTABLE_DATABASE_REPLACEMENT_RECEIPT_AUDIT_rev0984.md"]
++    notes = text["REVISION_NOTES_rev0984.md"]
+     verifier = text["tools/verify_release_package.py"]
++    bootstrap_path = root.parent.parent / "BOOTSTRAPROSE.md"
++    bootstrap = bootstrap_path.read_text(encoding="utf-8") if bootstrap_path.is_file() else ""
+ 
+-    target = cmake_call(
+-        cmake, "add_library(anonsync_sync_replica_database_backup STATIC"
+-    )
+-    links = cmake_call(
+-        cmake, "target_link_libraries(anonsync_sync_replica_database_backup"
+-    )
+-    replace = function_body(
+-        source, "SyncReplicaDatabaseReplacementOwner::replace_or_throw("
+-    )
+-    preflight_output_family = function_body(
+-        helper, "preflight_artifact_output_family_create_new_or_throw("
+-    )
++    target = cmake_call(cmake, "add_library(anonsync_sync_replica_database_backup STATIC")
++    links = cmake_call(cmake, "target_link_libraries(anonsync_sync_replica_database_backup")
++    replace = function_body(source, "SyncReplicaDatabaseReplacementOwner::replace_or_resume_or_throw(")
+     command = function_body(cli, "int command_database_recovery_replace(")
++    optional_artifact = function_body(source, "inspect_existing_artifact_if_present_or_throw(")
++    optional_receipt = function_body(receipt, "read_replacement_receipt_if_present_or_throw(")
++    absence = function_body(helper, "require_exact_path_absence_or_rethrow(")
++    serialize = function_body(receipt, "serialize_receipt(")
++    parse = function_body(receipt, "parse_receipt(")
++    classifier = function_body(source, "classify_entry_stage_or_throw(")
++    required_artifact = function_body(source, "inspect_required_artifact_or_throw(")
++    successor_preflight = function_body(
++        source, "require_representable_recovery_successor_or_throw(")
+ 
+     require(
+         "class SyncReplicaDatabaseReplacementOwner final" in header
+-        and "create_artifact_or_throw" not in header
+-        and "replace_or_throw" in header
+-        and "replace_or_throw" not in backup_header
+-        and "SyncReplicaDatabaseReplacementOwner" not in backup_header,
+-        "replacement_is_a_separate_owner_not_backup_method",
+-        "destructive authority is not smuggled into the immutable backup creator",
++        and "replace_or_resume_or_throw" in header
++        and "replace_or_resume_or_throw" not in backup_header,
++        "replacement_remains_a_separate_offline_owner",
++        "immutable backup creation does not acquire destructive resume authority",
+     )
+     require(
+-        "src/sync_replica_database_replacement.cpp" in target
+-        and "anonsync_sqlite_live_backup" in links,
+-        "replacement_is_retained_and_reuses_live_backup_owner",
+-        "the shipping graph links one reviewed page-copy protocol",
++        all(token in target for token in (
++            "sync_replica_database_backup.cpp",
++            "sync_replica_database_replacement.cpp",
++            "sync_replica_database_replacement_receipt.cpp",
++        )) and all(token in links for token in (
++            "anonsync_sqlite_live_backup", "anonsync_sha256_digest",
++            "anonsync_sync_atomic_file_publication",
++            "anonsync_sync_bounded_regular_file",
++        )),
++        "shipping_graph_retains_receipt_and_shared_owners",
++        "the receipt adds no private hashing, file-publication, or SQLite-copy engine",
+     )
+     require(
+-        ordered(
+-            source,
+-            "SyncReplicaDeploymentManifest deployment;",
+-            "std::string label;",
+-            "SyncReplicaPeerServiceSingletonOwner singleton;",
+-        ),
++        ordered(source, "SyncReplicaDeploymentManifest deployment;",
++                "std::string label;", "SyncReplicaPeerServiceSingletonOwner singleton;"),
+         "deployment_singleton_precedes_selected_authority",
+-        "database and artifact paths are opened only after the deployment claim",
++        "the singleton is acquired during owner construction before artifact opens",
++    )
++    require(
++        'options.require_only(\n        {"manifest", "snapshot", "rollback", "receipt", "expected-current"})'
++            in command
++        and "replace_or_resume_or_throw" in command
++        and "sqlite3_backup" not in command,
++        "cli_is_a_strict_receipt_bound_adapter",
++        "the executable requires all exact selections and delegates effects to one owner",
++    )
++    require(
++        "anonsync.local-database-recovery-replacement.response.v3" in command
++        and all(token in command for token in (
++            "replacement_entry_stage", "replacement_receipt_preexisting",
++            "replacement_receipt_created_this_invocation",
++            "rollback_artifact_published_this_invocation",
++            "logical_database_replacement_performed_this_invocation",
++            "recovery_epoch_advanced_this_invocation", "idempotent_reproof_only",
++            "final_candidate_artifact_path_reproved",
++            "final_rollback_artifact_path_reproved",
++            "final_artifact_reproof_bracketed_by_database_cutpoint",
++            "artifact_pathnames_continuously_reserved\\\":false",
++            "noncooperating_same_uid_artifact_replacement_excluded\\\":false",
++        )),
++        "response_v3_reports_effects_final_path_reproof_and_nonclaims",
++        "operators can distinguish effects, durable final observation, and the hostile-local-writer nonclaim",
+     )
+     require(
+         replace.count("validate_artifact_path_or_throw") == 2
+         and "require_disjoint_artifact_families_or_throw" in replace
+-        and "sqlite_artifact_families_overlap" in helper
+-        and all(token in helper for token in (
+-            "deployment.manifest_path", "deployment.replica_db",
+-            "deployment.effect_db", "deployment.membership_db",
+-            "deployment.anchor_db", "deployment.payload_root",
+-            "deployment.files_root", "sync_replica_folder_catalog_path_or_throw",
+-            "for (const fs::path& artifact_member : artifact_family)",
+-            "path_is_same_or_descendant(artifact_member, *root)",
+-        ))
+-        and "artifact family sidecar colliding with payload root"
+-            in process_test,
+-        "candidate_and_rollback_paths_share_complete_exclusion_policy",
+-        "neither complete artifact family may overlap the other, active stores, or synchronized data",
++        and "validate_external_receipt_path_or_throw" in replace,
++        "candidate_rollback_and_receipt_share_exact_path_admission",
++        "all selected external state is validated before capture or publication",
+     )
+     require(
+-        ordered(
+-            replace,
+-            "rollback output preflight",
+-            "bounded candidate capture",
+-            "candidate validation",
+-            "displaced database forensic source",
+-        ),
+-        "rollback_family_preflight_precedes_large_candidate_and_displaced_allocation",
+-        "a deterministic output-family conflict is denied before retaining up to 512 MiB or reading the active database",
++        "sqlite_artifact_family_paths" in receipt
++        and "receipt_path_collides_with_family" in receipt
++        and "collides with a selected SQLite artifact family" in receipt,
++        "receipt_cannot_occupy_candidate_or_rollback_family_name",
++        "the external record is outside deterministic main/journal/WAL/SHM namespaces",
+     )
+     require(
+-        ordered(
+-            replace,
+-            "bounded candidate capture",
+-            "candidate validation",
+-            "displaced database forensic source",
+-            "immutable rollback artifact publication",
+-        ),
+-        "candidate_is_fully_validated_before_any_mutation",
+-        "the destructive ceremony cannot preserve or replace before candidate proof",
++        "kMaximumReceiptBytes = 8U * 1024U" in receipt
++        and "read_sync_bounded_private_regular_file_no_symlink_or_throw" in receipt
++        and "write_sync_file_atomically_create_new_no_symlink_or_throw" in receipt,
++        "receipt_is_bounded_private_and_create_new",
++        "receipt bytes are no-follow, mode-0600, single-link state",
+     )
+     require(
+-        ordered(
+-            preflight_output_family,
+-            "guard_sqlite_path_family_or_throw",
+-            "sidecar preflight",
+-            "preflight_sync_file_create_new_no_symlink_or_throw",
+-            "final sidecar preflight",
+-        )
+-        and "replacement with preexisting rollback sidecar" in process_test
+-        and "rollback sidecar preflight allowed the main artifact to publish"
+-            in process_test,
+-        "rollback_family_conflicts_fail_before_main_publication",
+-        "a pre-existing WAL/SHM/journal name cannot turn rollback preservation into a partial artifact",
++        all(token in receipt for token in (
++            'path:v1\\0"sv', 'action:v1\\0"sv', 'record:v1\\0"sv',
++            "static_assert(kReceiptPathDigestDomain.back() == '\\0')",
++            "static_assert(kReceiptActionDigestDomain.back() == '\\0')",
++            "static_assert(kReceiptRecordDigestDomain.back() == '\\0')",
++        )),
++        "receipt_digest_domains_bind_explicit_nul_bytes",
++        "C++ literal construction cannot silently drop the intended separator",
+     )
+     require(
+-        ordered(
+-            replace,
+-            "displaced snapshot before capture",
+-            "require_expected_current_or_throw(",
+-            "bounded displaced database capture",
+-            "displaced snapshot after capture",
+-            "displaced database changed across rollback capture",
+-        ),
+-        "displaced_state_is_expected_and_bracketed",
+-        "the rollback image names one exact operator-approved active cutpoint",
++        all(token in receipt for token in (
++            "deployment_id", "manifest_digest", "manifest_path_sha256",
++            "replica_database_path_sha256", "candidate_path_sha256",
++            "rollback_path_sha256", "receipt_path_sha256",
++            "expected_database_incarnation_sha256",
++            "expected_database_recovery_epoch", "expected_cutpoint_digest",
++            "append_artifact_fields(output, \"candidate\"",
++            "append_artifact_fields(output, \"rollback\"",
++        )),
++        "action_digest_binds_deployment_selection_and_complete_artifacts",
++        "the immutable admission cannot be replayed for another path or cutpoint",
++    )
++    require(
++        ordered(serialize, "kReceiptMagic", "immutable_receipt_fields(receipt)",
++                "action_sha256", "kReceiptRecordDigestDomain", "record_sha256")
++        and ordered(parse, "record_line_bytes", "kReceiptRecordDigestDomain",
++                    "checksum is invalid", "validate_receipt", "encoding is noncanonical"),
++        "receipt_has_canonical_action_and_record_integrity",
++        "parsing rejects reorder, truncation, trailing fields, checksum drift, and noncanonical encoding",
++    )
++    require(
++        "stage" not in receipt_header.lower()
++        and "rewrite" not in receipt_header.lower()
++        and "progress_classified_from_active_database" in command
++        and "replacement_receipt_effect_authority\\\":false" in command,
++        "receipt_is_not_a_mutable_progress_journal",
++        "database state, not a receipt stage, classifies restart progress",
++    )
++    require(
++        "require_exact_path_absence_or_rethrow" in optional_artifact
++        and "require_exact_path_absence_or_rethrow" in optional_receipt
++        and all(token in absence for token in (
++            "symlink_status", "no_such_file_or_directory", "file_type::not_found",
++            "rethrow_exception",
++        )),
++        "optional_receipt_and_rollback_share_exact_absence_classifier",
++        "only fresh exact absence becomes nullopt; all other failures remain terminal",
++    )
++    require(
++        ordered(replace, "read_replacement_receipt_if_present_or_throw",
++                "rollback output preflight", "bounded candidate capture",
++                "candidate validation")
++        and "receipt_preexisting" in replace,
++        "cheap_output_conflicts_precede_large_candidate_capture",
++        "deterministic namespace denial does not retain a large database image",
+     )
+     require(
+-        replace.count("preflight_artifact_output_family_create_new_or_throw") == 2
++        ordered(replace, "bounded candidate capture", "candidate validation",
++                "capture_displaced_database_or_throw", "publish_replacement_receipt_create_new_or_throw"),
++        "candidate_and_displaced_state_are_proved_before_first_effect",
++        "no receipt, rollback, or database effect precedes complete source proof",
++    )
++    require(
++        ordered(source, "snapshot before capture", "require_expected_current_or_throw",
++                "bounded database capture", "snapshot after capture",
++                "database changed across rollback capture"),
++        "displaced_capture_is_expected_and_bracketed",
++        "the receipt's rollback denotes one exact operator-approved database",
++    )
++    require(
++        all(token in source for token in (
++            "candidate and displaced database cutpoints are identical",
++            "displaced database is already the candidate's exact recovery",
++        )) and "require_unambiguous_restart_states_or_throw" in replace,
++        "ambiguous_restart_shapes_are_rejected_before_admission",
++        "pre-copy, post-copy, and completed states remain distinguishable",
++    )
++    require(
++        all(token in successor_preflight for token in (
++            "database_recovery_epoch", "state_generation",
++            "numeric_limits<std::uint64_t>::max()",
++            "no representable recovery successor",
++        ))
+         and ordered(
+-            replace,
+-            "candidate page size differs from the active database",
+-            "rollback output final prepublication reproof",
+-            "publish_exact_copy_atomically_create_new_or_throw",
++            replace, "candidate validation",
++            "require_representable_recovery_successor_or_throw",
++            "bool receipt_created_this_invocation",
++            "publish_replacement_receipt_create_new_or_throw",
+         ),
+-        "wal_compatibility_and_final_family_reproof_precede_rollback_publication",
+-        "an incompatible candidate or rollback-family drift cannot consume the create-new destination",
++        "recovery_successor_overflow_is_rejected_before_durable_admission",
++        "an immutable receipt or rollback cannot be created for an action whose mandatory epoch successor is unrepresentable",
+     )
+     require(
+-        ordered(
+-            replace,
+-            "immutable rollback artifact publication",
+-            "durable rollback artifact capture",
+-            "durable rollback artifact verification",
+-            "rollback postpublication reproof",
+-        ),
+-        "rollback_artifact_is_create_new_and_independently_reproved",
+-        "replacement does not begin from resident rollback bytes alone",
++        ordered(replace, "publish_replacement_receipt_create_new_or_throw",
++                "rollback output final prepublication reproof",
++                "immutable rollback artifact publication")
++        and ordered(replace, "pre-database-effect receipt reproof",
++                    "active replacement classification"),
++        "immutable_receipt_precedes_and_is_reproved_around_effects",
++        "admission survives restart without becoming effect authority",
+     )
+     require(
+-        ordered(
+-            replace,
+-            "replacement replica owner",
+-            "active database changed after rollback publication",
+-            "replace_sqlite_live_database_bounded_or_throw",
+-        ),
+-        "active_database_is_reproved_after_rollback_publication",
+-        "the rollback publication interval cannot silently change the replacement target",
++        ordered(replace, "Receipt-only restart", "capture_displaced_database_or_throw",
++                "require_replacement_receipt_artifact_matches_or_throw",
++                "resumed rollback artifact publication")
++        and "require_expected_current_or_throw" in source,
++        "receipt_only_resume_recreates_rollback_only_from_exact_displaced_state",
++        "a later database cannot be misrepresented as the original rollback",
+     )
+     require(
+-        "sqlite3_backup_init" not in source
+-        and "sqlite3_backup_step" not in source
+-        and "replace_sqlite_live_database_bounded_or_throw" in source
+-        and "replace_sqlite_live_database_bounded_or_throw" in live_header
+-        and "ExistingNamedWritable" in live_source,
+-        "replacement_adds_no_second_raw_sqlite_copy_loop",
+-        "named replacement is one destination profile of the retained bounded owner",
++        "Release the resident displaced snapshot" in replace
++        and ordered(replace, "immutable rollback artifact publication",
++                    "if (!receipt.has_value())", "if (!rollback.has_value())",
++                    "durable rollback artifact"),
++        "durable_rollback_reopen_does_not_retain_third_complete_image",
++        "peak resident complete images remain candidate+displaced or candidate+rollback",
+     )
+     require(
+-        all(token in live_source for token in (
+-            "replacement destination database is not named state",
+-            "replacement destination database is read-only",
+-            "replacement destination page size differs from the pinned source",
+-            "sqlite3_get_autocommit(destination)",
+-            "sqlite3_txn_state(destination, \"main\")",
++        all(token in classifier for token in (
++            "active == displaced", "active == candidate",
++            "recovery_successor_matches(candidate, active)", "continuity is unknown",
+         )),
+-        "named_destination_preflight_is_writable_transaction_free_and_page_exact",
+-        "SQLite destination authority is rejected before the first copy step when incompatible",
++        "active_database_is_the_exact_three_state_restart_classifier",
++        "every state outside displaced/candidate/successor fails closed",
+     )
+     require(
+-        all(token in live_test for token in (
+-            "named replacement did not publish the source schema",
+-            "interrupted replacement changed displaced destination data",
+-            "page-size rejection changed destination data",
+-            "destination database is read-only",
+-            "replacement destination database is not named state",
+-        )),
+-        "focused_oracle_covers_success_rollback_and_preconditions",
+-        "the shared low-level refactor has direct executable regression coverage",
++        "replace_sqlite_live_database_bounded_or_throw" in replace
++        and "sqlite3_backup_init" not in source
++        and "sqlite3_backup_step" not in source
++        and "replace_sqlite_live_database_bounded_or_throw" in live_header
++        and "ExistingNamedWritable" in live_source,
++        "resume_adds_no_second_sqlite_copy_loop",
++        "logical replacement remains one profile of the retained bounded owner",
+     )
+     require(
+-        ordered(
+-            replace,
+-            "restored database rooted reproof",
+-            "restored database differs from the validated candidate",
+-            "advance_database_recovery_epoch_or_throw",
+-            "post-replacement recovery epoch proof is inconsistent",
+-        ),
+-        "restored_candidate_is_exact_before_mandatory_epoch_advance",
+-        "recovery lineage cannot be advanced for a different restored image",
++        ordered(replace, "DisplacedDatabaseCurrent", "replacement source database",
++                "replace_sqlite_live_database_bounded_or_throw")
++        and "CandidateInstalledEpochPending" in classifier
++        and ordered(replace, "expected_writable_entry",
++                    "replace_sqlite_live_database_bounded_or_throw",
++                    "restored database rooted reproof"),
++        "candidate_pending_resume_skips_database_copy",
++        "the installed candidate advances lineage without duplicate page transfer",
+     )
+     require(
+-        "recovery_successor_matches" in helper
+-        and all(token in helper for token in (
+-            "database_recovery_epoch + 1U", "state_generation + 1U",
+-            "operation_set_digest", "evidence_set_digest",
+-            "visible_state_digest", "historical_version_pin_set_digest",
+-        )),
+-        "successor_proof_preserves_every_non_lineage_fact",
+-        "the mandatory transition changes only recovery epoch, state generation, and cutpoint seal",
++        ordered(replace, "restored database differs from the validated candidate",
++                "pre-recovery-epoch receipt reproof",
++                "advance_database_recovery_epoch_or_throw",
++                "post-replacement recovery epoch proof is inconsistent"),
++        "epoch_advance_requires_exact_candidate_and_receipt_reproof",
++        "lineage cannot advance for a different active database or changed receipt",
+     )
+     require(
+-        ordered(
++        all(token in required_artifact for token in (
++            "SealedSqliteSnapshot::capture",
++            "inspect_sealed_artifact_or_throw",
++        ))
++        and ordered(
+             replace,
+-            "final writable deployment reproof",
+-            "final forensic deployment reproof",
+-            "final durable snapshot",
+-            "final reopened database differs from the committed result",
+-        ),
+-        "success_requires_independent_final_reopen",
+-        "the writer connection is not the final durability oracle",
++            "final forensic deployment reproof before artifacts",
++            "pre-final-artifact receipt reproof",
++            "candidate_seal = {}",
++            "rollback->seal = {}",
++            "final candidate pathname reproof",
++            "final rollback pathname reproof",
++            "final immutable receipt reproof",
++            "final forensic deployment reproof after artifacts",
++        )
++        and "final database changed across artifact pathname reproof" in replace
++        and "noncooperating same-UID" in replace
++        and "idempotent_reproof_only" in replace,
++        "success_reopens_named_artifacts_inside_database_cutpoint_bracket",
++        "retained resident buffers no longer stand in for candidate and rollback pathnames, while hostile-local-writer exclusion remains explicitly unclaimed",
+     )
+     require(
+         "::rename" not in source and "::unlink" not in source
+         and "remove(" not in source
+         and "publish_exact_copy_atomically_create_new_or_throw" in source,
+         "replacement_does_not_invent_raw_family_swap_or_cleanup",
+-        "rollback publication is rooted create-new and active replacement stays inside SQLite",
++        "rollback publication is create-new and active replacement remains inside SQLite",
+     )
+     require(
+-        'options.require_only(\n        {"manifest", "snapshot", "rollback", "expected-current"})' in command
+-        and "SyncReplicaDatabaseReplacementOwner owner" in command
+-        and "owner.replace_or_throw" in command
+-        and "sqlite3_backup" not in command,
+-        "cli_is_a_strict_adapter_to_one_replacement_owner",
+-        "the executable does not become a second restore implementation",
++        all(token in process_test for token in (
++            "RECEIPT_ACTION_DOMAIN", "RECEIPT_RECORD_DOMAIN",
++            "action digest disagreed with canonical bytes",
++            "record digest disagreed with canonical bytes",
++        )),
++        "process_oracle_independently_recomputes_receipt_digests",
++        "production serialization is not its own only oracle",
+     )
+     require(
+-        all(token in command for token in (
+-            "candidate_validated_before_mutation",
+-            "rollback_artifact_create_new",
+-            "rollback_represents_displaced_logical_database",
+-            "raw_sqlite_family_byte_identity_preserved",
+-            "sqlite_destination_transaction",
+-            "recovery_epoch_advanced",
+-            "final_database_reopened_and_reproved",
+-            "payload_store_replacement_performed",
+-            "other_database_replacement_performed",
++        all(token in process_test for token in (
++            "damaged replacement receipt", "nonprivate replacement receipt",
++            "hardlinked replacement receipt", "changed the active database",
+         )),
+-        "operator_receipt_states_positive_proofs_and_nonclaims",
+-        "the response cannot be mistaken for whole-share or raw-family restore",
++        "process_oracle_rejects_damaged_nonprivate_and_hardlinked_receipts",
++        "invalid external evidence cannot authorize database effects",
++    )
++    require(
++        "completed database replacement replay" in process_test
++        and '"idempotent_reproof_only": True' in process_test
++        and '"mutation_performed": False' in process_test,
++        "process_oracle_proves_mutation_free_completed_replay",
++        "repeated operator invocation is safe after exact completion",
+     )
+     require(
+         all(token in process_test for token in (
+-            "replacement with overlapping candidate and rollback families",
+-            "SQLite artifact families overlap",
+-            "replacement with preexisting rollback sidecar",
+-            "stale database replacement expectation",
+-            "stale replacement published a rollback artifact",
+-            "offline database replacement",
+-            "rollback artifact is not private single-link state",
+-            "rollback artifact did not preserve the displaced logical database",
+-            "replacement did not durably restore and advance the candidate",
+-            "anonsync database recovery process:",
++            "changed candidate artifact pathname",
++            "changed rollback artifact pathname",
++            "changed candidate artifact altered the active database",
++            "changed rollback artifact altered the active database",
++            "final candidate pathname replacement race",
++            "SIGSTOP",
++            "candidate artifact changed",
++            "final candidate pathname reproof resume",
+         )),
+-        "real_process_oracle_covers_stale_denial_preservation_and_restore",
+-        "the shipping command is exercised across independent processes with roots absent",
++        "process_oracle_rejects_stable_candidate_and_rollback_path_drift",
++        "each invocation reopens both selected artifacts instead of trusting an earlier resident seal",
+     )
+     require(
+-        all(token in process_test for token in ("payload_root", "files_root", "catalog"))
+-        and r'payload_store_replacement_performed\":false' in command
+-        and r'other_database_replacement_performed\":false' in command,
+-        "replacement_authority_remains_primary_database_only",
+-        "payloads, files, catalog, and other databases are outside this ceremony",
++        "candidate-installed replacement resume" in process_test
++        and '"candidate_installed_epoch_pending"' in process_test
++        and '"backup_step_calls": 0' in process_test,
++        "process_oracle_proves_candidate_pending_resume",
++        "the crash cutpoint advances exactly once without another logical copy",
+     )
+-    final_archive = (
+-        "AnonSync-rev0983-2026.08.03.06.40-"
+-        "logicalreplace-familyfence-rollbackproof-andalusite.zip"
++    require(
++        "receipt-only database replacement resume" in process_test
++        and '"rollback_artifact_published_this_invocation": True' in process_test
++        and "receipt-only resume did not restore exact rollback and successor" in process_test,
++        "process_oracle_proves_receipt_only_rollback_reconstruction",
++        "earliest durable crash resumes from exact displaced bytes",
+     )
+     require(
+-        all(token in " ".join(design.split()) for token in (
+-            "Why logical SQLite replacement, not raw family rename",
+-            "Crash boundary", "Rollback meaning", "Retention-age boundary",
+-            "https://sqlite.org/backup.html", "https://sqlite.org/wal.html",
+-            "does not claim an external durable action receipt",
+-        ))
+-        and final_archive in notes
+-        and final_archive in readme
+-        and final_archive in bootstrap
+-        and "ARCHIVE_PENDING_REV0983" not in notes
+-        and "VALIDATION_PENDING_REV0983" not in notes,
+-        "design_records_state_crash_nonclaim_and_release_boundaries",
+-        "the design and operator pages bind the exact sealed rev0983 archive",
++        "missing rollback after completed replacement" in process_test
++        and "current database expectation is stale" in process_test,
++        "receipt_cannot_reconstruct_rollback_from_completed_database",
++        "external evidence remains nonauthoritative after active state changes",
+     )
+     require(
+-        "database-recovery-replace" in readme or "database-recovery-replace" not in readme,
+-        "readme_update_is_pending_or_present",
+-        "preseal permits final operator documentation to land after exact validation",
++        "unknown replacement continuity" in process_test
++        and "continuity is unknown" in process_test
++        and "replacement recovery after unknown-state rejection" in process_test,
++        "process_oracle_proves_unknown_state_denial_and_later_recovery",
++        "fail-closed classification does not poison an admitted future resume",
+     )
+     require(
+-        "database-recovery-replace" in bootstrap
+-        or "NEXT PRODUCT EDGE" in bootstrap,
+-        "bootstrap_update_is_pending_or_present",
+-        "the wake document will be reconciled at release sealing",
++        all(token in command for token in (
++            'payload_store_replacement_performed\\\":false',
++            'other_database_replacement_performed\\\":false',
++            'replacement_receipt_effect_authority\\\":false',
++            'artifact_pathnames_continuously_reserved\\\":false',
++            'noncooperating_same_uid_artifact_replacement_excluded\\\":false',
++        )),
++        "response_preserves_scope_and_namespace_race_nonclaims",
++        "the command cannot be mistaken for complete-share recovery or continuous same-UID pathname reservation",
++    )
++    final_archive = (
++        "AnonSync-rev0984-2026.08.03.12.22-"
++        "receiptresume-pathreproof-successorfence-grandidierite.zip"
++    )
++    require(
++        all(token in " ".join(design.split()) for token in (
++            "One immutable receipt, not a mutable stage journal",
++            "Exact restart classifier", "Executable crash-cutpoint proof",
++            "not a signature", "external monotonic counter",
++            "noncooperating same-UID", "representable recovery successor",
++            "598 checks", final_archive,
++        )) and all(token in notes for token in (
++            "exact restart classifier", "representable-successor fence",
++            "pathname reproof", "536/536", "262/262", final_archive,
++        )),
++        "design_and_revision_notes_state_the_real_authority_boundary",
++        "sealed prose records exact validation, positive guarantees, and explicit nonclaims",
++    )
++    require(
++        "Rev0984: immutable receipt" in readme
++        and "Rev0984 closes rev0983" in bootstrap
++        and "262/262" in readme
++        and "247/247" in bootstrap
++        and final_archive in readme
++        and final_archive in bootstrap
++        and "VALIDATION_PENDING_REV0984" not in readme
++        and "VALIDATION_PENDING_REV0984" not in bootstrap
++        and "ARCHIVE_PENDING_REV0984" not in readme
++        and "ARCHIVE_PENDING_REV0984" not in bootstrap,
++        "operator_and_restart_pages_are_reconciled_for_seal",
++        "operator and restart pages bind the exact archive and terminal validation",
+     )
+     require(
+         "revision_number is not None and revision_number >= 983" in verifier
+         or "REVISION_NOTES_rev0983.md" not in verifier,
+-        "release_verifier_update_is_pending_or_present",
+-        "preseal permits package-policy binding after final source freeze",
++        "release_verifier_can_be_advanced_at_final_seal",
++        "package-policy binding remains visible rather than implied",
+     )
+     require(
+-        "non-semantic" in __doc__.lower()
+-        and "runtime" in __doc__.lower()
++        "non-semantic" in __doc__.lower() and "runtime" in __doc__.lower()
+         and "package" in __doc__.lower(),
+         "lexical_audit_disclaims_semantic_authority",
+         "source spelling cannot substitute for executable or package proof",
+@@ -458,26 +566,5 @@ def main() -> int:
+     return emit(root, args.json, checks)
+ 
+ 
+-def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+-    violations = [check.check_id for check in checks if not check.passed]
+-    report = {
+-        "format": "anonsync-replica-database-replacement-audit-v1",
+-        "scope": "lexical-hygiene-not-semantic-proof",
+-        "root": str(root),
+-        "passed": not violations,
+-        "passed_checks": len(checks) - len(violations),
+-        "total_checks": len(checks),
+-        "checks": [asdict(check) for check in checks],
+-        "violations": violations,
+-    }
+-    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+-    if output is None:
+-        sys.stdout.write(rendered)
+-    else:
+-        output.parent.mkdir(parents=True, exist_ok=True)
+-        output.write_text(rendered, encoding="utf-8")
+-    return 0 if not violations else 1
+-
+-
+ if __name__ == "__main__":
+     raise SystemExit(main())
+diff --git a/tools/test_anonsync_database_recovery.py b/tools/test_anonsync_database_recovery.py
+index 57554a3f36512402fb8a81c06e490952a5ee6ab7..9ed8223c723e3d36c1782a381200890685778ec8 100644
+--- a/tools/test_anonsync_database_recovery.py
++++ b/tools/test_anonsync_database_recovery.py
+@@ -16,9 +16,13 @@ import hashlib
+ import json
+ import os
+ from pathlib import Path
++import shutil
++import signal
++import sqlite3
+ import stat
+ import subprocess
+ import tempfile
++import time
+ from typing import Any, NoReturn, Sequence
+ 
+ 
+@@ -165,6 +169,89 @@ def sqlite_family_fingerprint(database: Path) -> dict[str, tuple[int, int, str]]
+     return result
+ 
+ 
++
++RECEIPT_MAGIC = b"anonsync:replica-database-replacement-receipt:v1\n"
++RECEIPT_PATH_DOMAIN = (
++    b"anonsync:replica-database-replacement-receipt:path:v1\0"
++)
++RECEIPT_ACTION_DOMAIN = (
++    b"anonsync:replica-database-replacement-receipt:action:v1\0"
++)
++RECEIPT_RECORD_DOMAIN = (
++    b"anonsync:replica-database-replacement-receipt:record:v1\0"
++)
++
++
++def path_receipt_digest(path: Path) -> str:
++    return hashlib.sha256(RECEIPT_PATH_DOMAIN + str(path).encode()).hexdigest()
++
++
++def inspect_replacement_receipt(path: Path) -> dict[str, str]:
++    observed = path.lstat()
++    require(stat.S_ISREG(observed.st_mode), "replacement receipt is not regular")
++    require(observed.st_nlink == 1, "replacement receipt is not single-linked")
++    require(
++        stat.S_IMODE(observed.st_mode) == 0o600,
++        "replacement receipt is not owner-only mode 0600",
++    )
++    require(0 < observed.st_size <= 8 * 1024,
++            "replacement receipt exceeded its 8 KiB boundary")
++    encoded = path.read_bytes()
++    require(encoded.startswith(RECEIPT_MAGIC),
++            "replacement receipt magic is not canonical")
++    require(encoded.endswith(b"\n") and b"\r" not in encoded and b"\0" not in encoded,
++            "replacement receipt framing is not canonical")
++    lines = encoded.splitlines(keepends=True)
++    require(len(lines) > 4, "replacement receipt omitted canonical fields")
++    require(lines[-2].startswith(b"action_sha256="),
++            "replacement receipt omitted action digest")
++    require(lines[-1].startswith(b"record_sha256="),
++            "replacement receipt omitted record digest")
++    action = lines[-2][len(b"action_sha256="):-1].decode("ascii")
++    record = lines[-1][len(b"record_sha256="):-1].decode("ascii")
++    immutable_fields = b"".join(lines[1:-2])
++    record_prefix = b"".join(lines[:-1])
++    require(is_sha256(action), "replacement receipt action digest is invalid")
++    require(is_sha256(record), "replacement receipt record digest is invalid")
++    require(
++        hashlib.sha256(RECEIPT_ACTION_DOMAIN + immutable_fields).hexdigest() == action,
++        "replacement receipt action digest disagreed with canonical bytes",
++    )
++    require(
++        hashlib.sha256(RECEIPT_RECORD_DOMAIN + record_prefix).hexdigest() == record,
++        "replacement receipt record digest disagreed with canonical bytes",
++    )
++    fields: dict[str, str] = {}
++    for raw in lines[1:-2]:
++        name, separator, value = raw[:-1].partition(b"=")
++        require(separator == b"=" and name and name.decode("ascii") not in fields,
++                "replacement receipt fields are malformed or duplicated")
++        fields[name.decode("ascii")] = value.decode("ascii")
++    fields["action_sha256"] = action
++    fields["record_sha256"] = record
++    return fields
++
++
++def install_logical_sqlite_image(source: Path, destination: Path) -> None:
++    """Simulate a crash cutpoint by logically copying source into destination."""
++    source_uri = f"file:{source}?mode=ro&immutable=1"
++    source_connection = sqlite3.connect(source_uri, uri=True)
++    destination_connection = sqlite3.connect(str(destination))
++    try:
++        destination_connection.execute("PRAGMA busy_timeout=5000")
++        source_connection.backup(destination_connection, pages=64, sleep=0.001)
++        destination_connection.commit()
++        # Leave the active deployment in its ordinary WAL profile and force all
++        # copied pages durable before the shipping owner reopens it.
++        mode = destination_connection.execute("PRAGMA journal_mode=WAL").fetchone()
++        require(mode is not None and str(mode[0]).lower() == "wal",
++                "test crash-cutpoint installation did not retain WAL mode")
++        destination_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
++    finally:
++        destination_connection.close()
++        source_connection.close()
++
++
+ def recovery_state(value: dict[str, Any]) -> tuple[str, int, int, str, str]:
+     return (
+         str(value.get("database_incarnation_sha256")),
+@@ -227,6 +314,13 @@ def main() -> int:
+         "candidate_snapshot_page_count", "rollback_snapshot_path",
+         "rollback_snapshot_sha256", "rollback_snapshot_byte_count",
+         "rollback_snapshot_page_size", "rollback_snapshot_page_count",
++        "replacement_receipt_path", "replacement_receipt_action_sha256",
++        "replacement_receipt_record_sha256", "replacement_entry_stage",
++        "replacement_receipt_preexisting",
++        "replacement_receipt_created_this_invocation",
++        "rollback_artifact_published_this_invocation",
++        "logical_database_replacement_performed_this_invocation",
++        "recovery_epoch_advanced_this_invocation", "idempotent_reproof_only",
+         "expected_current_recovery_expectation",
+         "displaced_database_incarnation_sha256",
+         "displaced_database_recovery_epoch", "displaced_state_generation",
+@@ -239,16 +333,25 @@ def main() -> int:
+         "backup_step_calls", "maximum_reported_page_count",
+         "maximum_reported_remaining_pages",
+         "candidate_validated_before_mutation",
+-        "candidate_deployment_binding_attested",
++        "candidate_deployment_binding_attested", "replacement_receipt_immutable",
++        "replacement_receipt_effect_authority",
++        "progress_classified_from_active_database",
+         "rollback_artifact_create_new",
+         "rollback_artifact_postpublication_reverified",
+         "rollback_represents_displaced_logical_database",
+         "raw_sqlite_family_byte_identity_preserved",
+         "descriptor_rooted_writable_destination",
+         "sqlite_destination_transaction",
++        "logical_database_replacement_complete",
+         "logical_database_replacement_performed",
+         "restored_cutpoint_reproved_before_advance",
+-        "recovery_epoch_advanced", "final_database_reopened_and_reproved",
++        "recovery_epoch_advanced", "recovery_epoch_advance_complete",
++        "final_database_reopened_and_reproved",
++        "final_candidate_artifact_path_reproved",
++        "final_rollback_artifact_path_reproved",
++        "final_artifact_reproof_bracketed_by_database_cutpoint",
++        "artifact_pathnames_continuously_reserved",
++        "noncooperating_same_uid_artifact_replacement_excluded",
+         "retention_age_reset_by_exact_source_change",
+         "payload_store_replacement_performed",
+         "other_database_replacement_performed", "mutation_performed",
+@@ -776,6 +879,7 @@ def main() -> int:
+             advanced_twice_token = str(advanced_twice["recovery_expectation"])
+ 
+             overlapping_rollback = Path(str(backup_artifact) + "-wal")
++            overlapping_receipt = backup_root / "overlap-replacement.receipt"
+             active_before_overlap = sqlite_family_fingerprint(replica_db)
+             candidate_before_overlap = sqlite_family_fingerprint(backup_artifact)
+             run_failure([
+@@ -783,6 +887,7 @@ def main() -> int:
+                 "--manifest", str(manifest),
+                 "--snapshot", str(backup_artifact),
+                 "--rollback", str(overlapping_rollback),
++                "--receipt", str(overlapping_receipt),
+                 "--expected-current", advanced_twice_token,
+             ], label="replacement with overlapping candidate and rollback families",
+                returncode=2, error_code="invalid_arguments",
+@@ -802,6 +907,7 @@ def main() -> int:
+             )
+ 
+             blocked_rollback = backup_root / "blocked-replacement-rollback.sqlite"
++            blocked_receipt = backup_root / "blocked-replacement.receipt"
+             blocked_rollback_sidecar = Path(str(blocked_rollback) + "-wal")
+             blocked_rollback_sidecar.write_bytes(b"preexisting-rollback-sidecar")
+             os.chmod(blocked_rollback_sidecar, 0o600)
+@@ -815,6 +921,7 @@ def main() -> int:
+                 "--manifest", str(manifest),
+                 "--snapshot", str(backup_artifact),
+                 "--rollback", str(blocked_rollback),
++                "--receipt", str(blocked_receipt),
+                 "--expected-current", advanced_twice_token,
+             ], label="replacement with preexisting rollback sidecar",
+                returncode=1, error_code="operation_failed",
+@@ -841,12 +948,14 @@ def main() -> int:
+             blocked_rollback_sidecar.unlink()
+ 
+             stale_rollback = backup_root / "stale-replacement-rollback.sqlite"
++            stale_receipt = backup_root / "stale-replacement.receipt"
+             active_before_stale_replace = sqlite_family_fingerprint(replica_db)
+             run_failure([
+                 str(sync), "database-recovery-replace",
+                 "--manifest", str(manifest),
+                 "--snapshot", str(backup_artifact),
+                 "--rollback", str(stale_rollback),
++                "--receipt", str(stale_receipt),
+                 "--expected-current", successor_token,
+             ], label="stale database replacement expectation", returncode=1,
+                error_code="operation_failed",
+@@ -861,11 +970,13 @@ def main() -> int:
+             )
+ 
+             replacement_rollback = backup_root / "replacement-rollback.sqlite"
++            replacement_receipt = backup_root / "replacement.receipt"
+             replaced = run_ok([
+                 str(sync), "database-recovery-replace",
+                 "--manifest", str(manifest),
+                 "--snapshot", str(backup_artifact),
+                 "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
+                 "--expected-current", advanced_twice_token,
+             ], label="offline database replacement", timeout=120.0)
+             require_exact_keys(replaced, replacement_keys,
+@@ -874,7 +985,7 @@ def main() -> int:
+                 "command": "database-recovery-replace",
+                 "terminal_class": "completed",
+                 "response_schema":
+-                    "anonsync.local-database-recovery-replacement.response.v1",
++                    "anonsync.local-database-recovery-replacement.response.v3",
+                 **common,
+                 "candidate_snapshot_path": str(backup_artifact),
+                 "candidate_snapshot_sha256":
+@@ -886,6 +997,14 @@ def main() -> int:
+                 "candidate_snapshot_page_count":
+                     created_backup["snapshot_page_count"],
+                 "rollback_snapshot_path": str(replacement_rollback),
++                "replacement_receipt_path": str(replacement_receipt),
++                "replacement_entry_stage": "displaced_database_current",
++                "replacement_receipt_preexisting": False,
++                "replacement_receipt_created_this_invocation": True,
++                "rollback_artifact_published_this_invocation": True,
++                "logical_database_replacement_performed_this_invocation": True,
++                "recovery_epoch_advanced_this_invocation": True,
++                "idempotent_reproof_only": False,
+                 "expected_current_recovery_expectation": advanced_twice_token,
+                 "displaced_database_incarnation_sha256":
+                     advanced_twice["database_incarnation_sha256"],
+@@ -911,16 +1030,26 @@ def main() -> int:
+                 "recovery_expectation": successor_token,
+                 "candidate_validated_before_mutation": True,
+                 "candidate_deployment_binding_attested": True,
++                "replacement_receipt_immutable": True,
++                "replacement_receipt_effect_authority": False,
++                "progress_classified_from_active_database": True,
+                 "rollback_artifact_create_new": True,
+                 "rollback_artifact_postpublication_reverified": True,
+                 "rollback_represents_displaced_logical_database": True,
+                 "raw_sqlite_family_byte_identity_preserved": False,
+                 "descriptor_rooted_writable_destination": True,
+                 "sqlite_destination_transaction": True,
++                "logical_database_replacement_complete": True,
+                 "logical_database_replacement_performed": True,
+                 "restored_cutpoint_reproved_before_advance": True,
+                 "recovery_epoch_advanced": True,
++                "recovery_epoch_advance_complete": True,
+                 "final_database_reopened_and_reproved": True,
++                "final_candidate_artifact_path_reproved": True,
++                "final_rollback_artifact_path_reproved": True,
++                "final_artifact_reproof_bracketed_by_database_cutpoint": True,
++                "artifact_pathnames_continuously_reserved": False,
++                "noncooperating_same_uid_artifact_replacement_excluded": False,
+                 "retention_age_reset_by_exact_source_change": True,
+                 "payload_store_replacement_performed": False,
+                 "other_database_replacement_performed": False,
+@@ -975,6 +1104,330 @@ def main() -> int:
+                 "replacement did not durably restore and advance the candidate",
+             )
+ 
++            receipt_fields = inspect_replacement_receipt(replacement_receipt)
++            require(
++                replaced["replacement_receipt_action_sha256"] ==
++                    receipt_fields["action_sha256"] and
++                replaced["replacement_receipt_record_sha256"] ==
++                    receipt_fields["record_sha256"],
++                "replacement response disagreed with the immutable receipt",
++            )
++            require_fields(receipt_fields, {
++                "deployment_id": common["deployment_id"],
++                "manifest_path_sha256": path_receipt_digest(manifest),
++                "replica_database_path_sha256": path_receipt_digest(replica_db),
++                "candidate_path_sha256": path_receipt_digest(backup_artifact),
++                "rollback_path_sha256": path_receipt_digest(replacement_rollback),
++                "receipt_path_sha256": path_receipt_digest(replacement_receipt),
++                "expected_database_incarnation_sha256":
++                    advanced_twice["database_incarnation_sha256"],
++                "expected_database_recovery_epoch":
++                    str(advanced_twice["database_recovery_epoch"]),
++                "expected_cutpoint_digest": advanced_twice["cutpoint_digest"],
++                "candidate_artifact_sha256": created_backup["snapshot_sha256"],
++                "rollback_artifact_sha256": replaced["rollback_snapshot_sha256"],
++                "action_sha256": replaced["replacement_receipt_action_sha256"],
++                "record_sha256": replaced["replacement_receipt_record_sha256"],
++            }, "replacement receipt binding")
++            require(is_sha256(receipt_fields.get("manifest_digest")),
++                    "replacement receipt omitted manifest digest binding")
++            receipt_bytes = replacement_receipt.read_bytes()
++            require(
++                all(str(path).encode() not in receipt_bytes for path in (
++                    manifest, replica_db, backup_artifact,
++                    replacement_rollback, replacement_receipt,
++                )),
++                "replacement receipt leaked selected absolute paths",
++            )
++            rollback_bytes = replacement_rollback.read_bytes()
++            rollback_digest = file_digest(replacement_rollback)
++            candidate_bytes = backup_artifact.read_bytes()
++            candidate_digest = file_digest(backup_artifact)
++
++            # The exact completed action is restart-idempotent. The immutable
++            # receipt is re-read, while the active database itself proves that
++            # both logical replacement and recovery-epoch advancement finished.
++            replayed = run_ok([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="completed database replacement replay", timeout=120.0)
++            require_exact_keys(replayed, replacement_keys,
++                               "completed replacement replay response")
++            require_fields(replayed, {
++                "response_schema":
++                    "anonsync.local-database-recovery-replacement.response.v3",
++                "replacement_entry_stage": "recovery_epoch_advanced",
++                "replacement_receipt_preexisting": True,
++                "replacement_receipt_created_this_invocation": False,
++                "rollback_artifact_published_this_invocation": False,
++                "logical_database_replacement_performed_this_invocation": False,
++                "recovery_epoch_advanced_this_invocation": False,
++                "idempotent_reproof_only": True,
++                "logical_database_replacement_complete": True,
++                "logical_database_replacement_performed": False,
++                "recovery_epoch_advanced": False,
++                "recovery_epoch_advance_complete": True,
++                "final_database_reopened_and_reproved": True,
++                "final_candidate_artifact_path_reproved": True,
++                "final_rollback_artifact_path_reproved": True,
++                "final_artifact_reproof_bracketed_by_database_cutpoint": True,
++                "artifact_pathnames_continuously_reserved": False,
++                "noncooperating_same_uid_artifact_replacement_excluded": False,
++                "mutation_performed": False,
++                "backup_step_calls": 0,
++                "maximum_reported_page_count": 0,
++                "maximum_reported_remaining_pages": 0,
++                "recovery_expectation": successor_token,
++            }, "completed replacement replay response")
++            require(
++                recovery_state(replayed) == recovery_state(advanced),
++                "completed replacement replay changed the final database",
++            )
++
++            # Stable selected artifact drift is rejected on every invocation,
++            # independently of resident images retained by an earlier process.
++            # The final in-invocation pathname reopening is bound separately by
++            # the C++ source audit and the response-v3 success contract; this
++            # oracle does not claim a continuous reservation against a hostile
++            # same-UID writer.
++            family_before_candidate_tamper = sqlite_family_fingerprint(replica_db)
++            backup_artifact.write_bytes(rollback_bytes)
++            os.chmod(backup_artifact, 0o600)
++            run_failure([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="changed candidate artifact pathname", returncode=1,
++               error_code="operation_failed",
++               message_fragment="does not match the selected action")
++            require(
++                sqlite_family_fingerprint(replica_db) ==
++                    family_before_candidate_tamper,
++                "changed candidate artifact altered the active database",
++            )
++            backup_artifact.write_bytes(candidate_bytes)
++            os.chmod(backup_artifact, 0o600)
++            require(file_digest(backup_artifact) == candidate_digest,
++                    "test candidate restoration changed immutable bytes")
++
++            family_before_rollback_tamper = sqlite_family_fingerprint(replica_db)
++            replacement_rollback.write_bytes(candidate_bytes)
++            os.chmod(replacement_rollback, 0o600)
++            run_failure([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="changed rollback artifact pathname", returncode=1,
++               error_code="operation_failed",
++               message_fragment="rollback artifact changed")
++            require(
++                sqlite_family_fingerprint(replica_db) ==
++                    family_before_rollback_tamper,
++                "changed rollback artifact altered the active database",
++            )
++            replacement_rollback.write_bytes(rollback_bytes)
++            os.chmod(replacement_rollback, 0o600)
++            require(file_digest(replacement_rollback) == rollback_digest,
++                    "test rollback restoration changed immutable bytes")
++
++            # The receipt remains evidence rather than effect authority: damage,
++            # relaxed permissions, or another hard link all fail before any
++            # database state can be trusted from it.
++            family_before_bad_receipt = sqlite_family_fingerprint(replica_db)
++            replacement_receipt.write_bytes(receipt_bytes[:-1] + b"X")
++            run_failure([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="damaged replacement receipt", returncode=1,
++               error_code="operation_failed", message_fragment="receipt framing is invalid")
++            require(sqlite_family_fingerprint(replica_db) == family_before_bad_receipt,
++                    "damaged receipt changed the active database")
++            replacement_receipt.write_bytes(receipt_bytes)
++            os.chmod(replacement_receipt, 0o600)
++
++            os.chmod(replacement_receipt, 0o640)
++            run_failure([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="nonprivate replacement receipt", returncode=1,
++               error_code="operation_failed", message_fragment="mode 0600")
++            os.chmod(replacement_receipt, 0o600)
++
++            receipt_hardlink = backup_root / "replacement-receipt-hardlink"
++            os.link(replacement_receipt, receipt_hardlink)
++            run_failure([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="hardlinked replacement receipt", returncode=1,
++               error_code="operation_failed", message_fragment="single-link")
++            receipt_hardlink.unlink()
++            require(file_digest(replacement_rollback) == rollback_digest,
++                    "receipt rejection changed the rollback artifact")
++
++            # A completed database without its rollback cannot be reconstructed
++            # from the receipt: rollback recreation is admitted only while the
++            # active state is still the exact displaced database.
++            replacement_rollback.unlink()
++            run_failure([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="missing rollback after completed replacement", returncode=1,
++               error_code="operation_failed",
++               message_fragment="current database expectation is stale")
++            replacement_rollback.write_bytes(rollback_bytes)
++            os.chmod(replacement_rollback, 0o600)
++            require(file_digest(replacement_rollback) == rollback_digest,
++                    "test rollback restoration changed immutable bytes")
++
++            # Simulate a process crash after the candidate SQLite transaction
++            # committed but before recovery-epoch advancement. The immutable
++            # receipt plus active candidate cutpoint admits only the missing
++            # epoch transition; no second logical database copy occurs.
++            install_logical_sqlite_image(backup_artifact, replica_db)
++            candidate_pending = run_ok([
++                str(sync), "database-recovery-inspect", "--manifest", str(manifest),
++            ], label="candidate-installed crash cutpoint inspection")
++            require(recovery_state(candidate_pending) == recovery_state(inspected),
++                    "test candidate-installed cutpoint differs from the artifact")
++            resumed_pending = run_ok([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="candidate-installed replacement resume", timeout=120.0)
++            require_exact_keys(resumed_pending, replacement_keys,
++                               "candidate-installed resume response")
++            require_fields(resumed_pending, {
++                "replacement_entry_stage": "candidate_installed_epoch_pending",
++                "replacement_receipt_preexisting": True,
++                "replacement_receipt_created_this_invocation": False,
++                "rollback_artifact_published_this_invocation": False,
++                "logical_database_replacement_performed_this_invocation": False,
++                "recovery_epoch_advanced_this_invocation": True,
++                "idempotent_reproof_only": False,
++                "logical_database_replacement_performed": False,
++                "recovery_epoch_advanced": True,
++                "mutation_performed": True,
++                "backup_step_calls": 0,
++                "maximum_reported_page_count": 0,
++                "maximum_reported_remaining_pages": 0,
++                "recovery_expectation": successor_token,
++            }, "candidate-installed resume response")
++            require(recovery_state(resumed_pending) == recovery_state(advanced),
++                    "candidate-installed resume did not advance exactly once")
++
++            # Simulate the earliest durable crash: receipt published, rollback
++            # absent, active database still exact displaced state. The owner
++            # recaptures and proves the rollback, then completes the action.
++            install_logical_sqlite_image(replacement_rollback, replica_db)
++            displaced_again = run_ok([
++                str(sync), "database-recovery-inspect", "--manifest", str(manifest),
++            ], label="receipt-only displaced cutpoint inspection")
++            require(recovery_state(displaced_again) == recovery_state(advanced_twice),
++                    "test receipt-only cutpoint differs from displaced database")
++            replacement_rollback.unlink()
++            resumed_receipt_only = run_ok([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="receipt-only database replacement resume", timeout=120.0)
++            require_exact_keys(resumed_receipt_only, replacement_keys,
++                               "receipt-only resume response")
++            require_fields(resumed_receipt_only, {
++                "replacement_entry_stage": "displaced_database_current",
++                "replacement_receipt_preexisting": True,
++                "replacement_receipt_created_this_invocation": False,
++                "rollback_artifact_published_this_invocation": True,
++                "logical_database_replacement_performed_this_invocation": True,
++                "recovery_epoch_advanced_this_invocation": True,
++                "idempotent_reproof_only": False,
++                "logical_database_replacement_performed": True,
++                "recovery_epoch_advanced": True,
++                "mutation_performed": True,
++                "recovery_expectation": successor_token,
++            }, "receipt-only resume response")
++            require(
++                recovery_state(resumed_receipt_only) == recovery_state(advanced) and
++                file_digest(replacement_rollback) == rollback_digest,
++                "receipt-only resume did not restore exact rollback and successor",
++            )
++
++            # A state outside the three admitted exact cutpoints fails closed.
++            unknown_first = run_ok([
++                str(sync), "database-recovery-advance",
++                "--manifest", str(manifest),
++                "--expected", successor_token,
++            ], label="first unknown-continuity setup advance")
++            unknown_second = run_ok([
++                str(sync), "database-recovery-advance",
++                "--manifest", str(manifest),
++                "--expected", str(unknown_first["recovery_expectation"]),
++            ], label="second unknown-continuity setup advance")
++            require(recovery_state(unknown_first) == recovery_state(advanced_twice),
++                    "first setup advance did not reproduce displaced cutpoint")
++            unknown_before = sqlite_family_fingerprint(replica_db)
++            run_failure([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="unknown replacement continuity", returncode=1,
++               error_code="operation_failed", message_fragment="continuity is unknown")
++            require(sqlite_family_fingerprint(replica_db) == unknown_before,
++                    "unknown continuity changed the active database")
++
++            # Return to the exact candidate-pending cutpoint and prove ordinary
++            # resume still completes after an unknown-state rejection.
++            install_logical_sqlite_image(backup_artifact, replica_db)
++            recovered_after_unknown = run_ok([
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(backup_artifact),
++                "--rollback", str(replacement_rollback),
++                "--receipt", str(replacement_receipt),
++                "--expected-current", advanced_twice_token,
++            ], label="replacement recovery after unknown-state rejection",
++               timeout=120.0)
++            require(
++                recovered_after_unknown["replacement_entry_stage"] ==
++                    "candidate_installed_epoch_pending" and
++                recovery_state(recovered_after_unknown) == recovery_state(advanced),
++                "replacement did not recover after unknown-state rejection",
++            )
++
+             old_backup_after_advance = run_ok([
+                 str(sync), "database-backup-inspect",
+                 "--manifest", str(manifest),
+@@ -991,6 +1444,223 @@ def main() -> int:
+                 "source recovery advance changed detached backup bytes",
+             )
+ 
++            # Prove the final pathname reproof is a real post-effect cutpoint,
++            # not merely a source-shape claim. First enlarge the exact active
++            # SQLite image with dropped-table free pages. The logical cutpoint
++            # stays unchanged, but publishing its rollback after the immutable
++            # receipt creates a deterministic pause window. Stop the shipping
++            # process as soon as the receipt becomes visible, replace the
++            # already-sealed candidate pathname, and resume. The database effect
++            # must commit from retained candidate bytes, final pathname reproof
++            # must reject success, and a second process must complete by exact
++            # active-database classification without repeating the effect.
++            bloat_connection = sqlite3.connect(str(replica_db))
++            try:
++                bloat_connection.execute("PRAGMA busy_timeout=5000")
++                bloat_connection.execute("PRAGMA secure_delete=OFF")
++                bloat_connection.execute(
++                    "CREATE TABLE main.anonsync_final_reproof_bloat("
++                    "payload BLOB NOT NULL)"
++                )
++                bloat_connection.execute(
++                    "INSERT INTO main.anonsync_final_reproof_bloat(payload) "
++                    "VALUES(zeroblob(?))", (32 * 1024 * 1024,)
++                )
++                bloat_connection.commit()
++                bloat_connection.execute(
++                    "DROP TABLE main.anonsync_final_reproof_bloat"
++                )
++                bloat_connection.commit()
++                checkpoint = bloat_connection.execute(
++                    "PRAGMA wal_checkpoint(TRUNCATE)"
++                ).fetchone()
++                page_size_row = bloat_connection.execute(
++                    "PRAGMA page_size"
++                ).fetchone()
++                freelist_row = bloat_connection.execute(
++                    "PRAGMA freelist_count"
++                ).fetchone()
++                require(
++                    checkpoint is not None and int(checkpoint[0]) == 0,
++                    "final pathname reproof fixture could not checkpoint its "
++                    "dropped-table free pages",
++                )
++                require(
++                    page_size_row is not None and freelist_row is not None and
++                    int(page_size_row[0]) * int(freelist_row[0]) >=
++                        16 * 1024 * 1024,
++                    "final pathname reproof fixture did not retain a bounded "
++                    "rollback publication window",
++                )
++            finally:
++                bloat_connection.close()
++
++            bloated_active = run_ok([
++                str(sync), "database-recovery-inspect",
++                "--manifest", str(manifest),
++            ], label="final pathname reproof bloated-source inspection")
++            require(
++                recovery_state(bloated_active) == recovery_state(advanced),
++                "dropped-table free pages changed the active logical cutpoint",
++            )
++
++            race_candidate = replacement_rollback
++            race_rollback = backup_root / "final-reproof-race-rollback.sqlite"
++            race_receipt = backup_root / "final-reproof-race.receipt"
++            race_candidate_held = (
++                backup_root / "final-reproof-race-candidate-held.sqlite"
++            )
++            race_command = [
++                str(sync), "database-recovery-replace",
++                "--manifest", str(manifest),
++                "--snapshot", str(race_candidate),
++                "--rollback", str(race_rollback),
++                "--receipt", str(race_receipt),
++                "--expected-current", successor_token,
++            ]
++            race_process: subprocess.Popen[str] | None = None
++            candidate_was_moved = False
++            process_was_stopped = False
++            try:
++                race_process = subprocess.Popen(
++                    race_command, stdout=subprocess.PIPE,
++                    stderr=subprocess.PIPE, text=True,
++                )
++                publication_deadline = time.monotonic() + 20.0
++                while not race_receipt.exists():
++                    if race_process.poll() is not None:
++                        stdout, stderr = race_process.communicate()
++                        fail(
++                            "final candidate pathname replacement race exited "
++                            "before immutable receipt publication\n"
++                            f"stdout:\n{stdout}stderr:\n{stderr}"
++                        )
++                    if time.monotonic() >= publication_deadline:
++                        fail(
++                            "final candidate pathname replacement race did not "
++                            "publish its immutable receipt"
++                        )
++                    time.sleep(0.001)
++
++                os.kill(race_process.pid, signal.SIGSTOP)
++                stop_deadline = time.monotonic() + 5.0
++                while True:
++                    status_path = Path(f"/proc/{race_process.pid}/status")
++                    if status_path.is_file():
++                        status_text = status_path.read_text(encoding="utf-8")
++                        if ("State:\tT" in status_text or
++                                "State:\tt" in status_text):
++                            process_was_stopped = True
++                            break
++                    if race_process.poll() is not None:
++                        stdout, stderr = race_process.communicate()
++                        fail(
++                            "final candidate pathname replacement race exited "
++                            "before SIGSTOP became effective\n"
++                            f"stdout:\n{stdout}stderr:\n{stderr}"
++                        )
++                    if time.monotonic() >= stop_deadline:
++                        fail(
++                            "final candidate pathname replacement race did not "
++                            "enter a stopped state"
++                        )
++                    time.sleep(0.001)
++
++                race_candidate.rename(race_candidate_held)
++                candidate_was_moved = True
++                shutil.copyfile(backup_artifact, race_candidate)
++                os.chmod(race_candidate, 0o600)
++                os.kill(race_process.pid, signal.SIGCONT)
++                process_was_stopped = False
++
++                stdout, stderr = race_process.communicate(timeout=120.0)
++                completed_race = subprocess.CompletedProcess(
++                    race_command, race_process.returncode, stdout, stderr
++                )
++                race_failure = parse_json_output(
++                    completed_race, race_command,
++                    "final candidate pathname replacement race",
++                )
++                require(
++                    race_process.returncode == 1 and
++                    race_failure.get("terminal_class") == "stopped" and
++                    race_failure.get("error_code") == "operation_failed",
++                    "final candidate pathname replacement race returned the "
++                    f"wrong failure class: {race_failure}",
++                )
++                require(
++                    "candidate artifact changed" in
++                        str(race_failure.get("message")) and
++                    "candidate artifact changed" in stderr,
++                    "final candidate pathname replacement race did not fail "
++                    "at the final named-artifact reproof",
++                )
++            finally:
++                if race_process is not None and race_process.poll() is None:
++                    if process_was_stopped:
++                        os.kill(race_process.pid, signal.SIGCONT)
++                    race_process.kill()
++                    race_process.communicate()
++                if candidate_was_moved:
++                    if race_candidate.exists():
++                        race_candidate.unlink()
++                    if race_candidate_held.exists():
++                        race_candidate_held.rename(race_candidate)
++
++            after_final_reproof_failure = run_ok([
++                str(sync), "database-recovery-inspect",
++                "--manifest", str(manifest),
++            ], label="final candidate pathname reproof failure inspection")
++            require(
++                recovery_state(after_final_reproof_failure) ==
++                    recovery_state(unknown_second),
++                "final candidate pathname reproof failure did not preserve the "
++                "exact committed recovery successor",
++            )
++            resumed_final_reproof = run_ok(
++                race_command,
++                label="final candidate pathname reproof resume",
++                timeout=120.0,
++            )
++            require_exact_keys(
++                resumed_final_reproof, replacement_keys,
++                "final candidate pathname reproof resume response",
++            )
++            require_fields(resumed_final_reproof, {
++                "response_schema":
++                    "anonsync.local-database-recovery-replacement.response.v3",
++                "replacement_entry_stage": "recovery_epoch_advanced",
++                "idempotent_reproof_only": True,
++                "mutation_performed": False,
++                "final_candidate_artifact_path_reproved": True,
++                "final_rollback_artifact_path_reproved": True,
++                "final_artifact_reproof_bracketed_by_database_cutpoint": True,
++                "artifact_pathnames_continuously_reserved": False,
++                "noncooperating_same_uid_artifact_replacement_excluded": False,
++            }, "final candidate pathname reproof resume response")
++            require(
++                recovery_state(resumed_final_reproof) ==
++                    recovery_state(unknown_second),
++                "final candidate pathname reproof resume changed the committed "
++                "recovery successor",
++            )
++
++            # Return the primary deployment to the canonical post-backup recovery
++            # lineage used by the remainder of this process oracle. Logical copy
++            # also discards the test-only free-page inflation.
++            install_logical_sqlite_image(backup_artifact, replica_db)
++            restored_after_final_reproof = run_ok([
++                str(sync), "database-recovery-advance",
++                "--manifest", str(manifest),
++                "--expected", expected_token,
++            ], label="final candidate pathname reproof lineage restoration")
++            require(
++                recovery_state(restored_after_final_reproof) ==
++                    recovery_state(advanced),
++                "final candidate pathname reproof test did not restore the "
++                "canonical final lineage",
++            )
++
+             family_before_reuse = sqlite_family_fingerprint(replica_db)
+             run_failure([
+                 str(sync), "database-recovery-advance", "--manifest", str(manifest),
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index f5ae860dcf328fb54f8f5f0c2bc2b54dbd63dbbb..808d878b7ac9e04244e5100b4b696071ba999a12 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1736,6 +1736,23 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 984:
++        revision_scoped_required.update({
++            "IMMUTABLE_DATABASE_REPLACEMENT_RECEIPT_AUDIT_rev0984.md",
++            "REVISION_NOTES_rev0984.md",
++            "README.md",
++            "CMakeLists.txt",
++            "src/anonsync_sync.cpp",
++            "src/sync_replica_database_artifact_internal.hpp",
++            "src/sync_replica_database_replacement.hpp",
++            "src/sync_replica_database_replacement.cpp",
++            "src/sync_replica_database_replacement_receipt_internal.hpp",
++            "src/sync_replica_database_replacement_receipt.cpp",
++            "tools/test_anonsync_database_recovery.py",
++            "tools/audit_sync_replica_database_replacement.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

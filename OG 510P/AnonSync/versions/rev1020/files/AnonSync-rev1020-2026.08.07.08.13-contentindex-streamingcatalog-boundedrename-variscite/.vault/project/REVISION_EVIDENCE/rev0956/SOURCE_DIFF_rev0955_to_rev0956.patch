@@ -1,0 +1,2062 @@
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index 8c806b2..bf6e218 100755
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -1495,6 +1495,7 @@ int command_run(const Options& options) {
+         status_server->require_healthy_or_throw();
+     };
+     const auto current_service_state = [&]() -> std::string_view {
++        if (owner.payload_integrity_fault_active()) return "faulted";
+         if (!owner.initial_repair_complete()) return "starting";
+         return owner.ingress_ready() ? "running" : "degraded";
+     };
+@@ -1503,6 +1504,10 @@ int command_run(const Options& options) {
+             if (owner.ready()) {
+                 service_manager.announce_ready_or_throw(
+                     "Running: initial repair and required ingress are ready");
++            } else if (owner.payload_integrity_fault_active()) {
++                service_manager.publish_startup_status_or_throw(
++                    "Faulted: payload integrity mismatch; synchronization is "
++                    "paused pending current-byte reproof");
+             } else if (!owner.initial_repair_complete()) {
+                 service_manager.publish_startup_status_or_throw(
+                     "Starting: repairing configured folder");
+@@ -1512,7 +1517,11 @@ int command_run(const Options& options) {
+             }
+             return;
+         }
+-        if (owner.ingress_ready()) {
++        if (owner.payload_integrity_fault_active()) {
++            service_manager.publish_runtime_status(
++                "Faulted: payload integrity mismatch; synchronization is "
++                "paused pending current-byte reproof");
++        } else if (owner.ingress_ready()) {
+             service_manager.publish_runtime_status(
+                 "Running: linked-peer synchronization is operational");
+         } else {
+@@ -1589,11 +1598,13 @@ int command_run(const Options& options) {
+ 
+         publish_status(
+             current_service_state(),
+-            !owner.initial_repair_complete()
+-                ? "initial_repair"
+-                : (owner.ingress_ready()
+-                       ? "peer_service_step"
+-                       : "ingress_publication"));
++            owner.payload_integrity_fault_active()
++                ? "payload_integrity_reproof"
++                : (!owner.initial_repair_complete()
++                       ? "initial_repair"
++                       : (owner.ingress_ready()
++                              ? "peer_service_step"
++                              : "ingress_publication")));
+         const auto step = owner.run_next_or_throw();
+         anonsync::account_sync_replica_peer_service_step(summary, step);
+         ++status_generation;
+@@ -1611,20 +1622,35 @@ int command_run(const Options& options) {
+         const bool ingress_backoff_pending =
+             step.disposition == anonsync::SyncReplicaPeerServiceStepDisposition::
+                 IngressPublicationBackoffPending;
++        const bool payload_integrity_backoff_pending =
++            step.disposition == anonsync::SyncReplicaPeerServiceStepDisposition::
++                    PayloadIntegrityFaultObserved ||
++            step.disposition == anonsync::SyncReplicaPeerServiceStepDisposition::
++                    PayloadIntegrityReproofBackoffPending;
+         publish_status(
+             current_service_state(),
+             local_drain_pending
+                 ? "drain_requested"
+-                : (ingress_backoff_pending
+-                       ? "ingress_retry_wait"
+-                       : "between_steps"));
+-        if (ingress_backoff_pending &&
+-            step.ingress_retry_delay_milliseconds != 0U &&
+-            !local_drain_pending) {
+-            const std::uint64_t bounded_wait = std::min(
++                : (payload_integrity_backoff_pending
++                       ? "payload_integrity_retry_wait"
++                       : (ingress_backoff_pending
++                              ? "ingress_retry_wait"
++                              : "between_steps")));
++        std::uint64_t bounded_wait = 0U;
++        if (payload_integrity_backoff_pending &&
++            step.payload_integrity_retry_delay_milliseconds != 0U) {
++            bounded_wait = std::min(
++                step.payload_integrity_retry_delay_milliseconds,
++                anonsync::
++                    kSyncReplicaPeerServiceMaximumIntegrityBackoffWaitMilliseconds);
++        } else if (ingress_backoff_pending &&
++                   step.ingress_retry_delay_milliseconds != 0U) {
++            bounded_wait = std::min(
+                 step.ingress_retry_delay_milliseconds,
+                 anonsync::
+                     kSyncReplicaPeerServiceMaximumIngressBackoffWaitMilliseconds);
++        }
++        if (bounded_wait != 0U && !local_drain_pending) {
+             if (status_server) {
+                 (void)status_server->wait_for_stop_request_or_timeout(
+                     bounded_wait);
+@@ -1735,6 +1761,16 @@ int command_run(const Options& options) {
+         << json_quote(anonsync::sync_replica_peer_service_role_name(
+                owner.role()))
+         << ",\"steps\":" << counters.steps
++        << ",\"payload_integrity_fault_active\":"
++        << json_bool(owner.payload_integrity_fault_active())
++        << ",\"payload_integrity_faults_observed\":"
++        << counters.payload_integrity_faults_observed
++        << ",\"payload_integrity_reproof_attempts\":"
++        << counters.payload_integrity_reproof_attempts
++        << ",\"payload_integrity_reproof_recoveries\":"
++        << counters.payload_integrity_reproof_recoveries
++        << ",\"payload_integrity_backoff_deferrals\":"
++        << counters.payload_integrity_backoff_deferrals
+         << ",\"initial_repairs\":" << counters.initial_repairs
+         << ",\"periodic_repairs\":" << counters.periodic_repairs
+         << ",\"filesystem_wake_repairs\":"
+@@ -1754,6 +1790,10 @@ int command_run(const Options& options) {
+         << summary.cycles_with_durable_progress
+         << ",\"outbound_handoffs\":" << counters.outbound_handoffs
+         << ",\"outbound_failures\":" << counters.outbound_failures
++        << ",\"outbound_session_io_failures\":"
++        << counters.outbound_session_io_failures
++        << ",\"inbound_session_io_failures\":"
++        << counters.inbound_session_io_failures
+         << ",\"ingress\":{\"setup_attempts\":"
+         << counters.ingress_setup_attempts
+         << ",\"setup_successes\":" << counters.ingress_setup_successes
+diff --git a/src/sync_replica_file_payload_store.cpp b/src/sync_replica_file_payload_store.cpp
+index 10dab5d..ea1771c 100755
+--- a/src/sync_replica_file_payload_store.cpp
++++ b/src/sync_replica_file_payload_store.cpp
+@@ -3538,6 +3538,15 @@ struct SyncReplicaFilePayloadStore::State final {
+         std::make_shared<PayloadVerificationCache>();
+     std::chrono::steady_clock::time_point next_scrub_not_before =
+         std::chrono::steady_clock::time_point::min();
++    // Operator-only process observations. Durable scheduling authority remains
++    // exclusively in .anonsync-payload-scrub-state-v1; these timestamps are
++    // monotonic and intentionally disappear at restart rather than pretending
++    // a wall-clock age that rev0955 never persisted.
++    std::optional<SyncReplicaFilePayloadStoreScrubReport> last_scrub_report;
++    std::chrono::steady_clock::time_point last_scrub_report_at =
++        std::chrono::steady_clock::time_point::min();
++    std::optional<std::chrono::steady_clock::time_point>
++        last_scrub_cycle_completed_at;
+ };
+ 
+ struct SyncReplicaFilePayloadStoreMutationBatch::State final {
+@@ -4334,6 +4343,35 @@ void retain_completed_payload_verification_best_effort(
+     }
+ }
+ 
++std::string_view sync_replica_file_payload_store_scrub_disposition_name(
++    SyncReplicaFilePayloadStoreScrubDisposition disposition) noexcept {
++    switch (disposition) {
++        case SyncReplicaFilePayloadStoreScrubDisposition::Disabled:
++            return "disabled";
++        case SyncReplicaFilePayloadStoreScrubDisposition::DeferredBySchedule:
++            return "deferred_by_schedule";
++        case SyncReplicaFilePayloadStoreScrubDisposition::Empty:
++            return "empty";
++        case SyncReplicaFilePayloadStoreScrubDisposition::DeferredLeaseBusy:
++            return "deferred_lease_busy";
++        case SyncReplicaFilePayloadStoreScrubDisposition::
++                DeferredStaleSnapshot:
++            return "deferred_stale_snapshot";
++        case SyncReplicaFilePayloadStoreScrubDisposition::
++                DeferredTransientCapacity:
++            return "deferred_transient_capacity";
++        case SyncReplicaFilePayloadStoreScrubDisposition::
++                DeferredPublicationFailure:
++            return "deferred_publication_failure";
++        case SyncReplicaFilePayloadStoreScrubDisposition::
++                DeferredAttemptFailure:
++            return "deferred_attempt_failure";
++        case SyncReplicaFilePayloadStoreScrubDisposition::Advanced:
++            return "advanced";
++    }
++    return "unknown";
++}
++
+ void validate_sync_replica_file_payload_store_limits_or_throw(
+     const SyncReplicaFilePayloadStoreLimits& limits) {
+     if (limits.max_entries == 0U ||
+@@ -5297,6 +5335,44 @@ SyncReplicaFilePayloadStore::limits() const {
+     return state_->limits;
+ }
+ 
++SyncReplicaFilePayloadStoreScrubStatus
++SyncReplicaFilePayloadStore::scrub_status() const {
++    if (!state_) throw std::logic_error("file payload store is inactive");
++    sync_directory_authority_detail::SyncDirectoryAuthorityAccess::
++        require_current_owner_or_throw(
++            state_->root_authority, state_->label + " scrub status");
++
++    SyncReplicaFilePayloadStoreScrubStatus status;
++    status.enabled =
++        state_->disposition !=
++            SyncReplicaFilePayloadStoreOpenDisposition::ReadOnlyInspect &&
++        payload_scrub_enabled(state_->limits);
++    status.max_bytes_per_attempt =
++        state_->limits.max_scrub_bytes_per_attempt;
++    status.max_entries_per_attempt =
++        state_->limits.max_scrub_entries_per_attempt;
++    if (!state_->last_scrub_report.has_value()) return status;
++
++    status.last_report = state_->last_scrub_report;
++    const auto now = std::chrono::steady_clock::now();
++    const auto age_milliseconds = [](auto current, auto observed) {
++        if (current < observed) return std::uint64_t{0U};
++        const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
++            current - observed);
++        return age.count() <= 0
++            ? std::uint64_t{0U}
++            : static_cast<std::uint64_t>(age.count());
++    };
++    status.last_report_age_milliseconds =
++        age_milliseconds(now, state_->last_scrub_report_at);
++    if (state_->last_scrub_cycle_completed_at.has_value()) {
++        status.last_completed_cycle_age_milliseconds =
++            age_milliseconds(
++                now, *state_->last_scrub_cycle_completed_at);
++    }
++    return status;
++}
++
+ SyncReplicaFilePayloadStoreTargetedAccess
+ SyncReplicaFilePayloadStore::begin_targeted_access_or_throw(
+     std::string_view label_view) const {
+@@ -5467,6 +5543,11 @@ SyncReplicaFilePayloadStore::snapshot_or_throw() const {
+             store.label + " snapshot final lease cutpoint");
+     }
+ 
++    const std::uint64_t scrub_cycles_before_attempt =
++        snapshot->scrub_state_usable && snapshot->scrub_state.has_value()
++        ? snapshot->scrub_state->completed_cycles
++        : 0U;
++
+     // A successful snapshot is already complete authority. Only after releasing
+     // its shared lease do we opportunistically take an exclusive lease for one
+     // process-throttled rotating byte scrub and then checkpoint restart
+@@ -5551,6 +5632,14 @@ SyncReplicaFilePayloadStore::snapshot_or_throw() const {
+         }
+     }
+ 
++    const auto scrub_report_observed_at = std::chrono::steady_clock::now();
++    if (snapshot->scrub_report.completed_cycles >
++        scrub_cycles_before_attempt) {
++        store.last_scrub_cycle_completed_at = scrub_report_observed_at;
++    }
++    store.last_scrub_report = snapshot->scrub_report;
++    store.last_scrub_report_at = scrub_report_observed_at;
++
+     if (refresh_verification_index) {
+         refresh_verification_index_best_effort(
+             store.root_authority, store.limits, store.identity_basename,
+diff --git a/src/sync_replica_file_payload_store.hpp b/src/sync_replica_file_payload_store.hpp
+index 7b18998..4ab8ea7 100755
+--- a/src/sync_replica_file_payload_store.hpp
++++ b/src/sync_replica_file_payload_store.hpp
+@@ -217,6 +217,10 @@ enum class SyncReplicaFilePayloadStoreScrubDisposition : std::uint8_t {
+     Advanced = 9,
+ };
+ 
++[[nodiscard]] std::string_view
++sync_replica_file_payload_store_scrub_disposition_name(
++    SyncReplicaFilePayloadStoreScrubDisposition disposition) noexcept;
++
+ struct SyncReplicaFilePayloadStoreScrubReport final {
+     SyncReplicaFilePayloadStoreScrubDisposition disposition =
+         SyncReplicaFilePayloadStoreScrubDisposition::Disabled;
+@@ -237,6 +241,25 @@ struct SyncReplicaFilePayloadStoreScrubReport final {
+         default;
+ };
+ 
++// Process-local operator projection of the restart-safe scrub scheduler. The
++// durable cycle count and continuation position come from the checksum-framed
++// scrub record. Ages are deliberately optional: rev0955 did not persist wall
++// time, so a fresh process must not invent when a pre-existing cycle completed.
++// Once this process observes a report, report age is monotonic-clock based; once
++// it itself completes a cycle, last_completed_cycle_age_milliseconds becomes
++// available until process restart.
++struct SyncReplicaFilePayloadStoreScrubStatus final {
++    bool enabled = false;
++    std::uint64_t max_bytes_per_attempt = 0U;
++    std::uint64_t max_entries_per_attempt = 0U;
++    std::optional<SyncReplicaFilePayloadStoreScrubReport> last_report;
++    std::optional<std::uint64_t> last_report_age_milliseconds;
++    std::optional<std::uint64_t> last_completed_cycle_age_milliseconds;
++
++    bool operator==(const SyncReplicaFilePayloadStoreScrubStatus&) const =
++        default;
++};
++
+ class SyncReplicaFilePayloadStore;
+ class SyncReplicaFilePayloadStoreSnapshot;
+ class SyncReplicaFilePayloadStoreMutationBatch;
+@@ -614,6 +637,11 @@ public:
+     [[nodiscard]] const std::filesystem::path& root_path() const;
+     [[nodiscard]] const SyncReplicaFilePayloadStoreLimits& limits() const;
+ 
++    // Cheap exact-owner status projection. This performs no filesystem I/O and
++    // grants no payload or scheduling authority. It is intended for immutable
++    // status serialization on the store's originating owner thread.
++    [[nodiscard]] SyncReplicaFilePayloadStoreScrubStatus scrub_status() const;
++
+     // Shipping many-file publication seam. One complete store scan and one
+     // exclusive lease are amortized across a bounded synchronous caller-owned
+     // batch. The caller must destroy the batch before awaiting peer I/O or
+diff --git a/src/sync_replica_folder_process.cpp b/src/sync_replica_folder_process.cpp
+index 9d949b0..9b6fde6 100644
+--- a/src/sync_replica_folder_process.cpp
++++ b/src/sync_replica_folder_process.cpp
+@@ -373,6 +373,15 @@ SyncReplicaFolderProcessOwner::payload_store_or_throw() {
+     return *state_->payload_store;
+ }
+ 
++const SyncReplicaFilePayloadStore&
++SyncReplicaFolderProcessOwner::payload_store_or_throw() const {
++    if (!state_ || !state_->payload_store) {
++        throw std::logic_error(
++            "sync replica folder process owner is inactive");
++    }
++    return *state_->payload_store;
++}
++
+ SyncReplicaFolderScanOwner&
+ SyncReplicaFolderProcessOwner::folder_owner_or_throw() {
+     if (!state_ || !state_->folder_owner) {
+diff --git a/src/sync_replica_folder_process.hpp b/src/sync_replica_folder_process.hpp
+index f95d3cc..c37e85e 100644
+--- a/src/sync_replica_folder_process.hpp
++++ b/src/sync_replica_folder_process.hpp
+@@ -84,6 +84,8 @@ public:
+     // remain valid only for this process owner's retained lifetime.
+     [[nodiscard]] SyncReplicaSqliteOwner& replica_owner_or_throw();
+     [[nodiscard]] SyncReplicaFilePayloadStore& payload_store_or_throw();
++    [[nodiscard]] const SyncReplicaFilePayloadStore& payload_store_or_throw()
++        const;
+     [[nodiscard]] SyncReplicaFolderScanOwner& folder_owner_or_throw();
+ 
+ private:
+diff --git a/src/sync_replica_peer_service.cpp b/src/sync_replica_peer_service.cpp
+index 99a0b34..9cd187e 100644
+--- a/src/sync_replica_peer_service.cpp
++++ b/src/sync_replica_peer_service.cpp
+@@ -84,6 +84,20 @@ using Milliseconds = std::chrono::milliseconds;
+     return static_cast<std::uint64_t>(exact.count());
+ }
+ 
++void increment_saturating(std::uint64_t& value) noexcept {
++    if (value != std::numeric_limits<std::uint64_t>::max()) ++value;
++}
++
++[[nodiscard]] std::uint64_t elapsed_milliseconds(
++    Clock::time_point now,
++    Clock::time_point observed_at) noexcept {
++    if (now <= observed_at) return 0U;
++    const auto exact = std::chrono::duration_cast<Milliseconds>(
++        now - observed_at);
++    if (exact.count() <= 0) return 0U;
++    return static_cast<std::uint64_t>(exact.count());
++}
++
+ [[nodiscard]] std::uint64_t successful_handoff_lease_milliseconds(
+     const SyncReplicaPeerServiceLimits& limits) {
+     if (limits.cycle_runtime_seconds >
+@@ -398,11 +412,38 @@ std::string_view sync_replica_peer_service_step_disposition_name(
+         case SyncReplicaPeerServiceStepDisposition::
+                 FilesystemWakeRepairCompleted:
+             return "filesystem_wake_repair_completed";
++        case SyncReplicaPeerServiceStepDisposition::
++                PayloadIntegrityFaultObserved:
++            return "payload_integrity_fault_observed";
++        case SyncReplicaPeerServiceStepDisposition::
++                PayloadIntegrityReproofBackoffPending:
++            return "payload_integrity_reproof_backoff_pending";
++        case SyncReplicaPeerServiceStepDisposition::
++                PayloadIntegrityReproofCompleted:
++            return "payload_integrity_reproof_completed";
++        case SyncReplicaPeerServiceStepDisposition::OutboundSessionIoFailed:
++            return "outbound_session_io_failed";
++        case SyncReplicaPeerServiceStepDisposition::InboundSessionIoFailed:
++            return "inbound_session_io_failed";
+     }
+     return "unknown";
+ }
+ 
+ struct SyncReplicaPeerServiceOwner::State final {
++    struct ActivePayloadIntegrityFault final {
++        std::string expected_content_sha256;
++        std::string observed_content_sha256;
++        bool failure_persisted = false;
++        std::uint64_t detection_count = 0U;
++        Clock::time_point first_detected_at = Clock::time_point::min();
++        Clock::time_point last_detected_at = Clock::time_point::min();
++    };
++
++    struct RecoveredPayloadIntegrityFault final {
++        ActivePayloadIntegrityFault fault;
++        Clock::time_point recovered_at = Clock::time_point::min();
++    };
++
+     SyncReplicaPeerServiceLimits limits;
+     SyncReplicaFolderProcessOwner folder_process;
+     SyncReplicaFolderWakeOwner folder_wake;
+@@ -417,6 +458,11 @@ struct SyncReplicaPeerServiceOwner::State final {
+     Clock::time_point next_repair_at = Clock::time_point::min();
+     Clock::time_point next_outbound_at = Clock::time_point::min();
+     std::uint64_t consecutive_outbound_failures = 0U;
++    std::optional<ActivePayloadIntegrityFault> payload_integrity_fault;
++    std::optional<RecoveredPayloadIntegrityFault>
++        most_recent_payload_integrity_recovery;
++    Clock::time_point next_payload_integrity_reproof_at =
++        Clock::time_point::min();
+     bool ingress_is_ready = false;
+     bool ingress_setup_in_progress = false;
+     Clock::time_point next_ingress_attempt_at = Clock::time_point::min();
+@@ -628,6 +674,173 @@ struct SyncReplicaPeerServiceOwner::State final {
+             label + " next repair");
+     }
+ 
++    [[nodiscard]] std::optional<SyncReplicaPeerServicePayloadIntegrityFault>
++    payload_integrity_status() const {
++        if (!payload_integrity_fault.has_value()) return std::nullopt;
++        const Clock::time_point now = Clock::now();
++        const ActivePayloadIntegrityFault& active = *payload_integrity_fault;
++        SyncReplicaPeerServicePayloadIntegrityFault status;
++        status.expected_content_sha256 = active.expected_content_sha256;
++        status.observed_content_sha256 = active.observed_content_sha256;
++        status.failure_persisted = active.failure_persisted;
++        status.detection_count = active.detection_count;
++        status.active_age_milliseconds =
++            elapsed_milliseconds(now, active.first_detected_at);
++        status.last_detection_age_milliseconds =
++            elapsed_milliseconds(now, active.last_detected_at);
++        status.retry_delay_milliseconds = remaining_milliseconds(
++            now, next_payload_integrity_reproof_at);
++        return status;
++    }
++
++    [[nodiscard]]
++    std::optional<SyncReplicaPeerServicePayloadIntegrityRecovery>
++    payload_integrity_recovery_status() const {
++        if (!most_recent_payload_integrity_recovery.has_value()) {
++            return std::nullopt;
++        }
++        const Clock::time_point now = Clock::now();
++        const RecoveredPayloadIntegrityFault& recovered =
++            *most_recent_payload_integrity_recovery;
++        SyncReplicaPeerServicePayloadIntegrityRecovery status;
++        status.expected_content_sha256 =
++            recovered.fault.expected_content_sha256;
++        status.observed_content_sha256 =
++            recovered.fault.observed_content_sha256;
++        status.failure_persisted = recovered.fault.failure_persisted;
++        status.detection_count = recovered.fault.detection_count;
++        status.fault_duration_milliseconds = elapsed_milliseconds(
++            recovered.recovered_at, recovered.fault.first_detected_at);
++        status.recovery_age_milliseconds = elapsed_milliseconds(
++            now, recovered.recovered_at);
++        return status;
++    }
++
++    void record_payload_integrity_fault_or_throw(
++        const SyncReplicaFilePayloadStoreIntegrityError& error) {
++        const Clock::time_point now = Clock::now();
++        const bool same_target =
++            payload_integrity_fault.has_value() &&
++            payload_integrity_fault->expected_content_sha256 ==
++                error.expected_content_sha256();
++        if (!same_target) {
++            ActivePayloadIntegrityFault active;
++            active.expected_content_sha256 =
++                error.expected_content_sha256();
++            active.observed_content_sha256 =
++                error.observed_content_sha256();
++            active.failure_persisted = error.failure_persisted();
++            active.detection_count = 1U;
++            active.first_detected_at = now;
++            active.last_detected_at = now;
++            payload_integrity_fault = std::move(active);
++        } else {
++            ActivePayloadIntegrityFault& active = *payload_integrity_fault;
++            active.observed_content_sha256 =
++                error.observed_content_sha256();
++            active.failure_persisted =
++                active.failure_persisted || error.failure_persisted();
++            increment_saturating(active.detection_count);
++            active.last_detected_at = now;
++        }
++        increment_saturating(counters.payload_integrity_faults_observed);
++        const std::uint64_t retry_delay = retry_delay_milliseconds(
++            limits, payload_integrity_fault->detection_count);
++        next_payload_integrity_reproof_at = add_milliseconds_or_throw(
++            now, retry_delay, label + " payload integrity reproof");
++    }
++
++    [[nodiscard]] SyncReplicaPeerServiceStepResult
++    payload_integrity_fault_step_or_throw(
++        const SyncReplicaFilePayloadStoreIntegrityError& error) {
++        record_payload_integrity_fault_or_throw(error);
++        SyncReplicaPeerServiceStepResult result;
++        result.role_before = role;
++        result.role_after = role;
++        result.ingress_ready = ingress_is_ready;
++        result.consecutive_outbound_failures =
++            consecutive_outbound_failures;
++        result.consecutive_ingress_failures =
++            consecutive_ingress_failures;
++        result.disposition = SyncReplicaPeerServiceStepDisposition::
++            PayloadIntegrityFaultObserved;
++        result.payload_integrity_retry_delay_milliseconds =
++            remaining_milliseconds(
++                Clock::now(), next_payload_integrity_reproof_at);
++        increment_saturating(counters.steps);
++        return result;
++    }
++
++    [[nodiscard]] SyncReplicaPeerServiceStepResult
++    payload_integrity_backoff_step() {
++        SyncReplicaPeerServiceStepResult result;
++        result.role_before = role;
++        result.role_after = role;
++        result.ingress_ready = ingress_is_ready;
++        result.consecutive_outbound_failures =
++            consecutive_outbound_failures;
++        result.consecutive_ingress_failures =
++            consecutive_ingress_failures;
++        result.disposition = SyncReplicaPeerServiceStepDisposition::
++            PayloadIntegrityReproofBackoffPending;
++        result.payload_integrity_retry_delay_milliseconds =
++            remaining_milliseconds(
++                Clock::now(), next_payload_integrity_reproof_at);
++        increment_saturating(counters.steps);
++        increment_saturating(
++            counters.payload_integrity_backoff_deferrals);
++        return result;
++    }
++
++    [[nodiscard]] SyncReplicaPeerServiceStepResult
++    payload_integrity_reproof_step_or_throw() {
++        if (!payload_integrity_fault.has_value()) {
++            throw std::logic_error(
++                label + " payload integrity reproof lacks an active fault");
++        }
++        increment_saturating(counters.payload_integrity_reproof_attempts);
++        const bool initial = !initial_repair_done;
++
++        // The complete leased payload snapshot is the sole authority that can
++        // clear the process-local fail-closed witness after current bytes or
++        // absence are proved. Only then run the ordinary convergence pass; the
++        // service fault remains active until both operations succeed.
++        (void)folder_process.payload_store_or_throw().snapshot_or_throw();
++
++        SyncReplicaPeerServiceStepResult result;
++        result.role_before = role;
++        result.initial_repair = initial;
++        result.repair.emplace(
++            folder_process.run_convergence_pass_or_throw(
++                limits.folder_limits));
++        initial_repair_done = true;
++        const Clock::time_point recovered_at = Clock::now();
++        schedule_next_repair(recovered_at);
++        RecoveredPayloadIntegrityFault recovered;
++        recovered.fault = std::move(*payload_integrity_fault);
++        recovered.recovered_at = recovered_at;
++        most_recent_payload_integrity_recovery = std::move(recovered);
++        payload_integrity_fault.reset();
++        next_payload_integrity_reproof_at = Clock::time_point::min();
++        result.role_after = role;
++        result.ingress_ready = ingress_is_ready;
++        result.consecutive_outbound_failures =
++            consecutive_outbound_failures;
++        result.consecutive_ingress_failures =
++            consecutive_ingress_failures;
++        result.disposition = SyncReplicaPeerServiceStepDisposition::
++            PayloadIntegrityReproofCompleted;
++        increment_saturating(counters.steps);
++        increment_saturating(
++            counters.payload_integrity_reproof_recoveries);
++        if (initial) {
++            increment_saturating(counters.initial_repairs);
++        } else {
++            increment_saturating(counters.periodic_repairs);
++        }
++        return result;
++    }
++
+     [[nodiscard]] SyncReplicaPeerServiceStepResult repair_step_or_throw(
+         bool initial,
+         bool filesystem_wake = false) {
+@@ -665,6 +878,63 @@ struct SyncReplicaPeerServiceOwner::State final {
+         return result;
+     }
+ 
++    [[nodiscard]] SyncReplicaPeerServiceStepResult
++    outbound_session_io_failure_step(
++        const SyncReplicaTlsSessionIoError& error) {
++        SyncReplicaPeerServiceStepResult result;
++        result.role_before = role;
++        attach_folder_wake(result);
++        result.disposition = SyncReplicaPeerServiceStepDisposition::
++            OutboundSessionIoFailed;
++        result.session_io_error = error.what();
++
++        increment_saturating(consecutive_outbound_failures);
++        const std::uint64_t retry = retry_delay_milliseconds(
++            limits, consecutive_outbound_failures);
++        next_outbound_at = add_milliseconds_or_throw(
++            Clock::now(), retry, label + " outbound session-I/O retry");
++        result.retry_delay_milliseconds = retry;
++
++        // Match every bounded non-handoff result: yield to inbound service so
++        // two peers cannot enter a reconnect spin after one broken session.
++        role = SyncReplicaPeerServiceRole::InboundServe;
++        result.role_after = role;
++        result.consecutive_outbound_failures =
++            consecutive_outbound_failures;
++        result.ingress_ready = ingress_is_ready;
++        result.consecutive_ingress_failures =
++            consecutive_ingress_failures;
++        increment_saturating(counters.steps);
++        increment_saturating(counters.outbound_cycles);
++        increment_saturating(counters.outbound_failures);
++        increment_saturating(counters.outbound_session_io_failures);
++        return result;
++    }
++
++    [[nodiscard]] SyncReplicaPeerServiceStepResult
++    inbound_session_io_failure_step(
++        const SyncReplicaTlsSessionIoError& error) {
++        SyncReplicaPeerServiceStepResult result;
++        result.role_before = role;
++        result.disposition = SyncReplicaPeerServiceStepDisposition::
++            InboundSessionIoFailed;
++        result.session_io_error = error.what();
++        if (local_recovery_initiator &&
++            next_outbound_at != Clock::time_point::min() &&
++            Clock::now() >= next_outbound_at) {
++            role = SyncReplicaPeerServiceRole::OutboundPull;
++        }
++        result.role_after = role;
++        result.consecutive_outbound_failures =
++            consecutive_outbound_failures;
++        result.ingress_ready = ingress_is_ready;
++        result.consecutive_ingress_failures =
++            consecutive_ingress_failures;
++        increment_saturating(counters.steps);
++        increment_saturating(counters.inbound_session_io_failures);
++        return result;
++    }
++
+     [[nodiscard]] SyncReplicaPeerServiceStepResult outbound_step_or_throw() {
+         SyncReplicaPeerServiceStepResult result;
+         result.role_before = role;
+@@ -905,7 +1175,8 @@ bool SyncReplicaPeerServiceOwner::ingress_ready() const noexcept {
+ }
+ 
+ bool SyncReplicaPeerServiceOwner::ready() const noexcept {
+-    return state_->initial_repair_done && state_->ingress_is_ready;
++    return state_->initial_repair_done && state_->ingress_is_ready &&
++        !state_->payload_integrity_fault.has_value();
+ }
+ 
+ const SyncReplicaPeerServiceLimits& SyncReplicaPeerServiceOwner::limits()
+@@ -936,34 +1207,79 @@ SyncReplicaPeerServiceOwner::counters() const noexcept {
+     return state_->counters;
+ }
+ 
++SyncReplicaFilePayloadStoreScrubStatus
++SyncReplicaPeerServiceOwner::payload_scrub_status() const {
++    return state_->folder_process.payload_store_or_throw().scrub_status();
++}
++
++bool SyncReplicaPeerServiceOwner::payload_integrity_fault_active()
++    const noexcept {
++    return state_->payload_integrity_fault.has_value();
++}
++
++std::optional<SyncReplicaPeerServicePayloadIntegrityFault>
++SyncReplicaPeerServiceOwner::payload_integrity_fault() const {
++    return state_->payload_integrity_status();
++}
++
++std::optional<SyncReplicaPeerServicePayloadIntegrityRecovery>
++SyncReplicaPeerServiceOwner::most_recent_payload_integrity_recovery() const {
++    return state_->payload_integrity_recovery_status();
++}
++
+ SyncReplicaPeerServiceStepResult
+ SyncReplicaPeerServiceOwner::run_next_or_throw() {
+-    if (!state_->initial_repair_done) {
+-        return state_->repair_step_or_throw(true);
+-    }
+-    state_->observe_folder_wake_or_throw();
+-    if (auto event = state_->refresh_ingress_worker(true);
+-        event.has_value()) {
+-        return std::move(*event);
+-    }
+-    const Clock::time_point now = Clock::now();
+-    // A handed-off outbound turn must run before a periodic repair. The bounded
+-    // outbound cycle already performs its own local pass and post-pull apply;
+-    // inserting another full repair first duplicates work and can consume the
+-    // peer's turn lease on a large tree. I2P setup continues independently.
+-    if (state_->role == SyncReplicaPeerServiceRole::OutboundPull) {
+-        return state_->outbound_step_or_throw();
+-    }
+-    if (state_->filesystem_wake_pending) {
+-        return state_->repair_step_or_throw(false, true);
+-    }
+-    if (now >= state_->next_repair_at) {
+-        return state_->repair_step_or_throw(false);
+-    }
+-    if (state_->native_i2p_ingress() && !state_->ingress_is_ready) {
+-        return state_->ingress_backoff_step();
++    try {
++        if (state_->payload_integrity_fault.has_value()) {
++            const Clock::time_point now = Clock::now();
++            if (now < state_->next_payload_integrity_reproof_at) {
++                return state_->payload_integrity_backoff_step();
++            }
++            return state_->payload_integrity_reproof_step_or_throw();
++        }
++        if (!state_->initial_repair_done) {
++            return state_->repair_step_or_throw(true);
++        }
++        state_->observe_folder_wake_or_throw();
++        if (auto event = state_->refresh_ingress_worker(true);
++            event.has_value()) {
++            return std::move(*event);
++        }
++        const Clock::time_point now = Clock::now();
++        // A handed-off outbound turn must run before a periodic repair. The
++        // bounded outbound cycle already performs its own local pass and
++        // post-pull apply; inserting another full repair first duplicates work
++        // and can consume the peer's turn lease on a large tree. I2P setup
++        // continues independently.
++        if (state_->role == SyncReplicaPeerServiceRole::OutboundPull) {
++            try {
++                return state_->outbound_step_or_throw();
++            } catch (const SyncReplicaTlsSessionIoError& error) {
++                return state_->outbound_session_io_failure_step(error);
++            }
++        }
++        if (state_->filesystem_wake_pending) {
++            return state_->repair_step_or_throw(false, true);
++        }
++        if (now >= state_->next_repair_at) {
++            return state_->repair_step_or_throw(false);
++        }
++        if (state_->native_i2p_ingress() && !state_->ingress_is_ready) {
++            return state_->ingress_backoff_step();
++        }
++        try {
++            return state_->inbound_step_or_throw();
++        } catch (const SyncReplicaTlsSessionIoError& error) {
++            return state_->inbound_session_io_failure_step(error);
++        }
++    } catch (const SyncReplicaFilePayloadStoreIntegrityError& error) {
++        // Payload corruption is an operational state, not a reason to destroy
++        // the service owner and its only status/control endpoint. Convert the
++        // lower typed alarm into a fail-closed service step. Every later call is
++        // restricted to bounded backoff or complete current-byte reproof until
++        // recovery succeeds.
++        return state_->payload_integrity_fault_step_or_throw(error);
+     }
+-    return state_->inbound_step_or_throw();
+ }
+ 
+ 
+diff --git a/src/sync_replica_peer_service.hpp b/src/sync_replica_peer_service.hpp
+index 2b07da0..9e064b7 100644
+--- a/src/sync_replica_peer_service.hpp
++++ b/src/sync_replica_peer_service.hpp
+@@ -23,6 +23,8 @@ inline constexpr std::uint64_t
+     kSyncReplicaPeerServiceMaximumRetryDelayMilliseconds = 3600000U;
+ inline constexpr std::uint64_t
+     kSyncReplicaPeerServiceMaximumIngressBackoffWaitMilliseconds = 250U;
++inline constexpr std::uint64_t
++    kSyncReplicaPeerServiceMaximumIntegrityBackoffWaitMilliseconds = 250U;
+ inline constexpr std::uint64_t
+     kSyncReplicaPeerServiceMaximumFilesystemWakePollMilliseconds = 250U;
+ // The installed user service grants one hour for any already-started network
+@@ -150,11 +152,50 @@ enum class SyncReplicaPeerServiceStepDisposition : std::uint8_t {
+     IngressPublicationLost = 8U,
+     IngressPublicationBackoffPending = 9U,
+     FilesystemWakeRepairCompleted = 10U,
++    PayloadIntegrityFaultObserved = 11U,
++    PayloadIntegrityReproofBackoffPending = 12U,
++    PayloadIntegrityReproofCompleted = 13U,
++    OutboundSessionIoFailed = 14U,
++    InboundSessionIoFailed = 15U,
+ };
+ 
+ [[nodiscard]] std::string_view sync_replica_peer_service_step_disposition_name(
+     SyncReplicaPeerServiceStepDisposition disposition) noexcept;
+ 
++// Immutable operator projection for the one active fail-closed payload alarm.
++// Ages and retry delay are process-local monotonic observations. Durable fault
++// evidence remains in the payload scrub record and is never replaced by this
++// presentation object.
++struct SyncReplicaPeerServicePayloadIntegrityFault final {
++    std::string expected_content_sha256;
++    std::string observed_content_sha256;
++    bool failure_persisted = false;
++    std::uint64_t detection_count = 0U;
++    std::uint64_t active_age_milliseconds = 0U;
++    std::uint64_t last_detection_age_milliseconds = 0U;
++    std::uint64_t retry_delay_milliseconds = 0U;
++
++    bool operator==(
++        const SyncReplicaPeerServicePayloadIntegrityFault&) const = default;
++};
++
++// Immutable history for the most recently recovered payload-integrity alarm.
++// Keeping the exact digests after authority is restored prevents a successful
++// repair from erasing the only operator-visible explanation for the outage.
++// This remains process-local presentation evidence; durable scrub state and
++// current complete-byte reproof retain their existing authority boundaries.
++struct SyncReplicaPeerServicePayloadIntegrityRecovery final {
++    std::string expected_content_sha256;
++    std::string observed_content_sha256;
++    bool failure_persisted = false;
++    std::uint64_t detection_count = 0U;
++    std::uint64_t fault_duration_milliseconds = 0U;
++    std::uint64_t recovery_age_milliseconds = 0U;
++
++    bool operator==(
++        const SyncReplicaPeerServicePayloadIntegrityRecovery&) const = default;
++};
++
+ struct SyncReplicaPeerServiceStepResult final {
+     SyncReplicaPeerServiceStepDisposition disposition =
+         SyncReplicaPeerServiceStepDisposition::InitialRepairCompleted;
+@@ -174,8 +215,10 @@ struct SyncReplicaPeerServiceStepResult final {
+     std::uint64_t retry_delay_milliseconds = 0U;
+     std::uint64_t consecutive_ingress_failures = 0U;
+     std::uint64_t ingress_retry_delay_milliseconds = 0U;
++    std::uint64_t payload_integrity_retry_delay_milliseconds = 0U;
+     std::optional<SyncReplicaStreamConnectReport> ingress_report;
+     std::optional<std::string> ingress_error;
++    std::optional<std::string> session_io_error;
+     std::optional<SyncReplicaFolderConvergencePassReport> repair;
+     std::optional<SyncReplicaSyncOnceResult> outbound;
+     std::optional<SyncReplicaPeerTlsServerResult> inbound;
+@@ -192,8 +235,10 @@ struct SyncReplicaPeerServiceCounters final {
+     std::uint64_t outbound_cycles = 0U;
+     std::uint64_t outbound_handoffs = 0U;
+     std::uint64_t outbound_failures = 0U;
++    std::uint64_t outbound_session_io_failures = 0U;
+     std::uint64_t inbound_accept_windows_expired = 0U;
+     std::uint64_t inbound_sessions = 0U;
++    std::uint64_t inbound_session_io_failures = 0U;
+     std::uint64_t inbound_exact_peer_sessions = 0U;
+     std::uint64_t inbound_handoffs = 0U;
+     std::uint64_t ingress_setup_attempts = 0U;
+@@ -201,6 +246,10 @@ struct SyncReplicaPeerServiceCounters final {
+     std::uint64_t ingress_setup_failures = 0U;
+     std::uint64_t ingress_losses = 0U;
+     std::uint64_t ingress_backoff_deferrals = 0U;
++    std::uint64_t payload_integrity_faults_observed = 0U;
++    std::uint64_t payload_integrity_reproof_attempts = 0U;
++    std::uint64_t payload_integrity_reproof_recoveries = 0U;
++    std::uint64_t payload_integrity_backoff_deferrals = 0U;
+ 
+     bool operator==(const SyncReplicaPeerServiceCounters&) const = default;
+ };
+@@ -261,6 +310,14 @@ public:
+     folder_wake_snapshot() const noexcept;
+     [[nodiscard]] const SyncReplicaPeerServiceCounters& counters()
+         const noexcept;
++    [[nodiscard]] SyncReplicaFilePayloadStoreScrubStatus payload_scrub_status()
++        const;
++    [[nodiscard]] bool payload_integrity_fault_active() const noexcept;
++    [[nodiscard]] std::optional<SyncReplicaPeerServicePayloadIntegrityFault>
++    payload_integrity_fault() const;
++    [[nodiscard]]
++    std::optional<SyncReplicaPeerServicePayloadIntegrityRecovery>
++    most_recent_payload_integrity_recovery() const;
+ 
+     [[nodiscard]] SyncReplicaPeerServiceStepResult run_next_or_throw();
+ 
+diff --git a/src/sync_replica_peer_service_status.cpp b/src/sync_replica_peer_service_status.cpp
+index eace53e..30b18a4 100644
+--- a/src/sync_replica_peer_service_status.cpp
++++ b/src/sync_replica_peer_service_status.cpp
+@@ -62,6 +62,16 @@ void append_optional_int(
+     }
+ }
+ 
++void append_optional_uint64(
++    std::ostream& output,
++    const std::optional<std::uint64_t>& value) {
++    if (value.has_value()) {
++        output << *value;
++    } else {
++        output << "null";
++    }
++}
++
+ void append_ingress_report(
+     std::ostream& output,
+     const std::optional<SyncReplicaStreamConnectReport>& report) {
+@@ -164,6 +174,108 @@ void append_folder_wake_snapshot(
+     output << '}';
+ }
+ 
++void append_payload_scrub_status(
++    std::ostream& output,
++    const SyncReplicaFilePayloadStoreScrubStatus& status) {
++    output
++        << "{\"enabled\":" << json_bool(status.enabled)
++        << ",\"max_bytes_per_attempt\":"
++        << status.max_bytes_per_attempt
++        << ",\"max_entries_per_attempt\":"
++        << status.max_entries_per_attempt
++        << ",\"last_report\":";
++    if (!status.last_report.has_value()) {
++        output << "null";
++    } else {
++        const auto& report = *status.last_report;
++        output
++            << "{\"disposition\":"
++            << json_quote(
++                   sync_replica_file_payload_store_scrub_disposition_name(
++                       report.disposition))
++            << ",\"age_milliseconds\":";
++        append_optional_uint64(
++            output, status.last_report_age_milliseconds);
++        output
++            << ",\"hashed_bytes\":" << report.hashed_bytes
++            << ",\"touched_entries\":"
++            << report.touched_entry_count
++            << ",\"completed_entries\":"
++            << report.completed_entry_count
++            << ",\"completed_cycles\":"
++            << report.completed_cycles
++            << ",\"state_generation\":"
++            << report.state_generation
++            << ",\"active_content_sha256\":";
++        if (report.active_content_sha256.empty()) {
++            output << "null";
++        } else {
++            output << json_quote(report.active_content_sha256);
++        }
++        output
++            << ",\"active_offset_bytes\":"
++            << report.active_offset_bytes
++            << ",\"state_rebuilt\":"
++            << json_bool(report.state_rebuilt)
++            << ",\"reverified_failure_cleared\":"
++            << json_bool(report.reverified_failure_cleared)
++            << '}';
++    }
++    output << ",\"last_completed_cycle_age_milliseconds\":";
++    append_optional_uint64(
++        output, status.last_completed_cycle_age_milliseconds);
++    output << '}';
++}
++
++void append_payload_integrity_status(
++    std::ostream& output,
++    const std::optional<SyncReplicaPeerServicePayloadIntegrityFault>& fault,
++    const std::optional<SyncReplicaPeerServicePayloadIntegrityRecovery>&
++        recovery) {
++    output << "{\"state\":"
++           << json_quote(fault.has_value() ? "faulted" : "healthy")
++           << ",\"active_fault\":";
++    if (!fault.has_value()) {
++        output << "null";
++    } else {
++        output
++            << "{\"expected_content_sha256\":"
++            << json_quote(fault->expected_content_sha256)
++            << ",\"observed_content_sha256\":"
++            << json_quote(fault->observed_content_sha256)
++            << ",\"failure_persisted\":"
++            << json_bool(fault->failure_persisted)
++            << ",\"detection_count\":"
++            << fault->detection_count
++            << ",\"active_age_milliseconds\":"
++            << fault->active_age_milliseconds
++            << ",\"last_detection_age_milliseconds\":"
++            << fault->last_detection_age_milliseconds
++            << ",\"retry_delay_milliseconds\":"
++            << fault->retry_delay_milliseconds
++            << '}';
++    }
++    output << ",\"most_recent_recovery\":";
++    if (!recovery.has_value()) {
++        output << "null}";
++        return;
++    }
++    output
++        << "{\"expected_content_sha256\":"
++        << json_quote(recovery->expected_content_sha256)
++        << ",\"observed_content_sha256\":"
++        << json_quote(recovery->observed_content_sha256)
++        << ",\"failure_persisted\":"
++        << json_bool(recovery->failure_persisted)
++        << ",\"detection_count\":"
++        << recovery->detection_count
++        << ",\"fault_duration_milliseconds\":"
++        << recovery->fault_duration_milliseconds
++        << ",\"recovery_age_milliseconds\":"
++        << recovery->recovery_age_milliseconds
++        << "}}";
++}
++
+ void validate_status_word_or_throw(
+     std::string_view value,
+     std::string_view label) {
+@@ -221,6 +333,10 @@ void account_sync_replica_peer_service_step(
+         }
+         summary.last_cycle = cycle;
+     }
++    if (step.disposition ==
++        SyncReplicaPeerServiceStepDisposition::OutboundSessionIoFailed) {
++        ++summary.cycles_failed;
++    }
+ 
+     if (step.inbound.has_value()) {
+         const auto& inbound = *step.inbound;
+@@ -280,6 +396,14 @@ void account_sync_replica_peer_service_step(
+         case SyncReplicaPeerServiceStepDisposition::InboundSessionObserved:
+         case SyncReplicaPeerServiceStepDisposition::
+                 IngressPublicationBackoffPending:
++        case SyncReplicaPeerServiceStepDisposition::
++                PayloadIntegrityFaultObserved:
++        case SyncReplicaPeerServiceStepDisposition::
++                PayloadIntegrityReproofBackoffPending:
++        case SyncReplicaPeerServiceStepDisposition::
++                PayloadIntegrityReproofCompleted:
++        case SyncReplicaPeerServiceStepDisposition::OutboundSessionIoFailed:
++        case SyncReplicaPeerServiceStepDisposition::InboundSessionIoFailed:
+             break;
+     }
+     summary.last_step = step;
+@@ -306,6 +430,11 @@ std::string render_sync_replica_peer_service_status_json(
+               now - service_started_at)
+         : std::chrono::milliseconds::zero();
+     const auto& counters = owner.counters();
++    const SyncReplicaFilePayloadStoreScrubStatus payload_scrub =
++        owner.payload_scrub_status();
++    const auto payload_integrity = owner.payload_integrity_fault();
++    const auto payload_integrity_recovery =
++        owner.most_recent_payload_integrity_recovery();
+ 
+     std::ostringstream output;
+     output
+@@ -363,6 +492,12 @@ std::string render_sync_replica_peer_service_status_json(
+     output << ",\"filesystem_watch\":";
+     append_folder_wake_snapshot(output, owner.folder_wake_snapshot());
+ 
++    output << ",\"payload_scrub\":";
++    append_payload_scrub_status(output, payload_scrub);
++    output << ",\"payload_integrity\":";
++    append_payload_integrity_status(
++        output, payload_integrity, payload_integrity_recovery);
++
+     output << ",\"stop_reason\":";
+     if (stop_reason.has_value()) {
+         output << json_quote(*stop_reason);
+@@ -381,9 +516,13 @@ std::string render_sync_replica_peer_service_status_json(
+         << ",\"outbound_cycles\":" << counters.outbound_cycles
+         << ",\"outbound_handoffs\":" << counters.outbound_handoffs
+         << ",\"outbound_failures\":" << counters.outbound_failures
++        << ",\"outbound_session_io_failures\":"
++        << counters.outbound_session_io_failures
+         << ",\"inbound_accept_windows_expired\":"
+         << counters.inbound_accept_windows_expired
+         << ",\"inbound_sessions\":" << counters.inbound_sessions
++        << ",\"inbound_session_io_failures\":"
++        << counters.inbound_session_io_failures
+         << ",\"inbound_exact_peer_sessions\":"
+         << counters.inbound_exact_peer_sessions
+         << ",\"inbound_handoffs\":" << counters.inbound_handoffs
+@@ -396,6 +535,14 @@ std::string render_sync_replica_peer_service_status_json(
+         << ",\"ingress_losses\":" << counters.ingress_losses
+         << ",\"ingress_backoff_deferrals\":"
+         << counters.ingress_backoff_deferrals
++        << ",\"payload_integrity_faults_observed\":"
++        << counters.payload_integrity_faults_observed
++        << ",\"payload_integrity_reproof_attempts\":"
++        << counters.payload_integrity_reproof_attempts
++        << ",\"payload_integrity_reproof_recoveries\":"
++        << counters.payload_integrity_reproof_recoveries
++        << ",\"payload_integrity_backoff_deferrals\":"
++        << counters.payload_integrity_backoff_deferrals
+         << ",\"cycles_complete\":" << summary.cycles_complete
+         << ",\"cycles_settled\":" << summary.cycles_settled
+         << ",\"cycles_changed\":" << summary.cycles_changed
+@@ -453,7 +600,16 @@ std::string render_sync_replica_peer_service_status_json(
+             << ",\"consecutive_ingress_failures\":"
+             << step.consecutive_ingress_failures
+             << ",\"ingress_retry_delay_milliseconds\":"
+-            << step.ingress_retry_delay_milliseconds << '}';
++            << step.ingress_retry_delay_milliseconds
++            << ",\"payload_integrity_retry_delay_milliseconds\":"
++            << step.payload_integrity_retry_delay_milliseconds
++            << ",\"session_io_error\":";
++        if (step.session_io_error.has_value()) {
++            output << json_quote(*step.session_io_error);
++        } else {
++            output << "null";
++        }
++        output << '}';
+     }
+     output << '}';
+     return output.str();
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index ef360a3..db8fb5a 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v2";
++    "anonsync.peer-service.status.v3";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/src/sync_replica_tls_transport.cpp b/src/sync_replica_tls_transport.cpp
+index b009258..1958e22 100644
+--- a/src/sync_replica_tls_transport.cpp
++++ b/src/sync_replica_tls_transport.cpp
+@@ -1223,7 +1223,7 @@ SyncReplicaTlsRecordWriteContinuation::advance_or_throw() {
+             state_->retry_pending = false;
+             state_->pending_readiness =
+                 detail::SyncReplicaTlsPendingReadiness::None;
+-            throw std::runtime_error(
++            throw SyncReplicaTlsSessionIoError(
+                 state_->label + " failed with SSL error " +
+                 std::to_string(ssl_error) + openssl_error_suffix());
+         }
+@@ -1461,11 +1461,11 @@ SyncReplicaTlsRecordReadContinuation::advance_or_throw() {
+                         Terminal::PeerClosed;
+                     return SyncReplicaTlsRecordReadProgress::PeerClosed;
+                 }
+-                throw std::runtime_error(
++                throw SyncReplicaTlsSessionIoError(
+                     state_->label +
+                     " peer closed TLS before the complete record");
+             }
+-            throw std::runtime_error(
++            throw SyncReplicaTlsSessionIoError(
+                 state_->label + " failed with SSL error " +
+                 std::to_string(ssl_error) + openssl_error_suffix());
+         }
+diff --git a/src/sync_replica_tls_transport.hpp b/src/sync_replica_tls_transport.hpp
+index 6096cf1..226ffe4 100644
+--- a/src/sync_replica_tls_transport.hpp
++++ b/src/sync_replica_tls_transport.hpp
+@@ -4,6 +4,7 @@
+ 
+ #include <cstdint>
+ #include <memory>
++#include <stdexcept>
+ #include <string>
+ #include <string_view>
+ 
+@@ -11,6 +12,16 @@
+ 
+ namespace anonsync {
+ 
++// A fatal error confined to one authenticated TLS session. The record stream
++// is poisoned and must not be reused, but a long-running peer-service owner may
++// safely discard that session, account the failure, and continue serving or
++// reconnecting. Durable/database failures and internal invariant violations do
++// not use this type and must still escape the service loop.
++class SyncReplicaTlsSessionIoError final : public std::runtime_error {
++public:
++    using std::runtime_error::runtime_error;
++};
++
+ namespace detail {
+ class SyncReplicaTlsAuthenticatedState;
+ class SyncReplicaTlsRecordReadState;
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index 5939b48..e624c59 100755
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -1146,6 +1146,20 @@ void test_foreign_thread_cannot_touch_owner_local_verification_cache() {
+         foreign_thread_reason.find("originating thread") != std::string::npos,
+         "foreign-thread payload snapshot reached owner-local cache authority");
+ 
++    std::string foreign_status_reason;
++    std::thread status_worker([&] {
++        try {
++            (void)store.scrub_status();
++        } catch (const std::exception& error) {
++            foreign_status_reason = error.what();
++        }
++    });
++    status_worker.join();
++    require(
++        foreign_status_reason.find("originating thread") !=
++            std::string::npos,
++        "foreign-thread scrub status reached mutex-free owner state");
++
+     std::string foreign_snapshot_reason;
+     std::thread snapshot_worker([&] {
+         try {
+@@ -1772,6 +1786,17 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+             owner.put_payload_or_throw(payload).disposition ==
+                 anonsync::SyncReplicaFilePayloadStorePutDisposition::Inserted,
+             "rotating scrub fixture did not publish its payload");
++        const auto status_before_snapshot = owner.scrub_status();
++        require(
++            status_before_snapshot.enabled &&
++                status_before_snapshot.max_bytes_per_attempt == 10U &&
++                status_before_snapshot.max_entries_per_attempt == 1U &&
++                !status_before_snapshot.last_report.has_value() &&
++                !status_before_snapshot.last_report_age_milliseconds
++                     .has_value() &&
++                !status_before_snapshot
++                     .last_completed_cycle_age_milliseconds.has_value(),
++            "fresh owner scrub status invented process observation history");
+ 
+         const auto first = owner.snapshot_or_throw();
+         canonical_snapshot_digest = first.snapshot_digest();
+@@ -1788,6 +1813,14 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+                 first.scrub_report().active_content_sha256 == digest &&
+                 first.scrub_report().active_offset_bytes == 10U,
+             "first rotating scrub attempt exceeded or lost its exact bound");
++        const auto first_status = owner.scrub_status();
++        require(
++            first_status.enabled &&
++                first_status.last_report == first.scrub_report() &&
++                first_status.last_report_age_milliseconds.has_value() &&
++                !first_status.last_completed_cycle_age_milliseconds
++                     .has_value(),
++            "scrub status did not retain the exact process-observed report");
+         const auto first_state = read_scrub_state_or_fail(
+             root, limits.max_payload_bytes, "first rotating scrub state");
+         require(
+@@ -1810,6 +1843,13 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+                 throttled.scrub_report().active_offset_bytes == 10U &&
+                 read_file_bytes(scrub_state_path) == state_before_throttle,
+             "same-owner scrub scheduling repeated work before its deadline");
++        const auto throttled_status = owner.scrub_status();
++        require(
++            throttled_status.last_report == throttled.scrub_report() &&
++                throttled_status.last_report_age_milliseconds.has_value() &&
++                !throttled_status.last_completed_cycle_age_milliseconds
++                     .has_value(),
++            "scrub status did not advance to the process-local throttle report");
+     }
+ 
+     const auto resume_once = [&](std::uint64_t expected_offset,
+@@ -1857,12 +1897,18 @@ void test_rotating_scrub_is_bounded_restart_safe_and_cyclic() {
+         anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ReadOnlyInspect,
+         limits, "rotating scrub forensic inspection");
+     const auto inspection = inspector.snapshot_or_throw();
++    const auto inspection_status = inspector.scrub_status();
+     require(
+         inspection.scrub_report().disposition ==
+                 anonsync::SyncReplicaFilePayloadStoreScrubDisposition::Disabled &&
+             inspection.snapshot_digest() == canonical_snapshot_digest &&
++            !inspection_status.enabled &&
++            inspection_status.last_report == inspection.scrub_report() &&
++            inspection_status.last_report_age_milliseconds.has_value() &&
++            !inspection_status.last_completed_cycle_age_milliseconds
++                 .has_value() &&
+             read_file_bytes(scrub_state_path) == state_before_inspection,
+-        "read-only inspection advanced rotating scrub scheduling evidence");
++        "read-only inspection misreported or advanced scrub scheduling evidence");
+ }
+ 
+ void test_scrub_state_damage_and_identity_rebind_are_disposable() {
+@@ -3804,6 +3850,49 @@ void test_legacy_identity_generation_requires_offline_migration() {
+ 
+ int main() {
+     try {
++        require(
++            anonsync::sync_replica_file_payload_store_scrub_disposition_name(
++                anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                    Disabled) == "disabled" &&
++                anonsync::
++                    sync_replica_file_payload_store_scrub_disposition_name(
++                        anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                            DeferredBySchedule) ==
++                    "deferred_by_schedule" &&
++                anonsync::
++                    sync_replica_file_payload_store_scrub_disposition_name(
++                        anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                            Empty) == "empty" &&
++                anonsync::
++                    sync_replica_file_payload_store_scrub_disposition_name(
++                        anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                            DeferredLeaseBusy) ==
++                    "deferred_lease_busy" &&
++                anonsync::
++                    sync_replica_file_payload_store_scrub_disposition_name(
++                        anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                            DeferredStaleSnapshot) ==
++                    "deferred_stale_snapshot" &&
++                anonsync::
++                    sync_replica_file_payload_store_scrub_disposition_name(
++                        anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                            DeferredTransientCapacity) ==
++                    "deferred_transient_capacity" &&
++                anonsync::
++                    sync_replica_file_payload_store_scrub_disposition_name(
++                        anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                            DeferredPublicationFailure) ==
++                    "deferred_publication_failure" &&
++                anonsync::
++                    sync_replica_file_payload_store_scrub_disposition_name(
++                        anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                            DeferredAttemptFailure) ==
++                    "deferred_attempt_failure" &&
++                anonsync::
++                    sync_replica_file_payload_store_scrub_disposition_name(
++                        anonsync::SyncReplicaFilePayloadStoreScrubDisposition::
++                            Advanced) == "advanced",
++            "payload scrub disposition names are not stable operator words");
+         const auto production_limits = anonsync::
+             sync_replica_file_payload_store_limits_for_payload_ceiling_or_throw(
+                 64ULL * 1024ULL * 1024ULL,
+diff --git a/tests/sync_replica_tls_transport_test.cpp b/tests/sync_replica_tls_transport_test.cpp
+index 719c668..9c9ea8f 100644
+--- a/tests/sync_replica_tls_transport_test.cpp
++++ b/tests/sync_replica_tls_transport_test.cpp
+@@ -125,6 +125,26 @@ void require_error(
+     fail(message + ": no error was thrown");
+ }
+ 
++template <typename Callable>
++void require_session_io_error(
++    Callable&& callable,
++    std::string_view expected_fragment,
++    const std::string& message) {
++    ++checks;
++    try {
++        std::forward<Callable>(callable)();
++    } catch (const anonsync::SyncReplicaTlsSessionIoError& error) {
++        if (std::string_view(error.what()).find(expected_fragment) !=
++            std::string_view::npos) {
++            return;
++        }
++        fail(message + ": unexpected session error: " + error.what());
++    } catch (const std::exception& error) {
++        fail(message + ": wrong exception type: " + error.what());
++    }
++    fail(message + ": no error was thrown");
++}
++
+ void test_sigpipe_ignore_policy() {
+ #ifdef __unix__
+     struct sigaction default_action {};
+@@ -2793,7 +2813,7 @@ void test_tls_record_read_continuation(
+             "truncated-body fixture did not establish a valid prefix");
+         send_tls_close_notify(
+             pair.connection.client.get(), "TLS truncated body close");
+-        require_error(
++        require_session_io_error(
+             [&] {
+                 for (std::size_t iteration = 0U; iteration < 128U;
+                      ++iteration) {
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 42716a1..57d4740 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -52,7 +52,14 @@ REQUIRED = (
+     Path("src/sync_replica_sqlite_owner.cpp"),
+     Path("src/sync_replica_folder_scan_owner.hpp"),
+     Path("src/sync_replica_folder_scan_owner.cpp"),
++    Path("src/sync_replica_folder_process.hpp"),
+     Path("src/sync_replica_folder_process.cpp"),
++    Path("src/sync_replica_peer_service.hpp"),
++    Path("src/sync_replica_peer_service.cpp"),
++    Path("src/sync_replica_peer_service_status.hpp"),
++    Path("src/sync_replica_peer_service_status.cpp"),
++    Path("src/sync_replica_tls_transport.hpp"),
++    Path("src/sync_replica_tls_transport.cpp"),
+     Path("src/sync_replica_sync_once.hpp"),
+     Path("src/sync_replica_sync_once.cpp"),
+     Path("src/sync_replica_deployment_manifest.hpp"),
+@@ -75,6 +82,7 @@ REQUIRED = (
+     Path("tests/sync_replica_network_model_test.cpp"),
+     Path("tests/sync_replica_sqlite_owner_test.cpp"),
+     Path("tests/sync_replica_folder_scan_owner_test.cpp"),
++    Path("tests/sync_replica_tls_transport_test.cpp"),
+     Path("tests/sync_replica_sync_once_test.cpp"),
+     Path("tests/sync_replica_file_delivery_service_test.cpp"),
+     Path("tools/audit_sync_file_payload_store.py"),
+@@ -91,6 +99,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0954.md"),
+     Path("DURABLE_BYTE_BOUNDED_PAYLOAD_SCRUB_AUDIT_rev0955.md"),
+     Path("REVISION_NOTES_rev0955.md"),
++    Path("PAYLOAD_INTEGRITY_SERVICE_RECOVERY_AUDIT_rev0956.md"),
++    Path("REVISION_NOTES_rev0956.md"),
+ )
+ 
+ 
+@@ -227,7 +237,14 @@ def main() -> int:
+     sqlite_owner = text["src/sync_replica_sqlite_owner.cpp"]
+     folder_scan_h = text["src/sync_replica_folder_scan_owner.hpp"]
+     folder_scan = text["src/sync_replica_folder_scan_owner.cpp"]
++    folder_process_h = text["src/sync_replica_folder_process.hpp"]
+     folder_process = text["src/sync_replica_folder_process.cpp"]
++    peer_service_h = text["src/sync_replica_peer_service.hpp"]
++    peer_service = text["src/sync_replica_peer_service.cpp"]
++    peer_status_h = text["src/sync_replica_peer_service_status.hpp"]
++    peer_status = text["src/sync_replica_peer_service_status.cpp"]
++    tls_transport_h = text["src/sync_replica_tls_transport.hpp"]
++    tls_transport = text["src/sync_replica_tls_transport.cpp"]
+     sync_once_h = text["src/sync_replica_sync_once.hpp"]
+     sync_once = text["src/sync_replica_sync_once.cpp"]
+     deployment_manifest_h = text["src/sync_replica_deployment_manifest.hpp"]
+@@ -255,6 +272,7 @@ def main() -> int:
+     network_model_runtime = text["tests/sync_replica_network_model_test.cpp"]
+     sqlite_owner_runtime = text["tests/sync_replica_sqlite_owner_test.cpp"]
+     folder_scan_runtime = text["tests/sync_replica_folder_scan_owner_test.cpp"]
++    tls_transport_runtime = text["tests/sync_replica_tls_transport_test.cpp"]
+     sync_once_runtime = text["tests/sync_replica_sync_once_test.cpp"]
+     service_runtime = text["tests/sync_replica_file_delivery_service_test.cpp"]
+     verifier = text["tools/verify_release_package.py"]
+@@ -287,6 +305,10 @@ def main() -> int:
+         "DURABLE_BYTE_BOUNDED_PAYLOAD_SCRUB_AUDIT_rev0955.md"
+     ]
+     rev0955_notes = text["REVISION_NOTES_rev0955.md"]
++    service_recovery_design = text[
++        "PAYLOAD_INTEGRITY_SERVICE_RECOVERY_AUDIT_rev0956.md"
++    ]
++    rev0956_notes = text["REVISION_NOTES_rev0956.md"]
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     store_sources = cmake_call(
+@@ -3161,7 +3183,7 @@ def main() -> int:
+                 "rotating scrub restart completion",
+                 "completed rotating scrub did not retain its fair cursor",
+                 "rotating scrub next cycle",
+-                "read-only inspection advanced rotating scrub scheduling evidence",
++                "read-only inspection misreported or advanced scrub scheduling evidence",
+             )
+         ),
+         "scrub_progress_is_restart_safe_cyclic_and_one_entry_rollover_live",
+@@ -3652,6 +3674,209 @@ def main() -> int:
+         "the release cannot silently reintroduce the rejected one-entry-per-pass experiment; rev0955 instead requires byte plus entry bounds and durable continuation",
+     )
+ 
++    peer_owner_run = function_body(
++        peer_service, "SyncReplicaPeerServiceOwner::run_next_or_throw()"
++    )
++    integrity_reproof = function_body(
++        peer_service, "payload_integrity_reproof_step_or_throw()"
++    )
++    peer_ready = function_body(
++        peer_service, "SyncReplicaPeerServiceOwner::ready() const noexcept"
++    )
++    scrub_status_body = function_body(
++        store, "SyncReplicaFilePayloadStore::scrub_status() const"
++    )
++
++    require(
++        all(
++            token in peer_service_h
++            for token in (
++                "PayloadIntegrityFaultObserved",
++                "PayloadIntegrityReproofBackoffPending",
++                "PayloadIntegrityReproofCompleted",
++                "SyncReplicaPeerServicePayloadIntegrityFault",
++                "SyncReplicaPeerServicePayloadIntegrityRecovery",
++                "most_recent_payload_integrity_recovery",
++            )
++        )
++        and peer_owner_run.count(
++            "catch (const SyncReplicaFilePayloadStoreIntegrityError& error)"
++        ) == 1
++        and ordered(
++            peer_owner_run,
++            "if (state_->payload_integrity_fault.has_value())",
++            "if (!state_->initial_repair_done)",
++            "state_->observe_folder_wake_or_throw()",
++        )
++        and "catch (...)" not in peer_owner_run,
++        "peer_owner_catches_only_typed_integrity_and_short_circuits_ordinary_work",
++        "an active payload alarm is a reusable peer-owner state; before filesystem wake, repair, or network scheduling, calls may only back off or reprove, while arbitrary exceptions stay terminal",
++    )
++
++    require(
++        all(
++            token in integrity_reproof
++            for token in (
++                "payload_integrity_reproof_attempts",
++                "snapshot_or_throw()",
++                "run_convergence_pass_or_throw",
++                "most_recent_payload_integrity_recovery",
++                "payload_integrity_fault.reset()",
++                "payload_integrity_reproof_recoveries",
++            )
++        )
++        and ordered(
++            integrity_reproof,
++            "snapshot_or_throw()",
++            "run_convergence_pass_or_throw",
++            "most_recent_payload_integrity_recovery",
++            "payload_integrity_fault.reset()",
++        )
++        and all(
++            token in service_configuration_runtime
++            for token in (
++                "payload integrity external repair",
++                "most_recent_recovery",
++                "integrity recovery erased exact operator evidence",
++                "payload-integrity recovery replaced the service process",
++            )
++        ),
++        "integrity_recovery_requires_current_bytes_convergence_and_retains_exact_history",
++        "the active alarm survives until a complete payload snapshot and ordinary convergence both succeed; recovery then preserves exact expected/observed evidence under the same process",
++    )
++
++    require(
++        "!state_->payload_integrity_fault.has_value()" in peer_ready
++        and 'if (owner.payload_integrity_fault_active()) return "faulted";'
++        in sync_cli
++        and "kSyncReplicaPeerServiceMaximumIntegrityBackoffWaitMilliseconds"
++        in sync_cli
++        and "payload_integrity_retry_wait" in sync_cli
++        and "Faulted: payload integrity mismatch" in sync_cli,
++        "service_readiness_and_cli_control_plane_fail_closed_during_integrity_alarm",
++        "readiness is false while authority is blocked, but the retained CLI loop keeps publishing status and slices retry waits so local drain remains responsive",
++    )
++
++    require(
++        '"anonsync.peer-service.status.v3"' in peer_status_h
++        and all(
++            token in peer_status
++            for token in (
++                "append_payload_scrub_status",
++                "append_payload_integrity_status",
++                "active_fault",
++                "most_recent_recovery",
++                "expected_content_sha256",
++                "observed_content_sha256",
++                "fault_duration_milliseconds",
++                "recovery_age_milliseconds",
++            )
++        )
++        and "render_sync_replica_peer_service_status_json" in sync_cli,
++        "status_v3_exposes_scrub_active_fault_and_bounded_recovery_history_once",
++        "one canonical live/terminal renderer separates scrub scheduling observations, active authority failure, and one process-local recovered event",
++    )
++
++    require(
++        all(
++            token in scrub_status_body
++            for token in (
++                "require_current_owner_or_throw",
++                "last_scrub_report",
++                "last_completed_cycle_age_milliseconds",
++            )
++        )
++        and all(
++            token not in scrub_status_body
++            for token in (
++                "snapshot_or_throw",
++                "openat",
++                "acquire_store_lease",
++                "verify_or_throw",
++                "sha256",
++            )
++        )
++        and "Cheap exact-owner status projection" in store_h,
++        "payload_scrub_status_projection_is_owner_gated_and_filesystem_cold",
++        "status serialization copies only process-local completed observations after exact-thread proof and cannot become a scan, hash, lease, or scheduling authority",
++    )
++
++    require(
++        "SyncReplicaTlsSessionIoError" in tls_transport_h + tls_transport
++        and "require_session_io_error" in tls_transport_runtime
++        and all(
++            token in peer_service_h + peer_service
++            for token in (
++                "OutboundSessionIoFailed",
++                "InboundSessionIoFailed",
++                "outbound_session_io_failure_step",
++                "inbound_session_io_failure_step",
++            )
++        ),
++        "session_io_churn_is_distinct_from_integrity_and_arbitrary_failure",
++        "bounded authenticated-session I/O failure becomes an accounted peer-service step while payload mismatch and unrelated exceptions retain separate semantics",
++    )
++
++    require(
++        all(
++            token in service_configuration_runtime
++            for token in (
++                'wait_for_payload_integrity_state(',
++                '"faulted"',
++                '"healthy"',
++                'faulted_status.get("pid") != source.pid',
++                'recovered_status.get("pid") != source.pid',
++                '"expected_content_sha256": source_payload_digest',
++                '"observed_content_sha256": corrupted_payload_digest',
++                'payload_integrity_recovery_expected=True',
++            )
++        )
++        and "mode-0600" in service_recovery_design
++        and "same PID" in service_recovery_design,
++        "shipping_process_regresses_exact_fault_same_pid_repair_history_and_drain",
++        "the configured product service corrupts a real digest object, remains inspectable, re-proves repaired bytes, retains exact recovery evidence, and drains through the same owner-only socket",
++    )
++
++    require(
++        all(
++            token in service_recovery_design
++            for token in (
++                "Heart of the mission",
++                "Owner-level state machine",
++                "Current-byte reproof",
++                "Operator projection",
++                "Research-informed comparison",
++                "What this proves",
++                "What this does not prove",
++                "duplicate",
++                "systemd",
++                "sole-copy",
++            )
++        )
++        and all(
++            token in rev0956_notes
++            for token in (
++                "same-process recovery state",
++                "most_recent_recovery",
++                "process-local",
++                "systemd `READY=1`",
++                "namespace",
++                "No quarantine",
++            )
++        )
++        and all(
++            token in verifier
++            for token in (
++                "PAYLOAD_INTEGRITY_SERVICE_RECOVERY_AUDIT_rev0956.md",
++                "REVISION_NOTES_rev0956.md",
++                "src/sync_replica_peer_service.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++            )
++        ),
++        "rev0956_records_recovery_authority_waste_nonclaims_and_release_binding",
++        "the handoff documents typed-only owner recovery, exact evidence retention, systemd readiness limits, duplicate recovery I/O, sole-copy constraints, and verifier inclusion",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index 41e2258..637d6ed 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -60,6 +60,136 @@ def write_private_json(path: Path, value: dict[str, Any]) -> None:
+     write_private_bytes(path, encoded.encode("utf-8"), "configuration")
+ 
+ 
++def overwrite_regular_file(path: Path, value: bytes, label: str) -> None:
++    observation = path.lstat()
++    if not stat.S_ISREG(observation.st_mode) or stat.S_ISLNK(
++        observation.st_mode
++    ):
++        fail(f"{label} target is not an exact regular file: {path}")
++    descriptor = os.open(
++        path,
++        os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
++    )
++    try:
++        written = 0
++        while written < len(value):
++            count = os.write(descriptor, value[written:])
++            if count <= 0:
++                fail(f"{label} made no forward write progress")
++            written += count
++        os.fsync(descriptor)
++    finally:
++        os.close(descriptor)
++
++
++def require_payload_operator_status(
++    value: dict[str, Any], label: str
++) -> None:
++    scrub = value.get("payload_scrub")
++    if not isinstance(scrub, dict):
++        fail(f"{label} status omitted payload scrub state")
++    expected_scrub = {
++        "enabled": True,
++        "max_bytes_per_attempt": 4 * 1024 * 1024,
++        "max_entries_per_attempt": 4,
++    }
++    for key, wanted in expected_scrub.items():
++        if scrub.get(key) != wanted:
++            fail(
++                f"{label} payload scrub field {key!r} was "
++                f"{scrub.get(key)!r}, expected {wanted!r}: "
++                f"{json.dumps(scrub, sort_keys=True)}"
++            )
++    report = scrub.get("last_report")
++    if report is not None:
++        if not isinstance(report, dict):
++            fail(f"{label} scrub report was neither object nor null")
++        if not isinstance(report.get("disposition"), str) or not isinstance(
++            report.get("age_milliseconds"), int
++        ):
++            fail(
++                f"{label} scrub report omitted disposition/age: "
++                f"{json.dumps(report, sort_keys=True)}"
++            )
++    completion_age = scrub.get("last_completed_cycle_age_milliseconds")
++    if completion_age is not None and not isinstance(completion_age, int):
++        fail(f"{label} scrub completion age was neither integer nor null")
++    if report is None and completion_age is not None:
++        fail(f"{label} invented a completed-cycle age without any report")
++
++    integrity = value.get("payload_integrity")
++    if not isinstance(integrity, dict):
++        fail(f"{label} status omitted payload integrity state")
++    state = integrity.get("state")
++    active = integrity.get("active_fault")
++    recovery = integrity.get("most_recent_recovery")
++    if recovery is not None and not isinstance(recovery, dict):
++        fail(f"{label} payload recovery history was neither object nor null")
++    if state == "healthy":
++        if active is not None:
++            fail(f"{label} healthy integrity state retained an active fault")
++    elif state == "faulted":
++        if not isinstance(active, dict):
++            fail(f"{label} faulted integrity state omitted fault evidence")
++    else:
++        fail(f"{label} reported unknown payload integrity state {state!r}")
++
++
++def wait_for_payload_integrity_state(
++    sync: Path,
++    process: subprocess.Popen[str],
++    socket_path: Path,
++    expected_state: str,
++    label: str,
++    *,
++    timeout_seconds: float = 15.0,
++) -> dict[str, Any]:
++    deadline = time.monotonic() + timeout_seconds
++    last_value: dict[str, Any] | None = None
++    last_error = "no status response"
++    while time.monotonic() < deadline:
++        if process.poll() is not None:
++            stdout, stderr = process.communicate(timeout=1.0)
++            fail(
++                f"{label} service exited while waiting for payload integrity "
++                f"state {expected_state!r} with {process.returncode}\n"
++                f"stdout:\n{stdout}\nstderr:\n{stderr}"
++            )
++        try:
++            mode = socket_path.lstat().st_mode
++            if not stat.S_ISSOCK(mode) or stat.S_IMODE(mode) != 0o600:
++                last_error = "owner-only status socket was not preserved"
++            else:
++                value = run_json(
++                    [
++                        str(sync), "status", "--socket", str(socket_path),
++                        "--timeout-milliseconds", "1000",
++                    ],
++                    label=f"{label} status query",
++                )
++                last_value = value
++                require_payload_operator_status(value, label)
++                integrity = value["payload_integrity"]
++                if integrity.get("state") == expected_state:
++                    return value
++                last_error = (
++                    "payload integrity state was "
++                    f"{integrity.get('state')!r}"
++                )
++        except (FileNotFoundError, OSError, RuntimeError) as error:
++            last_error = str(error)
++        time.sleep(0.02)
++    suffix = (
++        ""
++        if last_value is None
++        else f": {json.dumps(last_value, sort_keys=True)}"
++    )
++    fail(
++        f"{label} did not reach payload integrity state "
++        f"{expected_state!r}: {last_error}{suffix}"
++    )
++
++
+ def relocate_deployment_manifest(source: Path, destination: Path) -> None:
+     """Write one canonical manifest with only its committed pathname changed."""
+     exact = source.read_text(encoding="utf-8")
+@@ -180,7 +310,7 @@ def linked_peer_configuration(
+             "scan_interval_seconds": 1,
+             "retry_initial_seconds": 1,
+             "retry_maximum_seconds": 2,
+-            "maximum_service_runtime_seconds": 30,
++            "maximum_service_runtime_seconds": 90,
+         },
+     }
+ 
+@@ -221,7 +351,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v2",
++                    "schema": "anonsync.peer-service.status.v3",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -246,6 +376,9 @@ def wait_for_status(
+                     fail(f"{label} status omitted counters")
+                 if value.get("generation", -1) < 0:
+                     fail(f"{label} status generation was invalid")
++                require_payload_operator_status(value, label)
++                if value["payload_integrity"].get("state") != "healthy":
++                    fail(f"{label} was unexpectedly integrity-faulted")
+                 return value
+         except (FileNotFoundError, OSError, RuntimeError) as error:
+             last_error = str(error)
+@@ -334,6 +467,7 @@ def expect_terminal(
+     status_socket: Path,
+     label: str,
+     stop_reason: str = "stop_requested",
++    payload_integrity_recovery_expected: bool = False,
+ ) -> None:
+     expected = {
+         "command": "run",
+@@ -358,6 +492,16 @@ def expect_terminal(
+         fail(f"{label} completed no sync cycle")
+     if value.get("cycles_failed", 0) > value.get("cycles_attempted", 0):
+         fail(f"{label} cycle accounting is incoherent")
++    if payload_integrity_recovery_expected:
++        if value.get("payload_integrity_fault_active") is not False:
++            fail(f"{label} terminal retained an active payload fault")
++        for field in (
++            "payload_integrity_faults_observed",
++            "payload_integrity_reproof_attempts",
++            "payload_integrity_reproof_recoveries",
++        ):
++            if value.get(field, 0) < 1:
++                fail(f"{label} terminal omitted successful {field}")
+ 
+ 
+ def expect_config_failure(
+@@ -1042,6 +1186,158 @@ def main() -> int:
+             if receiver_after.get("generation", 0) < 1:
+                 fail("receiver live status did not advance after a service step")
+ 
++            # A current-byte mismatch used to escape the peer-service owner,
++            # destroy the process, and remove the only live status/control
++            # endpoint. Corrupt one exact payload object after convergence and
++            # prove the service instead remains alive, publishes a fail-closed
++            # fault, performs no ordinary work until a complete reproof, and
++            # recovers after an external exact-byte repair.
++            source_payload_bytes = b"config-driven source payload\n"
++            source_payload_digest = hashlib.sha256(
++                source_payload_bytes
++            ).hexdigest()
++            source_payload_path = (
++                source_manifest.parent.parent
++                / "payload"
++                / source_payload_digest
++            )
++            if source_payload_path.read_bytes() != source_payload_bytes:
++                fail("source payload store omitted the converged exact object")
++            corrupted_payload_bytes = bytes(
++                [source_payload_bytes[0] ^ 0x5A]
++            ) + source_payload_bytes[1:]
++            corrupted_payload_digest = hashlib.sha256(
++                corrupted_payload_bytes
++            ).hexdigest()
++            overwrite_regular_file(
++                source_payload_path,
++                corrupted_payload_bytes,
++                "payload integrity corruption injection",
++            )
++            faulted_status = wait_for_payload_integrity_state(
++                sync,
++                source,
++                source_status,
++                "faulted",
++                "config-driven source integrity fault",
++            )
++            if faulted_status.get("service_state") != "faulted" or (
++                faulted_status.get("ready") is not False
++            ):
++                fail(
++                    "payload corruption was not reflected in fail-closed "
++                    "service readiness: "
++                    f"{json.dumps(faulted_status, sort_keys=True)}"
++                )
++            if not isinstance(
++                faulted_status["payload_scrub"].get("last_report"), dict
++            ):
++                fail(
++                    "payload corruption workflow omitted its prior "
++                    "process-observed scrub report"
++                )
++            active_fault = faulted_status["payload_integrity"].get(
++                "active_fault"
++            )
++            if not isinstance(active_fault, dict):
++                fail("faulted source status omitted active payload evidence")
++            expected_fault = {
++                "expected_content_sha256": source_payload_digest,
++                "observed_content_sha256": corrupted_payload_digest,
++            }
++            for key, wanted in expected_fault.items():
++                if active_fault.get(key) != wanted:
++                    fail(
++                        f"payload fault field {key!r} was "
++                        f"{active_fault.get(key)!r}, expected {wanted!r}: "
++                        f"{json.dumps(active_fault, sort_keys=True)}"
++                    )
++            for key in (
++                "detection_count",
++                "active_age_milliseconds",
++                "last_detection_age_milliseconds",
++                "retry_delay_milliseconds",
++            ):
++                if not isinstance(active_fault.get(key), int) or (
++                    active_fault[key] < 0
++                ):
++                    fail(f"payload fault omitted bounded integer field {key}")
++            if active_fault["detection_count"] < 1:
++                fail("payload fault did not account its first detection")
++            fault_counters = faulted_status.get("counters")
++            if not isinstance(fault_counters, dict) or (
++                fault_counters.get("payload_integrity_faults_observed", 0)
++                < 1
++            ):
++                fail("payload fault status omitted service-owned accounting")
++
++            overwrite_regular_file(
++                source_payload_path,
++                source_payload_bytes,
++                "payload integrity external repair",
++            )
++            recovered_status = wait_for_payload_integrity_state(
++                sync,
++                source,
++                source_status,
++                "healthy",
++                "config-driven source integrity recovery",
++            )
++            if recovered_status.get("service_state") != "running" or (
++                recovered_status.get("ready") is not True
++            ):
++                fail(
++                    "complete current-byte reproof did not restore readiness: "
++                    f"{json.dumps(recovered_status, sort_keys=True)}"
++                )
++            if faulted_status.get("pid") != source.pid or (
++                recovered_status.get("pid") != source.pid
++            ):
++                fail("payload-integrity recovery replaced the service process")
++            recovery_history = recovered_status["payload_integrity"].get(
++                "most_recent_recovery"
++            )
++            if not isinstance(recovery_history, dict):
++                fail("integrity recovery erased exact operator evidence")
++            for key, wanted in expected_fault.items():
++                if recovery_history.get(key) != wanted:
++                    fail(
++                        f"recovery history field {key!r} was "
++                        f"{recovery_history.get(key)!r}, expected {wanted!r}: "
++                        f"{json.dumps(recovery_history, sort_keys=True)}"
++                    )
++            if not isinstance(
++                recovery_history.get("failure_persisted"), bool
++            ):
++                fail("recovery history omitted persistence evidence")
++            for key in (
++                "detection_count",
++                "fault_duration_milliseconds",
++                "recovery_age_milliseconds",
++            ):
++                if not isinstance(recovery_history.get(key), int) or (
++                    recovery_history[key] < 0
++                ):
++                    fail(f"recovery history omitted bounded integer field {key}")
++            if recovery_history["detection_count"] < 1:
++                fail("recovery history lost its detection count")
++
++            recovery_counters = recovered_status.get("counters")
++            if not isinstance(recovery_counters, dict):
++                fail("integrity recovery status omitted counters")
++            for field in (
++                "payload_integrity_faults_observed",
++                "payload_integrity_reproof_attempts",
++                "payload_integrity_reproof_recoveries",
++            ):
++                if recovery_counters.get(field, 0) < 1:
++                    fail(f"integrity recovery did not account {field}")
++
++            # Request the signal-driven peer drain first. Otherwise the
++            # locally drained source can close while the receiver starts one
++            # final outbound TLS pull, turning a test teardown race into an
++            # unrelated unexpected-EOF process failure.
++            receiver.send_signal(signal.SIGTERM)
+             stop_response = run_json(
+                 [str(sync), "stop", "--socket", str(source_status)],
+                 label="owner-only source drain request",
+@@ -1059,7 +1355,6 @@ def main() -> int:
+                     "source drain response was not exact: "
+                     f"{json.dumps(stop_response, sort_keys=True)}"
+                 )
+-            receiver.send_signal(signal.SIGTERM)
+             source_terminal = finish_service(
+                 source, "config-driven source local drain", timeout=15.0
+             )
+@@ -1119,6 +1414,7 @@ def main() -> int:
+             status_socket=source_status,
+             label="config-driven source service",
+             stop_reason="local_stop_requested",
++            payload_integrity_recovery_expected=True,
+         )
+         expect_terminal(
+             receiver_terminal,
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index 30e8e3b..286a5ad 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -542,7 +542,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v2"
++                    value.get("schema") == "anonsync.peer-service.status.v3"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 8792f79..50774ef 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1168,6 +1168,26 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/test_anonsync_service_i2p_ingress.py",
+             "tools/test_anonsync_provisioning.py",
+         })
++    if revision_number is not None and revision_number >= 956:
++        revision_scoped_required.update({
++            "PAYLOAD_INTEGRITY_SERVICE_RECOVERY_AUDIT_rev0956.md",
++            "REVISION_NOTES_rev0956.md",
++            "src/sync_replica_file_payload_store.hpp",
++            "src/sync_replica_file_payload_store.cpp",
++            "src/sync_replica_folder_process.hpp",
++            "src/sync_replica_folder_process.cpp",
++            "src/sync_replica_peer_service.hpp",
++            "src/sync_replica_peer_service.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_peer_service_status.cpp",
++            "src/sync_replica_tls_transport.hpp",
++            "src/sync_replica_tls_transport.cpp",
++            "src/anonsync_sync.cpp",
++            "tests/sync_replica_file_payload_store_test.cpp",
++            "tests/sync_replica_tls_transport_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/audit_sync_file_payload_store.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

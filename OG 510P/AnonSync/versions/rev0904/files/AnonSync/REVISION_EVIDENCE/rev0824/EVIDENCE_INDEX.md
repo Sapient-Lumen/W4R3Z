@@ -1,0 +1,57 @@
+# Rev0824 evidence index
+
+Captured `2026-07-17T22:17:48-04:00`. The machine-readable index binds 53 non-recursive evidence files.
+
+- `ACTIVE_IMPLEMENTATION_PROJECTION.json` — 32482 bytes — `f8557e75d9968d760af1b9bbbe59833f8e053d81f41f8c5cd728de7d692abf96`
+- `AUDIT.md` — 4942 bytes — `af74e4c2019bc895a6b606fd76567cea81d74334138a5a48650576a7b7d66eaf`
+- `CHANGESET.json` — 3492 bytes — `910d872d5a599368a99774e5fa4dcfe5cf1e0acc1b0cc58c369a33fdc9c48b91`
+- `COMMANDS.tsv` — 1139 bytes — `2bd234f300a9dad147436f917af054c9e54f525b2bfe9edfb94f158af5407627`
+- `LINEAGE.json` — 726 bytes — `3d98fcf9b749c983fbfa7bb0605a14e562377ccc919a61965d9332b0117b5af0`
+- `LINEAGE.md` — 666 bytes — `984606f52261b5a53d413c9fa0ce64dff0fa824315fe20443b34705789eca150`
+- `RESEARCH.md` — 3334 bytes — `7527d441a998e3a1018e9861252cb30e85f6876cf43345de034abb6243b5ee93`
+- `SOURCE_DIFF_rev0823_to_rev0824.patch` — 358022 bytes — `d4d0eaa7a426457be06dffebf5363f158c0373b69513829d9b5831606098c84a`
+- `SOURCE_NUMSTAT.txt` — 1253 bytes — `2bdfdee44441418f209e6934a0523c6e5093ff68521cae3439ca6ae15fb1de77`
+- `SOURCE_SHORTSTAT.txt` — 56 bytes — `8da318a0a3b79a6cfde07befa9e720d298cc0cc26dc1ed214fec5cd0bcdf683f`
+- `TOOLCHAIN.txt` — 543 bytes — `45f87b57c8fad39ed9c80106e2bf0980255a87a270e4b338e6c03abf35fd375e`
+- `audits/backup-publication.json` — 5884 bytes — `fe8802c97d56ab0c4fd184136a4b0cb3ae5ca5be42957320d2220483f6c7451d`
+- `audits/backup-publication.log` — 5884 bytes — `fe8802c97d56ab0c4fd184136a4b0cb3ae5ca5be42957320d2220483f6c7451d`
+- `audits/load-authority.json` — 5433 bytes — `acc12e388779217c6dd2c80a58e5e988ae632c9468710c47529307e2a8cd66c1`
+- `audits/load-authority.log` — 5433 bytes — `acc12e388779217c6dd2c80a58e5e988ae632c9468710c47529307e2a8cd66c1`
+- `audits/process-authority.json` — 135674 bytes — `123bf59c0b6259563f1b4db017458d94194e0e389a0403c49d997f6013755f64`
+- `audits/process-authority.log` — 135674 bytes — `123bf59c0b6259563f1b4db017458d94194e0e389a0403c49d997f6013755f64`
+- `audits/reset.json` — 18661 bytes — `9054b59dfdf6c38a60390d3485331dba90bff40a6b80d249746c7b62077904d0`
+- `audits/reset.log` — 18661 bytes — `9054b59dfdf6c38a60390d3485331dba90bff40a6b80d249746c7b62077904d0`
+- `audits/restore-publication.json` — 2245 bytes — `d11e4bd7202727a52cb92481218af55c567b64a1236e9d3067a802d967e4541f`
+- `audits/restore-publication.log` — 2245 bytes — `d11e4bd7202727a52cb92481218af55c567b64a1236e9d3067a802d967e4541f`
+- `audits/summary.txt` — 133 bytes — `fe4522cb69c2922506ce39149970a2e01f62447e26b9c95b0c05dd1f0dff496e`
+- `inventory/reset-boundary.json` — 1731 bytes — `26028f8b8ef5bc0540817726d2541cc859876266e442ecf79e904227ff876199`
+- `inventory/sqlite-namespace-deletion-inventory.json` — 808 bytes — `dce321b816ddebc273546cc63ca872e7629c03b7ef7474d8cf8326f2a7bb278b`
+- `lineage/parent-archive.sha256` — 164 bytes — `f0cd7cd5132e7a98189c94c1339071a4c6f2ad1d173db1a482b1ce531c43f255`
+- `lineage/parent-directory-verification.json` — 3676 bytes — `7d697145b181f67516b36a152d7479de17fe300e8036887a06bcba479ba80f5e`
+- `lineage/parent-directory-verification.log` — 3676 bytes — `7d697145b181f67516b36a152d7479de17fe300e8036887a06bcba479ba80f5e`
+- `lineage/parent-zip-verification.json` — 4172 bytes — `a22188fbb13b04725d95bd485e4bc61c9f87335b321aa9be47e617b43d898b8e`
+- `lineage/parent-zip-verification.log` — 4172 bytes — `a22188fbb13b04725d95bd485e4bc61c9f87335b321aa9be47e617b43d898b8e`
+- `repository_metrics.json` — 915 bytes — `7c681370ce986b009d883f39960b5ea597aef8644756fdb37136c739edcd5812`
+- `validation/TOOLCHAIN.txt` — 543 bytes — `45f87b57c8fad39ed9c80106e2bf0980255a87a270e4b338e6c03abf35fd375e`
+- `validation/VALIDATION_SUMMARY.json` — 2860 bytes — `f4edd33a8076261706994d7b2fc13256d1b5cf85b8689a535f96d649e36cfa25`
+- `validation/captured-at.txt` — 26 bytes — `5d1f9dae32d64df5f99d1a165b24ed6d56316ab8a05f2e3ff0a7af763324cf17`
+- `validation/changed-active-files.txt` — 1086 bytes — `5409cf5082c62111806ac63428ccd31a3681f280ef3baa22002b6a0243300b9a`
+- `validation/clang-werror-build.log` — 8278 bytes — `3e2ee72de0cc8be708563fff0e9157a65e854f8e30ea4548f8e225916219d138`
+- `validation/clang-werror-configure.log` — 925 bytes — `01abc955f0391ccd354e3c6bb9dd3a88b03b30b012f8f5629437962f63b81fd3`
+- `validation/clang-werror-reset.log` — 51 bytes — `0d5c0b0927a4372a92ef61f11c98aa35bcdb00b26cfc540a92dc82bfd1ba635c`
+- `validation/clang-werror-tests.log` — 641 bytes — `4ac3ebd3cdd2a8ba34e9c7f4cce581d553dafa147081dab3b33789f6beb2cbfe`
+- `validation/ctest-complete-107.log` — 18693 bytes — `d27b91ac6234f9303183a8942edf3e3574b659ed9bb28daa94d1f9495a8dec57`
+- `validation/ctest-inventory-107.log` — 6537 bytes — `80c99a45dc9f83036d1778025bd41c86ef59566ea0bcdaa57c594e60491596d3`
+- `validation/debug-final-source-rebuild.log` — 130 bytes — `65aabad3fd1d13442a28f575986e1ca3695ac197f268abab5d5ed145f544451e`
+- `validation/final-dependency-closure-no-work.log` — 82 bytes — `d73f03c57e925ce4b9853b1f9ecade5040d840f73c95e94da26bb117b64f4d1f`
+- `validation/focused-cli-332.log` — 56 bytes — `c36cdb9fe7983923c2e8c72f2ad91a8e4f08a7599d28bd055fbb5cb092fab0d0`
+- `validation/focused-repeat-25x2.log` — 1246 bytes — `5e7772e18d7e7bc2d1b7cfa3cabf9aa5a8a09d365341e7a12ca541efdad0f0e5`
+- `validation/focused-reset-67.log` — 51 bytes — `0d5c0b0927a4372a92ef61f11c98aa35bcdb00b26cfc540a92dc82bfd1ba635c`
+- `validation/gcc-asan-ubsan-build.log` — 2660 bytes — `ecff9daa0d6b5ca5241a4e031fba145b347f1923b600b8d8dc8dcf094769158b`
+- `validation/gcc-asan-ubsan-configure.log` — 880 bytes — `affe0acb01cf5100de0fcc72cd4df1089348a1c3e85cefb4e349fb0f9d7892a6`
+- `validation/gcc-asan-ubsan-reset.log` — 51 bytes — `0d5c0b0927a4372a92ef61f11c98aa35bcdb00b26cfc540a92dc82bfd1ba635c`
+- `validation/gcc-werror-build.log` — 8278 bytes — `8733ff44fbeb99c89a57b9fb493909471de8a0f890b4e5090980625e0feb4310`
+- `validation/gcc-werror-configure.log` — 881 bytes — `42b471f13d4121683c34355e4b71421db6d1a6a73796883421e57d23915b47b9`
+- `validation/gcc-werror-reset.log` — 51 bytes — `0d5c0b0927a4372a92ef61f11c98aa35bcdb00b26cfc540a92dc82bfd1ba635c`
+- `validation/gcc-werror-tests.log` — 637 bytes — `fc218fcb5fe2699468a7ffc41c542e7264031469204264d7148cbcf87c67465c`
+- `validation/source-patch-compare.json` — 1496 bytes — `19e9e7b50dec2add610f74c307020db84c9c5bd7d47a258523d1d4180fd483ea`

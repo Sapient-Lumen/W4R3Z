@@ -1,0 +1,1861 @@
+diff --git aa/src/persistence/sqlite_snapshot_seal.cpp bb/src/persistence/sqlite_snapshot_seal.cpp
+index 778c656..894acf0 100644
+--- aa/src/persistence/sqlite_snapshot_seal.cpp
++++ bb/src/persistence/sqlite_snapshot_seal.cpp
+@@ -1,14 +1,14 @@
+ #include "sqlite_snapshot_seal.hpp"
+ 
++#include "sqlite_path_security.hpp"
++
+ #include <sqlite3.h>
+ 
+ #include <openssl/evp.h>
+ 
++#include <algorithm>
+ #include <array>
+ #include <cerrno>
+-#include <climits>
+-#include <cstdio>
+-#include <cstdlib>
+ #include <cstring>
+ #include <iomanip>
+ #include <limits>
+@@ -19,7 +19,6 @@
+ #include <utility>
+ #include <vector>
+ 
+-#include <fcntl.h>
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ #include <unistd.h>
+@@ -41,8 +40,7 @@ std::vector<std::string> snapshot_sidecar_suffixes() {
+ 
+ class ScopedFd final {
+ public:
+-    ScopedFd() noexcept = default;
+-    explicit ScopedFd(int fd) noexcept : fd_(fd) {}
++    explicit ScopedFd(int fd = -1) noexcept : fd_(fd) {}
+     ~ScopedFd() { reset(); }
+     ScopedFd(const ScopedFd&) = delete;
+     ScopedFd& operator=(const ScopedFd&) = delete;
+@@ -85,16 +83,6 @@ bool source_stat_is_stable(const struct stat& before,
+            before.st_ctim.tv_nsec == after.st_ctim.tv_nsec;
+ }
+ 
+-template <typename Integer>
+-std::uint64_t unsigned_stat_value(Integer value) noexcept {
+-    return static_cast<std::uint64_t>(value);
+-}
+-
+-template <typename Integer>
+-std::int64_t signed_time_value(Integer value) noexcept {
+-    return static_cast<std::int64_t>(value);
+-}
+-
+ std::string digest_hex(const unsigned char* bytes, std::size_t count) {
+     std::ostringstream out;
+     out << std::hex << std::setfill('0');
+@@ -104,48 +92,18 @@ std::string digest_hex(const unsigned char* bytes, std::size_t count) {
+     return out.str();
+ }
+ 
+-
+ using DigestContext = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
+ 
+-std::string sha256_descriptor_exact_or_throw(int fd,
+-                                             std::uint64_t expected_bytes,
+-                                             const std::string& label) {
+-    if (fd < 0) {
+-        throw std::runtime_error(label + " SHA-256 descriptor is invalid");
+-    }
++DigestContext new_sha256_context_or_throw(const std::string& label) {
+     DigestContext digest(EVP_MD_CTX_new(), &EVP_MD_CTX_free);
+     if (!digest || EVP_DigestInit_ex(digest.get(), EVP_sha256(), nullptr) != 1) {
+         throw std::runtime_error(label + " SHA-256 initialization failed");
+     }
++    return digest;
++}
+ 
+-    std::array<unsigned char, 64U * 1024U> buffer{};
+-    std::uint64_t consumed = 0;
+-    while (consumed < expected_bytes) {
+-        const std::uint64_t remaining = expected_bytes - consumed;
+-        const std::size_t request =
+-            remaining < static_cast<std::uint64_t>(buffer.size())
+-                ? static_cast<std::size_t>(remaining)
+-                : buffer.size();
+-        if (consumed > static_cast<std::uint64_t>(
+-                           std::numeric_limits<off_t>::max())) {
+-            throw std::runtime_error(label + " SHA-256 offset exceeds off_t");
+-        }
+-        const ssize_t rc = ::pread(fd, buffer.data(), request,
+-                                   static_cast<off_t>(consumed));
+-        if (rc < 0 && errno == EINTR) continue;
+-        if (rc < 0) throw_errno(label, "SHA-256 descriptor read");
+-        if (rc == 0) {
+-            throw std::runtime_error(
+-                label + " SHA-256 descriptor ended before the expected byte count");
+-        }
+-        const auto count = static_cast<std::size_t>(rc);
+-        if (count > request ||
+-            EVP_DigestUpdate(digest.get(), buffer.data(), count) != 1) {
+-            throw std::runtime_error(label + " SHA-256 update failed");
+-        }
+-        consumed += static_cast<std::uint64_t>(count);
+-    }
+-
++std::string finish_sha256_or_throw(DigestContext& digest,
++                                   const std::string& label) {
+     std::array<unsigned char, EVP_MAX_MD_SIZE> digest_bytes{};
+     unsigned int digest_count = 0;
+     if (EVP_DigestFinal_ex(digest.get(), digest_bytes.data(), &digest_count) != 1 ||
+@@ -155,6 +113,28 @@ std::string sha256_descriptor_exact_or_throw(int fd,
+     return digest_hex(digest_bytes.data(), digest_count);
+ }
+ 
++std::string sha256_bytes_or_throw(const std::vector<unsigned char>& bytes,
++                                  const std::string& label) {
++    DigestContext digest = new_sha256_context_or_throw(label);
++    if (!bytes.empty() &&
++        EVP_DigestUpdate(digest.get(), bytes.data(), bytes.size()) != 1) {
++        throw std::runtime_error(label + " SHA-256 update failed");
++    }
++    return finish_sha256_or_throw(digest, label);
++}
++
++std::array<unsigned char, kSqliteDatabaseHeaderBytes>
++header_from_bytes_or_throw(const std::vector<unsigned char>& bytes,
++                           const std::string& label) {
++    if (bytes.size() < kSqliteDatabaseHeaderBytes) {
++        throw std::runtime_error(
++            label + " SQLite snapshot ended before its 100-byte header");
++    }
++    std::array<unsigned char, kSqliteDatabaseHeaderBytes> header{};
++    std::copy_n(bytes.begin(), header.size(), header.begin());
++    return header;
++}
++
+ std::array<unsigned char, kSqliteDatabaseHeaderBytes>
+ read_sqlite_header_exact_or_throw(int fd, const std::string& label) {
+     if (fd < 0) {
+@@ -181,89 +161,19 @@ read_sqlite_header_exact_or_throw(int fd, const std::string& label) {
+     return header;
+ }
+ 
+-std::string uri_encode_path(const fs::path& path) {
+-    const std::string bytes = path.string();
+-    static constexpr char kHex[] = "0123456789ABCDEF";
+-    std::string encoded;
+-    encoded.reserve(bytes.size() + 32U);
+-    for (const char byte : bytes) {
+-        const auto value = static_cast<unsigned char>(byte);
+-        const bool unreserved =
+-            (value >= static_cast<unsigned char>('a') &&
+-             value <= static_cast<unsigned char>('z')) ||
+-            (value >= static_cast<unsigned char>('A') &&
+-             value <= static_cast<unsigned char>('Z')) ||
+-            (value >= static_cast<unsigned char>('0') &&
+-             value <= static_cast<unsigned char>('9')) ||
+-            value == static_cast<unsigned char>('-') ||
+-            value == static_cast<unsigned char>('_') ||
+-            value == static_cast<unsigned char>('.') ||
+-            value == static_cast<unsigned char>('~') ||
+-            value == static_cast<unsigned char>('/');
+-        if (unreserved) {
+-            encoded.push_back(static_cast<char>(value));
+-        } else {
+-            encoded.push_back('%');
+-            encoded.push_back(kHex[(value >> 4U) & 0x0fU]);
+-            encoded.push_back(kHex[value & 0x0fU]);
+-        }
+-    }
+-    return encoded;
+-}
+-
+-fs::path make_private_staging_directory_or_throw(const std::string& label) {
+-    std::string candidate =
+-        "/tmp/anonsync-sqlite-snapshot-seal-" +
+-        std::to_string(static_cast<long long>(::getpid())) + "-XXXXXX";
+-    std::vector<char> writable(candidate.begin(), candidate.end());
+-    writable.push_back('\0');
+-    char* created = ::mkdtemp(writable.data());
+-    if (created == nullptr) throw_errno(label, "private staging directory creation");
+-    const fs::path directory(created);
+-    if (::chmod(directory.c_str(), 0700) != 0) {
+-        const int chmod_error = errno;
+-        (void)::rmdir(directory.c_str());
+-        throw_errno(label, "private staging directory chmod", chmod_error);
+-    }
+-    struct stat status{};
+-    if (::lstat(directory.c_str(), &status) != 0) {
+-        const int stat_error = errno;
+-        (void)::rmdir(directory.c_str());
+-        throw_errno(label, "private staging directory inspection", stat_error);
+-    }
+-    if (!S_ISDIR(status.st_mode) || status.st_uid != ::geteuid() ||
+-        (status.st_mode & 0777) != 0700) {
+-        (void)::rmdir(directory.c_str());
++void verify_deserializable_file_format_or_throw(
++    const std::array<unsigned char, kSqliteDatabaseHeaderBytes>& header,
++    const std::string& label) {
++    // sqlite3_deserialize() cannot use an image whose file-format read/write
++    // versions advertise WAL mode. A cleanly closed WAL database commonly has
++    // no -wal or -shm sibling while retaining 2/2 at offsets 18/19, so sidecar
++    // absence alone is not sufficient evidence. Do not rewrite authenticated
++    // bytes to 1/1: require the producer to supply a canonical rollback-mode
++    // snapshot instead.
++    if (header[18] != 1U || header[19] != 1U) {
+         throw std::runtime_error(
+-            label + " private staging directory did not retain mode 0700 ownership");
+-    }
+-    return directory;
+-}
+-
+-int destination_open_flags() noexcept {
+-    int flags = O_RDWR | O_CREAT | O_EXCL;
+-#ifdef O_CLOEXEC
+-    flags |= O_CLOEXEC;
+-#endif
+-#ifdef O_NOFOLLOW
+-    flags |= O_NOFOLLOW;
+-#endif
+-    return flags;
+-}
+-
+-void write_all_or_throw(int fd,
+-                        const unsigned char* bytes,
+-                        std::size_t count,
+-                        const std::string& label) {
+-    std::size_t offset = 0;
+-    while (offset < count) {
+-        const ssize_t rc = ::write(fd, bytes + offset, count - offset);
+-        if (rc < 0 && errno == EINTR) continue;
+-        if (rc <= 0) {
+-            const int write_error = rc < 0 ? errno : EIO;
+-            throw_errno(label, "private snapshot write", write_error);
+-        }
+-        offset += static_cast<std::size_t>(rc);
++            label +
++            " SQLite snapshot must use rollback-journal file format versions 1/1 for read-only deserialization");
+     }
+ }
+ 
+@@ -294,6 +204,69 @@ std::uint64_t checked_source_size_or_throw(const struct stat& status,
+     if (bytes > policy.maximum_bytes) {
+         throw std::runtime_error(label + " SQLite snapshot exceeds the byte ceiling");
+     }
++    if (bytes > static_cast<std::uint64_t>(
++                    std::numeric_limits<std::size_t>::max())) {
++        throw std::runtime_error(label + " SQLite snapshot exceeds process addressability");
++    }
++    if (bytes > static_cast<std::uint64_t>(
++                    std::numeric_limits<sqlite3_int64>::max())) {
++        throw std::runtime_error(label + " SQLite snapshot exceeds SQLite addressability");
++    }
++    return bytes;
++}
++
++std::vector<unsigned char> copy_source_exact_or_throw(
++    int fd,
++    std::uint64_t expected_bytes,
++    std::string& stream_sha256,
++    const std::string& label) {
++    if (fd < 0) {
++        throw std::runtime_error(label + " source descriptor is invalid");
++    }
++    std::vector<unsigned char> bytes(
++        static_cast<std::size_t>(expected_bytes));
++    DigestContext digest = new_sha256_context_or_throw(label);
++
++    std::uint64_t copied = 0;
++    while (copied < expected_bytes) {
++        const std::uint64_t remaining = expected_bytes - copied;
++        const std::size_t request =
++            remaining < 64U * 1024U
++                ? static_cast<std::size_t>(remaining)
++                : 64U * 1024U;
++        const ssize_t rc = ::pread(
++            fd, bytes.data() + static_cast<std::size_t>(copied), request,
++            static_cast<off_t>(copied));
++        if (rc < 0 && errno == EINTR) continue;
++        if (rc < 0) throw_errno(label, "source snapshot read");
++        if (rc == 0) {
++            throw std::runtime_error(
++                label + " source snapshot ended before its captured byte count");
++        }
++        const auto count = static_cast<std::size_t>(rc);
++        if (count > request ||
++            EVP_DigestUpdate(
++                digest.get(),
++                bytes.data() + static_cast<std::size_t>(copied), count) != 1) {
++            throw std::runtime_error(label + " SHA-256 update failed");
++        }
++        copied += static_cast<std::uint64_t>(count);
++    }
++
++    unsigned char extra = 0;
++    while (true) {
++        const ssize_t rc = ::pread(
++            fd, &extra, 1U, static_cast<off_t>(expected_bytes));
++        if (rc < 0 && errno == EINTR) continue;
++        if (rc < 0) throw_errno(label, "source snapshot terminal read");
++        if (rc != 0) {
++            throw std::runtime_error(
++                label + " source snapshot grew beyond its captured byte count");
++        }
++        break;
++    }
++
++    stream_sha256 = finish_sha256_or_throw(digest, label);
+     return bytes;
+ }
+ 
+@@ -332,151 +305,53 @@ SealedSqliteSnapshot SealedSqliteSnapshot::capture(
+     const std::uint64_t expected_bytes =
+         checked_source_size_or_throw(source_before, policy, label);
+     out.geometry_policy_ = policy;
++    const auto source_header =
++        read_sqlite_header_exact_or_throw(source.get(), label + " source");
++    verify_deserializable_file_format_or_throw(source_header, label + " source");
+     out.geometry_ = verify_sqlite_snapshot_geometry_or_throw(
+-        read_sqlite_header_exact_or_throw(source.get(), label + " source"),
+-        expected_bytes, label + " source", out.geometry_policy_);
++        source_header, expected_bytes, label + " source", out.geometry_policy_);
+     out.byte_count_ = out.geometry_.byte_count;
+ 
+-    // Geometry is established before creating a private staging directory, so
+-    // malformed or padded input cannot mint staging-allocation authority.
+-    out.source_path_ = source_guard.database_path();
+-    out.staging_directory_ = make_private_staging_directory_or_throw(label);
+-    out.staged_path_ = out.staging_directory_ / "snapshot.sqlite";
+-
+-    try {
+-        ScopedFd destination(::open(out.staged_path_.c_str(),
+-                                    destination_open_flags(), 0600));
+-        if (destination.get() < 0) {
+-            throw_errno(label, "private snapshot creation");
+-        }
+-
+-        DigestContext digest(EVP_MD_CTX_new(), &EVP_MD_CTX_free);
+-        if (!digest || EVP_DigestInit_ex(digest.get(), EVP_sha256(), nullptr) != 1) {
+-            throw std::runtime_error(label + " SHA-256 initialization failed");
+-        }
+-
+-        std::array<unsigned char, 64U * 1024U> buffer{};
+-        std::uint64_t copied = 0;
+-        while (true) {
+-            const ssize_t rc = ::read(source.get(), buffer.data(), buffer.size());
+-            if (rc < 0 && errno == EINTR) continue;
+-            if (rc < 0) throw_errno(label, "source snapshot read");
+-            if (rc == 0) break;
+-            const auto count = static_cast<std::size_t>(rc);
+-            const auto count_u64 = static_cast<std::uint64_t>(count);
+-            if (count_u64 > policy.maximum_bytes ||
+-                copied > policy.maximum_bytes - count_u64) {
+-                throw std::runtime_error(
+-                    label +
+-                    " source snapshot exceeded the byte ceiling while copying");
+-            }
+-            if (EVP_DigestUpdate(digest.get(), buffer.data(), count) != 1) {
+-                throw std::runtime_error(label + " SHA-256 update failed");
+-            }
+-            write_all_or_throw(destination.get(), buffer.data(), count, label);
+-            copied += count_u64;
+-        }
+-        if (copied != expected_bytes) {
+-            throw std::runtime_error(label + " source snapshot size changed while copying");
+-        }
+-
+-        struct stat source_after{};
+-        if (::fstat(source.get(), &source_after) != 0) {
+-            throw_errno(label, "source descriptor post-copy inspection");
+-        }
+-        if (!source_stat_is_stable(source_before, source_after)) {
+-            throw std::runtime_error(label + " source snapshot changed while being sealed");
+-        }
+-        source_guard.verify_open_file_descriptor_or_throw(source.get(), label);
+-        source_guard.verify_sidecars_absent_or_throw(label);
+-
+-        if (::fsync(destination.get()) != 0) {
+-            throw_errno(label, "private snapshot fsync");
+-        }
+-        if (::fchmod(destination.get(), 0400) != 0) {
+-            throw_errno(label, "private snapshot chmod");
+-        }
+-        struct stat staged_status{};
+-        if (::fstat(destination.get(), &staged_status) != 0) {
+-            throw_errno(label, "private snapshot inspection");
+-        }
+-        if (!S_ISREG(staged_status.st_mode) || staged_status.st_nlink != 1 ||
+-            staged_status.st_uid != ::geteuid() ||
+-            (staged_status.st_mode & 0777) != 0400 ||
+-            staged_status.st_size != source_before.st_size) {
+-            throw std::runtime_error(label + " private snapshot identity or mode mismatch");
+-        }
+-        const SqliteSnapshotGeometry staged_geometry =
+-            verify_sqlite_snapshot_geometry_or_throw(
+-                read_sqlite_header_exact_or_throw(
+-                    destination.get(), label + " private snapshot"),
+-                static_cast<std::uint64_t>(staged_status.st_size),
+-                label + " private snapshot", out.geometry_policy_);
+-        if (staged_geometry != out.geometry_) {
+-            throw std::runtime_error(
+-                label + " private snapshot geometry changed while copying");
+-        }
+-
+-        std::array<unsigned char, EVP_MAX_MD_SIZE> digest_bytes{};
+-        unsigned int digest_count = 0;
+-        if (EVP_DigestFinal_ex(digest.get(), digest_bytes.data(), &digest_count) != 1 ||
+-            digest_count != 32U) {
+-            throw std::runtime_error(label + " SHA-256 finalization failed");
+-        }
++    // Geometry is established before allocating resident snapshot authority, so
++    // malformed or padded input cannot mint a large process-memory capability.
++    std::string stream_sha256;
++    std::vector<unsigned char> captured = copy_source_exact_or_throw(
++        source.get(), expected_bytes, stream_sha256, label);
+ 
+-        destination.reset();
+-        out.sha256_hex_ = digest_hex(digest_bytes.data(), digest_count);
+-        if (copied != out.geometry_.byte_count) {
+-            throw std::runtime_error(
+-                label + " private snapshot byte count diverged from verified geometry");
+-        }
+-        out.immutable_uri_ =
+-            "file:" + uri_encode_path(out.staged_path_) +
+-            "?mode=ro&immutable=1&cache=private";
+-        out.staged_guard_ = guard_sqlite_path_family_or_throw(
+-            out.staged_path_, false, snapshot_sidecar_suffixes(), label);
+-        out.staged_guard_.verify_private_parent_directory_or_throw(label);
+-        out.staged_guard_.verify_sidecars_absent_or_throw(label);
+-        out.staged_fd_ = out.staged_guard_.open_readonly_file_or_throw(label);
+-        const std::string staged_sha256 = sha256_descriptor_exact_or_throw(
+-            out.staged_fd_, out.byte_count_, label + " private snapshot");
+-        if (staged_sha256 != out.sha256_hex_) {
+-            throw std::runtime_error(
+-                label + " private snapshot digest does not match captured source bytes");
+-        }
++    struct stat source_after{};
++    if (::fstat(source.get(), &source_after) != 0) {
++        throw_errno(label, "source descriptor post-copy inspection");
++    }
++    if (!source_stat_is_stable(source_before, source_after)) {
++        throw std::runtime_error(label + " source snapshot changed while being sealed");
++    }
++    source_guard.verify_open_file_descriptor_or_throw(source.get(), label);
++    source_guard.verify_sidecars_absent_or_throw(label);
+ 
+-        struct stat retained_status{};
+-        if (::fstat(out.staged_fd_, &retained_status) != 0) {
+-            throw_errno(label, "retained private snapshot inspection");
+-        }
+-        if (retained_status.st_size < 0) {
+-            throw std::runtime_error(
+-                label + " retained private snapshot has a negative byte count");
+-        }
+-        const SqliteSnapshotGeometry retained_geometry =
+-            verify_sqlite_snapshot_geometry_or_throw(
+-                read_sqlite_header_exact_or_throw(
+-                    out.staged_fd_, label + " retained private snapshot"),
+-                static_cast<std::uint64_t>(retained_status.st_size),
+-                label + " retained private snapshot", out.geometry_policy_);
+-        if (retained_geometry != out.geometry_) {
+-            throw std::runtime_error(
+-                label + " retained private snapshot geometry mismatch");
+-        }
+-        out.staged_device_ = unsigned_stat_value(retained_status.st_dev);
+-        out.staged_inode_ = unsigned_stat_value(retained_status.st_ino);
+-        out.staged_mtime_seconds_ = signed_time_value(retained_status.st_mtim.tv_sec);
+-        out.staged_mtime_nanoseconds_ =
+-            static_cast<std::int64_t>(retained_status.st_mtim.tv_nsec);
+-        out.staged_ctime_seconds_ = signed_time_value(retained_status.st_ctim.tv_sec);
+-        out.staged_ctime_nanoseconds_ =
+-            static_cast<std::int64_t>(retained_status.st_ctim.tv_nsec);
+-        out.verify_unchanged_or_throw(label);
+-        return out;
+-    } catch (...) {
+-        out.cleanup_noexcept();
+-        throw;
++    const auto captured_header =
++        header_from_bytes_or_throw(captured, label + " captured bytes");
++    verify_deserializable_file_format_or_throw(
++        captured_header, label + " captured bytes");
++    const SqliteSnapshotGeometry captured_geometry =
++        verify_sqlite_snapshot_geometry_or_throw(
++            captured_header, static_cast<std::uint64_t>(captured.size()),
++            label + " captured bytes", out.geometry_policy_);
++    if (captured_geometry != out.geometry_) {
++        throw std::runtime_error(
++            label + " resident snapshot geometry changed while copying");
+     }
++    const std::string resident_sha256 =
++        sha256_bytes_or_throw(captured, label + " resident snapshot");
++    if (resident_sha256 != stream_sha256) {
++        throw std::runtime_error(
++            label + " resident snapshot digest does not match captured source bytes");
++    }
++
++    out.source_path_ = source_guard.database_path();
++    out.sha256_hex_ = stream_sha256;
++    out.serialized_bytes_ = std::move(captured);
++    out.verify_unchanged_or_throw(label);
++    return out;
+ }
+ 
+ SealedSqliteSnapshot::~SealedSqliteSnapshot() {
+@@ -503,45 +378,26 @@ void SealedSqliteSnapshot::transfer_from_noexcept(
+     SealedSqliteSnapshot& other) noexcept {
+     process_id_ = other.process_id_;
+     source_path_ = std::move(other.source_path_);
+-    staging_directory_ = std::move(other.staging_directory_);
+-    staged_path_ = std::move(other.staged_path_);
+-    immutable_uri_ = std::move(other.immutable_uri_);
+     sha256_hex_ = std::move(other.sha256_hex_);
+     pinned_vfs_name_ = std::move(other.pinned_vfs_name_);
+     byte_count_ = other.byte_count_;
+     geometry_ = other.geometry_;
+     geometry_policy_ = other.geometry_policy_;
+-    staged_guard_ = std::move(other.staged_guard_);
+-    staged_fd_ = other.staged_fd_;
++    serialized_bytes_ = std::move(other.serialized_bytes_);
+     pinned_vfs_ = other.pinned_vfs_;
+-    staged_device_ = other.staged_device_;
+-    staged_inode_ = other.staged_inode_;
+-    staged_mtime_seconds_ = other.staged_mtime_seconds_;
+-    staged_mtime_nanoseconds_ = other.staged_mtime_nanoseconds_;
+-    staged_ctime_seconds_ = other.staged_ctime_seconds_;
+-    staged_ctime_nanoseconds_ = other.staged_ctime_nanoseconds_;
+     other.clear_moved_from_noexcept();
+ }
+ 
+ void SealedSqliteSnapshot::clear_moved_from_noexcept() noexcept {
+     process_id_ = 0;
+     source_path_.clear();
+-    staging_directory_.clear();
+-    staged_path_.clear();
+-    immutable_uri_.clear();
+     sha256_hex_.clear();
+     pinned_vfs_name_.clear();
+     byte_count_ = 0;
+     geometry_ = {};
+     geometry_policy_ = {};
+-    staged_fd_ = -1;
++    serialized_bytes_.clear();
+     pinned_vfs_ = nullptr;
+-    staged_device_ = 0;
+-    staged_inode_ = 0;
+-    staged_mtime_seconds_ = 0;
+-    staged_mtime_nanoseconds_ = 0;
+-    staged_ctime_seconds_ = 0;
+-    staged_ctime_nanoseconds_ = 0;
+ }
+ 
+ void SealedSqliteSnapshot::require_current_process_noexcept() const noexcept {
+@@ -564,16 +420,6 @@ const fs::path& SealedSqliteSnapshot::source_path() const noexcept {
+     return source_path_;
+ }
+ 
+-const fs::path& SealedSqliteSnapshot::staged_path() const noexcept {
+-    require_current_process_noexcept();
+-    return staged_path_;
+-}
+-
+-const std::string& SealedSqliteSnapshot::immutable_uri() const noexcept {
+-    require_current_process_noexcept();
+-    return immutable_uri_;
+-}
+-
+ const std::string& SealedSqliteSnapshot::sha256_hex() const noexcept {
+     require_current_process_noexcept();
+     return sha256_hex_;
+@@ -619,76 +465,82 @@ void SealedSqliteSnapshot::verify_pinned_vfs_registration_or_throw(
+ void SealedSqliteSnapshot::verify_unchanged_or_throw(
+     const std::string& label) {
+     require_current_process_or_throw(label);
+-    if (staged_fd_ < 0 || staged_path_.empty() || staging_directory_.empty()) {
++    if (serialized_bytes_.empty() || byte_count_ == 0U ||
++        serialized_bytes_.size() != static_cast<std::size_t>(byte_count_)) {
+         throw std::runtime_error(label + " sealed SQLite snapshot is not initialized");
+     }
+     verify_pinned_vfs_registration_or_throw(label);
+-    staged_guard_.verify_private_parent_directory_or_throw(label);
+-    staged_guard_.verify_sidecars_absent_or_throw(label);
+-    staged_guard_.verify_open_file_descriptor_or_throw(staged_fd_, label);
+-    struct stat status{};
+-    if (::fstat(staged_fd_, &status) != 0) {
+-        throw_errno(label, "sealed snapshot descriptor inspection");
+-    }
+-    if (!S_ISREG(status.st_mode) || status.st_nlink != 1 ||
+-        status.st_uid != ::geteuid() || (status.st_mode & 0777) != 0400 ||
+-        status.st_size < 0 ||
+-        static_cast<std::uint64_t>(status.st_size) != byte_count_ ||
+-        unsigned_stat_value(status.st_dev) != staged_device_ ||
+-        unsigned_stat_value(status.st_ino) != staged_inode_ ||
+-        signed_time_value(status.st_mtim.tv_sec) != staged_mtime_seconds_ ||
+-        static_cast<std::int64_t>(status.st_mtim.tv_nsec) !=
+-            staged_mtime_nanoseconds_ ||
+-        signed_time_value(status.st_ctim.tv_sec) != staged_ctime_seconds_ ||
+-        static_cast<std::int64_t>(status.st_ctim.tv_nsec) !=
+-            staged_ctime_nanoseconds_) {
+-        throw std::runtime_error(label + " sealed SQLite snapshot changed after capture");
+-    }
++
++    const auto resident_header = header_from_bytes_or_throw(
++        serialized_bytes_, label + " resident snapshot");
++    verify_deserializable_file_format_or_throw(
++        resident_header, label + " resident snapshot");
+     const SqliteSnapshotGeometry current_geometry =
+         verify_sqlite_snapshot_geometry_or_throw(
+-            read_sqlite_header_exact_or_throw(
+-                staged_fd_, label + " sealed snapshot"),
+-            static_cast<std::uint64_t>(status.st_size),
+-            label + " sealed snapshot", geometry_policy_);
++            resident_header,
++            static_cast<std::uint64_t>(serialized_bytes_.size()),
++            label + " resident snapshot", geometry_policy_);
+     if (current_geometry != geometry_) {
+         throw std::runtime_error(
+             label + " sealed SQLite snapshot geometry changed after capture");
+     }
++    if (sha256_bytes_or_throw(serialized_bytes_, label + " resident snapshot") !=
++        sha256_hex_) {
++        throw std::runtime_error(
++            label + " sealed SQLite snapshot bytes changed after capture");
++    }
+ }
+ 
+ sqlite3* SealedSqliteSnapshot::open_database_or_throw(
+     const std::string& label) {
+     require_current_process_or_throw(label);
+     verify_unchanged_or_throw(label);
++
++    auto* copy = static_cast<unsigned char*>(sqlite3_malloc64(byte_count_));
++    if (copy == nullptr) {
++        throw std::runtime_error(
++            label + " could not allocate an independent SQLite snapshot image");
++    }
++    std::memcpy(copy, serialized_bytes_.data(), serialized_bytes_.size());
++
+     sqlite3* database = nullptr;
+-    int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_URI |
+-                SQLITE_OPEN_PRIVATECACHE;
+-#ifdef SQLITE_OPEN_NOFOLLOW
+-    flags |= SQLITE_OPEN_NOFOLLOW;
+-#endif
+-    const int rc = sqlite3_open_v2(
+-        immutable_uri_.c_str(), &database, flags, pinned_vfs_name_.c_str());
+-    if (rc != SQLITE_OK) {
++    const int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX |
++                      SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_MEMORY;
++    const int open_rc = sqlite3_open_v2(
++        ":memory:", &database, flags, pinned_vfs_name_.c_str());
++    if (open_rc != SQLITE_OK) {
+         const std::string message =
+             database != nullptr ? sqlite3_errmsg(database) : "SQLite open failed";
++        sqlite3_free(copy);
+         if (database != nullptr) (void)sqlite3_close_v2(database);
+-        throw std::runtime_error(label + " immutable SQLite open failed: " + message);
++        throw std::runtime_error(label + " private in-memory SQLite open failed: " +
++                                 message);
++    }
++
++    const int deserialize_rc = sqlite3_deserialize(
++        database, "main", copy,
++        static_cast<sqlite3_int64>(byte_count_),
++        static_cast<sqlite3_int64>(byte_count_),
++        SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_READONLY);
++    // FREEONCLOSE transfers or releases copy even when deserialization fails.
++    copy = nullptr;
++    if (deserialize_rc != SQLITE_OK) {
++        const std::string message = sqlite3_errmsg(database);
++        (void)sqlite3_close_v2(database);
++        throw std::runtime_error(label + " read-only SQLite deserialize failed: " +
++                                 message);
+     }
++
+     try {
+-        staged_guard_.verify_open_database_or_throw(database, label);
+-        if (sqlite3_db_readonly(database, "main") != 1) {
+-            throw std::runtime_error(label + " immutable SQLite handle is not read-only");
+-        }
++        verify_pinned_vfs_registration_or_throw(label);
+         if (sqlite3_db_mutex(database) == nullptr) {
+             throw std::runtime_error(
+-                label + " immutable SQLite handle lacks its requested full mutex");
++                label + " deserialized SQLite handle lacks its requested full mutex");
+         }
+-        sqlite3_vfs* observed_vfs = nullptr;
+-        const int vfs_rc = sqlite3_file_control(
+-            database, "main", SQLITE_FCNTL_VFS_POINTER, &observed_vfs);
+-        if (vfs_rc != SQLITE_OK || observed_vfs != pinned_vfs_) {
++        const char* const filename = sqlite3_db_filename(database, "main");
++        if (filename == nullptr || filename[0] != '\0') {
+             throw std::runtime_error(
+-                label + " immutable SQLite open used an unpinned VFS object");
++                label + " deserialized SQLite handle unexpectedly names a file");
+         }
+         verify_unchanged_or_throw(label);
+         return database;
+@@ -700,36 +552,14 @@ sqlite3* SealedSqliteSnapshot::open_database_or_throw(
+ 
+ void SealedSqliteSnapshot::cleanup_noexcept() noexcept {
+     require_current_process_noexcept();
+-    if (staged_fd_ >= 0) {
+-        (void)::close(staged_fd_);
+-        staged_fd_ = -1;
+-    }
+-    if (!staged_path_.empty()) {
+-        (void)::unlink((staged_path_.string() + "-wal").c_str());
+-        (void)::unlink((staged_path_.string() + "-shm").c_str());
+-        (void)::unlink((staged_path_.string() + "-journal").c_str());
+-        (void)::unlink(staged_path_.c_str());
+-    }
+-    staged_guard_ = SqlitePathFamilyGuard{};
+-    if (!staging_directory_.empty()) {
+-        (void)::rmdir(staging_directory_.c_str());
+-    }
++    std::vector<unsigned char>{}.swap(serialized_bytes_);
+     source_path_.clear();
+-    staging_directory_.clear();
+-    staged_path_.clear();
+-    immutable_uri_.clear();
+     sha256_hex_.clear();
+     pinned_vfs_name_.clear();
+     byte_count_ = 0;
+     geometry_ = {};
+     geometry_policy_ = {};
+     pinned_vfs_ = nullptr;
+-    staged_device_ = 0;
+-    staged_inode_ = 0;
+-    staged_mtime_seconds_ = 0;
+-    staged_mtime_nanoseconds_ = 0;
+-    staged_ctime_seconds_ = 0;
+-    staged_ctime_nanoseconds_ = 0;
+     process_id_ = 0;
+ }
+ 
+diff --git aa/src/persistence/sqlite_snapshot_seal.hpp bb/src/persistence/sqlite_snapshot_seal.hpp
+index 877f355..00d43fb 100644
+--- aa/src/persistence/sqlite_snapshot_seal.hpp
++++ bb/src/persistence/sqlite_snapshot_seal.hpp
+@@ -1,6 +1,5 @@
+ #pragma once
+ 
+-#include "sqlite_path_security.hpp"
+ #include "sqlite_snapshot_geometry.hpp"
+ #include "sync_sqlite_process_incarnation.hpp"
+ 
+@@ -8,26 +7,30 @@
+ #include <filesystem>
+ #include <string>
+ #include <string_view>
++#include <vector>
+ 
+ struct sqlite3;
+ struct sqlite3_vfs;
+ 
+ namespace anonsync::persistence {
+ 
+-// The seal and the pure geometry verifier share one monotone policy.  Callers
++// The seal and the pure geometry verifier share one monotone policy. Callers
+ // may reduce reviewed byte/page authority for narrower deployments and tests;
+ // they cannot enlarge it.
+ using SqliteSnapshotSealPolicy = SqliteSnapshotGeometryPolicy;
+ 
+-// A process-local capability for one byte-exact, sidecar-free SQLite snapshot.
++// A process-local, namespace-free capability for one byte-exact, sidecar-free
++// SQLite snapshot.
++//
++// Capture opens the source through a retained no-symlink parent-directory
++// guard, rejects WAL/SHM/journal siblings, verifies exact SQLite geometry, and
++// copies the exact bytes into private process memory while hashing that same
++// stream. SQLite consumers receive independent read-only deserializations of
++// those captured bytes. No staging pathname, journal pathname, unlink, rename,
++// or cleanup directory exists after capture.
+ //
+-// Capture opens the source through a retained, no-symlink parent-directory
+-// guard, rejects WAL/SHM/journal siblings, copies and hashes the exact bytes
+-// into a private 0700 directory, and retains an O_RDONLY descriptor for the
+-// staged inode. SQLite is then opened only through an immutable, read-only URI
+-// naming that private copy. The original pathname is never used after capture.
+ // The minting fork-lineage token is retained so a child cannot inspect, move,
+-// close, or unlink the parent's inherited staging capability.
++// free, deserialize, or otherwise reuse its parent's inherited capability.
+ class SealedSqliteSnapshot final {
+ public:
+     static SealedSqliteSnapshot capture(
+@@ -43,20 +46,20 @@ public:
+     SealedSqliteSnapshot& operator=(SealedSqliteSnapshot&& other) noexcept;
+ 
+     const std::filesystem::path& source_path() const noexcept;
+-    const std::filesystem::path& staged_path() const noexcept;
+-    const std::string& immutable_uri() const noexcept;
+     const std::string& sha256_hex() const noexcept;
+     std::uint64_t byte_count() const noexcept;
+     std::uint32_t page_size() const noexcept;
+     std::uint32_t page_count() const noexcept;
+     const SqliteSnapshotGeometry& geometry() const noexcept;
+ 
+-    // Re-establish that the retained descriptor, staged pathname, and absent
+-    // sidecars still describe the same private snapshot captured above.
++    // Re-establish that the process-owned bytes still have the captured size,
++    // digest, and exact SQLite geometry, and that the capture-time VFS object
++    // remains registered under the same name.
+     void verify_unchanged_or_throw(const std::string& label);
+ 
+-    // Open the private copy with mode=ro, cache=private, immutable=1, URI and
+-    // no-follow flags.  The returned handle is owned by the caller.
++    // Create an independent private in-memory database and deserialize a fresh
++    // SQLite-owned copy using SQLITE_DESERIALIZE_READONLY. The returned handle
++    // is owned by the caller and remains valid after this seal is destroyed.
+     sqlite3* open_database_or_throw(const std::string& label);
+ 
+ private:
+@@ -69,23 +72,13 @@ private:
+ 
+     SyncSqliteProcessId process_id_ = 0;
+     std::filesystem::path source_path_;
+-    std::filesystem::path staging_directory_;
+-    std::filesystem::path staged_path_;
+-    std::string immutable_uri_;
+     std::string sha256_hex_;
+     std::string pinned_vfs_name_;
+     std::uint64_t byte_count_ = 0;
+     SqliteSnapshotGeometry geometry_{};
+     SqliteSnapshotGeometryPolicy geometry_policy_{};
+-    SqlitePathFamilyGuard staged_guard_;
+-    int staged_fd_ = -1;
++    std::vector<unsigned char> serialized_bytes_;
+     sqlite3_vfs* pinned_vfs_ = nullptr;
+-    std::uint64_t staged_device_ = 0;
+-    std::uint64_t staged_inode_ = 0;
+-    std::int64_t staged_mtime_seconds_ = 0;
+-    std::int64_t staged_mtime_nanoseconds_ = 0;
+-    std::int64_t staged_ctime_seconds_ = 0;
+-    std::int64_t staged_ctime_nanoseconds_ = 0;
+ };
+ 
+ }  // namespace anonsync::persistence
+diff --git aa/src/sqlite_replay_ledger.cpp bb/src/sqlite_replay_ledger.cpp
+index c8990cc..afa25b4 100644
+--- aa/src/sqlite_replay_ledger.cpp
++++ bb/src/sqlite_replay_ledger.cpp
+@@ -379,6 +379,44 @@ long long sqlite_query_single_int64(sqlite3* db, const std::string& sql, const s
+     return column_i64(stmt.stmt, 0);
+ }
+ 
++bool sqlite_query_optional_int64(sqlite3* db,
++                                 const std::string& sql,
++                                 const std::string& label,
++                                 long long& value) {
++    Stmt stmt(db, sql, label + " prepare failed");
++    const int rc = sqlite3_step(stmt.stmt);
++    if (rc == SQLITE_DONE) return false;
++    if (rc != SQLITE_ROW) sqlite_throw(db, label + " query failed");
++    value = column_i64(stmt.stmt, 0);
++    return true;
++}
++
++void canonicalize_backup_snapshot_for_deserialization_or_throw(sqlite3* db) {
++    // sqlite3_backup copies page 1 byte-for-byte, including WAL read/write format
++    // versions 2/2 from the live source.  A standalone snapshot has no WAL
++    // authority and sqlite3_deserialize() cannot consume a WAL-format image.
++    // Ask SQLite itself to make the destination a rollback-journal database
++    // before the bytes are sealed; do not patch authenticated bytes in the
++    // verifier or in an individual deserialized handle.
++    const std::string journal_mode = ascii_lower(sqlite_query_single_text(
++        db,
++        "PRAGMA main.journal_mode=DELETE;",
++        "sqlite-wal snapshot rollback-journal canonicalization"));
++    if (journal_mode != "delete") {
++        throw std::runtime_error(
++            "sqlite-wal snapshot rollback-journal canonicalization did not return delete");
++    }
++
++    const std::string verified_mode = ascii_lower(sqlite_query_single_text(
++        db,
++        "PRAGMA main.journal_mode;",
++        "sqlite-wal snapshot rollback-journal canonicalization verification"));
++    if (verified_mode != "delete") {
++        throw std::runtime_error(
++            "sqlite-wal snapshot rollback-journal canonicalization did not persist delete mode");
++    }
++}
++
+ void bind_text_or_throw(sqlite3* db, sqlite3_stmt* stmt, int index, const std::string& value, const std::string& label) {
+     if (sqlite3_bind_text(stmt, index, value.c_str(), static_cast<int>(value.size()), SQLITE_TRANSIENT) != SQLITE_OK) sqlite_throw(db, label);
+ }
+@@ -1312,6 +1350,16 @@ void apply_untrusted_snapshot_readonly_profile(sqlite3* db, const std::string& l
+     sqlite_exec_or_throw(db, "PRAGMA mmap_size=0;",
+                          label + " could not disable memory-mapped I/O");
+ 
++    long long mmap_size = 0;
++    const bool mmap_size_reported = sqlite_query_optional_int64(
++        db, "PRAGMA mmap_size;", label + " mmap_size verification", mmap_size);
++    const char* const database_filename = sqlite3_db_filename(db, "main");
++    const bool namespace_free_database =
++        database_filename != nullptr && database_filename[0] == '\0';
++
++    // SQLite returns no mmap_size row for a deserialized in-memory main
++    // database. That absence is acceptable only when the handle proves it has
++    // no filesystem namespace; a file-backed handle must report an exact zero.
+     if (sqlite_query_single_int64(db, "PRAGMA query_only;",
+                                   label + " query_only verification") != 1 ||
+         sqlite_query_single_int64(db, "PRAGMA trusted_schema;",
+@@ -1320,8 +1368,8 @@ void apply_untrusted_snapshot_readonly_profile(sqlite3* db, const std::string& l
+                                   label + " foreign_keys verification") != 1 ||
+         sqlite_query_single_int64(db, "PRAGMA cell_size_check;",
+                                   label + " cell_size_check verification") != 1 ||
+-        sqlite_query_single_int64(db, "PRAGMA mmap_size;",
+-                                  label + " mmap_size verification") != 0) {
++        (mmap_size_reported && mmap_size != 0) ||
++        (!mmap_size_reported && !namespace_free_database)) {
+         throw std::runtime_error(
+             label + " SQLite untrusted snapshot hardening profile mismatch");
+     }
+@@ -3247,12 +3295,12 @@ bool SqliteWalReplayLedger::backup_snapshot(const std::string& snapshot_path, st
+     if (!pending_.empty()) {
+         if (!run_commit(reason)) return false;
+     }
++    sqlite3* dst = nullptr;
+     try {
+         reject_sqlite_family_symlinks(snapshot_path);
+         unlink_sqlite_family(snapshot_path);
+         std::filesystem::path parent = std::filesystem::path(snapshot_path).parent_path();
+         if (!parent.empty()) std::filesystem::create_directories(parent);
+-        sqlite3* dst = nullptr;
+         int flags = sqlite_open_flags_for_ledger();
+         dst = sqlite_open_or_throw(snapshot_path, flags, "sqlite-wal snapshot destination open failed");
+         sqlite3_backup* backup = sqlite3_backup_init(dst, "main", db_, "main");
+@@ -3268,7 +3316,9 @@ bool SqliteWalReplayLedger::backup_snapshot(const std::string& snapshot_path, st
+             sqlite_close_best_effort(dst);
+             return false;
+         }
++        canonicalize_backup_snapshot_for_deserialization_or_throw(dst);
+         sqlite_close_or_throw(dst, "sqlite-wal snapshot destination close failed");
++        dst = nullptr;
+         // Verify the snapshot with the dedicated read-only verifier so untrusted snapshot bytes are
+         // not judged through the mutable backend loader or allowed to create write-gate sidecars.
+         ReplayLedgerStats verifier_stats = verify_sqlite_ledger_snapshot_readonly(snapshot_path, "sqlite-wal backup snapshot read-only verifier");
+@@ -3281,6 +3331,7 @@ bool SqliteWalReplayLedger::backup_snapshot(const std::string& snapshot_path, st
+         reason = "sqlite-wal replay ledger wrote verified sqlite3_backup snapshot with backend-profile/hash-chain verification";
+         return true;
+     } catch (const std::exception& e) {
++        sqlite_close_best_effort(dst);
+         pending_.clear();
+         staged_jtis_.clear();
+         staged_event_identities_.clear();
+@@ -5231,7 +5282,13 @@ int run_ledger_sqlite_restore_manifest_binding_selftest() {
+         return st;
+     };
+     auto expected_for = [&](const std::string& snapshot) {
+-        ReplayLedgerStats st = stats_for(snapshot);
++        // Snapshot evidence is never opened through the mutable WAL backend to
++        // compute its own signed summary. That path changes page-1 format bytes
++        // before authority is checked. Consume the same sealed, namespace-free
++        // read-only verifier used by production restore.
++        ReplayLedgerStats st = verify_sqlite_ledger_snapshot_readonly(
++            snapshot,
++            "restore manifest binding expected snapshot read-only verifier");
+         SqliteSnapshotManifestVerification v;
+         v.line_count = st.durable_line_count;
+         v.head_hash = st.durable_head_hash;
+diff --git aa/tests/persistence/sqlite_persistence_process_authority_fork_test.cpp bb/tests/persistence/sqlite_persistence_process_authority_fork_test.cpp
+index d0221bd..310d247 100644
+--- aa/tests/persistence/sqlite_persistence_process_authority_fork_test.cpp
++++ bb/tests/persistence/sqlite_persistence_process_authority_fork_test.cpp
+@@ -185,17 +185,15 @@ void test_path_guard_process_authority(const fs::path& source,
+ 
+ void test_seal_process_authority(const fs::path& source,
+                                  TestState& test) {
+-    fs::path first_staged;
+-    fs::path first_directory;
++    std::string first_digest;
+     {
+         SealedSqliteSnapshot seal = SealedSqliteSnapshot::capture(
+             source, "process-bound sealed snapshot");
+-        first_staged = seal.staged_path();
+-        first_directory = first_staged.parent_path();
++        first_digest = seal.sha256_hex();
+ 
+         require_child_fail_stop(
+             test,
+-            [&] { (void)seal.staged_path(); },
++            [&] { (void)seal.sha256_hex(); },
+             "child cannot inspect an inherited sealed snapshot");
+         require_child_fail_stop(
+             test,
+@@ -211,35 +209,34 @@ void test_seal_process_authority(const fs::path& source,
+         require_child_fail_stop(
+             test,
+             [&] { seal = SealedSqliteSnapshot{}; },
+-            "child move-assignment cannot clean a parent staging object");
++            "child move-assignment cannot free parent resident snapshot bytes");
+ 
+-        test.require(fs::exists(first_staged) && fs::exists(first_directory),
+-                     "hostile child cleanup left parent staging intact");
++        test.require(seal.sha256_hex() == first_digest,
++                     "hostile child cleanup changed parent resident snapshot evidence");
+         seal.verify_unchanged_or_throw("parent seal post-fork verification");
+         sqlite3* database = seal.open_database_or_throw(
+-            "parent seal post-fork immutable open");
++            "parent seal post-fork deserialize");
+         sqlite_or_throw(sqlite3_close(database), database,
+                         "parent seal post-fork close");
+         test.require(true,
+                      "parent seal remains verifiable and openable after hostile children");
+     }
+-    test.require(!fs::exists(first_staged) && !fs::exists(first_directory),
+-                 "parent seal destructor removed its own staging object");
++    test.require(!first_digest.empty(),
++                 "parent seal destructor completed after process-fenced use");
+ 
+     auto* heap_seal = new SealedSqliteSnapshot(
+         SealedSqliteSnapshot::capture(source, "heap process-bound seal"));
+-    const fs::path heap_staged = heap_seal->staged_path();
++    const std::string heap_digest = heap_seal->sha256_hex();
+     require_child_fail_stop(
+         test,
+         [&] { delete heap_seal; },
+-        "child destructor cannot unlink an inherited sealed snapshot");
+-    test.require(fs::exists(heap_staged),
+-                 "child seal destructor left parent staging file present");
++        "child destructor cannot free an inherited sealed snapshot");
++    test.require(heap_seal->sha256_hex() == heap_digest,
++                 "child seal destructor changed parent resident snapshot");
+     delete heap_seal;
+-    test.require(!fs::exists(heap_staged),
+-                 "parent seal destructor retained cleanup authority");
++    test.require(true,
++                 "parent seal destructor released resident snapshot authority");
+ }
+-
+ void test_child_local_persistence_authority(const fs::path& source,
+                                             TestState& test) {
+     require_child_success(
+diff --git aa/tests/persistence/sqlite_snapshot_geometry_binding_test.cpp bb/tests/persistence/sqlite_snapshot_geometry_binding_test.cpp
+index d5aaac9..e5b2891 100644
+--- aa/tests/persistence/sqlite_snapshot_geometry_binding_test.cpp
++++ bb/tests/persistence/sqlite_snapshot_geometry_binding_test.cpp
+@@ -161,7 +161,7 @@ void backup_logical_database(const fs::path& source, const fs::path& destination
+     }
+ }
+ 
+-std::set<std::string> staging_directories() {
++std::set<std::string> legacy_staging_entries_for_process() {
+     std::set<std::string> names;
+     std::error_code error;
+     for (const auto& entry : fs::directory_iterator("/tmp", error)) {
+@@ -182,7 +182,7 @@ std::set<std::string> staging_directories() {
+ int main() {
+     std::uint64_t checks = 0;
+     const fs::path root = fs::path("/tmp") /
+-                          ("anonsync_rev0798_geometry_binding_" +
++                          ("anonsync_rev0820_geometry_binding_" +
+                            std::to_string(::getpid()));
+     const fs::path canonical = root / "canonical.sqlite";
+     const fs::path padded = root / "padded.sqlite";
+@@ -227,7 +227,7 @@ int main() {
+                     "logical restore changed the visible database row", checks);
+         }
+ 
+-        const auto staging_before = staging_directories();
++        const auto staging_before = legacy_staging_entries_for_process();
+         bool rejected = false;
+         std::string reason;
+         try {
+@@ -242,8 +242,8 @@ int main() {
+                     std::string::npos,
+                 "AnonSync rejected padding for an unexpected reason: " + reason,
+                 checks);
+-        require(staging_directories() == staging_before,
+-                "geometry rejection minted a private staging directory", checks);
++        require(legacy_staging_entries_for_process() == staging_before,
++                "geometry rejection changed the legacy staging namespace", checks);
+ 
+         {
+             SealedSqliteSnapshot seal = SealedSqliteSnapshot::capture(
+diff --git aa/tests/persistence/sqlite_snapshot_seal_tests.cpp bb/tests/persistence/sqlite_snapshot_seal_tests.cpp
+index b50ba63..128336b 100644
+--- aa/tests/persistence/sqlite_snapshot_seal_tests.cpp
++++ bb/tests/persistence/sqlite_snapshot_seal_tests.cpp
+@@ -12,6 +12,7 @@
+ #include <iomanip>
+ #include <iostream>
+ #include <memory>
++#include <set>
+ #include <sstream>
+ #include <stdexcept>
+ #include <string>
+@@ -212,6 +213,21 @@ void create_database(const fs::path& path, const std::string& value) {
+     (void)sqlite3_finalize(statement);
+ }
+ 
++
++std::set<std::string> snapshot_staging_entries() {
++    std::set<std::string> entries;
++    std::error_code error;
++    for (const auto& entry : fs::directory_iterator("/tmp", error)) {
++        if (error) break;
++        const std::string name = entry.path().filename().string();
++        if (name.rfind("anonsync-sqlite-snapshot-seal-", 0) == 0) {
++            entries.insert(name);
++        }
++    }
++    if (error) throw std::runtime_error("could not inventory /tmp snapshot staging entries");
++    return entries;
++}
++
+ std::string sha256_file(const fs::path& path) {
+     using DigestContext = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
+     DigestContext digest(EVP_MD_CTX_new(), &EVP_MD_CTX_free);
+@@ -244,6 +260,20 @@ std::string sha256_file(const fs::path& path) {
+     return output.str();
+ }
+ 
++std::array<unsigned char, 2> sqlite_file_format_versions(
++    const fs::path& path) {
++    std::ifstream input(path, std::ios::binary);
++    if (!input) throw std::runtime_error("could not open SQLite header fixture");
++    input.seekg(18, std::ios::beg);
++    std::array<unsigned char, 2> versions{};
++    input.read(reinterpret_cast<char*>(versions.data()),
++               static_cast<std::streamsize>(versions.size()));
++    if (input.gcount() != static_cast<std::streamsize>(versions.size())) {
++        throw std::runtime_error("could not read SQLite file-format versions");
++    }
++    return versions;
++}
++
+ template <typename Callable>
+ std::string expect_rejection(Callable&& callable,
+                              const std::string& expected_fragment,
+@@ -268,14 +298,14 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+     const fs::path replacement = root / "replacement.sqlite";
+     create_database(source, "alpha");
+     const std::string source_digest = sha256_file(source);
++    const auto namespace_before = snapshot_staging_entries();
+ 
+-    fs::path staged;
+-    fs::path staging_directory;
++    sqlite3* surviving_database = nullptr;
+     {
+         SealedSqliteSnapshot seal =
+             SealedSqliteSnapshot::capture(source, "focused snapshot seal");
+-        staged = seal.staged_path();
+-        staging_directory = staged.parent_path();
++        require(snapshot_staging_entries() == namespace_before,
++                "snapshot capture minted a staging pathname", checks);
+         require(seal.sha256_hex() == source_digest,
+                 "sealed digest did not bind copied source bytes", checks);
+         require(seal.byte_count() == fs::file_size(source),
+@@ -290,44 +320,33 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+                 "sealed page geometry does not bind exact bytes", checks);
+         require(seal.geometry().byte_count == seal.byte_count(),
+                 "sealed geometry capability lost its byte count", checks);
+-        require(seal.immutable_uri().find("immutable=1") != std::string::npos,
+-                "immutable URI parameter is absent", checks);
+-        require(seal.immutable_uri().find("mode=ro") != std::string::npos,
+-                "read-only URI parameter is absent", checks);
+-        require(seal.immutable_uri().find("cache=private") != std::string::npos,
+-                "private-cache URI parameter is absent", checks);
+-        require(seal.immutable_uri().rfind("file:/tmp/", 0) == 0,
+-                "immutable URI does not name the private staging tree", checks);
+-
+-        struct stat directory_status{};
+-        struct stat staged_status{};
+-        require(::lstat(staging_directory.c_str(), &directory_status) == 0 &&
+-                    S_ISDIR(directory_status.st_mode) &&
+-                    (directory_status.st_mode & 0777) == 0700,
+-                "staging directory is not private mode 0700", checks);
+-        require(::lstat(staged.c_str(), &staged_status) == 0 &&
+-                    S_ISREG(staged_status.st_mode) &&
+-                    (staged_status.st_mode & 0777) == 0400,
+-                "staged snapshot is not regular mode 0400", checks);
+ 
+         sqlite3_vfs* const captured_default_vfs = sqlite3_vfs_find(nullptr);
+         require(captured_default_vfs != nullptr,
+                 "SQLite did not expose a default VFS before substitution", checks);
+         {
+             RegisteredDefaultAliasVfs replacement_default(
+-                "anonsync-rev0796-replacement-default-vfs-" +
++                "anonsync-rev0820-replacement-default-vfs-" +
+                 std::to_string(::getpid()));
+             require(replacement_default.registered() &&
+                         sqlite3_vfs_find(nullptr) == replacement_default.pointer(),
+                     "replacement VFS did not become process default", checks);
+             {
+                 Database database(
+-                    seal.open_database_or_throw("focused pinned-VFS immutable open"));
++                    seal.open_database_or_throw("focused pinned-VFS deserialize"));
+                 require(database.text("SELECT value FROM evidence") == "alpha",
+-                        "sealed SQLite view did not match captured bytes", checks);
++                        "deserialized SQLite view did not match captured bytes", checks);
++                const char* const filename =
++                    sqlite3_db_filename(database.get(), "main");
++                require(filename != nullptr && filename[0] == '\0',
++                        "deserialized SQLite view unexpectedly names a file", checks);
++                expect_rejection(
++                    [&] { database.exec("INSERT INTO evidence VALUES('write');"); },
++                    "readonly", checks);
+             }
+             require(replacement_default.open_calls() == 0,
+-                    "sealed open inherited a replacement process-default VFS", checks);
++                    "deserialized open inherited a replacement process-default VFS",
++                    checks);
+             {
+                 Database ordinary(source, SQLITE_OPEN_READONLY);
+                 require(ordinary.text("SELECT value FROM evidence") == "alpha" &&
+@@ -356,21 +375,28 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+         create_database(replacement, "beta");
+         fs::rename(replacement, source);
+         {
+-            Database database(seal.open_database_or_throw("focused post-replace open"));
++            Database database(seal.open_database_or_throw(
++                "focused post-replace deserialize"));
+             require(database.text("SELECT value FROM evidence") == "alpha",
+                     "sealed snapshot followed a replaced source pathname", checks);
+         }
+         require(Database(source, SQLITE_OPEN_READONLY)
+                     .text("SELECT value FROM evidence") == "beta",
+                 "source replacement fixture did not take effect", checks);
++        surviving_database = seal.open_database_or_throw(
++            "focused handle-outlives-seal deserialize");
++    }
++    require(snapshot_staging_entries() == namespace_before,
++            "snapshot destruction changed the staging namespace", checks);
++    {
++        Database database(surviving_database);
++        surviving_database = nullptr;
++        require(database.text("SELECT value FROM evidence") == "alpha",
++                "deserialized handle depended on seal lifetime", checks);
+     }
+-    require(!fs::exists(staged), "sealed snapshot staging file leaked", checks);
+-    require(!fs::exists(staging_directory),
+-            "sealed snapshot staging directory leaked", checks);
+     cleanup_sqlite_family(source);
+     cleanup_sqlite_family(replacement);
+ }
+-
+ void test_wal_laundering_rejected(const fs::path& root,
+                                   std::uint64_t& checks) {
+     const fs::path source = root / "wal-laundering.sqlite";
+@@ -406,6 +432,42 @@ void test_wal_laundering_rejected(const fs::path& root,
+     cleanup_sqlite_family(source);
+ }
+ 
++void test_quiescent_wal_format_rejected(const fs::path& root,
++                                        std::uint64_t& checks) {
++    const fs::path source = root / "quiescent-wal-format.sqlite";
++    cleanup_sqlite_family(source);
++    {
++        Database writer(source, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
++        writer.exec("PRAGMA journal_mode=WAL;");
++        writer.exec("CREATE TABLE evidence(value TEXT NOT NULL);");
++        writer.exec("INSERT INTO evidence(value) VALUES('checkpointed');");
++        writer.exec("PRAGMA wal_checkpoint(TRUNCATE);");
++    }
++
++    require(!fs::exists(fs::path(source.string() + "-wal")) &&
++                !fs::exists(fs::path(source.string() + "-shm")),
++            "clean WAL close retained a sidecar in the format-version fixture",
++            checks);
++    const auto versions = sqlite_file_format_versions(source);
++    require(versions[0] == 2U && versions[1] == 2U,
++            "clean WAL fixture did not retain file-format versions 2/2", checks);
++    const auto namespace_before = snapshot_staging_entries();
++    expect_rejection(
++        [&] {
++            (void)SealedSqliteSnapshot::capture(
++                source, "quiescent WAL format deserialization proof");
++        },
++        "rollback-journal file format versions 1/1", checks);
++    require(snapshot_staging_entries() == namespace_before,
++            "quiescent WAL format rejection changed the staging namespace",
++            checks);
++    require(Database(source, SQLITE_OPEN_READONLY)
++                .text("SELECT value FROM evidence") == "checkpointed",
++            "ordinary SQLite could not read the quiescent WAL-format main file",
++            checks);
++    cleanup_sqlite_family(source);
++}
++
+ void test_other_sidecars_and_link_aliases_rejected(const fs::path& root,
+                                                     std::uint64_t& checks) {
+     const fs::path source = root / "sidecar.sqlite";
+@@ -444,8 +506,8 @@ void test_other_sidecars_and_link_aliases_rejected(const fs::path& root,
+     cleanup_sqlite_family(source);
+ }
+ 
+-void test_budget_and_staged_tamper_detection(const fs::path& root,
+-                                             std::uint64_t& checks) {
++void test_budget_and_resident_deserialization(const fs::path& root,
++                                               std::uint64_t& checks) {
+     const fs::path source = root / "budget.sqlite";
+     create_database(source, "value");
+     expect_rejection(
+@@ -491,70 +553,29 @@ void test_budget_and_staged_tamper_detection(const fs::path& root,
+         },
+         "exceeds the page ceiling", checks);
+ 
+-    {
+-        SealedSqliteSnapshot seal =
+-            SealedSqliteSnapshot::capture(source, "staged tamper proof");
+-        const fs::path malicious_sidecar(seal.staged_path().string() + "-wal");
+-        {
+-            std::ofstream output(malicious_sidecar, std::ios::binary);
+-            output << "late sidecar";
+-        }
+-        expect_rejection(
+-            [&] { seal.verify_unchanged_or_throw("late sidecar proof"); },
+-            "snapshot sidecar -wal", checks);
+-        fs::remove(malicious_sidecar);
+-        require(::chmod(seal.staged_path().c_str(), 0600) == 0,
+-                "could not modify staged mode for tamper proof", checks);
+-        expect_rejection(
+-            [&] { seal.verify_unchanged_or_throw("staged mode proof"); },
+-            "changed after capture", checks);
+-    }
+-
+-    {
+-        SealedSqliteSnapshot seal = SealedSqliteSnapshot::capture(
+-            source, "staging directory permission proof");
+-        const fs::path staging_directory = seal.staged_path().parent_path();
+-        require(::chmod(staging_directory.c_str(), 0755) == 0,
+-                "could not weaken staging directory mode for tamper proof",
+-                checks);
+-        expect_rejection(
+-            [&] {
+-                seal.verify_unchanged_or_throw(
+-                    "staging directory permission downgrade proof");
+-            },
+-            "private SQLite parent directory is not owned mode 0700", checks);
+-        require(::chmod(staging_directory.c_str(), 0700) == 0,
+-                "could not restore staging directory mode after tamper proof",
+-                checks);
+-    }
+-
++    const auto namespace_before = snapshot_staging_entries();
+     {
+         SealedSqliteSnapshot seal = SealedSqliteSnapshot::capture(
+-            source, "same-size staged tamper proof");
+-        require(::chmod(seal.staged_path().c_str(), 0600) == 0,
+-                "could not make staged file writable for same-size tamper proof",
+-                checks);
+-        {
+-            std::fstream file(seal.staged_path(),
+-                              std::ios::in | std::ios::out | std::ios::binary);
+-            require(static_cast<bool>(file),
+-                    "could not open staged file for same-size tamper proof",
+-                    checks);
+-            const char replacement = 'X';
+-            file.write(&replacement, 1);
+-            file.flush();
+-            require(static_cast<bool>(file),
+-                    "same-size staged tamper write failed", checks);
+-        }
+-        require(::chmod(seal.staged_path().c_str(), 0400) == 0,
+-                "could not restore staged mode after same-size tamper", checks);
++            source, "resident deserialize proof");
++        seal.verify_unchanged_or_throw("resident byte proof");
++        require(snapshot_staging_entries() == namespace_before,
++                "resident seal created a filesystem staging artifact", checks);
++
++        Database first(seal.open_database_or_throw(
++            "first independent deserialize proof"));
++        Database second(seal.open_database_or_throw(
++            "second independent deserialize proof"));
++        require(first.text("SELECT value FROM evidence") == "value" &&
++                    second.text("SELECT value FROM evidence") == "value",
++                "independent deserializations disagreed with captured bytes", checks);
+         expect_rejection(
+-            [&] {
+-                seal.verify_unchanged_or_throw(
+-                    "same-size staged byte tamper proof");
+-            },
+-            "changed after capture", checks);
++            [&] { first.exec("CREATE TABLE forbidden(value TEXT);"); },
++            "readonly", checks);
++        require(second.text("SELECT value FROM evidence") == "value",
++                "failed write contaminated another deserialized connection", checks);
+     }
++    require(snapshot_staging_entries() == namespace_before,
++            "resident seal cleanup mutated /tmp staging state", checks);
+ 
+     const fs::path empty = root / "empty.sqlite";
+     {
+@@ -566,22 +587,22 @@ void test_budget_and_staged_tamper_detection(const fs::path& root,
+     fs::remove(empty);
+     cleanup_sqlite_family(source);
+ }
+-
+ }  // namespace
+ 
+ int main() {
+     std::uint64_t checks = 0;
+     const fs::path root =
+         fs::path("/tmp") /
+-        ("anonsync_rev0798_snapshot_seal_" + std::to_string(::getpid()));
++        ("anonsync_rev0820_snapshot_seal_" + std::to_string(::getpid()));
+     std::error_code ignored;
+     fs::remove_all(root, ignored);
+     fs::create_directory(root);
+     try {
+         test_exact_capture_and_path_independence(root, checks);
+         test_wal_laundering_rejected(root, checks);
++        test_quiescent_wal_format_rejected(root, checks);
+         test_other_sidecars_and_link_aliases_rejected(root, checks);
+-        test_budget_and_staged_tamper_detection(root, checks);
++        test_budget_and_resident_deserialization(root, checks);
+         fs::remove_all(root, ignored);
+         std::cout << "anonsync sqlite snapshot seal tests checks=" << checks
+                   << "\n";
+diff --git aa/tests/sqlite_ingress_sender_replay_integrity_test.cpp bb/tests/sqlite_ingress_sender_replay_integrity_test.cpp
+index 6c517bf..41165ac 100644
+--- aa/tests/sqlite_ingress_sender_replay_integrity_test.cpp
++++ bb/tests/sqlite_ingress_sender_replay_integrity_test.cpp
+@@ -189,20 +189,30 @@ int main() {
+             std::string reason;
+             require(backend->stage(seed_case(), seed_claims(), "allow", reason),
+                     "seed replay reservation failed: " + reason, checks);
+-            require(backend->backup_snapshot(clean_snapshot.string(), reason),
+-                    "seed snapshot backup failed: " + reason, checks);
++            const bool snapshot_created =
++                backend->backup_snapshot(clean_snapshot.string(), reason);
++            require(snapshot_created, "seed snapshot backup failed: " + reason,
++                    checks);
+             backend->close();
+         }
+         require(fs::is_regular_file(clean_snapshot),
+                 "clean replay snapshot was not published", checks);
+-        require(reload_rejection(clean_snapshot).empty(),
++        // Ordinary backend load is a mutating WAL-mode observation. Exercise it
++        // on a disposable clone so the canonical snapshot remains immutable
++        // evidence for every hostile read-only verifier corpus below.
++        const fs::path ordinary_reload_copy = root / "ordinary-reload.sqlite";
++        clone_snapshot(clean_snapshot, ordinary_reload_copy);
++        require(reload_rejection(ordinary_reload_copy).empty(),
+                 "clean replay snapshot failed ordinary reload", checks);
+ 
+         const fs::path orphan = root / "orphan.sqlite";
+         clone_snapshot(clean_snapshot, orphan);
+         mutate_sql(orphan,
+             "UPDATE ingress_sender_replay_cache SET prepared_sequence=999;");
+-        require_rejected(orphan, "foreign_key_check", "orphaned prepared binding", checks);
++        // The write backend enables WAL before it verifies hostile rows, so it
++        // is itself a mutating observer. Exercise the namespace-free restore
++        // verifier first; otherwise the test contaminates its own fixture by
++        // changing the main header from rollback format 1/1 to WAL format 2/2.
+         const std::string restore_orphan = restore_rejection(
+             orphan, root / "orphan-restore-destination.sqlite");
+         require(!restore_orphan.empty(),
+@@ -211,6 +221,7 @@ int main() {
+                 "snapshot restore did not report the foreign-key violation: " +
+                     restore_orphan,
+                 checks);
++        require_rejected(orphan, "foreign_key_check", "orphaned prepared binding", checks);
+ 
+         const fs::path malformed_digest = root / "malformed-digest.sqlite";
+         clone_snapshot(clean_snapshot, malformed_digest);
+diff --git aa/tests/sqlite_snapshot_sidecar_binding_test.cpp bb/tests/sqlite_snapshot_sidecar_binding_test.cpp
+index a3be690..9fc4e67 100644
+--- aa/tests/sqlite_snapshot_sidecar_binding_test.cpp
++++ bb/tests/sqlite_snapshot_sidecar_binding_test.cpp
+@@ -134,10 +134,22 @@ int main() {
+         require(backend->stage(make_case(), make_claims(), "allow", reason),
+                 "seed stage failed: " + reason, checks);
+         require(backend->commit(reason), "seed commit failed: " + reason, checks);
+-        require(backend->backup_snapshot(snapshot, reason),
+-                "seed snapshot failed: " + reason, checks);
++        const bool snapshot_created = backend->backup_snapshot(snapshot, reason);
++        require(snapshot_created, "seed snapshot failed: " + reason, checks);
+         backend->close();
+ 
++        const std::string sealed_snapshot_bytes = anonsync::read_file(snapshot);
++        require(sealed_snapshot_bytes.size() >= 100,
++                "seed snapshot is too short for an SQLite header", checks);
++        require(static_cast<unsigned char>(sealed_snapshot_bytes[18]) == 1 &&
++                    static_cast<unsigned char>(sealed_snapshot_bytes[19]) == 1,
++                "backup snapshot did not persist rollback-journal format versions 1/1",
++                checks);
++        require(!fs::exists(snapshot + "-wal") &&
++                    !fs::exists(snapshot + "-shm") &&
++                    !fs::exists(snapshot + "-journal"),
++                "backup snapshot canonicalization left a mutable sidecar", checks);
++
+         Database attacker(snapshot, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX);
+         attacker.exec("PRAGMA journal_mode=WAL;");
+         attacker.exec("PRAGMA wal_autocheckpoint=0;");
+diff --git aa/tools/audit_sqlite_process_authority.py bb/tools/audit_sqlite_process_authority.py
+index eefb924..f64369f 100644
+--- aa/tools/audit_sqlite_process_authority.py
++++ bb/tools/audit_sqlite_process_authority.py
+@@ -280,10 +280,24 @@ def main() -> int:
+     )
+     seal_cleanup = function_body(seal_cpp, "void SealedSqliteSnapshot::cleanup_noexcept()")
+     require(
+-        ordered(seal_cleanup, "require_current_process_noexcept", "::close", "::unlink", "::rmdir")
+-        and "out.process_id_ = current_sync_sqlite_process_id_noexcept()" in seal_cpp,
+-        "sealed_snapshot_fences_cleanup_before_namespace_mutation",
+-        "an inherited seal must fail before closing or unlinking parent-owned staging",
++        ordered(
++            seal_cleanup,
++            "require_current_process_noexcept",
++            "swap(serialized_bytes_)",
++        )
++        and "out.process_id_ = current_sync_sqlite_process_id_noexcept()" in seal_cpp
++        and all(
++            marker not in seal_cpp
++            for marker in (
++                "::unlink(",
++                "::rmdir(",
++                "::rename(",
++                "staging_directory_",
++                "staged_path_",
++            )
++        ),
++        "sealed_snapshot_fences_resident_cleanup_without_namespace_mutation",
++        "an inherited seal must fail before freeing resident bytes, and the seal must own no cleanup pathname",
+     )
+     require(
+         "other.require_current_process_noexcept()" in seal_cpp
+@@ -432,8 +446,8 @@ def main() -> int:
+     for index, marker in enumerate(
+         (
+             "child destructor cannot close an inherited path guard owner",
+-            "child move-assignment cannot clean a parent staging object",
+-            "child destructor cannot unlink an inherited sealed snapshot",
++            "child move-assignment cannot free parent resident snapshot bytes",
++            "child destructor cannot free an inherited sealed snapshot",
+             "inherited SQLite execution reaches the process-bound callback",
+             "child destructor cannot detach an inherited verification budget",
+             "child can mint fresh persistence authority after fork",
+diff --git aa/tools/audit_sqlite_snapshot_geometry.py bb/tools/audit_sqlite_snapshot_geometry.py
+index 7ea4ba7..2d057ae 100644
+--- aa/tools/audit_sqlite_snapshot_geometry.py
++++ bb/tools/audit_sqlite_snapshot_geometry.py
+@@ -166,27 +166,30 @@ def main() -> int:
+     )
+ 
+     source_geometry = seal_cpp.find("out.geometry_ = verify_sqlite_snapshot_geometry_or_throw")
+-    staging_allocation = seal_cpp.find("out.staging_directory_ = make_private_staging_directory_or_throw")
++    resident_allocation = seal_cpp.find("std::vector<unsigned char> captured = copy_source_exact_or_throw(")
+     require(
+         checks,
+-        source_geometry >= 0 and staging_allocation >= 0 and source_geometry < staging_allocation,
+-        "geometry_is_proven_before_staging_allocation",
+-        "malformed bytes must not mint private copy/allocation authority",
++        source_geometry >= 0
++        and resident_allocation >= 0
++        and source_geometry < resident_allocation,
++        "geometry_is_proven_before_resident_allocation",
++        "malformed bytes must not mint process-resident copy authority",
+     )
+     require(
+         checks,
+-        "O_RDWR | O_CREAT | O_EXCL" in seal_cpp
+-        and "read_sqlite_header_exact_or_throw" in seal_cpp,
+-        "staged_copy_can_be_reproved_through_its_open_descriptor",
+-        "the private destination is read back without reopening its pathname",
++        "header_from_bytes_or_throw(captured" in seal_cpp
++        and "captured_geometry" in seal_cpp
++        and "sha256_bytes_or_throw(captured" in seal_cpp,
++        "resident_copy_is_reproved_without_path_reopen",
++        "the process-owned destination must reproduce both source geometry and digest",
+     )
+     require(
+         checks,
+-        seal_cpp.count("verify_sqlite_snapshot_geometry_or_throw") >= 4
+-        and "private snapshot geometry changed while copying" in seal_cpp
+-        and "retained private snapshot geometry mismatch" in seal_cpp,
++        seal_cpp.count("verify_sqlite_snapshot_geometry_or_throw") >= 3
++        and "resident snapshot geometry changed while copying" in seal_cpp
++        and "sealed SQLite snapshot geometry changed after capture" in seal_cpp,
+         "geometry_is_reproved_at_each_promotion_boundary",
+-        "source, writable staging fd, retained readonly fd, and live seal are all checked",
++        "source descriptor, resident promotion, and live capability are all checked",
+     )
+     require(
+         checks,
+@@ -223,9 +226,9 @@ def main() -> int:
+     require(
+         checks,
+         "header page count does not match exact file bytes" in binding_test
+-        and "geometry rejection minted a private staging directory" in binding_test,
+-        "production_seal_rejects_before_staging",
+-        "the exploit is rejected for exact geometry before private resources are allocated",
++        and "geometry rejection changed the legacy staging namespace" in binding_test,
++        "production_seal_rejects_before_resident_promotion",
++        "the exploit is rejected for exact geometry while the former staging namespace remains untouched",
+     )
+     require(
+         checks,
+diff --git aa/tools/audit_sqlite_snapshot_seal.py bb/tools/audit_sqlite_snapshot_seal.py
+index ec312ae..2ae89a6 100644
+--- aa/tools/audit_sqlite_snapshot_seal.py
++++ bb/tools/audit_sqlite_snapshot_seal.py
+@@ -27,6 +27,7 @@ REQUIRED = (
+     Path("src/sqlite_replay_ledger.cpp"),
+     Path("tests/persistence/sqlite_snapshot_seal_tests.cpp"),
+     Path("tests/sqlite_snapshot_sidecar_binding_test.cpp"),
++    Path("tests/sqlite_ingress_sender_replay_integrity_test.cpp"),
+ )
+ 
+ 
+@@ -89,6 +90,7 @@ def main() -> int:
+     ledger = texts[Path("src/sqlite_replay_ledger.cpp")]
+     focused = texts[Path("tests/persistence/sqlite_snapshot_seal_tests.cpp")]
+     integrated = texts[Path("tests/sqlite_snapshot_sidecar_binding_test.cpp")]
++    ingress_integrity = texts[Path("tests/sqlite_ingress_sender_replay_integrity_test.cpp")]
+ 
+     checks: list[Check] = []
+ 
+@@ -141,59 +143,84 @@ def main() -> int:
+         checks,
+         "class SealedSqliteSnapshot final" in seal_hpp
+         and "SealedSqliteSnapshot(const SealedSqliteSnapshot&) = delete" in seal_hpp
+-        and "SealedSqliteSnapshot& operator=(const SealedSqliteSnapshot&) = delete" in seal_hpp,
++        and "SealedSqliteSnapshot& operator=(const SealedSqliteSnapshot&) = delete" in seal_hpp
++        and "std::vector<unsigned char> serialized_bytes_" in seal_hpp,
+         "seal_is_move_only_capability",
+-        "a live seal owns descriptors and staging cleanup and must not be copyable",
++        "a live process-resident byte capability must not be copyable",
+     )
+     require(
+         checks,
+         all(marker in seal_cpp for marker in ('"-wal"', '"-shm"', '"-journal"'))
+-        and seal_cpp.count("verify_sidecars_absent_or_throw") >= 5,
+-        "source_and_staging_are_sidecar_free",
+-        "WAL, SHM, and rollback-journal files must be absent at capture and use",
++        and seal_cpp.count("verify_sidecars_absent_or_throw") >= 3,
++        "source_is_sidecar_free_through_capture",
++        "WAL, SHM, and rollback-journal siblings must remain absent while source bytes are acquired",
+     )
+     require(
+         checks,
+-        "mkdtemp" in seal_cpp
+-        and "0700" in seal_cpp
+-        and "fchmod(destination.get(), 0400)" in seal_cpp
+-        and "staged_status.st_nlink != 1" in seal_cpp,
+-        "private_single_link_staging_is_enforced",
+-        "sealed bytes must live in an owned 0700 directory as one mode-0400 inode",
++        all(
++            marker not in seal_hpp + seal_cpp
++            for marker in (
++                "mkdtemp",
++                "staging_directory_",
++                "staged_path_",
++                "immutable_uri_",
++                "::unlink(",
++                "::rmdir(",
++                "::rename(",
++            )
++        ),
++        "seal_owns_no_cleanup_pathname",
++        "capture and destruction must not create, rename, or delete filesystem staging names",
+     )
+     require(
+         checks,
+         "EVP_DigestUpdate" in seal_cpp
+-        and "write_all_or_throw" in seal_cpp
+-        and "copied != expected_bytes" in seal_cpp
+-        and "source_stat_is_stable" in seal_cpp,
++        and "std::vector<unsigned char> bytes(" in seal_cpp
++        and "::pread(" in seal_cpp
++        and "source_stat_is_stable" in seal_cpp
++        and "source snapshot grew beyond its captured byte count" in seal_cpp,
+         "copy_and_digest_share_one_source_stream",
+-        "the digest must describe exactly the bytes copied into the private seal",
++        "the digest must describe exactly the descriptor bytes copied into process memory",
+     )
+     require(
+         checks,
+-        "sha256_descriptor_exact_or_throw" in seal_cpp
+-        and "staged_sha256 != out.sha256_hex_" in seal_cpp
+-        and "private snapshot digest does not match captured source bytes" in seal_cpp,
+-        "staged_bytes_are_rehashed_before_promotion",
+-        "the private immutable input must independently reproduce the source-stream digest",
++        "sha256_bytes_or_throw(captured" in seal_cpp
++        and "resident_sha256 != stream_sha256" in seal_cpp
++        and "resident snapshot digest does not match captured source bytes" in seal_cpp,
++        "resident_bytes_are_rehashed_before_promotion",
++        "the process-owned image must independently reproduce the source-stream digest",
+     )
+     require(
+         checks,
+-        "count_u64 > policy.maximum_bytes" in seal_cpp
+-        and "copied > policy.maximum_bytes - count_u64" in seal_cpp
++        "bytes > policy.maximum_bytes" in seal_cpp
++        and "std::numeric_limits<std::size_t>::max()" in seal_cpp
++        and "std::numeric_limits<sqlite3_int64>::max()" in seal_cpp
++        and "const std::uint64_t remaining = expected_bytes - copied" in seal_cpp
+         and "kMaximumUntrustedSqliteSnapshotBytes" in geometry_hpp,
+         "copy_budget_arithmetic_is_overflow_safe",
+-        "hostile file sizes and read counts must not wrap the byte ceiling",
++        "hostile file sizes must fit policy, process, SQLite, and monotone copy arithmetic",
++    )
++    require(
++        checks,
++        "header[18] != 1U" in seal_cpp
++        and "header[19] != 1U" in seal_cpp
++        and seal_cpp.count("verify_deserializable_file_format_or_throw") >= 4
++        and "rollback-journal file format versions 1/1" in seal_cpp,
++        "wal_format_is_rejected_without_byte_rewrite",
++        "a sidecar-free 2/2 WAL header cannot be promoted into deserialize authority",
+     )
+     require(
+         checks,
+-        '"?mode=ro&immutable=1&cache=private"' in seal_cpp
++        '":memory:"' in seal_cpp
+         and "SQLITE_OPEN_READONLY" in seal_cpp
+-        and "SQLITE_OPEN_URI" in seal_cpp
+-        and "sqlite3_db_readonly(database, \"main\") != 1" in seal_cpp,
+-        "sqlite_open_is_private_readonly_and_immutable",
+-        "SQLite must not perform locking, recovery, or mutable sidecar discovery on sealed bytes",
++        and "SQLITE_OPEN_FULLMUTEX" in seal_cpp
++        and "SQLITE_OPEN_PRIVATECACHE" in seal_cpp
++        and "SQLITE_OPEN_MEMORY" in seal_cpp
++        and "sqlite3_deserialize(" in seal_cpp
++        and "SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_READONLY" in seal_cpp
++        and "sqlite3_db_filename(database, \"main\")" in seal_cpp,
++        "sqlite_open_is_private_readonly_and_namespace_free",
++        "SQLite must consume a private read-only in-memory image with no database pathname",
+     )
+     require(
+         checks,
+@@ -201,36 +228,36 @@ def main() -> int:
+         and "pinned_vfs_name_" in seal_hpp
+         and "verify_pinned_vfs_registration_or_throw" in seal_hpp
+         and "sqlite3_vfs_find(pinned_vfs_name_.c_str())" in seal_cpp
+-        and "SQLITE_FCNTL_VFS_POINTER" in seal_cpp
+-        and "observed_vfs != pinned_vfs_" in seal_cpp,
++        and "pinned_vfs_name_.c_str()" in seal_cpp,
+         "sqlite_open_pins_exact_vfs_object",
+         "capture-time VFS selection must survive default substitution and be observed after open",
+     )
+     require(
+         checks,
+-        "staged_fd_" in seal_hpp
+-        and seal_cpp.count("verify_private_parent_directory_or_throw") >= 2
+-        and "verify_open_file_descriptor_or_throw(staged_fd_" in seal_cpp
+-        and "verify_open_database_or_throw(database" in seal_cpp
++        "sqlite3_malloc64(byte_count_)" in seal_cpp
++        and "std::memcpy(copy, serialized_bytes_.data(), serialized_bytes_.size())" in seal_cpp
++        and "sqlite3_free(copy)" in seal_cpp
++        and "FREEONCLOSE transfers or releases copy" in seal_cpp
++        and "deserialized handle depended on seal lifetime" in focused,
++        "each_open_owns_an_independent_image",
++        "a returned SQLite handle must not borrow bytes from the seal lifetime",
++    )
++    require(
++        checks,
++        "serialized_bytes_.size() != static_cast<std::size_t>(byte_count_)" in seal_cpp
++        and "current_geometry != geometry_" in seal_cpp
++        and "sha256_bytes_or_throw(serialized_bytes_" in seal_cpp
+         and seal_cpp.count("verify_unchanged_or_throw(label)") >= 3,
+-        "retained_descriptor_binds_every_sqlite_open",
+-        "path identity, inode identity, mode, size, and sidecar absence must be rechecked",
++        "resident_image_binds_every_sqlite_open",
++        "size, geometry, digest, VFS registration, and process provenance must be rechecked",
+     )
+     require(
+         checks,
+-        all(
+-            marker in seal_hpp or marker in seal_cpp
+-            for marker in (
+-                "staged_mtime_seconds_",
+-                "staged_mtime_nanoseconds_",
+-                "staged_ctime_seconds_",
+-                "staged_ctime_nanoseconds_",
+-                "status.st_mtim.tv_sec",
+-                "status.st_ctim.tv_sec",
+-            )
+-        ),
+-        "same_size_staged_rewrite_is_detected",
+-        "mode restoration and same-size byte replacement must still invalidate the seal",
++        "std::vector<unsigned char>{}.swap(serialized_bytes_)" in seal_cpp
++        and "snapshot destruction changed the staging namespace" in focused
++        and "resident seal cleanup mutated /tmp staging state" in focused,
++        "cleanup_is_memory_only_and_namespace_observed",
++        "destruction must free resident authority without mutating the former staging namespace",
+     )
+ 
+     profile = function_body(
+@@ -257,6 +284,39 @@ def main() -> int:
+         "untrusted_sqlite_profile_matches_upstream_guidance",
+         "snapshot parsing must disable unused schema execution, mmap, and oversized inputs",
+     )
++    require(
++        checks,
++        "sqlite_query_optional_int64(" in ledger
++        and "const bool mmap_size_reported" in profile
++        and "sqlite3_db_filename(db, \"main\")" in profile
++        and "database_filename[0] == '\\0'" in profile
++        and "(!mmap_size_reported && !namespace_free_database)" in profile,
++        "missing_mmap_row_requires_namespace_free_handle",
++        "SQLite's rowless mmap pragma is safe only for a proven namespace-free deserialized database",
++    )
++    require(
++        checks,
++        "canonicalize_backup_snapshot_for_deserialization_or_throw(dst)" in ledger
++        and "PRAGMA main.journal_mode=DELETE;" in ledger
++        and "rollback-journal canonicalization did not persist delete mode" in ledger
++        and "sealed_snapshot_bytes[18]" in integrated
++        and "sealed_snapshot_bytes[19]" in integrated,
++        "backup_producer_emits_deserializable_rollback_image",
++        "the producer must canonicalize page-1 format through SQLite before the verifier seals exact bytes",
++    )
++    require(
++        checks,
++        "restore manifest binding expected snapshot read-only verifier" in ledger
++        and "ReplayLedgerStats st = verify_sqlite_ledger_snapshot_readonly(" in ledger
++        and "mutating observer" in ingress_integrity
++        and "ordinary_reload_copy" in ingress_integrity
++        and "reload_rejection(ordinary_reload_copy)" in ingress_integrity
++        and "reload_rejection(clean_snapshot)" not in ingress_integrity
++        and ingress_integrity.find("const std::string restore_orphan")
++            < ingress_integrity.find("require_rejected(orphan"),
++        "snapshot_summaries_avoid_mutable_backend_observation",
++        "snapshot evidence must not be summarized through a backend that enables WAL before verification",
++    )
+ 
+     readonly_wrapper = function_body(
+         ledger,
+@@ -330,10 +390,13 @@ def main() -> int:
+         ("main_digest_after == main_digest_before", "focused_proves_main_digest_stays_constant"),
+         ('integer("SELECT count(*) FROM evidence") == 2', "focused_proves_readonly_wal_merge"),
+         ("snapshot sidecar -wal", "focused_rejects_wal"),
+-        ("snapshot with ? hash# percent%.sqlite", "focused_exercises_uri_encoding"),
++        ("snapshot with ? hash# percent%.sqlite", "focused_exercises_special_path_bytes"),
+         ("source replacement fixture", "focused_proves_path_independence"),
+-        ("staged mode proof", "focused_detects_staged_inode_tamper"),
+-        ("staging directory permission downgrade proof", "focused_detects_parent_permission_downgrade"),
++        ("snapshot capture minted a staging pathname", "focused_proves_namespace_free_capture"),
++        ("deserialized handle depended on seal lifetime", "focused_proves_independent_open_lifetime"),
++        ("clean WAL fixture did not retain file-format versions 2/2", "focused_builds_quiescent_wal_header"),
++        ("rollback-journal file format versions 1/1", "focused_rejects_quiescent_wal_format"),
++        ("resident seal created a filesystem staging artifact", "focused_proves_memory_only_residency"),
+         ("replacement process-default VFS", "focused_proves_default_vfs_substitution_is_ignored"),
+         ("missing pinned-VFS registration", "focused_rejects_vfs_unregistration"),
+     ):
+diff --git aa/tools/audit_sqlite_verification_budget.py bb/tools/audit_sqlite_verification_budget.py
+index 8afaa49..f8cf377 100644
+--- aa/tools/audit_sqlite_verification_budget.py
++++ bb/tools/audit_sqlite_verification_budget.py
+@@ -351,10 +351,12 @@ def main() -> int:
+     )
+     require(
+         checks,
+-        "std::to_string(static_cast<long long>(::getpid()))" in seal
+-        and "process_prefix" in geometry_test,
+-        "staging_leak_oracle_is_process_scoped",
+-        "parallel processes must not contaminate one another's staging inventory",
++        "process_prefix" in geometry_test
++        and "std::to_string(static_cast<long long>(::getpid()))" in geometry_test
++        and "staging_directory_" not in seal
++        and "mkdtemp" not in seal,
++        "legacy_namespace_regression_oracle_is_process_scoped",
++        "the no-staging regression oracle must ignore parallel processes while production owns no staging namespace",
+     )
+     require(
+         checks,

@@ -1,0 +1,1039 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a3c9c5e..9e73c4c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -254,6 +254,16 @@ target_link_libraries(anonsync_peer_ingress_schema_attestation_test PRIVATE
+   anonsync_core_lib)
+ target_compile_options(anonsync_peer_ingress_schema_attestation_test PRIVATE
+   -Wall -Wextra -Wpedantic)
++# rev0788: independently executable proof for the durable, exact-VFS
++# peer-ingress connection publication boundary.
++add_executable(anonsync_peer_ingress_connection_profile_test
++  tests/persistence/peer_ingress_connection_profile_test.cpp)
++target_include_directories(anonsync_peer_ingress_connection_profile_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_peer_ingress_connection_profile_test PRIVATE
++  anonsync_core_lib)
++target_compile_options(anonsync_peer_ingress_connection_profile_test PRIVATE
++  -Wall -Wextra -Wpedantic)
+ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+   set(ANONSYNC_SANITIZER_COMPILE_TARGETS
+     anonsync_core_lib
+@@ -276,7 +286,8 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_sqlite_projection_decoder_test
+     anonsync_peer_ingress_projection_integrity_test
+     anonsync_peer_ingress_retention_integrity_test
+-    anonsync_peer_ingress_schema_attestation_test)
++    anonsync_peer_ingress_schema_attestation_test
++    anonsync_peer_ingress_connection_profile_test)
+   # Keep the multi-megabyte reviewed amalgamation out of the default C++
+   # sanitizer lane. Instrumenting it dominates cloud builds and can prevent
+   # the AnonSync ownership code from being exercised at all. A dedicated job
+@@ -305,7 +316,8 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_sqlite_projection_decoder_test
+       anonsync_peer_ingress_projection_integrity_test
+       anonsync_peer_ingress_retention_integrity_test
+-      anonsync_peer_ingress_schema_attestation_test)
++      anonsync_peer_ingress_schema_attestation_test
++      anonsync_peer_ingress_connection_profile_test)
+     target_link_options(${tgt} PRIVATE -fsanitize=address,undefined)
+   endforeach()
+ endif()
+@@ -330,6 +342,16 @@ add_test(NAME anonsync_peer_ingress_retention_integrity_test
+   COMMAND anonsync_peer_ingress_retention_integrity_test)
+ add_test(NAME anonsync_peer_ingress_schema_attestation_test
+   COMMAND anonsync_peer_ingress_schema_attestation_test)
++add_test(NAME anonsync_peer_ingress_connection_profile_test
++  COMMAND anonsync_peer_ingress_connection_profile_test)
++find_package(Python3 COMPONENTS Interpreter QUIET)
++if(Python3_Interpreter_FOUND)
++  add_test(NAME anonsync_peer_ingress_connection_profile_source_audit
++    COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_peer_ingress_connection_profile.py
++      ${CMAKE_CURRENT_SOURCE_DIR}
++      src/sync_domain.cpp)
++endif()
+ set_tests_properties(
+   anonsync_core_sync_domain_model_selftest
+   anonsync_core_sync_peer_ingress_lifecycle_selftest
+@@ -387,15 +409,3 @@ if(EXISTS "${ANONSYNC_REPO_ROOT}/fixtures/rev0618/cpp-slim-gateway-context.json"
+       --ledger-commit-mode batch
+       --report "${CMAKE_BINARY_DIR}/rev0648-ctest-report.json")
+ endif()
+-
+-
+-# rev0787: independently executable proof for the sealed peer-ingress open boundary.
+-if(BUILD_TESTING)
+-  add_executable(anonsync_peer_ingress_connection_profile_test
+-    tests/persistence/peer_ingress_connection_profile_test.cpp)
+-  target_include_directories(anonsync_peer_ingress_connection_profile_test PRIVATE
+-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+-  target_link_libraries(anonsync_peer_ingress_connection_profile_test PRIVATE anonsync_core_lib)
+-  add_test(NAME anonsync_peer_ingress_connection_profile_test
+-    COMMAND anonsync_peer_ingress_connection_profile_test)
+-endif()
+diff --git a/src/persistence/peer_ingress_connection_profile.cpp b/src/persistence/peer_ingress_connection_profile.cpp
+index 2b6ef47..f19a8b8 100644
+--- a/src/persistence/peer_ingress_connection_profile.cpp
++++ b/src/persistence/peer_ingress_connection_profile.cpp
+@@ -11,63 +11,87 @@ namespace anonsync {
+ namespace persistence {
+ namespace {
+ 
+-bool is_memory_database_name(const char* filename) noexcept {
++unsigned char ascii_lower(unsigned char value) noexcept {
++    if (value >= static_cast<unsigned char>('A') &&
++        value <= static_cast<unsigned char>('Z')) {
++        return static_cast<unsigned char>(
++            value + (static_cast<unsigned char>('a') -
++                     static_cast<unsigned char>('A')));
++    }
++    return value;
++}
++
++bool has_file_uri_scheme(const char* filename) noexcept {
++    constexpr char scheme[] = "file:";
+     if (filename == nullptr) {
+         return false;
+     }
+-    if (std::strcmp(filename, ":memory:") == 0) {
+-        return true;
++    for (std::size_t index = 0; index + 1 < sizeof(scheme); ++index) {
++        const unsigned char actual =
++            static_cast<unsigned char>(filename[index]);
++        if (actual == 0 ||
++            ascii_lower(actual) !=
++                static_cast<unsigned char>(scheme[index])) {
++            return false;
++        }
+     }
+-    // URI parameters are parsed by SQLite only when the caller requested URI
+-    // semantics. This check is not authorization; it only identifies the
+-    // SQLite in-memory case where SQLITE_FCNTL_VFSNAME has no file to inspect.
+-    return std::strstr(filename, "mode=memory") != nullptr;
++    return true;
+ }
+ 
+-bool vfs_stack_contains(const char* observed, const char* expected) noexcept {
+-    if (observed == nullptr || expected == nullptr || *expected == '\0') {
++bool filename_is_durable_file_candidate(const char* filename) noexcept {
++    if (filename == nullptr || filename[0] == '\0') {
+         return false;
+     }
+-    const std::size_t expected_size = std::strlen(expected);
+-    const char* cursor = observed;
+-    while (*cursor != '\0') {
+-        const char* separator = std::strchr(cursor, '/');
+-        const std::size_t component_size = separator == nullptr
+-            ? std::strlen(cursor)
+-            : static_cast<std::size_t>(separator - cursor);
+-        if (component_size == expected_size &&
+-            std::memcmp(cursor, expected, expected_size) == 0) {
+-            return true;
+-        }
+-        if (separator == nullptr) {
+-            break;
+-        }
+-        cursor = separator + 1;
++    // SQLite reserves :memory: and may assign semantics to more leading-colon
++    // names in future versions. A crash-reconstructible checkpoint must never
++    // depend on those process-local or future-special namespaces.
++    if (filename[0] == ':') {
++        return false;
+     }
+-    return false;
++    // URI interpretation can be enabled globally at compile/start time even
++    // when SQLITE_OPEN_URI is absent. Reject the scheme itself so query
++    // parameters cannot override VFS, access, cache, immutable, or nolock
++    // behavior behind this profile's back.
++    return !has_file_uri_scheme(filename);
+ }
+ 
+-void close_unpublished(sqlite3* database) noexcept {
+-    if (database == nullptr) {
+-        return;
+-    }
+-    // No statements can have escaped the sealed open boundary. close_v2 is
+-    // still used to keep this cleanup correct if SQLite has internal work.
+-    (void)sqlite3_close_v2(database);
++int allowed_application_open_flags() noexcept {
++    int allowed = SQLITE_OPEN_READONLY |
++                  SQLITE_OPEN_READWRITE |
++                  SQLITE_OPEN_CREATE |
++                  SQLITE_OPEN_FULLMUTEX |
++                  SQLITE_OPEN_PRIVATECACHE;
++#ifdef SQLITE_OPEN_EXRESCODE
++    allowed |= SQLITE_OPEN_EXRESCODE;
++#endif
++#ifdef SQLITE_OPEN_NOFOLLOW
++    allowed |= SQLITE_OPEN_NOFOLLOW;
++#endif
++    return allowed;
+ }
+ 
+-int fail_verification(sqlite3* database,
+-                      sqlite3** published_database,
+-                      int result) noexcept {
+-    close_unpublished(database);
+-    *published_database = nullptr;
+-    return result;
++bool requested_access_is_canonical(int flags) noexcept {
++    const int access = flags &
++        (SQLITE_OPEN_READONLY | SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
++    return access == SQLITE_OPEN_READONLY ||
++           access == SQLITE_OPEN_READWRITE ||
++           access == (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+ }
+ 
+-bool requested_access_is_coherent(int flags) noexcept {
+-    const bool read_only = (flags & SQLITE_OPEN_READONLY) != 0;
+-    const bool read_write = (flags & SQLITE_OPEN_READWRITE) != 0;
+-    return read_only != read_write;
++bool requested_profile_is_canonical(int flags) noexcept {
++    if (!requested_access_is_canonical(flags)) {
++        return false;
++    }
++    if ((flags & SQLITE_OPEN_FULLMUTEX) == 0) {
++        return false;
++    }
++    if ((flags & (SQLITE_OPEN_URI |
++                  SQLITE_OPEN_MEMORY |
++                  SQLITE_OPEN_NOMUTEX |
++                  SQLITE_OPEN_SHAREDCACHE)) != 0) {
++        return false;
++    }
++    return (flags & ~allowed_application_open_flags()) == 0;
+ }
+ 
+ bool observed_access_matches(int flags, int observed_read_only) noexcept {
+@@ -78,6 +102,28 @@ bool observed_access_matches(int flags, int observed_read_only) noexcept {
+     return requested_read_only == (observed_read_only == 1);
+ }
+ 
++int close_unpublished(sqlite3* database) noexcept {
++    if (database == nullptr) {
++        return SQLITE_OK;
++    }
++    // Nothing can have escaped this sealed boundary, so a strict close should
++    // succeed. Retain close_v2 only as a leak-prevention fallback if SQLite
++    // reports an unexpected internal dependent object.
++    const int close_result = sqlite3_close(database);
++    if (close_result != SQLITE_OK) {
++        (void)sqlite3_close_v2(database);
++    }
++    return close_result;
++}
++
++int fail_verification(sqlite3* database,
++                      sqlite3** published_database,
++                      int result) noexcept {
++    const int close_result = close_unpublished(database);
++    *published_database = nullptr;
++    return close_result == SQLITE_OK ? result : close_result;
++}
++
+ }  // namespace
+ 
+ int open_verified_sqlite_database(const char* filename,
+@@ -97,25 +143,43 @@ int open_verified_sqlite_database(const char* filename,
+         return SQLITE_MISUSE;
+     }
+     *published_database = nullptr;
++    if (evidence != nullptr) {
++        *evidence = SqliteConnectionEvidence{};
++    }
+ 
+-    if (filename == nullptr || !requested_access_is_coherent(flags)) {
++    if (!filename_is_durable_file_candidate(filename) ||
++        !requested_profile_is_canonical(flags)) {
+         return SQLITE_MISUSE;
+     }
+ 
+-    sqlite3_vfs* selected_vfs = sqlite3_vfs_find(requested_vfs);
++    sqlite3_vfs* const selected_vfs = sqlite3_vfs_find(requested_vfs);
+     if (selected_vfs == nullptr || selected_vfs->zName == nullptr ||
+         selected_vfs->zName[0] == '\0') {
+         return SQLITE_CANTOPEN;
+     }
+-    const char* const pinned_vfs_name = selected_vfs->zName;
++
++    std::string pinned_vfs_name;
++    try {
++        // The registration owns zName. Copy it before opening so later error
++        // paths do not depend on a borrowed registration string.
++        pinned_vfs_name = selected_vfs->zName;
++    } catch (const std::bad_alloc&) {
++        return SQLITE_NOMEM;
++    } catch (...) {
++        return SQLITE_ERROR;
++    }
++
++    // PRIVATECACHE overrides any process-global shared-cache setting. The
++    // requested flags remain separately visible in the evidence record.
++    const int effective_flags = flags | SQLITE_OPEN_PRIVATECACHE;
+ 
+     sqlite3* candidate = nullptr;
+     const int open_result = sqlite3_open_v2(
+-        filename, &candidate, flags, pinned_vfs_name);
++        filename, &candidate, effective_flags, pinned_vfs_name.c_str());
+     if (open_result != SQLITE_OK) {
+-        // Preserve sqlite3_open_v2's documented failed-handle behavior so the
+-        // caller can inspect sqlite3_errmsg and close it. Failed handles do not
+-        // carry synchronization authority and are never marked verified.
++        // sqlite3_open_v2 usually returns a handle carrying its best diagnostic
++        // even on failure. Existing callers own/close that handle and may read
++        // sqlite3_errmsg(), but no verification bit is minted for it.
+         *published_database = candidate;
+         return open_result;
+     }
+@@ -123,44 +187,74 @@ int open_verified_sqlite_database(const char* filename,
+         return SQLITE_CANTOPEN;
+     }
+ 
++    const char* const observed_main_filename =
++        sqlite3_db_filename(candidate, "main");
++    if (observed_main_filename == nullptr ||
++        observed_main_filename[0] == '\0') {
++        return fail_verification(
++            candidate, published_database, SQLITE_CANTOPEN);
++    }
++
+     const int observed_read_only = sqlite3_db_readonly(candidate, "main");
+-    if (!observed_access_matches(flags, observed_read_only)) {
+-        return fail_verification(candidate, published_database, SQLITE_CANTOPEN);
++    if (!observed_access_matches(effective_flags, observed_read_only)) {
++        return fail_verification(
++            candidate, published_database, SQLITE_CANTOPEN);
+     }
+ 
+-    char* observed_vfs_stack = nullptr;
+-    const int vfs_result = sqlite3_file_control(
+-        candidate, "main", SQLITE_FCNTL_VFSNAME, &observed_vfs_stack);
+-    const bool memory_database = is_memory_database_name(filename);
+-    const bool vfs_verified =
+-        vfs_result == SQLITE_OK &&
+-        observed_vfs_stack != nullptr &&
+-        vfs_stack_contains(observed_vfs_stack, pinned_vfs_name);
++    // FULLMUTEX is requested, but a concrete connection mutex is the observed
++    // proof that the opened generation actually materialized serialized mode.
++    if (sqlite3_db_mutex(candidate) == nullptr) {
++        return fail_verification(
++            candidate, published_database, SQLITE_MISUSE);
++    }
++
++    // VFSNAME is diagnostic-only. VFS_POINTER is the authority check: it must
++    // identify the exact object selected before open, defeating URI VFS
++    // overrides and same-name substitutions during the open boundary.
++    sqlite3_vfs* observed_vfs = nullptr;
++    const int vfs_pointer_result = sqlite3_file_control(
++        candidate, "main", SQLITE_FCNTL_VFS_POINTER, &observed_vfs);
++    if (vfs_pointer_result != SQLITE_OK || observed_vfs != selected_vfs) {
++        return fail_verification(
++            candidate, published_database, SQLITE_CANTOPEN);
++    }
+ 
+-    if (!vfs_verified && !memory_database) {
+-        sqlite3_free(observed_vfs_stack);
+-        return fail_verification(candidate, published_database, SQLITE_CANTOPEN);
++    char* observed_vfs_stack = nullptr;
++    bool vfs_name_diagnostic_available = false;
++    if (evidence != nullptr) {
++        const int vfs_name_result = sqlite3_file_control(
++            candidate, "main", SQLITE_FCNTL_VFSNAME, &observed_vfs_stack);
++        vfs_name_diagnostic_available =
++            vfs_name_result == SQLITE_OK && observed_vfs_stack != nullptr;
+     }
+ 
+     if (evidence != nullptr) {
+         try {
+             SqliteConnectionEvidence completed;
+             completed.requested_flags = flags;
++            completed.effective_flags = effective_flags;
+             completed.observed_read_only = observed_read_only;
+             completed.requested_vfs_was_explicit = requested_vfs != nullptr;
++            completed.file_backing_verified = true;
+             completed.access_mode_verified = true;
+-            completed.vfs_verified = vfs_verified || memory_database;
++            completed.serialized_mutex_verified = true;
++            completed.vfs_identity_verified = true;
++            completed.vfs_name_diagnostic_available =
++                vfs_name_diagnostic_available;
+             completed.pinned_vfs_name = pinned_vfs_name;
++            completed.observed_main_filename = observed_main_filename;
+             if (observed_vfs_stack != nullptr) {
+                 completed.observed_vfs_stack = observed_vfs_stack;
+             }
+             *evidence = std::move(completed);
+         } catch (const std::bad_alloc&) {
+             sqlite3_free(observed_vfs_stack);
+-            return fail_verification(candidate, published_database, SQLITE_NOMEM);
++            return fail_verification(
++                candidate, published_database, SQLITE_NOMEM);
+         } catch (...) {
+             sqlite3_free(observed_vfs_stack);
+-            return fail_verification(candidate, published_database, SQLITE_ERROR);
++            return fail_verification(
++                candidate, published_database, SQLITE_ERROR);
+         }
+     }
+ 
+@@ -169,40 +263,5 @@ int open_verified_sqlite_database(const char* filename,
+     return SQLITE_OK;
+ }
+ 
+-ScopedSqliteBusyHandler::ScopedSqliteBusyHandler(
+-    sqlite3* database,
+-    SqliteBusyCallback callback,
+-    void* callback_context) noexcept
+-    : database_(database) {
+-    if (database_ == nullptr || callback == nullptr) {
+-        install_result_ = SQLITE_MISUSE;
+-        return;
+-    }
+-    install_result_ = sqlite3_busy_handler(database_, callback, callback_context);
+-    installed_ = install_result_ == SQLITE_OK;
+-}
+-
+-ScopedSqliteBusyHandler::~ScopedSqliteBusyHandler() noexcept {
+-    reset();
+-}
+-
+-void ScopedSqliteBusyHandler::reset() noexcept {
+-    if (installed_ && database_ != nullptr) {
+-        (void)sqlite3_busy_handler(database_, nullptr, nullptr);
+-    }
+-    installed_ = false;
+-    database_ = nullptr;
+-}
+-
+-int bounded_busy_attempt_callback(void* context,
+-                                  int prior_callback_count) noexcept {
+-    auto* const budget = static_cast<BoundedBusyAttemptBudget*>(context);
+-    if (budget == nullptr || prior_callback_count < 0) {
+-        return 0;
+-    }
+-    ++budget->observed_callback_count;
+-    return prior_callback_count < budget->maximum_callback_count ? 1 : 0;
+-}
+-
+ }  // namespace persistence
+ }  // namespace anonsync
+diff --git a/src/persistence/peer_ingress_connection_profile.hpp b/src/persistence/peer_ingress_connection_profile.hpp
+index f4c0e0a..0e626af 100644
+--- a/src/persistence/peer_ingress_connection_profile.hpp
++++ b/src/persistence/peer_ingress_connection_profile.hpp
+@@ -7,22 +7,44 @@ struct sqlite3;
+ namespace anonsync {
+ namespace persistence {
+ 
+-// Evidence is deliberately populated only after the candidate connection has
+-// passed access-mode and VFS checks. A raw sqlite3* is never published first.
++// Process-local evidence captured only after an unpublished candidate has
++// passed the complete durable-file connection profile. Requested flags are not
++// authority: file backing, access mode, connection serialization, and the exact
++// top-level sqlite3_vfs object are observed before a successful handle is
++// published.
+ struct SqliteConnectionEvidence {
+     int requested_flags{0};
++    int effective_flags{0};
+     int observed_read_only{-1};
+     bool requested_vfs_was_explicit{false};
++    bool file_backing_verified{false};
+     bool access_mode_verified{false};
+-    bool vfs_verified{false};
++    bool serialized_mutex_verified{false};
++    bool vfs_identity_verified{false};
++    bool vfs_name_diagnostic_available{false};
+     std::string pinned_vfs_name;
+     std::string observed_vfs_stack;
++    std::string observed_main_filename;
+ };
+ 
+-// Signature-compatible with sqlite3_open_v2 so existing authority-sensitive
+-// call sites can be migrated without changing their error-control structure.
+-// The default VFS is resolved to its concrete name before opening, and the
+-// output handle is published only after successful post-open verification.
++// Opens only durable, file-backed, serialized SQLite connections. This is a
++// deliberately smaller contract than sqlite3_open_v2():
++//
++//   * one canonical access tuple: RO, RW, or RW|CREATE;
++//   * SQLITE_OPEN_FULLMUTEX is mandatory;
++//   * URI, MEMORY, NOMUTEX, and SHAREDCACHE control planes are rejected;
++//   * only explicitly allow-listed application flags are accepted;
++//   * PRIVATECACHE is imposed on the effective open profile;
++//   * the opened main database must report a concrete backing filename;
++//   * SQLITE_FCNTL_VFS_POINTER must report the exact preselected VFS object.
++//
++// SQLITE_FCNTL_VFSNAME is retained only as optional diagnostics because SQLite
++// documents that file-control as diagnostic-only and not guaranteed to act.
++// On successful return, *published_database is non-null and verified. On input
++// or post-open verification failure it is null. SQLite may still return a
++// failed diagnostic handle for an ordinary open failure; that handle is
++// published solely for sqlite3_errmsg() compatibility and carries no verified
++// connection evidence.
+ [[nodiscard]] int open_verified_sqlite_database(
+     const char* filename,
+     sqlite3** published_database,
+@@ -36,40 +58,5 @@ struct SqliteConnectionEvidence {
+     const char* requested_vfs,
+     SqliteConnectionEvidence* evidence) noexcept;
+ 
+-using SqliteBusyCallback = int (*)(void*, int);
+-
+-// The callback context is borrowed for exactly this object's lifetime. This
+-// class intentionally cannot be copied or moved: moving would make callback
+-// context lifetime and connection ownership ambiguous.
+-class ScopedSqliteBusyHandler final {
+-public:
+-    ScopedSqliteBusyHandler(sqlite3* database,
+-                            SqliteBusyCallback callback,
+-                            void* callback_context) noexcept;
+-    ~ScopedSqliteBusyHandler() noexcept;
+-
+-    ScopedSqliteBusyHandler(const ScopedSqliteBusyHandler&) = delete;
+-    ScopedSqliteBusyHandler& operator=(const ScopedSqliteBusyHandler&) = delete;
+-    ScopedSqliteBusyHandler(ScopedSqliteBusyHandler&&) = delete;
+-    ScopedSqliteBusyHandler& operator=(ScopedSqliteBusyHandler&&) = delete;
+-
+-    [[nodiscard]] int install_result() const noexcept { return install_result_; }
+-    [[nodiscard]] bool installed() const noexcept { return installed_; }
+-    void reset() noexcept;
+-
+-private:
+-    sqlite3* database_{nullptr};
+-    int install_result_{0};
+-    bool installed_{false};
+-};
+-
+-struct BoundedBusyAttemptBudget {
+-    int maximum_callback_count{0};
+-    int observed_callback_count{0};
+-};
+-
+-[[nodiscard]] int bounded_busy_attempt_callback(void* context,
+-                                                int prior_callback_count) noexcept;
+-
+ }  // namespace persistence
+ }  // namespace anonsync
+diff --git a/src/sync_domain.cpp b/src/sync_domain.cpp
+index 3075e5e..a3f9b41 100644
+--- a/src/sync_domain.cpp
++++ b/src/sync_domain.cpp
+@@ -23,11 +23,12 @@
+ 
+ #include <sqlite3.h>
+ 
++#include "persistence/peer_ingress_connection_profile.hpp"
++
+ #if !defined(_WIN32)
+ #include <fcntl.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+-#include "persistence/peer_ingress_connection_profile.hpp"
+ #endif
+ 
+ namespace anonsync {
+diff --git a/tests/persistence/peer_ingress_connection_profile_test.cpp b/tests/persistence/peer_ingress_connection_profile_test.cpp
+index 752ed6f..88db9e3 100644
+--- a/tests/persistence/peer_ingress_connection_profile_test.cpp
++++ b/tests/persistence/peer_ingress_connection_profile_test.cpp
+@@ -3,9 +3,11 @@
+ #include <sqlite3.h>
+ 
+ #include <chrono>
++#include <cstdint>
+ #include <filesystem>
+ #include <iostream>
+ #include <string>
++#include <utility>
+ 
+ namespace {
+ 
+@@ -14,99 +16,282 @@ int checks = 0;
+ bool check(bool condition, const char* expression, int line) {
+     ++checks;
+     if (!condition) {
+-        std::cerr << "check failed at line " << line << ": " << expression << '\n';
++        std::cerr << "check failed at line " << line << ": "
++                  << expression << '\n';
+         return false;
+     }
+     return true;
+ }
+ 
+-#define CHECK(expr) do { if (!check((expr), #expr, __LINE__)) return 1; } while (false)
++#define CHECK(expr) \
++    do { \
++        if (!check((expr), #expr, __LINE__)) return 1; \
++    } while (false)
+ 
+-std::filesystem::path unique_database_path() {
+-    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
++std::filesystem::path unique_database_path(const std::string& label) {
++    static std::uint64_t sequence = 0;
++    const auto ticks = std::chrono::steady_clock::now()
++                           .time_since_epoch()
++                           .count();
++    ++sequence;
+     return std::filesystem::temp_directory_path() /
+-        ("anonsync-rev0787-" + std::to_string(ticks) + ".sqlite");
++        ("anonsync-rev0788-" + label + "-" + std::to_string(ticks) +
++         "-" + std::to_string(sequence) + ".sqlite");
+ }
+ 
++void remove_database_family(const std::filesystem::path& path) noexcept {
++    std::error_code ignored;
++    std::filesystem::remove(path, ignored);
++    std::filesystem::remove(path.string() + "-wal", ignored);
++    std::filesystem::remove(path.string() + "-shm", ignored);
++    std::filesystem::remove(path.string() + "-journal", ignored);
++}
++
++int primary_code(int result) noexcept {
++    return result & 0xff;
++}
++
++class RegisteredAliasVfs final {
++public:
++    explicit RegisteredAliasVfs(std::string name)
++        : name_(std::move(name)) {
++        sqlite3_vfs* const base = sqlite3_vfs_find(nullptr);
++        if (base == nullptr) {
++            return;
++        }
++        alias_ = *base;
++        alias_.zName = name_.c_str();
++        alias_.pNext = nullptr;
++        registered_ = sqlite3_vfs_register(&alias_, 0) == SQLITE_OK;
++    }
++
++    ~RegisteredAliasVfs() {
++        if (registered_) {
++            (void)sqlite3_vfs_unregister(&alias_);
++        }
++    }
++
++    RegisteredAliasVfs(const RegisteredAliasVfs&) = delete;
++    RegisteredAliasVfs& operator=(const RegisteredAliasVfs&) = delete;
++
++    [[nodiscard]] bool registered() const noexcept { return registered_; }
++    [[nodiscard]] const char* name() const noexcept { return name_.c_str(); }
++
++private:
++    std::string name_;
++    sqlite3_vfs alias_{};
++    bool registered_{false};
++};
++
+ }  // namespace
+ 
+ int main() {
+-    using anonsync::persistence::BoundedBusyAttemptBudget;
+-    using anonsync::persistence::ScopedSqliteBusyHandler;
+     using anonsync::persistence::SqliteConnectionEvidence;
+-    using anonsync::persistence::bounded_busy_attempt_callback;
+     using anonsync::persistence::open_verified_sqlite_database;
+ 
+-    sqlite3* database = reinterpret_cast<sqlite3*>(0x1);
+-    CHECK(open_verified_sqlite_database(":memory:", nullptr,
+-              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) == SQLITE_MISUSE);
+-    CHECK(open_verified_sqlite_database(nullptr, &database,
+-              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) == SQLITE_MISUSE);
++    const int writable_flags =
++        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
++    const int readonly_flags =
++        SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX;
++
++    const std::filesystem::path path = unique_database_path("main");
++    const std::filesystem::path mode_text_path =
++        unique_database_path("literal-mode=memory");
++    const std::filesystem::path alias_path = unique_database_path("alias");
++    remove_database_family(path);
++    remove_database_family(mode_text_path);
++    remove_database_family(alias_path);
++
++    sqlite3* database = reinterpret_cast<sqlite3*>(
++        static_cast<std::uintptr_t>(1));
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), nullptr, writable_flags, nullptr) ==
++          SQLITE_MISUSE);
++
++    SqliteConnectionEvidence rejected_evidence;
++    rejected_evidence.requested_flags = 99;
++    rejected_evidence.pinned_vfs_name = "stale";
++    CHECK(open_verified_sqlite_database(
++              nullptr, &database, writable_flags, nullptr,
++              &rejected_evidence) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(rejected_evidence.requested_flags == 0);
++    CHECK(rejected_evidence.pinned_vfs_name.empty());
++
++    CHECK(open_verified_sqlite_database(
++              "", &database, writable_flags, nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              ":memory:", &database, writable_flags, nullptr) ==
++          SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              ":future-special", &database, writable_flags, nullptr) ==
++          SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              "file:authority.sqlite?mode=memory", &database,
++              writable_flags, nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              "FILE:authority.sqlite?nolock=1", &database,
++              writable_flags, nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database,
++              SQLITE_OPEN_READONLY | SQLITE_OPEN_READWRITE |
++                  SQLITE_OPEN_FULLMUTEX,
++              nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database,
++              SQLITE_OPEN_READONLY | SQLITE_OPEN_CREATE |
++                  SQLITE_OPEN_FULLMUTEX,
++              nullptr) == SQLITE_MISUSE);
+     CHECK(database == nullptr);
+-    CHECK(open_verified_sqlite_database(":memory:", &database,
+-              SQLITE_OPEN_READONLY | SQLITE_OPEN_READWRITE, nullptr) == SQLITE_MISUSE);
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database,
++              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
++              nullptr) == SQLITE_MISUSE);
+     CHECK(database == nullptr);
+-    CHECK(open_verified_sqlite_database(":memory:", &database,
+-              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "missing-anonsync-vfs") == SQLITE_CANTOPEN);
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database,
++              writable_flags | SQLITE_OPEN_NOMUTEX,
++              nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database,
++              writable_flags | SQLITE_OPEN_URI,
++              nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database,
++              writable_flags | SQLITE_OPEN_MEMORY,
++              nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database,
++              writable_flags | SQLITE_OPEN_SHAREDCACHE,
++              nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database,
++              writable_flags | SQLITE_OPEN_DELETEONCLOSE,
++              nullptr) == SQLITE_MISUSE);
++    CHECK(database == nullptr);
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database, writable_flags,
++              "missing-anonsync-vfs") == SQLITE_CANTOPEN);
+     CHECK(database == nullptr);
+ 
+-    SqliteConnectionEvidence memory_evidence;
+-    CHECK(open_verified_sqlite_database(":memory:", &database,
+-              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+-              nullptr, &memory_evidence) == SQLITE_OK);
++    SqliteConnectionEvidence writable_evidence;
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database, writable_flags,
++              nullptr, &writable_evidence) == SQLITE_OK);
+     CHECK(database != nullptr);
+-    CHECK(memory_evidence.access_mode_verified);
+-    CHECK(memory_evidence.vfs_verified);
+-    CHECK(!memory_evidence.pinned_vfs_name.empty());
+-
+-    BoundedBusyAttemptBudget budget{2, 0};
+-    CHECK(bounded_busy_attempt_callback(&budget, 0) == 1);
+-    CHECK(bounded_busy_attempt_callback(&budget, 1) == 1);
+-    CHECK(bounded_busy_attempt_callback(&budget, 2) == 0);
+-    CHECK(budget.observed_callback_count == 3);
+-    CHECK(bounded_busy_attempt_callback(nullptr, 0) == 0);
+-
+-    {
+-        ScopedSqliteBusyHandler handler(database, bounded_busy_attempt_callback, &budget);
+-        CHECK(handler.install_result() == SQLITE_OK);
+-        CHECK(handler.installed());
+-        handler.reset();
+-        CHECK(!handler.installed());
++    CHECK(writable_evidence.requested_flags == writable_flags);
++    CHECK((writable_evidence.effective_flags &
++           SQLITE_OPEN_PRIVATECACHE) != 0);
++    CHECK(!writable_evidence.requested_vfs_was_explicit);
++    CHECK(writable_evidence.file_backing_verified);
++    CHECK(writable_evidence.access_mode_verified);
++    CHECK(writable_evidence.serialized_mutex_verified);
++    CHECK(writable_evidence.vfs_identity_verified);
++    CHECK(writable_evidence.observed_read_only == 0);
++    CHECK(!writable_evidence.pinned_vfs_name.empty());
++    CHECK(!writable_evidence.observed_main_filename.empty());
++    CHECK(std::filesystem::path(
++              writable_evidence.observed_main_filename).is_absolute());
++    CHECK(sqlite3_db_mutex(database) != nullptr);
++    if (writable_evidence.vfs_name_diagnostic_available) {
++        CHECK(!writable_evidence.observed_vfs_stack.empty());
+     }
++    CHECK(sqlite3_exec(database,
++                       "CREATE TABLE authority(value INTEGER);",
++                       nullptr, nullptr, nullptr) == SQLITE_OK);
+     CHECK(sqlite3_close(database) == SQLITE_OK);
+     database = nullptr;
++    CHECK(std::filesystem::is_regular_file(path));
+ 
+-    const std::filesystem::path path = unique_database_path();
+-    SqliteConnectionEvidence writable_evidence;
+-    CHECK(open_verified_sqlite_database(path.string().c_str(), &database,
+-              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+-              nullptr, &writable_evidence) == SQLITE_OK);
++    // A literal ordinary filename containing mode=memory is still durable. The
++    // rev0787 substring classifier incorrectly treated this as in-memory.
++    CHECK(open_verified_sqlite_database(
++              mode_text_path.string().c_str(), &database, writable_flags,
++              nullptr) == SQLITE_OK);
+     CHECK(database != nullptr);
+-    CHECK(writable_evidence.observed_read_only == 0);
+-    CHECK(writable_evidence.access_mode_verified);
+-    CHECK(writable_evidence.vfs_verified);
+-    CHECK(!writable_evidence.observed_vfs_stack.empty());
+-    CHECK(sqlite3_exec(database, "CREATE TABLE authority(value INTEGER);", nullptr, nullptr, nullptr) == SQLITE_OK);
+     CHECK(sqlite3_close(database) == SQLITE_OK);
+     database = nullptr;
++    CHECK(std::filesystem::is_regular_file(mode_text_path));
+ 
+     SqliteConnectionEvidence readonly_evidence;
+-    CHECK(open_verified_sqlite_database(path.string().c_str(), &database,
+-              SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database, readonly_flags,
+               nullptr, &readonly_evidence) == SQLITE_OK);
+     CHECK(database != nullptr);
+     CHECK(readonly_evidence.observed_read_only == 1);
+-    CHECK(readonly_evidence.access_mode_verified);
+-    CHECK(readonly_evidence.vfs_verified);
+-    CHECK(sqlite3_exec(database, "INSERT INTO authority VALUES(1);", nullptr, nullptr, nullptr) == SQLITE_READONLY);
++    CHECK(readonly_evidence.file_backing_verified);
++    CHECK(readonly_evidence.serialized_mutex_verified);
++    CHECK(readonly_evidence.vfs_identity_verified);
++    CHECK(primary_code(sqlite3_exec(
++              database, "INSERT INTO authority VALUES(1);",
++              nullptr, nullptr, nullptr)) == SQLITE_READONLY);
+     CHECK(sqlite3_close(database) == SQLITE_OK);
+     database = nullptr;
+ 
+-    std::error_code ignored;
+-    std::filesystem::remove(path, ignored);
+-    std::filesystem::remove(path.string() + "-wal", ignored);
+-    std::filesystem::remove(path.string() + "-shm", ignored);
++    sqlite3_vfs* const default_vfs = sqlite3_vfs_find(nullptr);
++    CHECK(default_vfs != nullptr);
++    CHECK(default_vfs->zName != nullptr);
++    SqliteConnectionEvidence explicit_default_evidence;
++    CHECK(open_verified_sqlite_database(
++              path.string().c_str(), &database, readonly_flags,
++              default_vfs->zName, &explicit_default_evidence) == SQLITE_OK);
++    CHECK(database != nullptr);
++    CHECK(explicit_default_evidence.requested_vfs_was_explicit);
++    CHECK(explicit_default_evidence.vfs_identity_verified);
++    CHECK(explicit_default_evidence.pinned_vfs_name == default_vfs->zName);
++    CHECK(sqlite3_close(database) == SQLITE_OK);
++    database = nullptr;
++
++    RegisteredAliasVfs alias("anonsync-rev0788-alias-vfs");
++    CHECK(alias.registered());
++    SqliteConnectionEvidence alias_evidence;
++    CHECK(open_verified_sqlite_database(
++              alias_path.string().c_str(), &database, writable_flags,
++              alias.name(), &alias_evidence) == SQLITE_OK);
++    CHECK(database != nullptr);
++    CHECK(alias_evidence.requested_vfs_was_explicit);
++    CHECK(alias_evidence.vfs_identity_verified);
++    CHECK(alias_evidence.pinned_vfs_name == alias.name());
++    CHECK(sqlite3_close(database) == SQLITE_OK);
++    database = nullptr;
++
++    const std::filesystem::path missing_parent =
++        unique_database_path("missing-parent").parent_path() /
++        ("anonsync-rev0788-missing-parent-" +
++         std::to_string(std::chrono::steady_clock::now()
++                            .time_since_epoch().count())) /
++        "db.sqlite";
++    SqliteConnectionEvidence failed_open_evidence;
++    const int failed_open_result = open_verified_sqlite_database(
++        missing_parent.string().c_str(), &database, writable_flags,
++        nullptr, &failed_open_evidence);
++    CHECK(failed_open_result != SQLITE_OK);
++    CHECK(!failed_open_evidence.file_backing_verified);
++    CHECK(!failed_open_evidence.access_mode_verified);
++    CHECK(!failed_open_evidence.serialized_mutex_verified);
++    CHECK(!failed_open_evidence.vfs_identity_verified);
++    if (database != nullptr) {
++        CHECK(sqlite3_errmsg(database) != nullptr);
++        CHECK(sqlite3_close(database) == SQLITE_OK);
++        database = nullptr;
++    }
++
++    remove_database_family(path);
++    remove_database_family(mode_text_path);
++    remove_database_family(alias_path);
+ 
+-    std::cout << "peer ingress connection profile: " << checks << " checks passed\n";
++    std::cout << "peer ingress durable connection profile: "
++              << checks << " checks passed\n";
+     return 0;
+ }
+diff --git a/tools/audit_peer_ingress_connection_profile.py b/tools/audit_peer_ingress_connection_profile.py
+index 0a6b1b1..4176075 100755
+--- a/tools/audit_peer_ingress_connection_profile.py
++++ b/tools/audit_peer_ingress_connection_profile.py
+@@ -1,34 +1,119 @@
+ #!/usr/bin/env python3
+ from __future__ import annotations
++
+ import json
+ import re
+ import sys
+ from pathlib import Path
+ 
+-root = Path(sys.argv[1] if len(sys.argv) > 1 else '.').resolve()
+-target = root / sys.argv[2]
+-module_cpp = root / 'src/persistence/peer_ingress_connection_profile.cpp'
+-module_hpp = root / 'src/persistence/peer_ingress_connection_profile.hpp'
+-cmake = (root / 'CMakeLists.txt').read_text(encoding='utf-8')
+-target_text = target.read_text(encoding='utf-8')
+-cpp = module_cpp.read_text(encoding='utf-8')
+-hpp = module_hpp.read_text(encoding='utf-8')
++root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
++target_rel = Path(sys.argv[2] if len(sys.argv) > 2 else "src/sync_domain.cpp")
++target = root / target_rel
++module_cpp = root / "src/persistence/peer_ingress_connection_profile.cpp"
++module_hpp = root / "src/persistence/peer_ingress_connection_profile.hpp"
++test_cpp = root / "tests/persistence/peer_ingress_connection_profile_test.cpp"
++cmake_path = root / "CMakeLists.txt"
++
++for required in (target, module_cpp, module_hpp, test_cpp, cmake_path):
++    if not required.is_file():
++        print(json.dumps({
++            "passed": False,
++            "error": f"missing required file: {required}",
++        }, indent=2, sort_keys=True))
++        raise SystemExit(1)
++
++target_text = target.read_text(encoding="utf-8")
++cpp = module_cpp.read_text(encoding="utf-8")
++hpp = module_hpp.read_text(encoding="utf-8")
++test = test_cpp.read_text(encoding="utf-8")
++cmake = cmake_path.read_text(encoding="utf-8")
++
++raw_open_pattern = re.compile(r"(?<![A-Za-z0-9_])(?:::)?sqlite3_open_v2\s*\(")
++verified_open_pattern = re.compile(r"\bopen_verified_sqlite_database\s*\(")
++
++raw_target_sites = len(raw_open_pattern.findall(target_text))
++verified_target_sites = len(verified_open_pattern.findall(target_text))
++raw_boundary_sites = len(raw_open_pattern.findall(cpp))
++
++profile_include = '#include "persistence/peer_ingress_connection_profile.hpp"'
++posix_guard = "#if !defined(_WIN32)"
++include_position = target_text.find(profile_include)
++posix_guard_position = target_text.find(posix_guard)
+ 
+ checks = {
+-    'peer_ingress_has_no_raw_sqlite3_open_v2': re.search(r'(?<![A-Za-z0-9_])(?:::)?sqlite3_open_v2\\s*\\(', target_text) is None,
+-    'peer_ingress_routes_through_verified_open': 'open_verified_sqlite_database' in target_text,
+-    'module_is_compiled': 'src/persistence/peer_ingress_connection_profile.cpp' in cmake,
+-    'focused_test_is_registered': 'anonsync_peer_ingress_connection_profile_test' in cmake,
+-    'raw_open_is_confined_to_boundary': len(re.findall(r'(?<![A-Za-z0-9_])sqlite3_open_v2\\s*\\(', cpp)) == 1,
+-    'default_vfs_is_resolved_before_open': 'sqlite3_vfs_find(requested_vfs)' in cpp,
+-    'actual_access_mode_is_observed': 'sqlite3_db_readonly(candidate, "main")' in cpp,
+-    'actual_vfs_stack_is_observed': 'SQLITE_FCNTL_VFSNAME' in cpp,
+-    'candidate_published_after_checks': cpp.find('*published_database = candidate;') > cpp.find('SQLITE_FCNTL_VFSNAME'),
+-    'busy_scope_is_noncopyable': 'ScopedSqliteBusyHandler(const ScopedSqliteBusyHandler&) = delete' in hpp,
+-    'busy_scope_is_nonmovable': 'ScopedSqliteBusyHandler(ScopedSqliteBusyHandler&&) = delete' in hpp,
+-    'busy_scope_clears_handler': 'sqlite3_busy_handler(database_, nullptr, nullptr)' in cpp,
+-    'bounded_busy_callback_fails_closed_on_null': 'budget == nullptr' in cpp,
++    "target_has_no_raw_sqlite3_open_v2": raw_target_sites == 0,
++    "target_routes_all_discovered_opens_through_boundary":
++        verified_target_sites >= 1,
++    "raw_open_is_confined_to_one_boundary_site": raw_boundary_sites == 1,
++    "profile_header_is_cross_platform_visible":
++        include_position >= 0 and
++        (posix_guard_position < 0 or include_position < posix_guard_position),
++    "module_is_compiled":
++        "src/persistence/peer_ingress_connection_profile.cpp" in cmake,
++    "focused_test_is_registered":
++        "anonsync_peer_ingress_connection_profile_test" in cmake,
++    "durable_profile_rejects_empty_and_special_names":
++        "filename_is_durable_file_candidate" in cpp and
++        "filename[0] == ':'" in cpp,
++    "uri_scheme_is_rejected_even_without_uri_flag":
++        "has_file_uri_scheme" in cpp and
++        "return !has_file_uri_scheme(filename);" in cpp,
++    "fullmutex_is_mandatory":
++        "(flags & SQLITE_OPEN_FULLMUTEX) == 0" in cpp,
++    "alternate_control_planes_are_rejected": all(
++        token in cpp for token in (
++            "SQLITE_OPEN_URI",
++            "SQLITE_OPEN_MEMORY",
++            "SQLITE_OPEN_NOMUTEX",
++            "SQLITE_OPEN_SHAREDCACHE",
++        )
++    ),
++    "unknown_application_flags_are_rejected":
++        "flags & ~allowed_application_open_flags()" in cpp,
++    "private_cache_is_imposed":
++        "flags | SQLITE_OPEN_PRIVATECACHE" in cpp,
++    "file_backing_is_observed":
++        'sqlite3_db_filename(candidate, "main")' in cpp and
++        "observed_main_filename[0] == '\\0'" in cpp,
++    "actual_access_mode_is_observed":
++        'sqlite3_db_readonly(candidate, "main")' in cpp,
++    "actual_serialization_is_observed":
++        "sqlite3_db_mutex(candidate) == nullptr" in cpp,
++    "exact_vfs_object_is_observed":
++        "SQLITE_FCNTL_VFS_POINTER" in cpp and
++        "observed_vfs != selected_vfs" in cpp,
++    "vfs_name_is_diagnostic_only":
++        "VFSNAME is diagnostic-only" in cpp and
++        "vfs_name_diagnostic_available" in cpp,
++    "successful_candidate_publication_follows_all_observations":
++        cpp.rfind("*published_database = candidate;") >
++        cpp.find("SQLITE_FCNTL_VFS_POINTER") > 0,
++    "misleading_scoped_busy_handler_api_is_absent":
++        "ScopedSqliteBusyHandler" not in hpp and
++        "BoundedBusyAttemptBudget" not in hpp and
++        "bounded_busy_attempt_callback" not in cpp,
++    "adversarial_test_covers_uri_control_plane":
++        "mode=memory" in test and "nolock=1" in test,
++    "adversarial_test_covers_exact_vfs_alias":
++        "RegisteredAliasVfs" in test and
++        "vfs_identity_verified" in test,
++    "adversarial_test_covers_literal_mode_text_filename":
++        "literal-mode=memory" in test,
++}
++
++result = {
++    "format": "anonsync-peer-ingress-connection-profile-audit-v2",
++    "passed": all(checks.values()),
++    "target": target_rel.as_posix(),
++    "metrics": {
++        "target_raw_open_sites": raw_target_sites,
++        "target_verified_open_sites": verified_target_sites,
++        "boundary_raw_open_sites": raw_boundary_sites,
++        "target_lines": len(target_text.splitlines()),
++        "boundary_lines": len(cpp.splitlines()),
++        "focused_test_lines": len(test.splitlines()),
++    },
++    "checks": checks,
+ }
+-result = {'passed': all(checks.values()), 'target': str(target.relative_to(root)), 'checks': checks}
+ print(json.dumps(result, indent=2, sort_keys=True))
+-sys.exit(0 if result['passed'] else 1)
++raise SystemExit(0 if result["passed"] else 1)

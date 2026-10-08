@@ -1,0 +1,1380 @@
+diff --git a/src/persistence/sqlite_replay_ledger_reset.hpp b/src/persistence/sqlite_replay_ledger_reset.hpp
+index 3951b0c..9ce7f3d 100644
+--- a/src/persistence/sqlite_replay_ledger_reset.hpp
++++ b/src/persistence/sqlite_replay_ledger_reset.hpp
+@@ -32,8 +32,10 @@ using SqliteReplayLedgerResetObserver = void (*)(
+ 
+ // A reset transaction may be durably committed even when a later namespace,
+ // integrity, or receipt-postcondition check cannot complete. This typed error
+-// prevents callers from reporting a false pre-commit failure; replaying the
+-// exact request is the recovery protocol.
++// prevents callers from reporting a false pre-commit failure. Its receipt digest
++// names the reset candidate established at the transaction boundary; callers
++// must independently reopen and bind the current durable identity before this
++// becomes replay authority.
+ class SqliteReplayLedgerResetDurableOutcomeError final
+     : public std::runtime_error, public std::nested_exception {
+ public:
+diff --git a/src/persistence/sqlite_replay_ledger_reset_receipt_protocol.cpp b/src/persistence/sqlite_replay_ledger_reset_receipt_protocol.cpp
+index e632715..afe872b 100644
+--- a/src/persistence/sqlite_replay_ledger_reset_receipt_protocol.cpp
++++ b/src/persistence/sqlite_replay_ledger_reset_receipt_protocol.cpp
+@@ -94,6 +94,60 @@ void reject_receipt_inside_ledger_namespace_or_throw(
+                right.ingress_sender_replay_rows;
+ }
+ 
++struct DurableEvidenceInspection final {
++    SqliteReplayLedgerResetReceiptDurableEvidence evidence{
++        SqliteReplayLedgerResetReceiptDurableEvidence::
++            DurableIdentityIndeterminate};
++    std::string detail;
++};
++
++[[nodiscard]] DurableEvidenceInspection
++inspect_exact_request_durable_evidence(
++    const SqliteReplayLedgerResetRequest& request,
++    std::string_view expected_receipt) {
++    try {
++        const SqliteReplayLedgerResetState observed =
++            inspect_sqlite_replay_ledger_reset_state(request.ledger_path);
++        if (observed.normalized_ledger_path !=
++            request.ledger_path.generic_string()) {
++            return {
++                SqliteReplayLedgerResetReceiptDurableEvidence::
++                    DurableIdentityIndeterminate,
++                "independent reopen observed a different normalized ledger path"};
++        }
++        if (!(observed.namespace_identity ==
++              request.expected.namespace_identity)) {
++            return {
++                SqliteReplayLedgerResetReceiptDurableEvidence::
++                    DurableIdentityIndeterminate,
++                "independent reopen observed a different SQLite namespace identity"};
++        }
++        if (observed.ledger_instance_id != expected_receipt) {
++            return {
++                SqliteReplayLedgerResetReceiptDurableEvidence::
++                    DurableIdentityIndeterminate,
++                "independent reopen observed ledger identity " +
++                    observed.ledger_instance_id +
++                    " instead of the exact request receipt identity"};
++        }
++        return {
++            SqliteReplayLedgerResetReceiptDurableEvidence::
++                ExactRequestDurable,
++            "independent reopen bound the current SQLite namespace and ledger identity to the exact request receipt"};
++    } catch (const std::exception& error) {
++        return {
++            SqliteReplayLedgerResetReceiptDurableEvidence::
++                DurableIdentityIndeterminate,
++            std::string("independent reopen could not bind durable identity: ") +
++                error.what()};
++    } catch (...) {
++        return {
++            SqliteReplayLedgerResetReceiptDurableEvidence::
++                DurableIdentityIndeterminate,
++            "independent reopen could not bind durable identity: non-standard exception"};
++    }
++}
++
+ void verify_reset_result_binding_or_throw(
+     const SqliteReplayLedgerResetRequest& request,
+     std::string_view expected_receipt,
+@@ -138,40 +192,121 @@ void verify_reset_result_binding_or_throw(
+ 
+ [[noreturn]] void throw_protocol_error(
+     SqliteReplayLedgerResetReceiptProtocolFailure failure,
++    SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence,
+     SqliteReplayLedgerResetReceiptRecoveryAction recovery_action,
+-    std::optional<SqliteReplayLedgerResetOutcome> reset_outcome,
++    std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome,
+     std::string expected_reset_receipt_sha256,
+     std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
+         publication_effect,
+     std::string_view detail) {
+     throw detail::SqliteReplayLedgerResetReceiptProtocolErrorAccess::make(
+-        failure, recovery_action, reset_outcome,
++        failure, durable_evidence, recovery_action, reported_reset_outcome,
+         std::move(expected_reset_receipt_sha256), publication_effect,
+         failure_message(failure, detail));
+ }
+ 
+-[[noreturn]] void rethrow_current_as_protocol_error(
++[[nodiscard]] std::string describe_exception(
++    const std::exception_ptr& cause) {
++    try {
++        if (cause != nullptr) std::rethrow_exception(cause);
++    } catch (const std::exception& error) {
++        return error.what();
++    } catch (...) {
++        return "non-standard exception";
++    }
++    return "missing exception";
++}
++
++[[noreturn]] void throw_exception_as_protocol_error(
++    const std::exception_ptr& cause,
+     SqliteReplayLedgerResetReceiptProtocolFailure failure,
++    SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence,
+     SqliteReplayLedgerResetReceiptRecoveryAction recovery_action,
+-    std::optional<SqliteReplayLedgerResetOutcome> reset_outcome,
++    std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome,
+     std::string expected_reset_receipt_sha256,
+     std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
+-        publication_effect) {
++        publication_effect,
++    std::string_view additional_detail = {}) {
++    std::string detail = describe_exception(cause);
++    if (!additional_detail.empty()) {
++        detail += "; ";
++        detail += additional_detail;
++    }
+     try {
+-        throw;
+-    } catch (const std::exception& error) {
+-        throw_protocol_error(failure, recovery_action, reset_outcome,
+-                             std::move(expected_reset_receipt_sha256),
+-                             publication_effect, error.what());
++        if (cause != nullptr) std::rethrow_exception(cause);
+     } catch (...) {
+-        throw_protocol_error(failure, recovery_action, reset_outcome,
+-                             std::move(expected_reset_receipt_sha256),
+-                             publication_effect, "non-standard exception");
++        throw_protocol_error(
++            failure, durable_evidence, recovery_action, reported_reset_outcome,
++            std::move(expected_reset_receipt_sha256), publication_effect,
++            detail);
+     }
++    throw std::logic_error("protocol error wrapper received no exception");
++}
++
++[[noreturn]] void rethrow_current_as_protocol_error(
++    SqliteReplayLedgerResetReceiptProtocolFailure failure,
++    SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence,
++    SqliteReplayLedgerResetReceiptRecoveryAction recovery_action,
++    std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome,
++    std::string expected_reset_receipt_sha256,
++    std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
++        publication_effect,
++    std::string_view additional_detail = {}) {
++    throw_exception_as_protocol_error(
++        std::current_exception(), failure, durable_evidence, recovery_action,
++        reported_reset_outcome, std::move(expected_reset_receipt_sha256),
++        publication_effect, additional_detail);
++}
++
++[[noreturn]] void rethrow_after_durable_reset_frontier_as_protocol_error(
++    const std::exception_ptr& cause,
++    const SqliteReplayLedgerResetRequest& request,
++    std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome,
++    std::string expected_receipt,
++    std::string_view classifier_context = {}) {
++    const DurableEvidenceInspection inspection =
++        inspect_exact_request_durable_evidence(request, expected_receipt);
++    std::string detail;
++    if (!classifier_context.empty()) {
++        detail.assign(classifier_context);
++        detail += "; ";
++    }
++    detail += inspection.detail;
++    const bool exact =
++        inspection.evidence ==
++        SqliteReplayLedgerResetReceiptDurableEvidence::ExactRequestDurable;
++    throw_exception_as_protocol_error(
++        cause,
++        exact ? SqliteReplayLedgerResetReceiptProtocolFailure::
++                    ResetAfterExactDurableOutcome
++              : SqliteReplayLedgerResetReceiptProtocolFailure::
++                    ResetDurableIdentityIndeterminate,
++        inspection.evidence,
++        exact ? SqliteReplayLedgerResetReceiptRecoveryAction::
++                    ReplayExactRequestToFreshReceiptPath
++              : SqliteReplayLedgerResetReceiptRecoveryAction::
++                    ResolveDurableIdentityBeforeRecovery,
++        reported_reset_outcome, std::move(expected_receipt), std::nullopt,
++        detail);
+ }
+ 
+ }  // namespace
+ 
++const char* sqlite_replay_ledger_reset_receipt_durable_evidence_name(
++    SqliteReplayLedgerResetReceiptDurableEvidence evidence) noexcept {
++    switch (evidence) {
++        case SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable:
++            return "not_durable";
++        case SqliteReplayLedgerResetReceiptDurableEvidence::
++            ExactRequestDurable:
++            return "exact_request_durable";
++        case SqliteReplayLedgerResetReceiptDurableEvidence::
++            DurableIdentityIndeterminate:
++            return "durable_identity_indeterminate";
++    }
++    return "unknown";
++}
++
+ const char* sqlite_replay_ledger_reset_receipt_protocol_failure_name(
+     SqliteReplayLedgerResetReceiptProtocolFailure failure) noexcept {
+     switch (failure) {
+@@ -181,11 +316,14 @@ const char* sqlite_replay_ledger_reset_receipt_protocol_failure_name(
+             ResetBeforeDurableOutcome:
+             return "reset_before_durable_outcome";
+         case SqliteReplayLedgerResetReceiptProtocolFailure::
+-            ResetAfterDurableOutcome:
+-            return "reset_after_durable_outcome";
++            ResetAfterExactDurableOutcome:
++            return "reset_after_exact_durable_outcome";
+         case SqliteReplayLedgerResetReceiptProtocolFailure::
+-            ReceiptPublicationAfterDurableOutcome:
+-            return "receipt_publication_after_durable_outcome";
++            ResetDurableIdentityIndeterminate:
++            return "reset_durable_identity_indeterminate";
++        case SqliteReplayLedgerResetReceiptProtocolFailure::
++            ReceiptPublicationAfterExactDurableOutcome:
++            return "receipt_publication_after_exact_durable_outcome";
+     }
+     return "unknown";
+ }
+@@ -195,6 +333,9 @@ const char* sqlite_replay_ledger_reset_receipt_recovery_action_name(
+     switch (action) {
+         case SqliteReplayLedgerResetReceiptRecoveryAction::None:
+             return "none";
++        case SqliteReplayLedgerResetReceiptRecoveryAction::
++            ResolveDurableIdentityBeforeRecovery:
++            return "resolve_durable_identity_before_recovery";
+         case SqliteReplayLedgerResetReceiptRecoveryAction::
+             ReplayExactRequestToFreshReceiptPath:
+             return "replay_exact_request_to_fresh_receipt_path";
+@@ -205,36 +346,71 @@ const char* sqlite_replay_ledger_reset_receipt_recovery_action_name(
+ SqliteReplayLedgerResetReceiptProtocolError::
+     SqliteReplayLedgerResetReceiptProtocolError(
+         SqliteReplayLedgerResetReceiptProtocolFailure failure,
++        SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence,
+         SqliteReplayLedgerResetReceiptRecoveryAction recovery_action,
+-        std::optional<SqliteReplayLedgerResetOutcome> reset_outcome,
++        std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome,
+         std::string expected_reset_receipt_sha256,
+         std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
+             publication_effect,
+         std::string message)
+     : std::runtime_error(std::move(message)),
+       failure_(failure),
++      durable_evidence_(durable_evidence),
+       recovery_action_(recovery_action),
+-      reset_outcome_(reset_outcome),
++      reported_reset_outcome_(reported_reset_outcome),
+       expected_reset_receipt_sha256_(
+           std::move(expected_reset_receipt_sha256)),
+       publication_effect_(publication_effect) {
+-    const bool durable_failure =
++    const bool before_durable =
++        failure_ == SqliteReplayLedgerResetReceiptProtocolFailure::Preparation ||
++        failure_ == SqliteReplayLedgerResetReceiptProtocolFailure::
++                        ResetBeforeDurableOutcome;
++    const bool exact_durable =
++        failure_ == SqliteReplayLedgerResetReceiptProtocolFailure::
++                        ResetAfterExactDurableOutcome ||
+         failure_ == SqliteReplayLedgerResetReceiptProtocolFailure::
+-                        ResetAfterDurableOutcome ||
++                        ReceiptPublicationAfterExactDurableOutcome;
++    const bool indeterminate =
+         failure_ == SqliteReplayLedgerResetReceiptProtocolFailure::
+-                        ReceiptPublicationAfterDurableOutcome;
+-    const bool replay_authorized =
+-        recovery_action_ ==
+-        SqliteReplayLedgerResetReceiptRecoveryAction::
+-            ReplayExactRequestToFreshReceiptPath;
+-    if (durable_failure != replay_authorized ||
+-        durable_failure != reset_outcome_.has_value() ||
+-        (publication_effect_.has_value() &&
+-         failure_ != SqliteReplayLedgerResetReceiptProtocolFailure::
+-                         ReceiptPublicationAfterDurableOutcome) ||
+-        (failure_ !=
+-             SqliteReplayLedgerResetReceiptProtocolFailure::Preparation &&
+-         expected_reset_receipt_sha256_.empty())) {
++                        ResetDurableIdentityIndeterminate;
++    const bool evidence_matches_phase =
++        (before_durable &&
++         durable_evidence_ ==
++             SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable) ||
++        (exact_durable &&
++         durable_evidence_ ==
++             SqliteReplayLedgerResetReceiptDurableEvidence::
++                 ExactRequestDurable) ||
++        (indeterminate &&
++         durable_evidence_ ==
++             SqliteReplayLedgerResetReceiptDurableEvidence::
++                 DurableIdentityIndeterminate);
++    const bool recovery_matches_evidence =
++        (before_durable &&
++         recovery_action_ ==
++             SqliteReplayLedgerResetReceiptRecoveryAction::None) ||
++        (exact_durable &&
++         recovery_action_ ==
++             SqliteReplayLedgerResetReceiptRecoveryAction::
++                 ReplayExactRequestToFreshReceiptPath) ||
++        (indeterminate &&
++         recovery_action_ ==
++             SqliteReplayLedgerResetReceiptRecoveryAction::
++                 ResolveDurableIdentityBeforeRecovery);
++    const bool outcome_matches_evidence =
++        reported_reset_outcome_.has_value() == !before_durable;
++    const bool publication_matches_phase =
++        !publication_effect_.has_value() ||
++        failure_ == SqliteReplayLedgerResetReceiptProtocolFailure::
++                        ReceiptPublicationAfterExactDurableOutcome;
++    const bool expected_identity_valid =
++        expected_reset_receipt_sha256_.empty()
++            ? failure_ ==
++                  SqliteReplayLedgerResetReceiptProtocolFailure::Preparation
++            : is_lowercase_sha256_hex(expected_reset_receipt_sha256_);
++    if (!evidence_matches_phase || !recovery_matches_evidence ||
++        !outcome_matches_evidence || !publication_matches_phase ||
++        !expected_identity_valid) {
+         throw std::logic_error(
+             "invalid sqlite reset/receipt protocol error evidence");
+     }
+@@ -243,14 +419,15 @@ SqliteReplayLedgerResetReceiptProtocolError::
+ SqliteReplayLedgerResetReceiptProtocolError detail::
+     SqliteReplayLedgerResetReceiptProtocolErrorAccess::make(
+         SqliteReplayLedgerResetReceiptProtocolFailure failure,
++        SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence,
+         SqliteReplayLedgerResetReceiptRecoveryAction recovery_action,
+-        std::optional<SqliteReplayLedgerResetOutcome> reset_outcome,
++        std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome,
+         std::string expected_reset_receipt_sha256,
+         std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
+             publication_effect,
+         std::string message) {
+     return SqliteReplayLedgerResetReceiptProtocolError(
+-        failure, recovery_action, reset_outcome,
++        failure, durable_evidence, recovery_action, reported_reset_outcome,
+         std::move(expected_reset_receipt_sha256), publication_effect,
+         std::move(message));
+ }
+@@ -260,24 +437,20 @@ SqliteReplayLedgerResetReceiptProtocolError::failure() const noexcept {
+     return failure_;
+ }
+ 
++SqliteReplayLedgerResetReceiptDurableEvidence
++SqliteReplayLedgerResetReceiptProtocolError::durable_evidence() const noexcept {
++    return durable_evidence_;
++}
++
+ SqliteReplayLedgerResetReceiptRecoveryAction
+ SqliteReplayLedgerResetReceiptProtocolError::recovery_action() const noexcept {
+     return recovery_action_;
+ }
+ 
+-bool SqliteReplayLedgerResetReceiptProtocolError::durable_reset_observed()
+-    const noexcept {
+-    return failure_ ==
+-               SqliteReplayLedgerResetReceiptProtocolFailure::
+-                   ResetAfterDurableOutcome ||
+-           failure_ ==
+-               SqliteReplayLedgerResetReceiptProtocolFailure::
+-                   ReceiptPublicationAfterDurableOutcome;
+-}
+-
+ const std::optional<SqliteReplayLedgerResetOutcome>&
+-SqliteReplayLedgerResetReceiptProtocolError::reset_outcome() const noexcept {
+-    return reset_outcome_;
++SqliteReplayLedgerResetReceiptProtocolError::reported_reset_outcome()
++    const noexcept {
++    return reported_reset_outcome_;
+ }
+ 
+ const std::string&
+@@ -299,7 +472,7 @@ execute_sqlite_replay_ledger_reset_receipt_protocol_or_throw(
+     const fs::path& receipt_path) {
+     return detail::SqliteReplayLedgerResetReceiptProtocolObserverAccess::
+         execute_or_throw(request, request_sha256, receipt_path, nullptr, nullptr,
+-                         nullptr, nullptr);
++                         nullptr, nullptr, nullptr, nullptr);
+ }
+ 
+ SqliteReplayLedgerResetReceiptProtocolResult detail::
+@@ -309,6 +482,8 @@ SqliteReplayLedgerResetReceiptProtocolResult detail::
+         const fs::path& receipt_path,
+         SqliteReplayLedgerResetObserver reset_observer,
+         void* reset_observer_context,
++        SqliteReplayLedgerResetResultBindingObserver result_binding_observer,
++        void* result_binding_observer_context,
+         atomic_file_publication_detail::AtomicFilePublicationObserver
+             publication_observer,
+         void* publication_observer_context) {
+@@ -328,6 +503,7 @@ SqliteReplayLedgerResetReceiptProtocolResult detail::
+     } catch (...) {
+         rethrow_current_as_protocol_error(
+             SqliteReplayLedgerResetReceiptProtocolFailure::Preparation,
++            SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable,
+             SqliteReplayLedgerResetReceiptRecoveryAction::None, std::nullopt,
+             std::move(expected_receipt), std::nullopt);
+     }
+@@ -337,35 +513,35 @@ SqliteReplayLedgerResetReceiptProtocolResult detail::
+         reset_result = reset_sqlite_replay_ledger(
+             request, reset_observer, reset_observer_context);
+     } catch (const SqliteReplayLedgerResetDurableOutcomeError& error) {
+-        const std::string detail =
++        const std::exception_ptr cause = std::current_exception();
++        const std::string_view classifier_context =
+             error.reset_receipt_sha256() == expected_receipt
+-                ? error.what()
+-                : std::string(error.what()) +
+-                      "; durable reset error receipt digest disagrees with the prepared protocol receipt";
+-        throw_protocol_error(
+-            SqliteReplayLedgerResetReceiptProtocolFailure::
+-                ResetAfterDurableOutcome,
+-            SqliteReplayLedgerResetReceiptRecoveryAction::
+-                ReplayExactRequestToFreshReceiptPath,
+-            error.outcome(), expected_receipt, std::nullopt, detail);
++                ? std::string_view{}
++                : std::string_view(
++                      "reset durable-outcome error reported a different candidate receipt identity");
++        rethrow_after_durable_reset_frontier_as_protocol_error(
++            cause, request, error.outcome(), std::move(expected_receipt),
++            classifier_context);
+     } catch (...) {
+         rethrow_current_as_protocol_error(
+             SqliteReplayLedgerResetReceiptProtocolFailure::
+                 ResetBeforeDurableOutcome,
++            SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable,
+             SqliteReplayLedgerResetReceiptRecoveryAction::None, std::nullopt,
+             expected_receipt, std::nullopt);
+     }
+ 
+     try {
++        if (result_binding_observer != nullptr) {
++            result_binding_observer(reset_result,
++                                    result_binding_observer_context);
++        }
+         verify_reset_result_binding_or_throw(request, expected_receipt,
+                                              reset_result);
+     } catch (...) {
+-        rethrow_current_as_protocol_error(
+-            SqliteReplayLedgerResetReceiptProtocolFailure::
+-                ResetAfterDurableOutcome,
+-            SqliteReplayLedgerResetReceiptRecoveryAction::
+-                ReplayExactRequestToFreshReceiptPath,
+-            reset_result.outcome, expected_receipt, std::nullopt);
++        rethrow_after_durable_reset_frontier_as_protocol_error(
++            std::current_exception(), request, reset_result.outcome,
++            std::move(expected_receipt));
+     }
+ 
+     try {
+@@ -374,7 +550,9 @@ SqliteReplayLedgerResetReceiptProtocolResult detail::
+     } catch (const SyncAtomicFilePublicationError& error) {
+         throw_protocol_error(
+             SqliteReplayLedgerResetReceiptProtocolFailure::
+-                ReceiptPublicationAfterDurableOutcome,
++                ReceiptPublicationAfterExactDurableOutcome,
++            SqliteReplayLedgerResetReceiptDurableEvidence::
++                ExactRequestDurable,
+             SqliteReplayLedgerResetReceiptRecoveryAction::
+                 ReplayExactRequestToFreshReceiptPath,
+             reset_result.outcome, expected_receipt,
+@@ -384,7 +562,9 @@ SqliteReplayLedgerResetReceiptProtocolResult detail::
+     } catch (...) {
+         rethrow_current_as_protocol_error(
+             SqliteReplayLedgerResetReceiptProtocolFailure::
+-                ReceiptPublicationAfterDurableOutcome,
++                ReceiptPublicationAfterExactDurableOutcome,
++            SqliteReplayLedgerResetReceiptDurableEvidence::
++                ExactRequestDurable,
+             SqliteReplayLedgerResetReceiptRecoveryAction::
+                 ReplayExactRequestToFreshReceiptPath,
+             reset_result.outcome, expected_receipt, std::nullopt);
+diff --git a/src/persistence/sqlite_replay_ledger_reset_receipt_protocol.hpp b/src/persistence/sqlite_replay_ledger_reset_receipt_protocol.hpp
+index 973bb79..a4378d7 100644
+--- a/src/persistence/sqlite_replay_ledger_reset_receipt_protocol.hpp
++++ b/src/persistence/sqlite_replay_ledger_reset_receipt_protocol.hpp
+@@ -18,13 +18,26 @@ class SqliteReplayLedgerResetReceiptProtocolErrorAccess;
+ 
+ // One typed owner joins the durable SQLite reset and immutable receipt
+ // publication without pretending that the two resources are one transaction.
+-// Every failure says whether durable reset evidence exists and whether exact
+-// replay to a fresh receipt path is the only authorized recovery action.
++// A failure carries tri-state durable evidence: no durable reset was observed,
++// the exact request-derived identity was verified by the reset owner or by an
++// independent reopen, or a durable frontier was crossed but the identity is
++// indeterminate.
++enum class SqliteReplayLedgerResetReceiptDurableEvidence : std::uint8_t {
++    NotDurable,
++    ExactRequestDurable,
++    DurableIdentityIndeterminate,
++};
++
++[[nodiscard]] const char*
++sqlite_replay_ledger_reset_receipt_durable_evidence_name(
++    SqliteReplayLedgerResetReceiptDurableEvidence evidence) noexcept;
++
+ enum class SqliteReplayLedgerResetReceiptProtocolFailure : std::uint8_t {
+     Preparation,
+     ResetBeforeDurableOutcome,
+-    ResetAfterDurableOutcome,
+-    ReceiptPublicationAfterDurableOutcome,
++    ResetAfterExactDurableOutcome,
++    ResetDurableIdentityIndeterminate,
++    ReceiptPublicationAfterExactDurableOutcome,
+ };
+ 
+ [[nodiscard]] const char*
+@@ -33,6 +46,7 @@ sqlite_replay_ledger_reset_receipt_protocol_failure_name(
+ 
+ enum class SqliteReplayLedgerResetReceiptRecoveryAction : std::uint8_t {
+     None,
++    ResolveDurableIdentityBeforeRecovery,
+     ReplayExactRequestToFreshReceiptPath,
+ };
+ 
+@@ -59,11 +73,15 @@ class SqliteReplayLedgerResetReceiptProtocolError final
+ public:
+     [[nodiscard]] SqliteReplayLedgerResetReceiptProtocolFailure failure()
+         const noexcept;
++    [[nodiscard]] SqliteReplayLedgerResetReceiptDurableEvidence
++    durable_evidence() const noexcept;
+     [[nodiscard]] SqliteReplayLedgerResetReceiptRecoveryAction recovery_action()
+         const noexcept;
+-    [[nodiscard]] bool durable_reset_observed() const noexcept;
++    // This is the reset implementation's reported transaction outcome. It is
++    // authoritative recovery evidence only when durable_evidence() is
++    // ExactRequestDurable.
+     [[nodiscard]] const std::optional<SqliteReplayLedgerResetOutcome>&
+-    reset_outcome() const noexcept;
++    reported_reset_outcome() const noexcept;
+     [[nodiscard]] const std::string& expected_reset_receipt_sha256()
+         const noexcept;
+     [[nodiscard]] const std::optional<
+@@ -76,16 +94,18 @@ private:
+ 
+     SqliteReplayLedgerResetReceiptProtocolError(
+         SqliteReplayLedgerResetReceiptProtocolFailure failure,
++        SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence,
+         SqliteReplayLedgerResetReceiptRecoveryAction recovery_action,
+-        std::optional<SqliteReplayLedgerResetOutcome> reset_outcome,
++        std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome,
+         std::string expected_reset_receipt_sha256,
+         std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
+             publication_effect,
+         std::string message);
+ 
+     SqliteReplayLedgerResetReceiptProtocolFailure failure_;
++    SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence_;
+     SqliteReplayLedgerResetReceiptRecoveryAction recovery_action_;
+-    std::optional<SqliteReplayLedgerResetOutcome> reset_outcome_;
++    std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome_;
+     std::string expected_reset_receipt_sha256_;
+     std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
+         publication_effect_;
+diff --git a/src/persistence/sqlite_replay_ledger_reset_receipt_protocol_internal.hpp b/src/persistence/sqlite_replay_ledger_reset_receipt_protocol_internal.hpp
+index 68779d1..6865da9 100644
+--- a/src/persistence/sqlite_replay_ledger_reset_receipt_protocol_internal.hpp
++++ b/src/persistence/sqlite_replay_ledger_reset_receipt_protocol_internal.hpp
+@@ -12,14 +12,22 @@ class SqliteReplayLedgerResetReceiptProtocolErrorAccess final {
+ public:
+     [[nodiscard]] static SqliteReplayLedgerResetReceiptProtocolError make(
+         SqliteReplayLedgerResetReceiptProtocolFailure failure,
++        SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence,
+         SqliteReplayLedgerResetReceiptRecoveryAction recovery_action,
+-        std::optional<SqliteReplayLedgerResetOutcome> reset_outcome,
++        std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome,
+         std::string expected_reset_receipt_sha256,
+         std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
+             publication_effect,
+         std::string message);
+ };
+ 
++// Test-only mutation seam after the reset owner returns and before the protocol
++// binds the result to its original request. It is internal so production callers
++// cannot manufacture or alter durable evidence.
++using SqliteReplayLedgerResetResultBindingObserver = void (*)(
++    SqliteReplayLedgerResetResult& result,
++    void* context);
++
+ // Deterministic simulation access to the exact production protocol owner. The
+ // public entry point delegates here with null observers; tests therefore cannot
+ // accidentally validate parallel reset/publication choreography.
+@@ -32,6 +40,8 @@ public:
+         const std::filesystem::path& receipt_path,
+         SqliteReplayLedgerResetObserver reset_observer,
+         void* reset_observer_context,
++        SqliteReplayLedgerResetResultBindingObserver result_binding_observer,
++        void* result_binding_observer_context,
+         atomic_file_publication_detail::AtomicFilePublicationObserver
+             publication_observer,
+         void* publication_observer_context);
+diff --git a/src/runner.cpp b/src/runner.cpp
+index 10dd038..384cf01 100644
+--- a/src/runner.cpp
++++ b/src/runner.cpp
+@@ -2124,19 +2124,52 @@ int run_sqlite_replay_ledger_reset_command(
+         return 0;
+     } catch (const persistence::
+                  SqliteReplayLedgerResetReceiptProtocolError& error) {
+-        const bool durable = error.durable_reset_observed();
++        const persistence::SqliteReplayLedgerResetReceiptDurableEvidence
++            durable_evidence = error.durable_evidence();
++        int exit_status = 1;
++        const char* summary =
++            "sqlite-wal replay ledger reset/receipt protocol failed before a durable transition was observed";
++        switch (durable_evidence) {
++            case persistence::
++                SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable:
++                break;
++            case persistence::
++                SqliteReplayLedgerResetReceiptDurableEvidence::
++                    ExactRequestDurable:
++                summary =
++                    "sqlite-wal replay ledger reset is bound to the exact request but receipt finalization failed; rerun the exact digest-pinned request with a fresh absent receipt path";
++                exit_status = 3;
++                break;
++            case persistence::
++                SqliteReplayLedgerResetReceiptDurableEvidence::
++                    DurableIdentityIndeterminate:
++                summary =
++                    "sqlite-wal replay ledger reset crossed a durable frontier but the current ledger identity is not bound to the exact request; do not replay until durable identity is independently resolved";
++                exit_status = 4;
++                break;
++        }
+         std::cerr
+-            << (durable
+-                    ? "sqlite-wal replay ledger reset is durable but receipt protocol finalization failed; rerun the exact digest-pinned request with a fresh absent receipt path to recover the receipt"
+-                    : "sqlite-wal replay ledger reset/receipt protocol failed before a durable transition was observed")
++            << summary
+             << " failure="
+             << persistence::
+                    sqlite_replay_ledger_reset_receipt_protocol_failure_name(
+                        error.failure())
++            << " durable_evidence="
++            << persistence::
++                   sqlite_replay_ledger_reset_receipt_durable_evidence_name(
++                       durable_evidence)
+             << " recovery="
+             << persistence::
+                    sqlite_replay_ledger_reset_receipt_recovery_action_name(
+                        error.recovery_action());
++        if (error.reported_reset_outcome().has_value()) {
++            std::cerr << " reported_reset_outcome="
++                      << (*error.reported_reset_outcome() ==
++                                  persistence::SqliteReplayLedgerResetOutcome::
++                                      Committed
++                              ? "committed"
++                              : "already_committed");
++        }
+         if (!error.expected_reset_receipt_sha256().empty()) {
+             std::cerr << " expected_receipt_sha256="
+                       << error.expected_reset_receipt_sha256();
+@@ -2151,7 +2184,7 @@ int run_sqlite_replay_ledger_reset_command(
+                        error.publication_effect()->residue);
+         }
+         std::cerr << ": " << error.what() << "\n";
+-        return durable ? 3 : 1;
++        return exit_status;
+     } catch (const std::exception& error) {
+         std::cerr << "sqlite-wal replay ledger reset failed: " << error.what()
+                   << "\n";
+diff --git a/tests/persistence/sqlite_replay_ledger_reset_crash_frontier_test.cpp b/tests/persistence/sqlite_replay_ledger_reset_crash_frontier_test.cpp
+index 69493ef..c3e9a8e 100644
+--- a/tests/persistence/sqlite_replay_ledger_reset_crash_frontier_test.cpp
++++ b/tests/persistence/sqlite_replay_ledger_reset_crash_frontier_test.cpp
+@@ -40,11 +40,13 @@ using anonsync::persistence::SqliteReplayLedgerResetCutpoint;
+ using anonsync::persistence::SqliteReplayLedgerResetOutcome;
+ using anonsync::persistence::SqliteReplayLedgerResetObserver;
+ using anonsync::persistence::SqliteReplayLedgerResetReceiptProtocolError;
++using anonsync::persistence::SqliteReplayLedgerResetReceiptDurableEvidence;
+ using anonsync::persistence::SqliteReplayLedgerResetReceiptProtocolFailure;
+ using anonsync::persistence::SqliteReplayLedgerResetReceiptProtocolResult;
+ using anonsync::persistence::SqliteReplayLedgerResetReceiptPublicationEffect;
+ using anonsync::persistence::SqliteReplayLedgerResetReceiptRecoveryAction;
+ using anonsync::persistence::SqliteReplayLedgerResetRequest;
++using anonsync::persistence::SqliteReplayLedgerResetResult;
+ using anonsync::persistence::SqliteReplayLedgerResetState;
+ using anonsync::persistence::execute_sqlite_replay_ledger_reset_receipt_protocol_or_throw;
+ using anonsync::persistence::inspect_sqlite_replay_ledger_reset_state;
+@@ -381,18 +383,23 @@ struct ProtocolFailure final {
+         SqliteReplayLedgerResetReceiptProtocolFailure::Preparation};
+     SqliteReplayLedgerResetReceiptRecoveryAction recovery_action{
+         SqliteReplayLedgerResetReceiptRecoveryAction::None};
+-    std::optional<SqliteReplayLedgerResetOutcome> reset_outcome;
++    std::optional<SqliteReplayLedgerResetOutcome> reported_reset_outcome;
+     std::optional<SqliteReplayLedgerResetReceiptPublicationEffect>
+         publication_effect;
+     std::string expected_receipt_sha256;
+-    bool durable_reset_observed = false;
++    SqliteReplayLedgerResetReceiptDurableEvidence durable_evidence{
++        SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable};
+     std::string exception_chain;
+ };
+ 
+-[[nodiscard]] ProtocolFailure execute_protocol_and_capture(
++[[nodiscard]] ProtocolFailure
++execute_protocol_with_result_binding_observer_and_capture(
+     const ProtocolFixture& fixture,
+     SqliteReplayLedgerResetObserver reset_observer,
+     void* reset_observer_context,
++    anonsync::persistence::detail::
++        SqliteReplayLedgerResetResultBindingObserver result_binding_observer,
++    void* result_binding_observer_context,
+     publication::AtomicFilePublicationObserver publication_observer,
+     void* publication_observer_context) {
+     ProtocolFailure failure;
+@@ -400,22 +407,34 @@ struct ProtocolFailure final {
+         (void)SqliteReplayLedgerResetReceiptProtocolObserverAccess::
+             execute_or_throw(
+                 fixture.request, fixture.request_sha256, fixture.receipt,
+-                reset_observer, reset_observer_context, publication_observer,
+-                publication_observer_context);
++                reset_observer, reset_observer_context,
++                result_binding_observer, result_binding_observer_context,
++                publication_observer, publication_observer_context);
+     } catch (const SqliteReplayLedgerResetReceiptProtocolError& error) {
+         failure.caught = true;
+         failure.failure = error.failure();
+         failure.recovery_action = error.recovery_action();
+-        failure.reset_outcome = error.reset_outcome();
++        failure.reported_reset_outcome = error.reported_reset_outcome();
+         failure.publication_effect = error.publication_effect();
+         failure.expected_receipt_sha256 =
+             error.expected_reset_receipt_sha256();
+-        failure.durable_reset_observed = error.durable_reset_observed();
++        failure.durable_evidence = error.durable_evidence();
+         append_exception_chain(error, failure.exception_chain);
+     }
+     return failure;
+ }
+ 
++[[nodiscard]] ProtocolFailure execute_protocol_and_capture(
++    const ProtocolFixture& fixture,
++    SqliteReplayLedgerResetObserver reset_observer,
++    void* reset_observer_context,
++    publication::AtomicFilePublicationObserver publication_observer,
++    void* publication_observer_context) {
++    return execute_protocol_with_result_binding_observer_and_capture(
++        fixture, reset_observer, reset_observer_context, nullptr, nullptr,
++        publication_observer, publication_observer_context);
++}
++
+ void recover_receipt_to_fresh_path(ProtocolFixture& fixture,
+                                    const std::string& label,
+                                    std::uint64_t& checks) {
+@@ -450,7 +469,8 @@ void test_reset_crash_frontier(const fs::path& root, std::uint64_t& checks) {
+             (void)SqliteReplayLedgerResetReceiptProtocolObserverAccess::
+                 execute_or_throw(
+                     fixture.request, fixture.request_sha256, fixture.receipt,
+-                    crash_at_durable_reset_frontier, nullptr, nullptr, nullptr);
++                    crash_at_durable_reset_frontier, nullptr, nullptr, nullptr,
++                    nullptr, nullptr);
+             ::_exit(kUnexpectedChildReturn);
+         } catch (...) {
+             ::_exit(kUnexpectedChildException);
+@@ -494,7 +514,7 @@ void test_publication_process_crash_frontiers(const fs::path& root,
+                 (void)SqliteReplayLedgerResetReceiptProtocolObserverAccess::
+                     execute_or_throw(
+                         fixture.request, fixture.request_sha256,
+-                        fixture.receipt, nullptr, nullptr,
++                        fixture.receipt, nullptr, nullptr, nullptr, nullptr,
+                         crash_at_publication_frontier, &context);
+                 ::_exit(kUnexpectedChildReturn);
+             } catch (...) {
+@@ -576,14 +596,14 @@ void test_protocol_caught_failure_frontiers(const fs::path& root,
+                 label + " did not propagate a typed protocol error", checks);
+         require(failure.failure ==
+                     SqliteReplayLedgerResetReceiptProtocolFailure::
+-                        ReceiptPublicationAfterDurableOutcome,
++                        ReceiptPublicationAfterExactDurableOutcome,
+                 label + " lost the cross-resource failure phase", checks);
+         require(failure.recovery_action ==
+                     SqliteReplayLedgerResetReceiptRecoveryAction::
+                         ReplayExactRequestToFreshReceiptPath,
+                 label + " did not preserve exact replay authority", checks);
+-        require(failure.reset_outcome.has_value() &&
+-                    *failure.reset_outcome ==
++        require(failure.reported_reset_outcome.has_value() &&
++                    *failure.reported_reset_outcome ==
+                         SqliteReplayLedgerResetOutcome::Committed,
+                 label + " lost the durable reset outcome", checks);
+         require(failure.expected_receipt_sha256 == fixture.receipt_sha256,
+@@ -602,7 +622,9 @@ void test_protocol_caught_failure_frontiers(const fs::path& root,
+                     context.residue == failure.publication_effect->residue,
+                 label + " changed effect evidence while wrapping the failure",
+                 checks);
+-        require(failure.durable_reset_observed &&
++        require(failure.durable_evidence ==
++                    SqliteReplayLedgerResetReceiptDurableEvidence::
++                        ExactRequestDurable &&
+                     failure.exception_chain.find(
+                         "injected prepared-publication frontier failure") !=
+                         std::string::npos,
+@@ -672,8 +694,9 @@ void test_protocol_preparation_denial(const fs::path& root,
+                     SqliteReplayLedgerResetReceiptProtocolFailure::Preparation &&
+                 failure.recovery_action ==
+                     SqliteReplayLedgerResetReceiptRecoveryAction::None &&
+-                !failure.durable_reset_observed &&
+-                !failure.reset_outcome.has_value() &&
++                failure.durable_evidence ==
++                    SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable &&
++                !failure.reported_reset_outcome.has_value() &&
+                 !failure.publication_effect.has_value(),
+             "occupied receipt was not a typed pre-reset preparation denial",
+             checks);
+@@ -719,8 +742,9 @@ void test_protocol_reset_precondition_denial(const fs::path& root,
+                         ResetBeforeDurableOutcome &&
+                 failure.recovery_action ==
+                     SqliteReplayLedgerResetReceiptRecoveryAction::None &&
+-                !failure.durable_reset_observed &&
+-                !failure.reset_outcome.has_value() &&
++                failure.durable_evidence ==
++                    SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable &&
++                !failure.reported_reset_outcome.has_value() &&
+                 !failure.publication_effect.has_value(),
+             "stale request was not a typed pre-durable reset denial", checks);
+     require(failure.expected_receipt_sha256 == fixture.receipt_sha256,
+@@ -757,13 +781,15 @@ void test_protocol_postcommit_failure(const fs::path& root,
+     require(failure.caught &&
+                 failure.failure ==
+                     SqliteReplayLedgerResetReceiptProtocolFailure::
+-                        ResetAfterDurableOutcome &&
++                        ResetAfterExactDurableOutcome &&
+                 failure.recovery_action ==
+                     SqliteReplayLedgerResetReceiptRecoveryAction::
+                         ReplayExactRequestToFreshReceiptPath &&
+-                failure.durable_reset_observed &&
+-                failure.reset_outcome.has_value() &&
+-                *failure.reset_outcome ==
++                failure.durable_evidence ==
++                    SqliteReplayLedgerResetReceiptDurableEvidence::
++                        ExactRequestDurable &&
++                failure.reported_reset_outcome.has_value() &&
++                *failure.reported_reset_outcome ==
+                     SqliteReplayLedgerResetOutcome::Committed &&
+                 !failure.publication_effect.has_value(),
+             "postcommit reset failure lost typed recovery authority", checks);
+@@ -783,6 +809,191 @@ void test_protocol_postcommit_failure(const fs::path& root,
+         fixture, "protocol postcommit failure", checks);
+ }
+ 
++void corrupt_returned_reason_digest(
++    SqliteReplayLedgerResetResult& result,
++    void*) {
++    result.reason_sha256 =
++        sha256_hex("contradictory returned reset result reason");
++}
++
++void test_result_binding_contradiction_promotes_only_after_reopen(
++    const fs::path& root,
++    std::uint64_t& checks) {
++    ProtocolFixture fixture =
++        make_protocol_fixture(root, "result-binding-reopen-promotion");
++    const ProtocolFailure failure =
++        execute_protocol_with_result_binding_observer_and_capture(
++            fixture, nullptr, nullptr, corrupt_returned_reason_digest, nullptr,
++            nullptr, nullptr);
++    require(
++        failure.caught &&
++            failure.failure ==
++                SqliteReplayLedgerResetReceiptProtocolFailure::
++                    ResetAfterExactDurableOutcome &&
++            failure.durable_evidence ==
++                SqliteReplayLedgerResetReceiptDurableEvidence::
++                    ExactRequestDurable &&
++            failure.recovery_action ==
++                SqliteReplayLedgerResetReceiptRecoveryAction::
++                    ReplayExactRequestToFreshReceiptPath &&
++            failure.reported_reset_outcome.has_value() &&
++            *failure.reported_reset_outcome ==
++                SqliteReplayLedgerResetOutcome::Committed &&
++            !failure.publication_effect.has_value(),
++        "contradictory returned result was not promoted only after exact independent reopen",
++        checks);
++    require(
++        failure.exception_chain.find(
++            "reset result reason digest is not bound to the protocol request") !=
++            std::string::npos &&
++            failure.exception_chain.find(
++                "independent reopen bound the current SQLite namespace") !=
++                std::string::npos,
++        "result-binding promotion lost its contradiction or independent-reopen evidence",
++        checks);
++    require(!fs::exists(fixture.receipt) &&
++                publication_temps(fixture.receipt_directory).empty(),
++            "result-binding contradiction attempted receipt publication", checks);
++    verify_empty_reset_state(
++        inspect_sqlite_replay_ledger_reset_state(fixture.ledger),
++        fixture.receipt_sha256, "result-binding reopen promotion", checks);
++    recover_receipt_to_fresh_path(
++        fixture, "result-binding reopen promotion", checks);
++}
++
++struct IdentityReplacementContext final {
++    fs::path ledger;
++    std::string replacement_identity;
++    bool replaced = false;
++};
++
++void contradict_returned_result_and_replace_durable_identity(
++    SqliteReplayLedgerResetResult& result,
++    void* raw_context) {
++    auto& context = *static_cast<IdentityReplacementContext*>(raw_context);
++    result.reason_sha256 =
++        sha256_hex("contradictory result while durable identity advances");
++    reset_fixture::Database database(context.ledger, SQLITE_OPEN_READWRITE);
++    database.exec(
++        "UPDATE ledger_identity SET ledger_instance_id='" +
++        context.replacement_identity + "' WHERE id=1;");
++    context.replaced = true;
++}
++
++void test_result_binding_indeterminate_blocks_replay_authority(
++    const fs::path& root,
++    std::uint64_t& checks) {
++    ProtocolFixture fixture = make_protocol_fixture(
++        root, "result-binding-identity-indeterminate");
++    IdentityReplacementContext context{
++        fixture.ledger,
++        sha256_hex("different identity after a contradictory returned result")};
++    const ProtocolFailure failure =
++        execute_protocol_with_result_binding_observer_and_capture(
++            fixture, nullptr, nullptr,
++            contradict_returned_result_and_replace_durable_identity, &context,
++            nullptr, nullptr);
++    require(
++        failure.caught && context.replaced &&
++            failure.failure ==
++                SqliteReplayLedgerResetReceiptProtocolFailure::
++                    ResetDurableIdentityIndeterminate &&
++            failure.durable_evidence ==
++                SqliteReplayLedgerResetReceiptDurableEvidence::
++                    DurableIdentityIndeterminate &&
++            failure.recovery_action ==
++                SqliteReplayLedgerResetReceiptRecoveryAction::
++                    ResolveDurableIdentityBeforeRecovery &&
++            failure.reported_reset_outcome.has_value() &&
++            *failure.reported_reset_outcome ==
++                SqliteReplayLedgerResetOutcome::Committed &&
++            !failure.publication_effect.has_value(),
++        "contradictory returned result incorrectly authorized replay after durable identity drift",
++        checks);
++    require(
++        failure.exception_chain.find(
++            "reset result reason digest is not bound to the protocol request") !=
++                std::string::npos &&
++            failure.exception_chain.find(context.replacement_identity) !=
++                std::string::npos,
++        "contradictory-result indeterminate classification lost its binding cause or reopened identity",
++        checks);
++    const SqliteReplayLedgerResetState observed =
++        inspect_sqlite_replay_ledger_reset_state(fixture.ledger);
++    require(observed.ledger_instance_id == context.replacement_identity,
++            "contradictory-result test did not retain the competing durable identity",
++            checks);
++    require(!fs::exists(fixture.receipt) &&
++                publication_temps(fixture.receipt_directory).empty(),
++            "contradictory-result indeterminate state attempted receipt publication",
++            checks);
++}
++
++void replace_durable_identity_before_postcommit_verification(
++    SqliteReplayLedgerResetCutpoint cutpoint,
++    void* raw_context) {
++    if (cutpoint != SqliteReplayLedgerResetCutpoint::
++                        DurableOutcomeObservedBeforePostcommitVerification) {
++        throw std::runtime_error(
++            "unexpected durable-identity replacement cutpoint");
++    }
++    auto& context = *static_cast<IdentityReplacementContext*>(raw_context);
++    reset_fixture::Database database(context.ledger, SQLITE_OPEN_READWRITE);
++    database.exec(
++        "UPDATE ledger_identity SET ledger_instance_id='" +
++        context.replacement_identity + "' WHERE id=1;");
++    context.replaced = true;
++}
++
++void test_durable_identity_indeterminate_blocks_replay_authority(
++    const fs::path& root,
++    std::uint64_t& checks) {
++    ProtocolFixture fixture =
++        make_protocol_fixture(root, "durable-identity-indeterminate");
++    IdentityReplacementContext context{
++        fixture.ledger,
++        sha256_hex("different durable identity after reset commit")};
++    const ProtocolFailure failure = execute_protocol_and_capture(
++        fixture, replace_durable_identity_before_postcommit_verification,
++        &context, nullptr, nullptr);
++    require(
++        failure.caught && context.replaced &&
++            failure.failure ==
++                SqliteReplayLedgerResetReceiptProtocolFailure::
++                    ResetDurableIdentityIndeterminate &&
++            failure.durable_evidence ==
++                SqliteReplayLedgerResetReceiptDurableEvidence::
++                    DurableIdentityIndeterminate &&
++            failure.recovery_action ==
++                SqliteReplayLedgerResetReceiptRecoveryAction::
++                    ResolveDurableIdentityBeforeRecovery &&
++            failure.reported_reset_outcome.has_value() &&
++            *failure.reported_reset_outcome ==
++                SqliteReplayLedgerResetOutcome::Committed &&
++            !failure.publication_effect.has_value(),
++        "changed postcommit identity incorrectly retained automatic replay authority",
++        checks);
++    require(
++        failure.exception_chain.find(
++            "durable receipt identity") != std::string::npos ||
++            failure.exception_chain.find(
++                "committed postcondition is incomplete") != std::string::npos,
++        "indeterminate durable identity lost the reset postcommit cause", checks);
++    require(
++        failure.exception_chain.find(context.replacement_identity) !=
++            std::string::npos,
++        "indeterminate durable identity did not report the independently reopened identity",
++        checks);
++    const SqliteReplayLedgerResetState observed =
++        inspect_sqlite_replay_ledger_reset_state(fixture.ledger);
++    require(observed.ledger_instance_id == context.replacement_identity,
++            "indeterminate test did not retain the competing durable identity",
++            checks);
++    require(!fs::exists(fixture.receipt) &&
++                publication_temps(fixture.receipt_directory).empty(),
++            "indeterminate durable identity attempted receipt publication", checks);
++}
++
+ struct RebindContext final {
+     fs::path live_parent;
+     fs::path parked_parent;
+@@ -814,12 +1025,12 @@ void test_parent_rebind_after_durable_reset(const fs::path& root,
+     require(failure.caught &&
+                 failure.failure ==
+                     SqliteReplayLedgerResetReceiptProtocolFailure::
+-                        ReceiptPublicationAfterDurableOutcome &&
++                        ReceiptPublicationAfterExactDurableOutcome &&
+                 failure.recovery_action ==
+                     SqliteReplayLedgerResetReceiptRecoveryAction::
+                         ReplayExactRequestToFreshReceiptPath &&
+-                failure.reset_outcome.has_value() &&
+-                *failure.reset_outcome ==
++                failure.reported_reset_outcome.has_value() &&
++                *failure.reported_reset_outcome ==
+                     SqliteReplayLedgerResetOutcome::Committed &&
+                 failure.publication_effect.has_value() &&
+                 failure.publication_effect->outcome ==
+@@ -873,12 +1084,12 @@ void test_competing_final_after_durable_reset(const fs::path& root,
+     require(failure.caught &&
+                 failure.failure ==
+                     SqliteReplayLedgerResetReceiptProtocolFailure::
+-                        ReceiptPublicationAfterDurableOutcome &&
++                        ReceiptPublicationAfterExactDurableOutcome &&
+                 failure.recovery_action ==
+                     SqliteReplayLedgerResetReceiptRecoveryAction::
+                         ReplayExactRequestToFreshReceiptPath &&
+-                failure.reset_outcome.has_value() &&
+-                *failure.reset_outcome ==
++                failure.reported_reset_outcome.has_value() &&
++                *failure.reported_reset_outcome ==
+                     SqliteReplayLedgerResetOutcome::Committed &&
+                 failure.publication_effect.has_value() &&
+                 failure.publication_effect->outcome ==
+@@ -915,6 +1126,12 @@ int main() {
+         test_protocol_preparation_denial(temporary.path(), checks);
+         test_protocol_reset_precondition_denial(temporary.path(), checks);
+         test_protocol_postcommit_failure(temporary.path(), checks);
++        test_result_binding_contradiction_promotes_only_after_reopen(
++            temporary.path(), checks);
++        test_result_binding_indeterminate_blocks_replay_authority(
++            temporary.path(), checks);
++        test_durable_identity_indeterminate_blocks_replay_authority(
++            temporary.path(), checks);
+         test_reset_crash_frontier(temporary.path(), checks);
+         test_publication_process_crash_frontiers(temporary.path(), checks);
+         test_protocol_caught_failure_frontiers(temporary.path(), checks);
+diff --git a/tools/audit_sqlite_replay_ledger_reset.py b/tools/audit_sqlite_replay_ledger_reset.py
+index bc5f69c..327648d 100755
+--- a/tools/audit_sqlite_replay_ledger_reset.py
++++ b/tools/audit_sqlite_replay_ledger_reset.py
+@@ -772,7 +772,8 @@ def main() -> int:
+         and "reset_sqlite_replay_ledger(" not in reset_command
+         and "durable_transition_observed" not in reset_command
+         and "SqliteReplayLedgerResetReceiptProtocolError" in reset_command
+-        and "error.durable_reset_observed()" in reset_command
++        and "error.durable_evidence()" in reset_command
++        and "error.reported_reset_outcome()" in reset_command
+         and "class SyncPreparedImmutableJsonPublication final" in publication_hpp
+         and "parent rebind is denied against retained directory authority"
+             in prepared_publication_test
+@@ -787,9 +788,13 @@ def main() -> int:
+     require(
+         checks,
+         protocol_catch >= 0
+-        and "rerun the exact digest-pinned request with a fresh absent receipt path to recover the receipt"
++        and "rerun the exact digest-pinned request with a fresh absent receipt path"
+             in runner[protocol_catch:]
+-        and "return durable ? 3 : 1;" in runner[protocol_catch:]
++        and "do not replay until durable identity is independently resolved"
++            in runner[protocol_catch:]
++        and "exit_status = 3;" in runner[protocol_catch:]
++        and "exit_status = 4;" in runner[protocol_catch:]
++        and "return exit_status;" in runner[protocol_catch:]
+         and "error.recovery_action()" in runner[protocol_catch:]
+         and "error.publication_effect().has_value()" in runner[protocol_catch:],
+         "cli_classifies_postcommit_verification_failure_as_recoverable",
+diff --git a/tools/audit_sqlite_replay_ledger_reset_crash_frontier.py b/tools/audit_sqlite_replay_ledger_reset_crash_frontier.py
+index 37749c9..e697838 100755
+--- a/tools/audit_sqlite_replay_ledger_reset_crash_frontier.py
++++ b/tools/audit_sqlite_replay_ledger_reset_crash_frontier.py
+@@ -295,7 +295,7 @@ def main() -> int:
+         all(token in caught_protocol for token in (
+             "kPreparedPosixPublicationCutpoints",
+             "execute_protocol_and_capture(",
+-            "ReceiptPublicationAfterDurableOutcome",
++            "ReceiptPublicationAfterExactDurableOutcome",
+             "ReplayExactRequestToFreshReceiptPath",
+             "expected_outcome_at(cutpoint)",
+             "expected_residue_at(cutpoint)",
+@@ -328,15 +328,21 @@ def main() -> int:
+             "test_protocol_preparation_denial",
+             "test_protocol_reset_precondition_denial",
+             "test_protocol_postcommit_failure",
++            "test_result_binding_contradiction_promotes_only_after_reopen",
++            "test_result_binding_indeterminate_blocks_replay_authority",
++            "test_durable_identity_indeterminate_blocks_replay_authority",
+             "SqliteReplayLedgerResetReceiptProtocolFailure::Preparation",
+             "ResetBeforeDurableOutcome",
+-            "ResetAfterDurableOutcome",
+-            "ReceiptPublicationAfterDurableOutcome",
++            "ResetAfterExactDurableOutcome",
++            "ReceiptPublicationAfterExactDurableOutcome",
++            "ResetDurableIdentityIndeterminate",
++            "DurableIdentityIndeterminate",
++            "ResolveDurableIdentityBeforeRecovery",
+             "preparation denial changed durable ledger state",
+             "pre-durable reset denial changed the mismatched ledger",
+         )),
+         "protocol_state_machine_has_complete_noncrash_oracle",
+-        "success and all four typed failure phases prove both positive evidence and absence of unauthorized side effects",
++        "success, exact-durable recovery, indeterminate durability, and all publication phases prove both positive evidence and absence of unauthorized side effects",
+     )
+ 
+     require(
+diff --git a/tools/audit_sqlite_replay_ledger_reset_receipt.py b/tools/audit_sqlite_replay_ledger_reset_receipt.py
+index db2dc32..8eb76dd 100755
+--- a/tools/audit_sqlite_replay_ledger_reset_receipt.py
++++ b/tools/audit_sqlite_replay_ledger_reset_receipt.py
+@@ -314,9 +314,11 @@ def main() -> int:
+     require(
+         checks,
+         "SqliteReplayLedgerResetReceiptProtocolError& error" in reset_command
+-        and "error.durable_reset_observed()" in reset_command
+-        and "return durable ? 3 : 1;" in reset_command
+-        and "ReceiptPublicationAfterDurableOutcome" in protocol
++        and "error.durable_evidence()" in reset_command
++        and "return exit_status;" in reset_command
++        and "exit_status = 3;" in reset_command
++        and "exit_status = 4;" in reset_command
++        and "ReceiptPublicationAfterExactDurableOutcome" in protocol
+         and "ReplayExactRequestToFreshReceiptPath" in protocol
+         and "lost the nested publication cause" in frontier_test,
+         "postcommit_publication_denial_is_typed_for_recovery",
+diff --git a/tools/audit_sqlite_replay_ledger_reset_receipt_protocol.py b/tools/audit_sqlite_replay_ledger_reset_receipt_protocol.py
+index 50038d4..443433f 100755
+--- a/tools/audit_sqlite_replay_ledger_reset_receipt_protocol.py
++++ b/tools/audit_sqlite_replay_ledger_reset_receipt_protocol.py
+@@ -123,6 +123,11 @@ def main() -> int:
+             "SqliteReplayLedgerResetReceiptProtocolObserverAccess::execute_or_throw("
+         ) :
+     ]
++    durable_classifier = between(
++        protocol_cpp,
++        "[[noreturn]] void rethrow_after_durable_reset_frontier_as_protocol_error(",
++        "\n}\n\n}  // namespace",
++    )
+     protocol_link = between(
+         protocol_target,
+         "target_link_libraries(",
+@@ -132,13 +137,21 @@ def main() -> int:
+     require(
+         checks,
+         all(token in protocol_hpp for token in (
++            "enum class SqliteReplayLedgerResetReceiptDurableEvidence",
++            "NotDurable",
++            "ExactRequestDurable",
++            "DurableIdentityIndeterminate",
+             "enum class SqliteReplayLedgerResetReceiptProtocolFailure",
+             "Preparation",
+             "ResetBeforeDurableOutcome",
+-            "ResetAfterDurableOutcome",
+-            "ReceiptPublicationAfterDurableOutcome",
++            "ResetAfterExactDurableOutcome",
++            "ResetDurableIdentityIndeterminate",
++            "ReceiptPublicationAfterExactDurableOutcome",
+             "enum class SqliteReplayLedgerResetReceiptRecoveryAction",
++            "ResolveDurableIdentityBeforeRecovery",
+             "ReplayExactRequestToFreshReceiptPath",
++            "durable_evidence() const noexcept",
++            "reported_reset_outcome() const noexcept",
+             "SqliteReplayLedgerResetReceiptProtocolResult",
+             "SqliteReplayLedgerResetReceiptProtocolError",
+         )),
+@@ -172,15 +185,77 @@ def main() -> int:
+     require(
+         checks,
+         all(token in protocol_cpp for token in (
+-            "durable_failure != replay_authorized",
+-            "durable_failure != reset_outcome_.has_value()",
+-            "publication_effect_.has_value()",
+-            "expected_reset_receipt_sha256_.empty()",
++            "evidence_matches_phase",
++            "recovery_matches_evidence",
++            "outcome_matches_evidence",
++            "publication_matches_phase",
++            "expected_identity_valid",
++            "reported_reset_outcome_.has_value() == !before_durable",
+             "invalid sqlite reset/receipt protocol error evidence",
+         )),
+         "error_constructor_rejects_inconsistent_evidence",
+         "phase, durable outcome, recovery action, receipt identity, and publication effect cannot disagree",
+     )
++    require(
++        checks,
++        "durable_reset_observed" not in protocol_hpp
++        and "durable_reset_observed" not in protocol_cpp
++        and "durable_reset_observed" not in reset_command
++        and "durable_evidence() const noexcept" in protocol_hpp
++        and "reported_reset_outcome() const noexcept" in protocol_hpp,
++        "tri_state_evidence_replaces_boolean_authority",
++        "callers cannot collapse not-durable, exact-request-durable, and indeterminate identity into one Boolean retry decision",
++    )
++    require(
++        checks,
++        all(token in protocol_cpp for token in (
++            "inspect_exact_request_durable_evidence(",
++            "inspect_sqlite_replay_ledger_reset_state(request.ledger_path)",
++            "observed.normalized_ledger_path !=",
++            "observed.namespace_identity ==",
++            "observed.ledger_instance_id != expected_receipt",
++            "independent reopen bound the current SQLite namespace",
++        )),
++        "independent_reopen_binds_path_namespace_and_identity",
++        "promotion to exact replay authority requires a fresh reset-state inspection bound to the request path, original SQLite object, and expected receipt identity",
++    )
++    require(
++        checks,
++        protocol_cpp.count(
++            "rethrow_after_durable_reset_frontier_as_protocol_error(") >= 3
++        and "catch (const SqliteReplayLedgerResetDurableOutcomeError& error)" in execute_owner
++        and "verify_reset_result_binding_or_throw(request, expected_receipt" in execute_owner
++        and execute_owner.count(
++            "rethrow_after_durable_reset_frontier_as_protocol_error(") >= 2
++        and "ResetDurableIdentityIndeterminate" in protocol_cpp
++        and "ResolveDurableIdentityBeforeRecovery" in protocol_cpp,
++        "durable_error_and_binding_contradiction_share_reopen_classifier",
++        "both postcommit exceptions and contradictory returned evidence pass through the same independent inspection before recovery authority is minted",
++    )
++    require(
++        checks,
++        all(token in frontier_test for token in (
++            "corrupt_returned_reason_digest",
++            "contradict_returned_result_and_replace_durable_identity",
++            "test_result_binding_indeterminate_blocks_replay_authority",
++            "replace_durable_identity_before_postcommit_verification",
++            "different durable identity after reset commit",
++            "incorrectly authorized replay after durable identity drift",
++            "incorrectly retained automatic replay authority",
++            "contradictory returned result was not promoted only after exact independent reopen",
++        )),
++        "runtime_oracle_executes_exact_and_indeterminate_promotions",
++        "behavioral tests mutate returned evidence and the durable ledger identity, proving exact promotion and replay denial rather than only checking enum spellings",
++    )
++    require(
++        checks,
++        "do not replay until durable identity is independently resolved" in reset_command
++        and "durable_evidence=" in reset_command
++        and "exit_status = 4;" in reset_command,
++        "cli_separates_indeterminate_from_exact_durable_failure",
++        "automation receives a distinct non-replay exit status and explicit durable-evidence classification",
++    )
++
+     require(
+         checks,
+         "expected_reset_receipt_sha256()" in protocol_hpp
+@@ -236,21 +311,29 @@ def main() -> int:
+         all(token in execute_owner for token in (
+             "SqliteReplayLedgerResetReceiptProtocolFailure::Preparation",
+             "ResetBeforeDurableOutcome",
+-            "ResetAfterDurableOutcome",
+-            "ReceiptPublicationAfterDurableOutcome",
++            "ReceiptPublicationAfterExactDurableOutcome",
++            "SqliteReplayLedgerResetReceiptDurableEvidence::NotDurable",
++            "ExactRequestDurable",
+             "SqliteReplayLedgerResetReceiptRecoveryAction::None",
+-            "SqliteReplayLedgerResetReceiptRecoveryAction::",
++            "ReplayExactRequestToFreshReceiptPath",
++        ))
++        and all(token in durable_classifier for token in (
++            "ResetAfterExactDurableOutcome",
++            "ResetDurableIdentityIndeterminate",
++            "ExactRequestDurable",
++            "DurableIdentityIndeterminate",
++            "ResolveDurableIdentityBeforeRecovery",
+             "ReplayExactRequestToFreshReceiptPath",
+         )),
+         "every_failure_frontier_has_explicit_recovery_authority",
+-        "pre-durable failures authorize no recovery effect while every observed durable reset authorizes only exact replay to a fresh absent receipt name",
++        "pre-durable failures authorize no effect, exact independently rebound outcomes authorize only fresh-path replay, and indeterminate identities authorize resolution rather than replay",
+     )
+     require(
+         checks,
+         "catch (const SyncAtomicFilePublicationError& error)" in execute_owner
+         and "error.outcome()" in execute_owner
+         and "error.residue()" in execute_owner
+-        and "ReceiptPublicationAfterDurableOutcome" in execute_owner,
++        and "ReceiptPublicationAfterExactDurableOutcome" in execute_owner,
+         "publication_effect_is_preserved_through_protocol_wrapping",
+         "the owner does not collapse not-published, durability-indeterminate, synced, or residue classifications into one textual failure",
+     )
+@@ -290,10 +373,13 @@ def main() -> int:
+     require(
+         checks,
+         "SqliteReplayLedgerResetReceiptProtocolError& error" in reset_command
+-        and "error.durable_reset_observed()" in reset_command
++        and "error.durable_evidence()" in reset_command
++        and "error.reported_reset_outcome()" in reset_command
+         and "error.recovery_action()" in reset_command
+         and "error.publication_effect().has_value()" in reset_command
+-        and "return durable ? 3 : 1;" in reset_command,
++        and "exit_status = 3;" in reset_command
++        and "exit_status = 4;" in reset_command
++        and "return exit_status;" in reset_command,
+         "cli_consumes_typed_recovery_evidence",
+         "exit status and diagnostics are derived from the protocol error rather than inferred from which local statement completed",
+     )
+@@ -355,14 +441,18 @@ def main() -> int:
+             "test_protocol_preparation_denial",
+             "test_protocol_reset_precondition_denial",
+             "test_protocol_postcommit_failure",
++            "test_result_binding_contradiction_promotes_only_after_reopen",
++            "test_result_binding_indeterminate_blocks_replay_authority",
++            "test_durable_identity_indeterminate_blocks_replay_authority",
+             "test_protocol_caught_failure_frontiers",
+             "SqliteReplayLedgerResetReceiptProtocolFailure::Preparation",
+             "ResetBeforeDurableOutcome",
+-            "ResetAfterDurableOutcome",
+-            "ReceiptPublicationAfterDurableOutcome",
++            "ResetAfterExactDurableOutcome",
++            "ResetDurableIdentityIndeterminate",
++            "ReceiptPublicationAfterExactDurableOutcome",
+         )),
+-        "runtime_oracle_covers_success_and_all_four_failure_phases",
+-        "the protocol proof includes first success, occupied-name preparation denial, stale-state denial, postcommit reset failure, and every publication cutpoint",
++        "runtime_oracle_covers_success_and_all_five_failure_phases",
++        "the protocol proof includes success, pre-durable denials, exact postcommit recovery, indeterminate identity denial, contradictory-result promotion, and every publication cutpoint",
+     )
+     require(
+         checks,
+@@ -412,7 +502,7 @@ def main() -> int:
+             "protocol_orders_authority_evidence_effect_and_publication",
+             "cli_choreography_is_removed",
+             "nested_root_causes_are_runtime_proven",
+-            "runtime_oracle_covers_success_and_all_four_failure_phases",
++            "runtime_oracle_covers_success_and_all_five_failure_phases",
+         )),
+         "audit_is_substantive_and_self_describing",
+         "the source gate cannot pass merely because the new protocol files disappeared or were bypassed",

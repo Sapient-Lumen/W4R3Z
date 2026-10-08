@@ -1,0 +1,1151 @@
+--- a/src/sync_sqlite_owned_authorizer_policy.cpp
++++ b/src/sync_sqlite_owned_authorizer_policy.cpp
+@@ -18,24 +18,26 @@
+ 
+ SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(
+     SyncSqliteAuthorizerPolicy policy)
+-    : SyncSqliteOwnedAuthorizerPolicy(policy, {}) {}
+-
+-SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(
+-    SyncSqliteAuthorizerPolicy policy,
+-    std::shared_ptr<void> context_owner)
+     : process_id_(current_sync_process_incarnation_noexcept()),
+-      policy_(policy),
+-      context_owner_(std::move(context_owner)) {
+-    if (policy_ == nullptr) {
++      context_free_policy_(policy) {
++    if (context_free_policy_ == nullptr) {
+         throw std::invalid_argument("SQLite authorizer policy is null");
+     }
+     require_shape_noexcept();
+ }
+ 
++SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(
++    TypedFactoryTag,
++    std::unique_ptr<TypedPolicyCapsule> typed_policy_capsule) noexcept
++    : process_id_(current_sync_process_incarnation_noexcept()),
++      typed_policy_capsule_(std::move(typed_policy_capsule)) {
++    require_shape_noexcept();
++}
++
+ SyncSqliteOwnedAuthorizerPolicy::~SyncSqliteOwnedAuthorizerPolicy() {
+-    // Validate before context_owner_ reaches its implicit destructor.  A
+-    // foreign-process owner exits here, so no inherited shared_ptr reference
+-    // count or custom deleter is touched.
++    // Validate before typed_policy_capsule_ reaches its implicit destructor. A
++    // foreign-process owner exits here, so no inherited unique_ptr, virtual
++    // destructor, shared_ptr reference count, or custom deleter is touched.
+     require_current_process_noexcept();
+     require_shape_noexcept();
+ }
+@@ -43,13 +45,13 @@
+ SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(
+     SyncSqliteOwnedAuthorizerPolicy&& other) noexcept
+     : process_id_(current_sync_process_incarnation_noexcept()) {
+-    // Source-first validation is essential: do not even move the shared_ptr
+-    // out of an inherited owner before rejecting the capability.
++    // Source-first validation is essential: do not even move the capsule out of
++    // an inherited owner before rejecting the capability.
+     other.require_current_process_noexcept();
+     other.require_shape_noexcept();
+-    policy_ = other.policy_;
+-    context_owner_ = std::move(other.context_owner_);
+-    other.policy_ = nullptr;
++    context_free_policy_ = other.context_free_policy_;
++    typed_policy_capsule_ = std::move(other.typed_policy_capsule_);
++    other.context_free_policy_ = nullptr;
+     require_shape_noexcept();
+     other.require_shape_noexcept();
+ }
+@@ -57,7 +59,7 @@
+ bool SyncSqliteOwnedAuthorizerPolicy::valid() const noexcept {
+     require_current_process_noexcept();
+     require_shape_noexcept();
+-    return policy_ != nullptr;
++    return context_free_policy_ != nullptr || typed_policy_capsule_ != nullptr;
+ }
+ 
+ bool SyncSqliteOwnedAuthorizerPolicy::empty() const noexcept {
+@@ -67,7 +69,7 @@
+ bool SyncSqliteOwnedAuthorizerPolicy::owns_context() const noexcept {
+     require_current_process_noexcept();
+     require_shape_noexcept();
+-    return context_owner_ != nullptr;
++    return typed_policy_capsule_ != nullptr;
+ }
+ 
+ int SyncSqliteOwnedAuthorizerPolicy::invoke(
+@@ -78,15 +80,22 @@
+     const char* trigger_or_view) const {
+     require_current_process_noexcept();
+     require_shape_noexcept();
+-    if (policy_ == nullptr) {
++    if (typed_policy_capsule_ != nullptr) {
++        return typed_policy_capsule_->invoke(action,
++                                             argument1,
++                                             argument2,
++                                             database_name,
++                                             trigger_or_view);
++    }
++    if (context_free_policy_ == nullptr) {
+         throw std::logic_error("SQLite authorizer policy owner is empty");
+     }
+-    return policy_(context_owner_.get(),
+-                   action,
+-                   argument1,
+-                   argument2,
+-                   database_name,
+-                   trigger_or_view);
++    return context_free_policy_(nullptr,
++                                action,
++                                argument1,
++                                argument2,
++                                database_name,
++                                trigger_or_view);
+ }
+ 
+ void SyncSqliteOwnedAuthorizerPolicy::swap(
+@@ -98,8 +107,8 @@
+     if (this == &other) return;
+ 
+     using std::swap;
+-    swap(policy_, other.policy_);
+-    context_owner_.swap(other.context_owner_);
++    swap(context_free_policy_, other.context_free_policy_);
++    typed_policy_capsule_.swap(other.typed_policy_capsule_);
+     require_shape_noexcept();
+     other.require_shape_noexcept();
+ }
+@@ -113,7 +122,13 @@
+ }
+ 
+ void SyncSqliteOwnedAuthorizerPolicy::require_shape_noexcept() const noexcept {
+-    if (policy_ == nullptr && context_owner_ != nullptr) {
++    const bool empty = context_free_policy_ == nullptr &&
++                       typed_policy_capsule_ == nullptr;
++    const bool context_free = context_free_policy_ != nullptr &&
++                              typed_policy_capsule_ == nullptr;
++    const bool typed = context_free_policy_ == nullptr &&
++                       typed_policy_capsule_ != nullptr;
++    if (!empty && !context_free && !typed) {
+         fail_stop_on_authorizer_policy_lifetime_violation_noexcept();
+     }
+ }
+--- a/src/sync_sqlite_owned_authorizer_policy.hpp
++++ b/src/sync_sqlite_owned_authorizer_policy.hpp
+@@ -2,14 +2,19 @@
+ 
+ #include "sync_process_incarnation.hpp"
+ 
++#include <concepts>
++#include <functional>
+ #include <memory>
++#include <stdexcept>
++#include <type_traits>
++#include <utility>
+ 
+ namespace anonsync {
+ 
+-// Policy callback invoked by the owned SQLite authorizer bridge.  SQLite
+-// retains only the bridge and its stable connection-state context; arbitrary
+-// application policy state is retained separately by the process-bound owner
+-// below.
++// Context-free compatibility callback invoked by the owned SQLite authorizer
++// bridge. SQLite retains only the bridge and its stable connection-state
++// context; arbitrary application policy state is retained separately by the
++// process-bound owner below.
+ using SyncSqliteAuthorizerPolicy = int (*)(void*,
+                                            int,
+                                            const char*,
+@@ -17,28 +22,88 @@
+                                            const char*,
+                                            const char*);
+ 
++namespace detail {
++
++template <auto Policy>
++inline constexpr bool sync_sqlite_policy_value_is_supported = [] {
++    using PolicyType = std::remove_cv_t<decltype(Policy)>;
++    if constexpr (std::is_pointer_v<PolicyType>) {
++        return std::is_function_v<std::remove_pointer_t<PolicyType>> &&
++               Policy != nullptr;
++    }
++    if constexpr (std::is_class_v<PolicyType>) {
++        // Noncapturing lambdas and deliberately stateless structural adapters
++        // are empty class types. Reject compile-time state here rather than
++        // creating a second, less visible policy-context channel.
++        return std::is_empty_v<PolicyType>;
++    }
++    return false;
++}();
++
++// A typed authorizer adapter receives one exact Context reference, the SQLite
++// action code, and the four SQLite text arguments. Require an exact int result:
++// accidentally returning bool or another merely-convertible type would hide a
++// policy ABI mistake behind an implicit conversion. Const context is supported;
++// volatile and array context are deliberately rejected because their ownership
++// and invocation semantics are not part of this boundary contract.
++template <typename Context, auto Policy>
++concept SyncSqliteTypedAuthorizerPolicyFor =
++    std::is_object_v<Context> && !std::is_array_v<Context> &&
++    !std::is_volatile_v<Context> &&
++    sync_sqlite_policy_value_is_supported<Policy> &&
++    requires(Context& context,
++             int action,
++             const char* argument1,
++             const char* argument2,
++             const char* database_name,
++             const char* trigger_or_view) {
++        {
++            std::invoke(Policy,
++                        context,
++                        action,
++                        argument1,
++                        argument2,
++                        database_name,
++                        trigger_or_view)
++        } -> std::same_as<int>;
++    };
++
++}  // namespace detail
++
+ // Move-only process-local ownership for one authorizer policy and its optional
+-// type-erased context.  A nonempty context is held by shared ownership so a
+-// caller can deliberately share immutable or synchronized policy state, but
+-// the connection authority always owns one independent lifetime reference.
++// shared context. Context-bearing policies can be created only through the
++// constrained typed factory below: callback/context agreement is established at
++// compile time before a single type-erased capsule enters the non-templated
++// connection authority. The capsule owns both invocation behavior and the exact
++// shared_ptr<T>; there is no public or internal shared_ptr<void>/cast pairing.
++//
++// A nonempty context is held by shared ownership so a caller can deliberately
++// share immutable or synchronized policy state, but the connection authority
++// always owns one independent lifetime reference. Const context, aliasing
++// shared_ptr values, and custom deleters are supported. The exact stored pointer
++// and complete control block stay together inside one typed capsule through
++// movement, replacement, retirement, and destruction.
+ //
+ // The class is fork-sensitive: invoking, moving, swapping, inspecting, or
+ // destroying an instance inherited from another process fails stopped before
+-// its shared_ptr control block can be touched.  This protects the parent-side
+-// ownership protocol from copied post-fork teardown paths.
++// its capsule or shared_ptr control block can be touched. This protects the
++// parent-side ownership protocol from copied post-fork teardown paths. A new
++// owner binds to the process that constructs it; the factory cannot prove that
++// an arbitrary supplied shared_ptr control block was itself created in that
++// process, so callers must not re-wrap inherited shared ownership after fork.
+ //
+-// Custom context deleters are application code.  The connection-authority
+-// state machine therefore swaps retired policies into an ordinary C++ owner
+-// and releases them only after leaving SQLite's connection mutex and after
+-// revoking SQLite's retained authorizer callback.
++// Custom context deleters are application code. The connection-authority state
++// machine therefore swaps retired policies into an ordinary C++ owner and
++// releases them only after leaving SQLite's connection mutex and after revoking
++// SQLite's retained authorizer callback.
+ class SyncSqliteOwnedAuthorizerPolicy final {
+ public:
+     SyncSqliteOwnedAuthorizerPolicy() noexcept;
++
++    // Context-free compatibility lane. Non-null application context must use
++    // make_sync_sqlite_owned_authorizer_policy<Policy>(shared_ptr<T>).
+     explicit SyncSqliteOwnedAuthorizerPolicy(
+         SyncSqliteAuthorizerPolicy policy);
+-    SyncSqliteOwnedAuthorizerPolicy(
+-        SyncSqliteAuthorizerPolicy policy,
+-        std::shared_ptr<void> context_owner);
+     ~SyncSqliteOwnedAuthorizerPolicy();
+ 
+     SyncSqliteOwnedAuthorizerPolicy(
+@@ -60,18 +125,93 @@
+                const char* database_name,
+                const char* trigger_or_view) const;
+ 
+-    // Both participants must belong to the current process.  The process proof
++    // Both participants must belong to the current process. The process proof
+     // itself is not swapped: it describes each C++ owner object's provenance,
+     // while the callback and context move as one policy capability.
+     void swap(SyncSqliteOwnedAuthorizerPolicy& other) noexcept;
+ 
++    template <auto Policy, typename Context>
++        requires detail::SyncSqliteTypedAuthorizerPolicyFor<Context, Policy>
++    [[nodiscard]] static SyncSqliteOwnedAuthorizerPolicy from_shared(
++        std::shared_ptr<Context> context_owner) {
++        if (context_owner == nullptr) {
++            throw std::invalid_argument(
++                "typed SQLite authorizer policy requires a non-null shared context");
++        }
++        auto capsule =
++            std::make_unique<TypedPolicyCapsuleModel<Context, Policy>>(
++                std::move(context_owner));
++        return SyncSqliteOwnedAuthorizerPolicy(TypedFactoryTag{},
++                                                std::move(capsule));
++    }
++
+ private:
++    class TypedPolicyCapsule {
++    public:
++        TypedPolicyCapsule() = default;
++        virtual ~TypedPolicyCapsule() = default;
++        TypedPolicyCapsule(const TypedPolicyCapsule&) = delete;
++        TypedPolicyCapsule& operator=(const TypedPolicyCapsule&) = delete;
++
++        virtual int invoke(int action,
++                           const char* argument1,
++                           const char* argument2,
++                           const char* database_name,
++                           const char* trigger_or_view) const = 0;
++    };
++
++    template <typename Context, auto Policy>
++        requires detail::SyncSqliteTypedAuthorizerPolicyFor<Context, Policy>
++    class TypedPolicyCapsuleModel final : public TypedPolicyCapsule {
++    public:
++        explicit TypedPolicyCapsuleModel(
++            std::shared_ptr<Context> context_owner) noexcept
++            : context_owner_(std::move(context_owner)) {}
++
++        int invoke(int action,
++                   const char* argument1,
++                   const char* argument2,
++                   const char* database_name,
++                   const char* trigger_or_view) const override {
++            return std::invoke(Policy,
++                               *context_owner_,
++                               action,
++                               argument1,
++                               argument2,
++                               database_name,
++                               trigger_or_view);
++        }
++
++    private:
++        std::shared_ptr<Context> context_owner_;
++    };
++
++    struct TypedFactoryTag final {};
++
++    SyncSqliteOwnedAuthorizerPolicy(
++        TypedFactoryTag,
++        std::unique_ptr<TypedPolicyCapsule> typed_policy_capsule) noexcept;
++
+     void require_current_process_noexcept() const noexcept;
+     void require_shape_noexcept() const noexcept;
+ 
+     SyncProcessIncarnation process_id_;
+-    SyncSqliteAuthorizerPolicy policy_ = nullptr;
+-    std::shared_ptr<void> context_owner_;
++    SyncSqliteAuthorizerPolicy context_free_policy_ = nullptr;
++    std::unique_ptr<TypedPolicyCapsule> typed_policy_capsule_;
+ };
+ 
++// Public context-bearing construction edge. Policy may be a function pointer or
++// a C++20 structural noncapturing callable used as a non-type template argument.
++// Context is deduced from the shared_ptr, so a mismatched callback/context pair
++// is not a viable overload. The factory deliberately accepts shared_ptr<T> by
++// value to preserve aliasing pointers and custom control blocks exactly.
++template <auto Policy, typename Context>
++    requires detail::SyncSqliteTypedAuthorizerPolicyFor<Context, Policy>
++[[nodiscard]] SyncSqliteOwnedAuthorizerPolicy
++make_sync_sqlite_owned_authorizer_policy(
++    std::shared_ptr<Context> context_owner) {
++    return SyncSqliteOwnedAuthorizerPolicy::from_shared<Policy>(
++        std::move(context_owner));
++}
++
+ }  // namespace anonsync
+--- a/tests/sqlite_connection_authority_test.cpp
++++ b/tests/sqlite_connection_authority_test.cpp
+@@ -142,6 +142,15 @@
+     return SQLITE_OK;
+ }
+ 
++int raw_context_rejection_policy(void*,
++                                 int,
++                                 const char*,
++                                 const char*,
++                                 const char*,
++                                 const char*) noexcept {
++    return SQLITE_OK;
++}
++
+ int malformed_policy(void*,
+                      int,
+                      const char*,
+@@ -183,15 +192,13 @@
+     std::uint64_t calls = 0;
+ };
+ 
+-int owned_allow_policy(void* raw,
++int owned_allow_policy(OwnedPolicyState& state,
+                        int,
+                        const char*,
+                        const char*,
+                        const char*,
+                        const char*) noexcept {
+-    auto* const state = static_cast<OwnedPolicyState*>(raw);
+-    if (state == nullptr) return SQLITE_DENY;
+-    ++state->calls;
++    ++state.calls;
+     return SQLITE_OK;
+ }
+ 
+@@ -396,8 +403,8 @@
+     const SyncSqliteConnectionAuthorityProof first =
+         install_sync_sqlite_connection_authority_or_throw(
+             db.get(),
+-            SyncSqliteOwnedAuthorizerPolicy(
+-                owned_allow_policy, first_context),
++            make_sync_sqlite_owned_authorizer_policy<owned_allow_policy>(
++                first_context),
+             "owned policy first generation");
+     first_context.reset();
+     require(!first_lifetime.expired(),
+@@ -422,8 +429,8 @@
+     const SyncSqliteConnectionAuthorityProof second =
+         install_sync_sqlite_connection_authority_or_throw(
+             db.get(),
+-            SyncSqliteOwnedAuthorizerPolicy(
+-                owned_allow_policy, second_context),
++            make_sync_sqlite_owned_authorizer_policy<owned_allow_policy>(
++                second_context),
+             "owned policy replacement generation");
+     require(second.authorizer_generation() ==
+                 first.authorizer_generation() + 1,
+@@ -446,7 +453,7 @@
+         [&] {
+             (void)install_sync_sqlite_connection_authority_or_throw(
+                 db.get(),
+-                owned_allow_policy,
++                raw_context_rejection_policy,
+                 &raw_context,
+                 "raw policy context rejection");
+         },
+--- a/tests/sqlite_owned_authorizer_policy_test.cpp
++++ b/tests/sqlite_owned_authorizer_policy_test.cpp
+@@ -17,8 +17,10 @@
+ 
+ namespace {
+ 
++using anonsync::SyncSqliteAuthorizerPolicy;
+ using anonsync::SyncSqliteOwnedAuthorizerPolicy;
+ using anonsync::kSyncProcessCapabilityViolationExitCode;
++using anonsync::make_sync_sqlite_owned_authorizer_policy;
+ 
+ #if defined(__unix__) || defined(__APPLE__)
+ using anonsync::test::spawn_inherited_test_process_or_throw;
+@@ -29,20 +31,86 @@
+     std::uint64_t calls = 0;
+     int last_action = 0;
+     int decision = 0;
+-};
+-
+-int counting_policy(void* raw,
++
++    int member_policy(int,
++                      const char*,
++                      const char*,
++                      const char*,
++                      const char*) noexcept {
++        return decision;
++    }
++};
++
++struct WrongPolicyState final {
++    int decision = 0;
++};
++
++struct ReadOnlyPolicyState final {
++    int decision = 0;
++};
++
++int counting_policy(PolicyState& state,
+                     int action,
+                     const char*,
+                     const char*,
+                     const char*,
+                     const char*) noexcept {
+-    auto* const state = static_cast<PolicyState*>(raw);
+-    if (state == nullptr) return -1;
+-    ++state->calls;
+-    state->last_action = action;
+-    return state->decision;
+-}
++    ++state.calls;
++    state.last_action = action;
++    return state.decision;
++}
++
++bool wrong_result_policy(PolicyState&,
++                         int,
++                         const char*,
++                         const char*,
++                         const char*,
++                         const char*) noexcept {
++    return true;
++}
++
++int read_only_policy(const ReadOnlyPolicyState& state,
++                     int,
++                     const char*,
++                     const char*,
++                     const char*,
++                     const char*) noexcept {
++    return state.decision;
++}
++
++struct StatefulPolicyAdapter final {
++    int bias = 0;
++
++    int operator()(PolicyState& state,
++                   int action,
++                   const char*,
++                   const char*,
++                   const char*,
++                   const char*) const noexcept {
++        return state.decision + action + bias;
++    }
++};
++
++inline constexpr StatefulPolicyAdapter stateful_policy{7};
++inline constexpr auto member_policy = &PolicyState::member_policy;
++inline constexpr auto lambda_policy = [](PolicyState& state,
++                                         int action,
++                                         const char*,
++                                         const char*,
++                                         const char*,
++                                         const char*) noexcept -> int {
++    ++state.calls;
++    state.last_action = action;
++    return state.decision;
++};
++
++using TypedPolicyFunction = int (*)(PolicyState&,
++                                    int,
++                                    const char*,
++                                    const char*,
++                                    const char*,
++                                    const char*);
++inline constexpr TypedPolicyFunction null_typed_policy = nullptr;
+ 
+ int contextless_policy(void* raw,
+                        int action,
+@@ -52,6 +120,37 @@
+                        const char*) noexcept {
+     return raw == nullptr ? action + 1 : -1;
+ }
++
++template <typename Context>
++concept CanMakeCountingPolicy = requires(std::shared_ptr<Context> context) {
++    {
++        make_sync_sqlite_owned_authorizer_policy<counting_policy>(
++            std::move(context))
++    } -> std::same_as<SyncSqliteOwnedAuthorizerPolicy>;
++};
++
++template <auto Policy, typename Context>
++concept CanMakePolicy = requires(std::shared_ptr<Context> context) {
++    {
++        make_sync_sqlite_owned_authorizer_policy<Policy>(std::move(context))
++    } -> std::same_as<SyncSqliteOwnedAuthorizerPolicy>;
++};
++
++static_assert(CanMakeCountingPolicy<PolicyState>);
++static_assert(!CanMakeCountingPolicy<WrongPolicyState>);
++static_assert(!CanMakeCountingPolicy<const PolicyState>);
++static_assert(!CanMakePolicy<wrong_result_policy, PolicyState>);
++static_assert(CanMakePolicy<lambda_policy, PolicyState>);
++static_assert(!CanMakePolicy<null_typed_policy, PolicyState>);
++static_assert(!CanMakePolicy<member_policy, PolicyState>);
++static_assert(!CanMakePolicy<stateful_policy, PolicyState>);
++static_assert(CanMakePolicy<read_only_policy, ReadOnlyPolicyState>);
++static_assert(CanMakePolicy<read_only_policy, const ReadOnlyPolicyState>);
++static_assert(!CanMakeCountingPolicy<volatile PolicyState>);
++static_assert(!CanMakeCountingPolicy<PolicyState[2]>);
++static_assert(!std::is_constructible_v<SyncSqliteOwnedAuthorizerPolicy,
++                                       SyncSqliteAuthorizerPolicy,
++                                       std::shared_ptr<void>>);
+ 
+ [[noreturn]] void fail(const std::string& message) {
+     throw std::runtime_error(message);
+@@ -105,7 +204,15 @@
+             (void)invalid;
+         },
+         "policy is null",
+-        "null callback is rejected",
++        "null context-free callback is rejected",
++        checks);
++    expect_exception<std::invalid_argument>(
++        [] {
++            (void)make_sync_sqlite_owned_authorizer_policy<counting_policy>(
++                std::shared_ptr<PolicyState>{});
++        },
++        "non-null shared context",
++        "null typed context is rejected before erasure",
+         checks);
+ }
+ 
+@@ -119,14 +226,15 @@
+            checks);
+ }
+ 
+-void test_owned_context_move_swap_and_release(std::uint64_t& checks) {
++void test_typed_factory_move_swap_and_release(std::uint64_t& checks) {
+     auto external = std::make_shared<PolicyState>();
+     external->decision = 73;
+     const std::weak_ptr<PolicyState> lifetime = external;
+ 
+-    SyncSqliteOwnedAuthorizerPolicy source(counting_policy, external);
++    SyncSqliteOwnedAuthorizerPolicy source =
++        make_sync_sqlite_owned_authorizer_policy<counting_policy>(external);
+     expect(source.valid() && source.owns_context(),
+-           "policy retains an owned context",
++           "typed factory retains an owned context",
+            checks);
+     external.reset();
+     expect(!lifetime.expired(),
+@@ -135,23 +243,23 @@
+ 
+     SyncSqliteOwnedAuthorizerPolicy moved(std::move(source));
+     expect(source.empty() && moved.valid() && moved.owns_context(),
+-           "move transfers callback and context as one capability",
++           "move transfers callback and typed context as one capsule",
+            checks);
+     expect(moved.invoke(19, nullptr, nullptr, nullptr, nullptr) == 73,
+-           "moved policy remains callable",
++           "moved typed policy remains callable",
+            checks);
+     {
+         const std::shared_ptr<PolicyState> retained = lifetime.lock();
+         expect(retained != nullptr && retained->calls == 1 &&
+                    retained->last_action == 19,
+-               "callback observes the exact retained context",
++               "callback observes the exact retained typed context",
+                checks);
+     }
+ 
+     SyncSqliteOwnedAuthorizerPolicy escrow;
+     escrow.swap(moved);
+     expect(moved.empty() && escrow.valid() && escrow.owns_context(),
+-           "swap escrows the complete policy capability",
++           "swap escrows the complete typed policy capsule",
+            checks);
+     escrow.swap(escrow);
+     expect(escrow.valid(), "self-swap preserves policy authority", checks);
+@@ -162,10 +270,9 @@
+            checks);
+     final_owner.swap(moved);
+     expect(final_owner.empty() && moved.valid(),
+-           "policy can be retired into an ordinary owner",
+-           checks);
+-
+-    // Retire the final reference through a nested owner scope.
++           "typed policy can be retired into an ordinary owner",
++           checks);
++
+     {
+         SyncSqliteOwnedAuthorizerPolicy retiring(std::move(moved));
+         expect(!lifetime.expired(),
+@@ -173,7 +280,75 @@
+                checks);
+     }
+     expect(lifetime.expired(),
+-           "retiring owner releases the final policy context exactly once",
++           "retiring owner releases the final typed context exactly once",
++           checks);
++}
++
++void test_const_shared_context(std::uint64_t& checks) {
++    auto mutable_context =
++        std::make_shared<ReadOnlyPolicyState>(ReadOnlyPolicyState{91});
++    std::shared_ptr<const ReadOnlyPolicyState> context = mutable_context;
++    const std::weak_ptr<const ReadOnlyPolicyState> lifetime = context;
++
++    {
++        auto policy =
++            make_sync_sqlite_owned_authorizer_policy<read_only_policy>(context);
++        expect(policy.valid() && policy.owns_context(),
++               "factory preserves a genuinely const shared context",
++               checks);
++        mutable_context.reset();
++        context.reset();
++        expect(!lifetime.expired() &&
++                   policy.invoke(0, nullptr, nullptr, nullptr, nullptr) == 91,
++               "const policy invokes through its exact retained context",
++               checks);
++    }
++    expect(lifetime.expired(),
++           "const context retires with its typed capsule",
++           checks);
++}
++
++struct AliasingPolicyEnvelope final {
++    PolicyState state;
++    std::uint64_t guard = 0;
++};
++
++void test_aliasing_shared_owner_and_custom_deleter(std::uint64_t& checks) {
++    std::uint64_t deletes = 0;
++    auto complete = std::shared_ptr<AliasingPolicyEnvelope>(
++        new AliasingPolicyEnvelope{{0, 0, 64}, 0xA11A51A5ULL},
++        [&deletes](AliasingPolicyEnvelope* value) noexcept {
++            ++deletes;
++            delete value;
++        });
++    PolicyState* const exact_alias = &complete->state;
++    std::shared_ptr<PolicyState> alias(complete, exact_alias);
++    const std::weak_ptr<AliasingPolicyEnvelope> complete_lifetime = complete;
++    const std::weak_ptr<PolicyState> alias_lifetime = alias;
++
++    {
++        auto policy =
++            make_sync_sqlite_owned_authorizer_policy<lambda_policy>(alias);
++        complete.reset();
++        alias.reset();
++        expect(!complete_lifetime.expired() && !alias_lifetime.expired(),
++               "typed capsule preserves the aliasing shared control block",
++               checks);
++        expect(policy.invoke(29, nullptr, nullptr, nullptr, nullptr) == 64,
++               "noncapturing lambda invokes through an aliasing context",
++               checks);
++        const auto retained = alias_lifetime.lock();
++        expect(retained != nullptr && retained.get() == exact_alias &&
++                   retained->calls == 1 && retained->last_action == 29,
++               "capsule preserves the exact alias pointer and state",
++               checks);
++    }
++
++    expect(complete_lifetime.expired() && alias_lifetime.expired(),
++           "aliasing control block retires with the typed capsule",
++           checks);
++    expect(deletes == 1,
++           "custom deleter runs exactly once after capsule retirement",
+            checks);
+ }
+ 
+@@ -195,11 +370,29 @@
+     ++checks;
+ }
+ 
++void test_child_local_context_and_owner_work(std::uint64_t& checks) {
++    auto child = spawn_inherited_test_process_or_throw(
++        [] {
++            auto context = std::make_shared<PolicyState>();
++            context->decision = 17;
++            auto policy =
++                make_sync_sqlite_owned_authorizer_policy<counting_policy>(
++                    context);
++            return policy.invoke(5, nullptr, nullptr, nullptr, nullptr) == 17 &&
++                           context->calls == 1 && context->last_action == 5
++                       ? 0
++                       : 98;
++        },
++        "child-local typed policy owner");
++    child.wait_for_exact_exit(0, 5s, "child-local typed policy owner");
++    ++checks;
++}
++
+ void test_inherited_owner_fails_before_shared_state_access(
+     std::uint64_t& checks) {
+     auto context = std::make_shared<PolicyState>();
+-    auto* const policy =
+-        new SyncSqliteOwnedAuthorizerPolicy(counting_policy, context);
++    auto* const policy = new SyncSqliteOwnedAuthorizerPolicy(
++        make_sync_sqlite_owned_authorizer_policy<counting_policy>(context));
+ 
+     expect_inherited_fail_stop(
+         [policy] { (void)policy->valid(); },
+@@ -210,16 +403,16 @@
+             SyncSqliteOwnedAuthorizerPolicy moved(std::move(*policy));
+             (void)moved;
+         },
+-        "inherited move validates the source before shared_ptr transfer",
++        "inherited move validates source before capsule transfer",
+         checks);
+     expect_inherited_fail_stop(
+         [policy] { delete policy; },
+-        "inherited destruction fails before shared_ptr teardown",
++        "inherited destruction fails before capsule teardown",
+         checks);
+ 
+     delete policy;
+     expect(context.use_count() == 1,
+-           "child fail-stop paths do not alter the parent context lifetime",
++           "child fail-stop paths do not alter parent context lifetime",
+            checks);
+ }
+ 
+@@ -232,8 +425,11 @@
+     try {
+         test_type_and_empty_contract(checks);
+         test_contextless_policy(checks);
+-        test_owned_context_move_swap_and_release(checks);
++        test_typed_factory_move_swap_and_release(checks);
++        test_const_shared_context(checks);
++        test_aliasing_shared_owner_and_custom_deleter(checks);
+ #if defined(__unix__) || defined(__APPLE__)
++        test_child_local_context_and_owner_work(checks);
+         test_inherited_owner_fails_before_shared_state_access(checks);
+ #endif
+         std::cout << "sqlite owned-authorizer-policy tests passed: " << checks
+--- a/tests/sqlite_transaction_exception_composition_test.cpp
++++ b/tests/sqlite_transaction_exception_composition_test.cpp
+@@ -113,21 +113,19 @@
+     }
+ };
+ 
+-int one_shot_cutpoint_policy(void* raw,
++int one_shot_cutpoint_policy(OneShotBoundaryCutpoint& cutpoint,
+                              int action,
+                              const char* argument1,
+                              const char*,
+                              const char*,
+                              const char*) noexcept {
+-    auto* cutpoint = static_cast<OneShotBoundaryCutpoint*>(raw);
+-    if (cutpoint == nullptr || !cutpoint->armed ||
+-        action != cutpoint->target_action ||
+-        !ascii_case_equal(argument1, cutpoint->target_operation)) {
++    if (!cutpoint.armed || action != cutpoint.target_action ||
++        !ascii_case_equal(argument1, cutpoint.target_operation)) {
+         return SQLITE_OK;
+     }
+-    ++cutpoint->matching_callbacks;
+-    ++cutpoint->denials;
+-    cutpoint->armed = false;
++    ++cutpoint.matching_callbacks;
++    ++cutpoint.denials;
++    cutpoint.armed = false;
+     return SQLITE_DENY;
+ }
+ 
+@@ -145,8 +143,8 @@
+             "exception-composition schema");
+         authority = install_sync_sqlite_connection_authority_or_throw(
+             db.get(),
+-            SyncSqliteOwnedAuthorizerPolicy(
+-                one_shot_cutpoint_policy, cutpoint_owner),
++            make_sync_sqlite_owned_authorizer_policy<
++                one_shot_cutpoint_policy>(cutpoint_owner),
+             "exception-composition authority");
+         if (!authority.valid()) fail("exception-composition authority is invalid");
+     }
+--- a/tools/audit_inherited_test_process.py
++++ b/tools/audit_inherited_test_process.py
+@@ -325,7 +325,7 @@
+     require(
+         raw_forks == 1
+         and len(INHERITED_CONSUMERS) == 13
+-        and total_spawns == 23,
++        and total_spawns == 24,
+         "inventory_metrics_are_exact",
+         f"raw_forks={raw_forks}, consumer_tus={len(INHERITED_CONSUMERS)}, spawn_sites={total_spawns}",
+     )
+--- a/tools/audit_raw_fork_boundaries.py
++++ b/tools/audit_raw_fork_boundaries.py
+@@ -35,7 +35,7 @@
+     "tests/process_incarnation_tests.cpp": 4,
+     "tests/thread_incarnation_tests.cpp": 2,
+     "tests/sqlite_owner_generation_borrow_test.cpp": 1,
+-    "tests/sqlite_owned_authorizer_policy_test.cpp": 1,
++    "tests/sqlite_owned_authorizer_policy_test.cpp": 2,
+     "tests/sqlite_process_authority_fork_test.cpp": 1,
+     "tests/sqlite_replay_ledger_selftests.cpp": 3,
+     "tests/sqlite_source_first_move_test.cpp": 1,
+@@ -382,7 +382,7 @@
+             "test_raw_fork_calls": 1,
+             "raw_fork_translation_units": 1,
+             "inherited_consumer_translation_units": 13,
+-            "inherited_spawn_sites": 23,
++            "inherited_spawn_sites": 24,
+             "fresh_image_migrated_campaigns": 7,
+         },
+         "inventory_metrics_are_exact",
+--- a/tools/audit_self_exec_test_process.py
++++ b/tools/audit_self_exec_test_process.py
+@@ -627,7 +627,7 @@
+         in raw_fork_audit
+         and "inventory_metrics_are_exact" in raw_fork_audit
+         and '"test_raw_fork_calls": 1' in raw_fork_audit
+-        and '"inherited_spawn_sites": 23' in raw_fork_audit,
++        and '"inherited_spawn_sites": 24' in raw_fork_audit,
+         "raw_fork_inventory_is_fail_closed_and_exact",
+         "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 30 inherited or fresh-image process sites",
+     )
+--- a/tools/audit_sqlite_authorizer_owner.py
++++ b/tools/audit_sqlite_authorizer_owner.py
+@@ -129,12 +129,13 @@
+         "raw_test": Path("tests/persistence/sqlite_authorizer_owner_tests.cpp"),
+         "policy_test": Path("tests/sqlite_owned_authorizer_policy_test.cpp"),
+         "authority_test": Path("tests/sqlite_connection_authority_test.cpp"),
++        "transaction_test": Path("tests/sqlite_transaction_exception_composition_test.cpp"),
+         "verifier": Path("tools/verify_release_package.py"),
+     }
+     missing = [path.as_posix() for path in paths.values() if not (root / path).is_file()]
+     if missing:
+         payload = {
+-            "format": "anonsync-sqlite-authorizer-owner-audit-v2",
++            "format": "anonsync-sqlite-authorizer-owner-audit-v3",
+             "passed": False,
+             "missing": sorted(missing),
+         }
+@@ -165,6 +166,7 @@
+     raw_test = text["raw_test"]
+     policy_test = text["policy_test"]
+     authority_test = text["authority_test"]
++    transaction_test = text["transaction_test"]
+     verifier = text["verifier"]
+ 
+     sanitizer_block = cmake.split(
+@@ -240,13 +242,16 @@
+                 '"src/sync_sqlite_owned_authorizer_policy.hpp"',
+                 '"src/sync_sqlite_owned_authorizer_policy.cpp"',
+                 '"tests/sqlite_owned_authorizer_policy_test.cpp"',
++                '"tests/sqlite_connection_authority_test.cpp"',
++                '"tests/sqlite_transaction_exception_composition_test.cpp"',
+                 '"tools/audit_sqlite_authorizer_owner.py"',
+                 "revision_number >= 850",
+                 "revision_number >= 851",
+-            )
+-        ),
+-        "release_verifier_requires_both_revision_boundaries",
+-        "rev0850 retains raw callback ownership and rev0851 adds owned policy context",
++                "revision_number >= 852",
++            )
++        ),
++        "release_verifier_requires_all_authorizer_revision_boundaries",
++        "rev0850 owns the raw callback, rev0851 owns policy lifetime, and rev0852 binds typed consumers",
+     )
+     add(
+         checks,
+@@ -344,34 +349,71 @@
+         "close/replacement destruction is authorized only by reviewed synchronous calls",
+     )
+ 
++    policy_code = cpp_code_only(policy_header + "\n" + policy_owner)
+     add(
+         checks,
+         all(
+             token in policy_header
+             for token in (
+                 "class SyncSqliteOwnedAuthorizerPolicy final",
+-                "std::shared_ptr<void> context_owner_",
++                "std::unique_ptr<TypedPolicyCapsule> typed_policy_capsule_",
+                 "SyncSqliteOwnedAuthorizerPolicy&& other) noexcept",
+                 "SyncSqliteOwnedAuthorizerPolicy&&) = delete",
+                 "void swap(SyncSqliteOwnedAuthorizerPolicy& other) noexcept",
+                 "SyncProcessIncarnation process_id_",
+             )
+-        ),
+-        "policy_owner_is_move_only_process_bound_storage",
+-        "callback and optional shared context move only through an explicit capability",
++        )
++        and "std::shared_ptr<void>" not in policy_code,
++        "policy_owner_is_move_only_process_bound_capsule",
++        "the exact typed callback/context capsule moves only through one explicit capability",
++    )
++    add(
++        checks,
++        all(
++            token in policy_header
++            for token in (
++                "concept SyncSqliteTypedAuthorizerPolicyFor",
++                "sync_sqlite_policy_value_is_supported<Policy>",
++                "std::is_empty_v<PolicyType>",
++                "Policy != nullptr",
++                "std::same_as<int>",
++                "make_sync_sqlite_owned_authorizer_policy(",
++                "std::shared_ptr<Context> context_owner",
++            )
++        ),
++        "typed_factory_proves_callback_context_contract",
++        "context type, invocation shape, exact result, and supported callback form are compile-time obligations",
++    )
++    add(
++        checks,
++        all(
++            token in policy_header
++            for token in (
++                "class TypedPolicyCapsule",
++                "class TypedPolicyCapsuleModel final",
++                "std::shared_ptr<Context> context_owner_",
++                "std::make_unique<TypedPolicyCapsuleModel<Context, Policy>>",
++            )
++        )
++        and "std::shared_ptr<void>" not in policy_code
++        and "static_cast" not in policy_code
++        and "reinterpret_cast" not in policy_code,
++        "typed_capsule_has_one_erased_runtime_object",
++        "invocation behavior and exact shared ownership cross the non-templated boundary together without casts",
+     )
+     add(
+         checks,
+         ordered(
+             policy_owner,
+-            "SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(",
+             "SyncSqliteOwnedAuthorizerPolicy&& other) noexcept",
+             "other.require_current_process_noexcept()",
+-            "context_owner_ = std::move(other.context_owner_)",
+-            "other.policy_ = nullptr",
+-        ),
+-        "policy_move_validates_source_before_context_transfer",
+-        "an inherited owner fails stopped before its shared_ptr control block is touched",
++            "other.require_shape_noexcept()",
++            "context_free_policy_ = other.context_free_policy_",
++            "typed_policy_capsule_ = std::move(other.typed_policy_capsule_)",
++            "other.context_free_policy_ = nullptr",
++        ),
++        "policy_move_validates_source_before_capsule_transfer",
++        "an inherited owner fails stopped before unique or shared ownership can move",
+     )
+     add(
+         checks,
+@@ -381,9 +423,9 @@
+             "require_current_process_noexcept()",
+             "require_shape_noexcept()",
+         )
+-        and "before context_owner_ reaches its implicit destructor" in policy_owner,
+-        "policy_destructor_validates_before_context_release",
+-        "foreign-process destruction cannot decrement inherited shared ownership",
++        and "before typed_policy_capsule_ reaches its implicit destructor" in policy_owner,
++        "policy_destructor_validates_before_capsule_release",
++        "foreign-process destruction cannot enter a virtual destructor or decrement inherited shared ownership",
+     )
+     add(
+         checks,
+@@ -391,11 +433,28 @@
+             policy_owner,
+             "int SyncSqliteOwnedAuthorizerPolicy::invoke(",
+             "require_current_process_noexcept()",
+-            "if (policy_ == nullptr)",
+-            "policy_(context_owner_.get()",
+-        ),
+-        "policy_invocation_uses_owned_context_only",
+-        "the callback receives no separately retained raw application pointer",
++            "if (typed_policy_capsule_ != nullptr)",
++            "typed_policy_capsule_->invoke(",
++            "if (context_free_policy_ == nullptr)",
++            "context_free_policy_(nullptr",
++        ),
++        "policy_invocation_has_exact_typed_and_context_free_lanes",
++        "context-bearing invocation remains inside the capsule while compatibility invocation receives null",
++    )
++    add(
++        checks,
++        all(
++            token in policy_owner
++            for token in (
++                "const bool empty = context_free_policy_ == nullptr",
++                "const bool context_free = context_free_policy_ != nullptr",
++                "const bool typed = context_free_policy_ == nullptr",
++                "if (!empty && !context_free && !typed)",
++                "fail_stop_on_authorizer_policy_lifetime_violation_noexcept()",
++            )
++        ),
++        "policy_shape_is_exact_and_fail_stopped",
++        "empty, context-free, and typed are the only admitted runtime representations",
+     )
+ 
+     state_block = authority.split("struct ConnectionAuthorityState final", 1)[1].split(
+@@ -576,20 +635,67 @@
+         all(
+             token in policy_test
+             for token in (
++                "static_assert(!CanMakeCountingPolicy<WrongPolicyState>)",
++                "static_assert(!CanMakeCountingPolicy<const PolicyState>)",
++                "static_assert(!CanMakePolicy<wrong_result_policy, PolicyState>)",
++                "static_assert(!CanMakePolicy<null_typed_policy, PolicyState>)",
++                "static_assert(!CanMakePolicy<member_policy, PolicyState>)",
++                "static_assert(!CanMakePolicy<stateful_policy, PolicyState>)",
++                "static_assert(!CanMakeCountingPolicy<volatile PolicyState>)",
++                "static_assert(!CanMakeCountingPolicy<PolicyState[2]>)",
++                "std::shared_ptr<void>>)",
++            )
++        ),
++        "focused_policy_compile_time_rejects_mismatches",
++        "wrong context, cv-shape, result, null/member/stateful callback, array, and legacy erasure are non-viable",
++    )
++    add(
++        checks,
++        all(
++            token in policy_test
++            for token in (
++                "test_const_shared_context",
++                "test_aliasing_shared_owner_and_custom_deleter",
++                "factory preserves a genuinely const shared context",
++                "typed capsule preserves the aliasing shared control block",
++                "capsule preserves the exact alias pointer and state",
++                "custom deleter runs exactly once after capsule retirement",
++            )
++        ),
++        "focused_policy_runtime_preserves_const_alias_and_deleter",
++        "typed erasure retains the exact stored pointer and original control block",
++    )
++    add(
++        checks,
++        all(
++            token in policy_test
++            for token in (
+                 '#include "inherited_test_process.hpp"',
+                 "spawn_inherited_test_process_or_throw(",
+-                "test_type_and_empty_contract",
+-                "test_owned_context_move_swap_and_release",
++                "test_child_local_context_and_owner_work",
+                 "test_inherited_owner_fails_before_shared_state_access",
+-                "inherited move validates the source before shared_ptr transfer",
+-                "retiring owner releases the final policy context exactly once",
++                "inherited move validates source before capsule transfer",
++                "child fail-stop paths do not alter parent context lifetime",
+             )
+         )
+         and "::fork(" not in policy_test
+         and "::waitpid(" not in policy_test,
+-        "focused_policy_runtime_covers_move_release_and_fork",
+-        "the dependency-light owner has executable ownership and centralized inherited-process proofs",
+-    )
++        "focused_policy_runtime_proves_process_provenance",
++        "child-local ownership works while inherited inspection, move, and destruction fail stopped centrally",
++    )
++    add(
++        checks,
++        "make_sync_sqlite_owned_authorizer_policy<owned_allow_policy>" in authority_test
++        and "make_sync_sqlite_owned_authorizer_policy<" in transaction_test
++        and "one_shot_cutpoint_policy>(cutpoint_owner)" in transaction_test
++        and "int owned_allow_policy(OwnedPolicyState& state" in authority_test
++        and "int one_shot_cutpoint_policy(OneShotBoundaryCutpoint& cutpoint" in transaction_test
++        and "SyncSqliteOwnedAuthorizerPolicy(\n                owned_allow_policy" not in authority_test
++        and "SyncSqliteOwnedAuthorizerPolicy(\n                one_shot_cutpoint_policy" not in transaction_test,
++        "all_context_bearing_consumers_use_typed_factory",
++        "integrated lifetime and transaction-cutpoint policies cannot pair callbacks with erased context manually",
++    )
++
+     add(
+         checks,
+         all(
+@@ -629,7 +735,7 @@
+ 
+     passed = all(check.passed for check in checks)
+     payload = {
+-        "format": "anonsync-sqlite-authorizer-owner-audit-v2",
++        "format": "anonsync-sqlite-authorizer-owner-audit-v3",
+         "passed": passed,
+         "check_count": len(checks),
+         "passed_check_count": sum(check.passed for check in checks),
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -299,6 +299,15 @@
+             "src/sync_sqlite_owned_authorizer_policy.cpp",
+             "tests/sqlite_owned_authorizer_policy_test.cpp",
+         })
++    if revision_number is not None and revision_number >= 852:
++        revision_scoped_required.update({
++            "src/sync_sqlite_owned_authorizer_policy.hpp",
++            "src/sync_sqlite_owned_authorizer_policy.cpp",
++            "tests/sqlite_owned_authorizer_policy_test.cpp",
++            "tests/sqlite_connection_authority_test.cpp",
++            "tests/sqlite_transaction_exception_composition_test.cpp",
++            "tools/audit_sqlite_authorizer_owner.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

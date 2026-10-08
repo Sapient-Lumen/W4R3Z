@@ -1,0 +1,63 @@
+# Rev0862 evidence index
+
+Indexed evidence files: 57
+
+| Path | Bytes | SHA-256 |
+|---|---:|---|
+| `ACTIVE_IMPLEMENTATION_PROJECTION.json` | 55372 | `103c86dbec037861ea554b4a940f79d6f91866732b3e1fa26d45dd48a0325d44` |
+| `AUDIT.md` | 3908 | `33d8c8208532e8abf3b2f9e46df5f050b16e72494219ada975c86ae902a9cdcf` |
+| `CHANGESET.json` | 1571 | `7395a0f10c357aa688d78d918de356147fbc5ee2044bedb8363f470e58528c0c` |
+| `COMMANDS.tsv` | 1890 | `030dbb575fd3d460330f94c4985215394dff091b3e5d1c2d41d58ffa8e6e7da3` |
+| `LINEAGE.json` | 788 | `77a1170cb8a48a4cf69294e1aecded5d44a04adcf63ae137f48d39707e6b18ed` |
+| `LINEAGE.md` | 851 | `6a0a698dc868171d38a09b10879090c1da55fd354b6e98f483706cee340d2cd8` |
+| `NEXT_WORK.md` | 1235 | `7e7ef8d971fdf452675bcb7d02b516a740907dd8efa4dbe80fa61eaa961ca5be` |
+| `REPOSITORY_HYGIENE.md` | 606 | `8ff4c0449f2d1fc990e2319c3e908d1fa54f86448d81308ab4accfd8f9636054` |
+| `RESEARCH.md` | 788 | `4015fb5e22b2f40d15d5d89a5a8c9c38643be96e131fe4bf87148ff656f08beb` |
+| `SOURCE_DIFF_rev0861_to_rev0862.patch` | 95630 | `6822bb1e099f90c739d0974c2cce58b5591eb5d33df7cebd495a2ce8ad0fc589` |
+| `SOURCE_NAME_STATUS.txt` | 624 | `de91e50b852c9f9b8c458c6fed0a5311918348c82861e151f04151f01599e7e6` |
+| `SOURCE_NUMSTAT.txt` | 668 | `7c3a7907b42e9de92001ab26681298e4ab6507de57212fbff73ad5101def43b6` |
+| `SOURCE_SHORTSTAT.txt` | 55 | `0d218115241453dd53ef5bbde508f483c9ea69aa77ecb9dd02deb736b4603d8d` |
+| `SOURCE_STAT.txt` | 1028 | `bc36c08bb20d7e58451a8dcfefc480ccb629eda380bda00f8123c7bd7602bcf5` |
+| `TOOLCHAIN.txt` | 431 | `bd0d1f0bbaf3c79c9d454764c8cabb6e790a5352ad56a41c41191d4859b66b0f` |
+| `lineage/parent-archive.sha256` | 172 | `3227c07b529ddc06c78cf567b17ca388332cf626c1f5e69c690f824c8231e195` |
+| `lineage/parent-directory-verification.json` | 3836 | `df579bad739525c5446002ecb7e32658f8eced984180ed107b5c684de5054ecc` |
+| `lineage/parent-zip-verification.json` | 4338 | `1a7fb626aa3e00ba0aabe884252495b245b7fdb11770c0a1730dd67b0fbe5e2e` |
+| `operational/SANITIZER_SCOPE.md` | 693 | `e672c778ece1e968a0d551cf084d1771aa2665029f3cfaff2d0679d65498ee72` |
+| `validation/REGISTERED_AUDITS.tsv` | 2614 | `3c78b6ae36a4b58118462576f2ce1052485ec353d57fc922fd5ff9d1d9061f85` |
+| `validation/VALIDATION_SUMMARY.json` | 3592 | `ec3c2d05ed35cfa713603037de67a632c5ccd6d542461699b5ad6135f90399f1` |
+| `validation/clang-build-core-part1.log` | 12591 | `edc91b4ff29ccbb5b2255938b005a434427d115b2d08078ca9c016f801ced29c` |
+| `validation/clang-build-focused.log` | 3568 | `5a366404268c4c0eddd0448ac3d4967a0a53e16898577b985c477581ca717b01` |
+| `validation/clang-configure.log` | 925 | `af849a57ab30c999f45a9963a6e67a3ed5b1b275cef6abe02e78c487196c0c64` |
+| `validation/clang-run-domain.log` | 2312 | `767b44666342308b32b8c3899c6c4971df1bc4ee807ee5e41b22f9051b3c225c` |
+| `validation/clang-run-focused.log` | 66 | `d22a5d8705d9eef785331907fc0cd59bf2fdd06d4ffb2551acea73180591db3d` |
+| `validation/ctest-001-018.log` | 3114 | `2c355fac1d5a12d363e96276acdaaf5c6e8013339a56e9870a396325f0c5cd5f` |
+| `validation/ctest-019.log` | 347 | `250a57e64057c3bd032120cd4b50f0bf5f1f457e4d0bf1204bfffc4211d95635` |
+| `validation/ctest-020-022.log` | 647 | `8ddb7555bb6e1de93633fc94ec730c4ec31fd00bee450a88365e806821a78687` |
+| `validation/ctest-023.log` | 335 | `b230f827eba830cce1dc75127181dae080d9c452fd18f42aefeb28a79679eb79` |
+| `validation/ctest-024-042.log` | 3186 | `bf0b149df2bbf908b09abdd58cc78a0bb1ddad4868e46bccaf7ac2678608871b` |
+| `validation/ctest-043-091-audits.log` | 8695 | `e9578625f03c9528654ad4153c43f59a3f3a3c48e790511a9bf324f854a774b1` |
+| `validation/ctest-092-126.log` | 5743 | `2e80498cfcfecd84f699216abdc5ba6f7f0e898d97287a7d71d6d76514aa430c` |
+| `validation/ctest-127-148.log` | 3786 | `1a6cda62e04a4c87401c75694cf73a08702a2f45c441c23b00298fd0153beb57` |
+| `validation/ctest-149-162.log` | 2468 | `498c4c95e52e6d38f6e90e9778020a5d9d6c5e1c59bbcd25b75258b37c8afd59` |
+| `validation/ctest-registry.txt` | 9856 | `8bf65bf545d433c68247dd6be2c3cefd7d23b8abec019007c42b26912d65da1b` |
+| `validation/gcc14-debug-domain-runtime.log` | 2312 | `95a01e1f5321eb39090243d0b1d9d7ac8673ac2f5ff8b7ac3d9b34b77394909a` |
+| `validation/gcc14-debug-final-no-work-rebuild.log` | 83 | `f1c06678e9bf839a31e2f4a7e5d1a3114f2b446e34906445ebad3aa13314734b` |
+| `validation/gcc14-debug-focused-runtime.log` | 66 | `d22a5d8705d9eef785331907fc0cd59bf2fdd06d4ffb2551acea73180591db3d` |
+| `validation/git-diff-check.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `validation/repeat-focused-100.log` | 68 | `d85bd4b56bb890452b5811a5944143c7d62cc09487a2dbccfc9a5fa4c6bfd8ba` |
+| `validation/repeat-sidecar-audit-100.log` | 75 | `54d55e80ab09a8dd2cd968f6fbb7ab93cfa256534ef3602f309a2089e45b1e00` |
+| `validation/sanitizer-build-core-final.log` | 283 | `13e1c1a82aa60ed7f45d7bbc6c78913a52eb74f54f20015be8e67de827d28a83` |
+| `validation/sanitizer-build-core-part2.log` | 8330 | `2bc6c00adde8bbd0fa142a42488bf9f1b2a5142840e612e36db653e365b5cd1a` |
+| `validation/sanitizer-build-core-part3.log` | 4191 | `85a2e6cc07bb9260ecaf739cfae9378ebc7c5dcacf972f219fb289c278d0ae85` |
+| `validation/sanitizer-build-core-part4.log` | 1506 | `ae2de14c38ca991ba646a213e7687ba55d61d406e6fae282a2bf45d73217d787` |
+| `validation/sanitizer-build-core-part5.log` | 464 | `eb522d0710d8564011c406d8954a793a1772c272ecf7c4660088a3ec544b448f` |
+| `validation/sanitizer-build-core-part6.log` | 115 | `b0be071c5b2b618ddd94a41f00ccf0c5da8de7c42ff7df1ea25202b6378fa885` |
+| `validation/sanitizer-build-focused.log` | 3566 | `5f3d8cbf2b01a6a258810a0a2a9653150a44c87f888eecd6819b2687b09ea102` |
+| `validation/sanitizer-command-proof.log` | 18733 | `5d318f4273605a33af41350850110f2910967a233af295b590fae8e99b9ba745` |
+| `validation/sanitizer-configure.log` | 880 | `463a7b864b7e8ab04413afcb6870f7fb22bd5dd38ceb2f8affd0b8da33de3eb0` |
+| `validation/sanitizer-final-closure.log` | 81 | `03ad58e090c67a06525242159f0e2a6a438a935a95c34a724a2a10fa1299117c` |
+| `validation/sanitizer-repeat-focused-25.log` | 80 | `f948832168bf50031a2758c6dc85537ac6d4056fb5eff6ac1b93f2aafe9d821b` |
+| `validation/sanitizer-run-domain.log` | 2312 | `0b057843c4f81be4670f041bbffd908b2023e5eed09879d82adb0ce0829270c4` |
+| `validation/sanitizer-run-focused.log` | 66 | `d22a5d8705d9eef785331907fc0cd59bf2fdd06d4ffb2551acea73180591db3d` |
+| `validation/source-patch-compare.json` | 359 | `4cba6fb1bb273854b386d180d68604d314266c1a1f3a949c30686fd8670e85e1` |
+| `validation/sync-sqlite-sidecar-snapshot-audit.json` | 17036 | `f2312a2bcf683a99b33a342ab056a3739c93081f9d964c6e101eaaf4631cd90f` |

@@ -1,0 +1,3 @@
+# Rev1001 authority incidents
+
+The cloudtainer remounted twice and removed unsealed worktrees and build roots. A divergent availability-only branch and its staged archive survived separately; it was excluded. Rev1001 was reconstructed from the exact sealed rev1000 archive, a recovered committed source authority, and a binary-aware patch whose clean application was re-proved against the archive. Interrupted aggregate CTest wrappers and superseded lexical-audit failures were not counted as final validation. Generated Python bytecode discovered during projection calculation was removed before sealing.

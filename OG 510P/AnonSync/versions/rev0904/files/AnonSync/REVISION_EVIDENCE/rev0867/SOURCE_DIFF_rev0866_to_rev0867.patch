@@ -1,0 +1,1426 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e9c919e..f3d54ab 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1497,6 +1497,16 @@ target_link_libraries(anonsync_sync_replica_allocation_atomicity_test PRIVATE
+ target_compile_options(anonsync_sync_replica_allocation_atomicity_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++add_executable(anonsync_sync_replica_aggregate_budget_test
++  tests/sync_replica_aggregate_budget_test.cpp)
++target_include_directories(anonsync_sync_replica_aggregate_budget_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_aggregate_budget_test PRIVATE
++  anonsync_sync_replica_model
++  anonsync_sha256_digest)
++target_compile_options(anonsync_sync_replica_aggregate_budget_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ add_executable(anonsync_sync_bounded_regular_file_test
+   tests/sync_bounded_regular_file_test.cpp)
+ target_link_libraries(anonsync_sync_bounded_regular_file_test PRIVATE
+@@ -2350,6 +2360,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_sync_replica_network_model_test
+     anonsync_sync_replica_hash_graph_projection_test
+     anonsync_sync_replica_allocation_atomicity_test
++    anonsync_sync_replica_aggregate_budget_test
+     anonsync_fuzz_json_codec
+     anonsync_fuzz_jwt_codec
+     anonsync_fuzz_route_event_ledger
+@@ -2422,6 +2433,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_sync_replica_network_model_test
+       anonsync_sync_replica_hash_graph_projection_test
+       anonsync_sync_replica_allocation_atomicity_test
++      anonsync_sync_replica_aggregate_budget_test
+       anonsync_fuzz_json_codec
+       anonsync_fuzz_jwt_codec
+       anonsync_fuzz_route_event_ledger
+@@ -2551,6 +2563,8 @@ add_test(NAME anonsync_sync_replica_hash_graph_projection_test
+   COMMAND anonsync_sync_replica_hash_graph_projection_test)
+ add_test(NAME anonsync_sync_replica_allocation_atomicity_test
+   COMMAND anonsync_sync_replica_allocation_atomicity_test)
++add_test(NAME anonsync_sync_replica_aggregate_budget_test
++  COMMAND anonsync_sync_replica_aggregate_budget_test)
+ set_tests_properties(
+   anonsync_sync_peer_transport_digest_bound_frame_test
+   anonsync_sync_conflict_resolution_test
+@@ -2564,6 +2578,7 @@ set_tests_properties(
+   anonsync_sync_replica_network_model_test
+   anonsync_sync_replica_hash_graph_projection_test
+   anonsync_sync_replica_allocation_atomicity_test
++  anonsync_sync_replica_aggregate_budget_test
+   PROPERTIES TIMEOUT 20)
+ # The graph oracle deliberately includes reverse-history, wide-fan-in, and
+ # differential corpora. ASan+UBSan can take materially longer than an ordinary
+@@ -2708,6 +2723,12 @@ if(Python3_Interpreter_FOUND)
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   set_tests_properties(anonsync_sync_conflict_convergence_source_audit
+     PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_sync_replica_aggregate_budget_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_replica_aggregate_budget.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_sync_replica_aggregate_budget_source_audit
++    PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_sync_daemon_heartbeat_document_source_audit
+     COMMAND ${Python3_EXECUTABLE} -B -S
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_daemon_heartbeat_document.py
+diff --git a/src/sync_replica_model.cpp b/src/sync_replica_model.cpp
+index 620d6d9..528808f 100644
+--- a/src/sync_replica_model.cpp
++++ b/src/sync_replica_model.cpp
+@@ -31,11 +31,89 @@ using SyncReplicaOperationMap =
+ using SyncReplicaEvidenceStateMap =
+     std::map<std::string, SyncReplicaEvidenceState>;
+ 
++struct RetainedEvidenceCharge final {
++    std::uint64_t canonical_bytes = 0;
++    std::uint64_t context_entries = 0;
++    std::uint64_t predecessor_ids = 0;
++};
++
++struct RetainedEvidenceTotals final {
++    std::uint64_t canonical_bytes = 0;
++    std::uint64_t context_entries = 0;
++    std::uint64_t predecessor_ids = 0;
++};
++
+ static_assert(std::is_nothrow_move_constructible_v<std::string>);
+ static_assert(std::is_nothrow_swappable_v<SyncReplicaOperationMap>);
+ static_assert(std::is_nothrow_swappable_v<SyncReplicaEvidenceStateMap>);
+ static_assert(std::is_nothrow_swappable_v<std::set<std::string>>);
+ 
++[[nodiscard]] std::uint64_t size_to_u64_or_throw(
++    std::size_t value,
++    std::string_view label) {
++    if (std::cmp_greater(
++            value, std::numeric_limits<std::uint64_t>::max())) {
++        throw std::overflow_error(
++            "sync replica " + std::string(label) +
++            " does not fit uint64_t");
++    }
++    return static_cast<std::uint64_t>(value);
++}
++
++[[nodiscard]] RetainedEvidenceCharge retained_charge_or_throw(
++    const SyncReplicaOperation& operation,
++    std::uint64_t canonical_bytes) {
++    return {
++        canonical_bytes,
++        size_to_u64_or_throw(
++            operation.causal_context.size(), "causal context entry count"),
++        size_to_u64_or_throw(
++            operation.predecessor_operation_ids.size(),
++            "predecessor ID count"),
++    };
++}
++
++[[nodiscard]] std::uint64_t checked_retained_total_or_throw(
++    std::uint64_t current,
++    std::uint64_t addition,
++    std::uint64_t limit,
++    std::string_view label) {
++    if (current > limit) {
++        throw std::logic_error(
++            "sync replica retained " + std::string(label) +
++            " counter already exceeds its configured budget");
++    }
++    if (addition > limit - current) {
++        throw std::length_error(
++            "sync replica retained evidence exceeds configured aggregate " +
++            std::string(label) + " budget");
++    }
++    return current + addition;
++}
++
++[[nodiscard]] RetainedEvidenceTotals prospective_retained_totals_or_throw(
++    const RetainedEvidenceTotals& current,
++    const RetainedEvidenceCharge& charge,
++    const SyncReplicaModelLimits& limits) {
++    return {
++        checked_retained_total_or_throw(
++            current.canonical_bytes,
++            charge.canonical_bytes,
++            limits.max_retained_canonical_bytes,
++            "canonical-byte"),
++        checked_retained_total_or_throw(
++            current.context_entries,
++            charge.context_entries,
++            limits.max_retained_context_entries,
++            "context-entry"),
++        checked_retained_total_or_throw(
++            current.predecessor_ids,
++            charge.predecessor_ids,
++            limits.max_retained_predecessor_ids,
++            "predecessor-ID"),
++    };
++}
++
+ [[nodiscard]] std::string_view kind_text(
+     SyncReplicaValueKind kind) noexcept {
+     return kind == SyncReplicaValueKind::Tombstone ? "tombstone" : "file";
+@@ -182,7 +260,7 @@ SyncReplicaModel::SyncReplicaModel(
+ }
+ 
+ SyncReplicaModel SyncReplicaModel::restore_or_throw(
+-    const SyncReplicaDurableState& durable,
++    SyncReplicaDurableState durable,
+     SyncReplicaModelLimits limits) {
+     SyncReplicaModel restored(durable.folder_id, durable.local_actor, limits);
+     if (durable.operations.size() > limits.max_operations) {
+@@ -191,22 +269,28 @@ SyncReplicaModel SyncReplicaModel::restore_or_throw(
+     }
+     validate_local_operation_ids_or_throw(durable, limits);
+ 
+-    std::optional<std::string> previous_operation_id;
+     std::map<std::string, SyncReplicaOperation> evidence;
+-    for (const SyncReplicaOperation& operation : durable.operations) {
+-        validate_sync_replica_operation_or_throw(operation, limits);
++    RetainedEvidenceTotals retained_totals;
++    for (SyncReplicaOperation& operation : durable.operations) {
++        const std::uint64_t canonical_bytes =
++            detail::validate_sync_replica_operation_and_measure_or_throw(
++                operation, limits);
+         if (operation.folder_id != durable.folder_id) {
+             throw std::invalid_argument(
+                 "sync replica durable evidence belongs to a different folder");
+         }
+-        if (previous_operation_id.has_value() &&
+-            previous_operation_id.value() >= operation.operation_id) {
++        if (!evidence.empty() &&
++            evidence.rbegin()->first >= operation.operation_id) {
+             throw std::invalid_argument(
+                 "sync replica durable evidence must be strictly sorted and unique by operation_id");
+         }
+-        previous_operation_id = operation.operation_id;
++        retained_totals = prospective_retained_totals_or_throw(
++            retained_totals,
++            retained_charge_or_throw(operation, canonical_bytes),
++            limits);
++        std::string operation_id = operation.operation_id;
+         const bool inserted = evidence.emplace(
+-            operation.operation_id, operation).second;
++            std::move(operation_id), std::move(operation)).second;
+         if (!inserted) {
+             throw std::invalid_argument(
+                 "sync replica durable evidence contains a duplicate operation");
+@@ -219,13 +303,16 @@ SyncReplicaModel SyncReplicaModel::restore_or_throw(
+             evidence, durable.folder_id, limits);
+ 
+     restored.last_local_counter_ = durable.last_local_counter;
+-    restored.local_operation_ids_ = durable.local_operation_ids;
++    restored.local_operation_ids_ = std::move(durable.local_operation_ids);
+     restored.evidence_by_id_ = std::move(evidence);
+     restored.active_operation_ids_ =
+         std::move(projection.active_operation_ids);
+     restored.evidence_state_by_id_ = std::move(projection.state_by_id);
+     restored.causal_head_operation_ids_ =
+         std::move(projection.causal_head_operation_ids);
++    restored.retained_canonical_bytes_ = retained_totals.canonical_bytes;
++    restored.retained_context_entries_ = retained_totals.context_entries;
++    restored.retained_predecessor_ids_ = retained_totals.predecessor_ids;
+     restored.local_actor_compromised_ =
+         restored.compute_local_actor_compromised(
+             restored.evidence_by_id_,
+@@ -298,6 +385,16 @@ SyncReplicaOperation SyncReplicaModel::create_local_operation_or_throw(
+     }
+     operation.operation_id =
+         make_sync_replica_operation_id_or_throw(operation, limits_);
++    const RetainedEvidenceCharge retained_charge = retained_charge_or_throw(
++        operation,
++        sync_replica_operation_canonical_size_or_throw(operation, limits_));
++    const RetainedEvidenceTotals retained_totals =
++        prospective_retained_totals_or_throw(
++            {retained_canonical_bytes_,
++             retained_context_entries_,
++             retained_predecessor_ids_},
++            retained_charge,
++            limits_);
+ 
+     // Stage the only potentially allocating local-authority changes before
+     // publishing evidence. Reserving capacity is not semantically observable,
+@@ -346,6 +443,9 @@ SyncReplicaOperation SyncReplicaModel::create_local_operation_or_throw(
+         causal_head_operation_ids_.swap(
+             projection.causal_head_operation_ids);
+         last_local_counter_ = operation.dot.counter;
++        retained_canonical_bytes_ = retained_totals.canonical_bytes;
++        retained_context_entries_ = retained_totals.context_entries;
++        retained_predecessor_ids_ = retained_totals.predecessor_ids;
+     } catch (...) {
+         evidence_by_id_.erase(inserted.first);
+         throw;
+@@ -355,24 +455,38 @@ SyncReplicaOperation SyncReplicaModel::create_local_operation_or_throw(
+ 
+ SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(
+     const SyncReplicaOperation& operation) {
+-    validate_sync_replica_operation_or_throw(operation, limits_);
++    // Exact replay is already authorized by the immutable retained owner. Avoid
++    // re-encoding and rehashing a potentially large envelope on every retry. A
++    // same-ID but nonidentical value still takes the full validation path below
++    // and can only survive it if SHA-256 itself collides.
++    const auto duplicate = evidence_by_id_.find(operation.operation_id);
++    if (duplicate != evidence_by_id_.end() &&
++        duplicate->second == operation) {
++        return SyncReplicaAdmission::Duplicate;
++    }
++
++    const std::uint64_t canonical_bytes =
++        detail::validate_sync_replica_operation_and_measure_or_throw(
++            operation, limits_);
+     if (operation.folder_id != folder_id_) {
+         throw std::invalid_argument(
+             "sync replica rejected evidence from a different folder");
+     }
+-
+-    const auto duplicate = evidence_by_id_.find(operation.operation_id);
+     if (duplicate != evidence_by_id_.end()) {
+-        if (duplicate->second != operation) {
+-            throw std::runtime_error(
+-                "sync replica operation digest collision changed canonical bytes");
+-        }
+-        return SyncReplicaAdmission::Duplicate;
++        throw std::runtime_error(
++            "sync replica operation digest collision changed canonical bytes");
+     }
+     if (evidence_by_id_.size() >= limits_.max_operations) {
+         throw std::length_error(
+             "sync replica retained evidence reached configured operation limit");
+     }
++    const RetainedEvidenceTotals retained_totals =
++        prospective_retained_totals_or_throw(
++            {retained_canonical_bytes_,
++             retained_context_entries_,
++             retained_predecessor_ids_},
++            retained_charge_or_throw(operation, canonical_bytes),
++            limits_);
+ 
+     const auto inserted = evidence_by_id_.emplace(
+         operation.operation_id, operation);
+@@ -396,6 +510,9 @@ SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(
+         causal_head_operation_ids_.swap(
+             projection.causal_head_operation_ids);
+         local_actor_compromised_ = compromised;
++        retained_canonical_bytes_ = retained_totals.canonical_bytes;
++        retained_context_entries_ = retained_totals.context_entries;
++        retained_predecessor_ids_ = retained_totals.predecessor_ids;
+         return admission_for_state(incoming_state);
+     } catch (...) {
+         evidence_by_id_.erase(inserted.first);
+diff --git a/src/sync_replica_model.hpp b/src/sync_replica_model.hpp
+index 36d3292..a67938c 100644
+--- a/src/sync_replica_model.hpp
++++ b/src/sync_replica_model.hpp
+@@ -71,6 +71,16 @@ struct SyncReplicaModelLimits final {
+     std::uint64_t max_context_entries = 4096;
+     std::uint64_t max_predecessor_ids = 4096;
+     std::uint64_t max_canonical_operation_bytes = 4U * 1024U * 1024U;
++
++    // Per-envelope ceilings do not bound the aggregate retained attack surface:
++    // max_operations envelopes at the canonical-byte ceiling would otherwise
++    // authorize roughly 40 GiB before map/vector/string overhead at the defaults.
++    // These independent cumulative budgets charge active, pending, and
++    // quarantined evidence alike.
++    std::uint64_t max_retained_canonical_bytes =
++        256ULL * 1024ULL * 1024ULL;
++    std::uint64_t max_retained_context_entries = 1000000ULL;
++    std::uint64_t max_retained_predecessor_ids = 1000000ULL;
+ };
+ 
+ // Evidence admission and active applicability are deliberately separate. An
+@@ -129,6 +139,14 @@ struct SyncReplicaDurableState final {
+ // Canonical binary operation bytes exclude operation_id itself. The fixed
+ // versioned encoding uses big-endian integer and length fields, is bounded
+ // before allocation, and binds predecessor IDs as well as the dotted summary.
++// This measurement applies exactly the same semantic and per-envelope limits
++// as encoding but does not allocate the encoded envelope. operation_id may be
++// empty while a local operation is being prepared.
++[[nodiscard]] std::uint64_t
++    sync_replica_operation_canonical_size_or_throw(
++        const SyncReplicaOperation& operation,
++        const SyncReplicaModelLimits& limits = {});
++
+ [[nodiscard]] std::string encode_sync_replica_operation_canonical_or_throw(
+     const SyncReplicaOperation& operation,
+     const SyncReplicaModelLimits& limits = {});
+@@ -170,7 +188,7 @@ public:
+         SyncReplicaModelLimits limits = {});
+ 
+     [[nodiscard]] static SyncReplicaModel restore_or_throw(
+-        const SyncReplicaDurableState& durable,
++        SyncReplicaDurableState durable,
+         SyncReplicaModelLimits limits = {});
+ 
+     // Local mutations observe only the active causal graph, bind its exact heads
+@@ -214,6 +232,18 @@ public:
+         return evidence_by_id_.size();
+     }
+ 
++    [[nodiscard]] std::uint64_t retained_canonical_bytes() const noexcept {
++        return retained_canonical_bytes_;
++    }
++
++    [[nodiscard]] std::uint64_t retained_context_entry_count() const noexcept {
++        return retained_context_entries_;
++    }
++
++    [[nodiscard]] std::uint64_t retained_predecessor_id_count() const noexcept {
++        return retained_predecessor_ids_;
++    }
++
+     [[nodiscard]] std::size_t pending_operation_count() const noexcept;
+     [[nodiscard]] std::size_t quarantined_operation_count() const noexcept;
+ 
+@@ -281,6 +311,13 @@ private:
+     std::set<std::string> active_operation_ids_;
+     std::map<std::string, SyncReplicaEvidenceState> evidence_state_by_id_;
+     std::set<std::string> causal_head_operation_ids_;
++
++    // Exact aggregate charge of evidence_by_id_. These values are published in
++    // the same no-throw commit section as graph projection and are unchanged on
++    // every rejected or allocation-failed admission.
++    std::uint64_t retained_canonical_bytes_ = 0;
++    std::uint64_t retained_context_entries_ = 0;
++    std::uint64_t retained_predecessor_ids_ = 0;
+ };
+ 
+ }  // namespace anonsync
+diff --git a/src/sync_replica_operation_codec.cpp b/src/sync_replica_operation_codec.cpp
+index 623730f..cd98b43 100644
+--- a/src/sync_replica_operation_codec.cpp
++++ b/src/sync_replica_operation_codec.cpp
+@@ -160,7 +160,10 @@ void add_framed_string_size_or_throw(
+             "sync replica operation plus exact predecessors exceeds the configured model limit");
+     }
+ 
+-    std::optional<SyncReplicaActor> previous_actor;
++    // Keep only an observer into the already-owned context. Copying the
++    // previous actor cloned its device_id on every validation pass, turning an
++    // otherwise measurement-only traversal into avoidable heap traffic.
++    const SyncReplicaActor* previous_actor = nullptr;
+     std::uint64_t implied_past_events = 0;
+     for (const SyncReplicaClockEntry& entry : operation.causal_context) {
+         detail::validate_sync_replica_actor_or_throw(
+@@ -175,12 +178,12 @@ void add_framed_string_size_or_throw(
+                 "sync replica causal context implies more retained history than the configured model limit");
+         }
+         implied_past_events += entry.counter;
+-        if (previous_actor.has_value() &&
+-            !(previous_actor.value() < entry.actor)) {
++        if (previous_actor != nullptr &&
++            !(*previous_actor < entry.actor)) {
+             throw std::invalid_argument(
+                 "sync replica causal context must be strictly sorted with unique actors");
+         }
+-        previous_actor = entry.actor;
++        previous_actor = &entry.actor;
+     }
+     if (implied_past_events >= limits.max_operations) {
+         throw std::invalid_argument(
+@@ -411,6 +414,41 @@ void validate_sync_replica_model_limits_or_throw(
+         throw std::invalid_argument(
+             "sync replica model max_canonical_operation_bytes must be positive");
+     }
++    if (limits.max_retained_canonical_bytes <
++        limits.max_canonical_operation_bytes) {
++        throw std::invalid_argument(
++            "sync replica model retained canonical-byte budget must admit one maximum-size operation");
++    }
++    if (limits.max_retained_context_entries <
++        limits.max_context_entries) {
++        throw std::invalid_argument(
++            "sync replica model retained context-entry budget must admit one maximum-size context");
++    }
++    if (limits.max_retained_predecessor_ids <
++        limits.max_predecessor_ids) {
++        throw std::invalid_argument(
++            "sync replica model retained predecessor-ID budget must admit one maximum-size predecessor set");
++    }
++}
++
++std::uint64_t validate_sync_replica_operation_and_measure_or_throw(
++    const SyncReplicaOperation& operation,
++    const SyncReplicaModelLimits& limits) {
++    const std::size_t encoded_size =
++        validate_operation_semantics_or_throw(operation, limits);
++    validate_operation_id_shape_or_throw(operation);
++    if (sha256_hex(encode_after_semantic_validation_or_throw(
++            operation, encoded_size)) != operation.operation_id) {
++        throw std::invalid_argument(
++            "sync replica operation_id does not bind the exact canonical operation bytes");
++    }
++    if (std::cmp_greater(
++            encoded_size,
++            std::numeric_limits<std::uint64_t>::max())) {
++        throw std::overflow_error(
++            "sync replica canonical operation size does not fit uint64_t");
++    }
++    return static_cast<std::uint64_t>(encoded_size);
+ }
+ 
+ void validate_sync_replica_actor_or_throw(
+@@ -442,6 +480,20 @@ std::uint64_t sync_replica_context_counter(
+ 
+ }  // namespace detail
+ 
++std::uint64_t sync_replica_operation_canonical_size_or_throw(
++    const SyncReplicaOperation& operation,
++    const SyncReplicaModelLimits& limits) {
++    const std::size_t encoded_size =
++        validate_operation_semantics_or_throw(operation, limits);
++    if (std::cmp_greater(
++            encoded_size,
++            std::numeric_limits<std::uint64_t>::max())) {
++        throw std::overflow_error(
++            "sync replica canonical operation size does not fit uint64_t");
++    }
++    return static_cast<std::uint64_t>(encoded_size);
++}
++
+ std::string encode_sync_replica_operation_canonical_or_throw(
+     const SyncReplicaOperation& operation,
+     const SyncReplicaModelLimits& limits) {
+@@ -542,14 +594,8 @@ std::string make_sync_replica_operation_id_or_throw(
+ void validate_sync_replica_operation_or_throw(
+     const SyncReplicaOperation& operation,
+     const SyncReplicaModelLimits& limits) {
+-    const std::size_t encoded_size =
+-        validate_operation_semantics_or_throw(operation, limits);
+-    validate_operation_id_shape_or_throw(operation);
+-    if (sha256_hex(encode_after_semantic_validation_or_throw(
+-            operation, encoded_size)) != operation.operation_id) {
+-        throw std::invalid_argument(
+-            "sync replica operation_id does not bind the exact canonical operation bytes");
+-    }
++    (void)detail::validate_sync_replica_operation_and_measure_or_throw(
++        operation, limits);
+ }
+ 
+ bool sync_replica_context_covers_dot(
+diff --git a/src/sync_replica_operation_codec_internal.hpp b/src/sync_replica_operation_codec_internal.hpp
+index fbd1b15..6c92575 100644
+--- a/src/sync_replica_operation_codec_internal.hpp
++++ b/src/sync_replica_operation_codec_internal.hpp
+@@ -11,6 +11,11 @@ namespace anonsync::detail {
+ void validate_sync_replica_model_limits_or_throw(
+     const SyncReplicaModelLimits& limits);
+ 
++[[nodiscard]] std::uint64_t
++    validate_sync_replica_operation_and_measure_or_throw(
++        const SyncReplicaOperation& operation,
++        const SyncReplicaModelLimits& limits);
++
+ void validate_sync_replica_actor_or_throw(
+     const SyncReplicaActor& actor,
+     std::string_view label);
+diff --git a/tests/sync_replica_aggregate_budget_test.cpp b/tests/sync_replica_aggregate_budget_test.cpp
+new file mode 100644
+index 0000000..01c0399
+--- /dev/null
++++ b/tests/sync_replica_aggregate_budget_test.cpp
+@@ -0,0 +1,404 @@
++#include "sha256_digest.hpp"
++#include "sync_replica_model.hpp"
++
++#include <algorithm>
++#include <cstdint>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace {
++
++void require(bool condition, const std::string& message, std::size_t& checks) {
++    ++checks;
++    if (!condition) throw std::runtime_error(message);
++}
++
++template <typename ExpectedException, typename Callable>
++void require_throws(
++    Callable&& callable,
++    const std::string& message,
++    std::size_t& checks) {
++    bool threw_expected = false;
++    try {
++        std::forward<Callable>(callable)();
++    } catch (const ExpectedException&) {
++        threw_expected = true;
++    } catch (...) {
++    }
++    require(threw_expected, message, checks);
++}
++
++anonsync::SyncReplicaActor actor(
++    const std::string& device_id,
++    std::uint64_t epoch) {
++    return {device_id, epoch};
++}
++
++anonsync::SyncReplicaOperation root_operation(
++    const std::string& folder,
++    const anonsync::SyncReplicaActor& operation_actor,
++    const std::string& path,
++    const std::string& payload) {
++    anonsync::SyncReplicaOperation operation;
++    operation.folder_id = folder;
++    operation.canonical_path = path;
++    operation.kind = anonsync::SyncReplicaValueKind::File;
++    operation.size_bytes = static_cast<std::uint64_t>(payload.size());
++    operation.content_sha256 = anonsync::sha256_hex(payload);
++    operation.dot = {operation_actor, 1U};
++    operation.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(operation);
++    return operation;
++}
++
++anonsync::SyncReplicaOperation pending_operation(
++    const std::string& folder,
++    const anonsync::SyncReplicaActor& operation_actor,
++    const anonsync::SyncReplicaActor& missing_actor,
++    const std::string& path,
++    const std::string& label) {
++    anonsync::SyncReplicaOperation operation;
++    operation.folder_id = folder;
++    operation.canonical_path = path;
++    operation.kind = anonsync::SyncReplicaValueKind::File;
++    operation.size_bytes = static_cast<std::uint64_t>(label.size());
++    operation.content_sha256 = anonsync::sha256_hex("pending:" + label);
++    operation.dot = {operation_actor, 1U};
++    operation.causal_context = {{missing_actor, 1U}};
++    operation.predecessor_operation_ids = {
++        anonsync::sha256_hex("missing-parent:" + label)};
++    operation.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(operation);
++    return operation;
++}
++
++anonsync::SyncReplicaOperation same_dot_fork(
++    const std::string& folder,
++    const anonsync::SyncReplicaActor& fork_actor,
++    const std::string& payload) {
++    return root_operation(
++        folder, fork_actor, "budget/fork.bin", payload);
++}
++
++std::uint64_t canonical_size(
++    const anonsync::SyncReplicaOperation& operation) {
++    return anonsync::sync_replica_operation_canonical_size_or_throw(operation);
++}
++
++std::uint64_t sum_canonical_sizes(
++    const std::vector<anonsync::SyncReplicaOperation>& operations) {
++    std::uint64_t total = 0U;
++    for (const auto& operation : operations) {
++        total += canonical_size(operation);
++    }
++    return total;
++}
++
++anonsync::SyncReplicaModelLimits base_limits() {
++    anonsync::SyncReplicaModelLimits limits;
++    limits.max_operations = 32U;
++    limits.max_context_entries = 4U;
++    limits.max_predecessor_ids = 4U;
++    limits.max_canonical_operation_bytes = 64U * 1024U;
++    limits.max_retained_canonical_bytes = 4U * 1024U * 1024U;
++    limits.max_retained_context_entries = 64U;
++    limits.max_retained_predecessor_ids = 64U;
++    return limits;
++}
++
++}  // namespace
++
++int main() {
++    using namespace anonsync;
++
++    try {
++        std::size_t checks = 0U;
++        const std::string folder = "folder-aggregate-budget";
++        const SyncReplicaActor local_actor =
++            actor("device-budget-local", 701U);
++
++        SyncReplicaOperation measured;
++        measured.folder_id = folder;
++        measured.canonical_path = "budget/measured.bin";
++        measured.kind = SyncReplicaValueKind::File;
++        measured.size_bytes = 8U;
++        measured.content_sha256 = sha256_hex("measured");
++        measured.dot = {actor("device-budget-measured", 702U), 1U};
++        const std::uint64_t measured_size = canonical_size(measured);
++        require(
++            measured_size ==
++                encode_sync_replica_operation_canonical_or_throw(measured)
++                    .size(),
++            "exact canonical-size API disagrees with canonical encoding",
++            checks);
++        measured.operation_id =
++            make_sync_replica_operation_id_or_throw(measured);
++        require(
++            canonical_size(measured) == measured_size,
++            "operation_id unexpectedly changed canonical envelope size",
++            checks);
++
++        SyncReplicaModelLimits invalid = base_limits();
++        invalid.max_retained_canonical_bytes =
++            invalid.max_canonical_operation_bytes - 1U;
++        require_throws<std::invalid_argument>(
++            [&] { SyncReplicaModel model(folder, local_actor, invalid); },
++            "limits admitted an envelope larger than the aggregate byte budget",
++            checks);
++        invalid = base_limits();
++        invalid.max_retained_context_entries =
++            invalid.max_context_entries - 1U;
++        require_throws<std::invalid_argument>(
++            [&] { SyncReplicaModel model(folder, local_actor, invalid); },
++            "limits admitted a context larger than its aggregate entry budget",
++            checks);
++        invalid = base_limits();
++        invalid.max_retained_predecessor_ids =
++            invalid.max_predecessor_ids - 1U;
++        require_throws<std::invalid_argument>(
++            [&] { SyncReplicaModel model(folder, local_actor, invalid); },
++            "limits admitted a predecessor set larger than its aggregate budget",
++            checks);
++
++        const SyncReplicaOperation active = root_operation(
++            folder,
++            actor("device-budget-active", 710U),
++            "budget/active.bin",
++            "active");
++        const SyncReplicaOperation pending = pending_operation(
++            folder,
++            actor("device-budget-pending", 711U),
++            actor("device-budget-missing", 712U),
++            "budget/pending.bin",
++            "pending");
++        const SyncReplicaActor fork_actor =
++            actor("device-budget-fork", 713U);
++        const SyncReplicaOperation fork_one =
++            same_dot_fork(folder, fork_actor, "fork-one");
++        const SyncReplicaOperation fork_two =
++            same_dot_fork(folder, fork_actor, "fork-two");
++        const SyncReplicaOperation overflow = root_operation(
++            folder,
++            actor("device-budget-overflow", 714U),
++            "budget/overflow.bin",
++            "overflow");
++        const std::vector<SyncReplicaOperation> retained = {
++            active, pending, fork_one, fork_two};
++
++        SyncReplicaModelLimits byte_limits = base_limits();
++        byte_limits.max_canonical_operation_bytes = std::max({
++            canonical_size(active),
++            canonical_size(pending),
++            canonical_size(fork_one),
++            canonical_size(fork_two),
++            canonical_size(overflow)});
++        byte_limits.max_retained_canonical_bytes =
++            sum_canonical_sizes(retained);
++        SyncReplicaModel byte_model(folder, local_actor, byte_limits);
++        require(
++            byte_model.accept_remote_or_throw(active) ==
++                SyncReplicaAdmission::InsertedActive,
++            "active evidence did not enter the aggregate-byte fixture",
++            checks);
++        require(
++            byte_model.accept_remote_or_throw(pending) ==
++                SyncReplicaAdmission::InsertedPending,
++            "missing-parent evidence was not retained pending",
++            checks);
++        require(
++            byte_model.accept_remote_or_throw(fork_one) ==
++                SyncReplicaAdmission::InsertedActive,
++            "first same-dot envelope did not initially activate",
++            checks);
++        require(
++            byte_model.accept_remote_or_throw(fork_two) ==
++                SyncReplicaAdmission::InsertedQuarantined,
++            "second same-dot envelope did not quarantine the fork",
++            checks);
++        require(
++            byte_model.operation_count() == 1U &&
++                byte_model.pending_operation_count() == 1U &&
++                byte_model.quarantined_operation_count() == 2U,
++            "mixed retained evidence did not cover active, pending, and quarantine states",
++            checks);
++        require(
++            byte_model.retained_canonical_bytes() ==
++                byte_limits.max_retained_canonical_bytes &&
++                byte_model.retained_context_entry_count() == 1U &&
++                byte_model.retained_predecessor_id_count() == 1U,
++            "mixed evidence aggregate charges were not exact",
++            checks);
++        require(
++            byte_model.accept_remote_or_throw(fork_two) ==
++                    SyncReplicaAdmission::Duplicate &&
++                byte_model.retained_canonical_bytes() ==
++                    byte_limits.max_retained_canonical_bytes,
++            "duplicate evidence consumed aggregate budget",
++            checks);
++        const SyncReplicaDurableState byte_baseline =
++            byte_model.durable_state();
++        require_throws<std::length_error>(
++            [&] { (void)byte_model.accept_remote_or_throw(overflow); },
++            "aggregate canonical-byte ceiling admitted one extra envelope",
++            checks);
++        require(
++            byte_model.durable_state() == byte_baseline &&
++                byte_model.evidence_count() == retained.size() &&
++                byte_model.retained_canonical_bytes() ==
++                    byte_limits.max_retained_canonical_bytes,
++            "rejected byte-budget admission changed retained semantics",
++            checks);
++
++        SyncReplicaDurableState move_restore_state = byte_baseline;
++        SyncReplicaModel restored = SyncReplicaModel::restore_or_throw(
++            std::move(move_restore_state), byte_limits);
++        require(
++            restored.durable_state() == byte_baseline &&
++                restored.retained_canonical_bytes() ==
++                    byte_model.retained_canonical_bytes() &&
++                restored.retained_context_entry_count() ==
++                    byte_model.retained_context_entry_count() &&
++                restored.retained_predecessor_id_count() ==
++                    byte_model.retained_predecessor_id_count(),
++            "move-based restore did not reconstruct exact aggregate charges",
++            checks);
++
++        std::vector<SyncReplicaOperation> pending_set;
++        for (std::uint64_t index = 0U; index < 3U; ++index) {
++            pending_set.push_back(pending_operation(
++                folder,
++                actor(
++                    "device-context-op-" + std::to_string(index),
++                    720U + index),
++                actor(
++                    "device-context-missing-" + std::to_string(index),
++                    730U + index),
++                "budget/context-" + std::to_string(index) + ".bin",
++                "context-" + std::to_string(index)));
++        }
++        SyncReplicaModelLimits context_limits = base_limits();
++        context_limits.max_context_entries = 1U;
++        context_limits.max_retained_context_entries = 2U;
++        SyncReplicaModel context_model(folder, local_actor, context_limits);
++        require(
++            context_model.accept_remote_or_throw(pending_set[0]) ==
++                    SyncReplicaAdmission::InsertedPending &&
++                context_model.accept_remote_or_throw(pending_set[1]) ==
++                    SyncReplicaAdmission::InsertedPending,
++            "context-budget fixture did not retain its first two envelopes",
++            checks);
++        const SyncReplicaDurableState context_baseline =
++            context_model.durable_state();
++        require_throws<std::length_error>(
++            [&] { (void)context_model.accept_remote_or_throw(pending_set[2]); },
++            "aggregate context-entry ceiling admitted one extra context",
++            checks);
++        require(
++            context_model.durable_state() == context_baseline &&
++                context_model.retained_context_entry_count() == 2U,
++            "context-budget rejection partially retained an envelope",
++            checks);
++        SyncReplicaModelLimits context_restore_limits = context_limits;
++        context_restore_limits.max_retained_context_entries = 1U;
++        require_throws<std::length_error>(
++            [&] {
++                (void)SyncReplicaModel::restore_or_throw(
++                    context_baseline, context_restore_limits);
++            },
++            "restore ignored the aggregate context-entry ceiling",
++            checks);
++
++        SyncReplicaModelLimits predecessor_limits = base_limits();
++        predecessor_limits.max_predecessor_ids = 1U;
++        predecessor_limits.max_retained_predecessor_ids = 2U;
++        SyncReplicaModel predecessor_model(
++            folder, local_actor, predecessor_limits);
++        require(
++            predecessor_model.accept_remote_or_throw(pending_set[0]) ==
++                    SyncReplicaAdmission::InsertedPending &&
++                predecessor_model.accept_remote_or_throw(pending_set[1]) ==
++                    SyncReplicaAdmission::InsertedPending,
++            "predecessor-budget fixture did not retain its first two envelopes",
++            checks);
++        const SyncReplicaDurableState predecessor_baseline =
++            predecessor_model.durable_state();
++        require_throws<std::length_error>(
++            [&] {
++                (void)predecessor_model.accept_remote_or_throw(pending_set[2]);
++            },
++            "aggregate predecessor-ID ceiling admitted one extra dependency",
++            checks);
++        require(
++            predecessor_model.durable_state() == predecessor_baseline &&
++                predecessor_model.retained_predecessor_id_count() == 2U,
++            "predecessor-budget rejection partially retained an envelope",
++            checks);
++        SyncReplicaModelLimits predecessor_restore_limits = predecessor_limits;
++        predecessor_restore_limits.max_retained_predecessor_ids = 1U;
++        require_throws<std::length_error>(
++            [&] {
++                (void)SyncReplicaModel::restore_or_throw(
++                    predecessor_baseline, predecessor_restore_limits);
++            },
++            "restore ignored the aggregate predecessor-ID ceiling",
++            checks);
++
++        SyncReplicaModelLimits probe_limits = base_limits();
++        const SyncReplicaActor mint_actor =
++            actor("device-budget-mint", 740U);
++        SyncReplicaModel probe(folder, mint_actor, probe_limits);
++        const SyncReplicaOperation first_local =
++            probe.create_local_file_or_throw(
++                "budget/local.bin", 1U, sha256_hex("local-one"));
++        const SyncReplicaDurableState first_local_state =
++            probe.durable_state();
++        const SyncReplicaOperation second_local =
++            probe.create_local_file_or_throw(
++                "budget/local.bin", 2U, sha256_hex("local-two"));
++
++        SyncReplicaModelLimits local_limits = base_limits();
++        local_limits.max_canonical_operation_bytes = std::max(
++            canonical_size(first_local), canonical_size(second_local));
++        local_limits.max_retained_canonical_bytes =
++            local_limits.max_canonical_operation_bytes;
++        SyncReplicaModel local_model = SyncReplicaModel::restore_or_throw(
++            first_local_state, local_limits);
++        const SyncReplicaDurableState local_baseline =
++            local_model.durable_state();
++        const std::uint64_t local_bytes =
++            local_model.retained_canonical_bytes();
++        const std::uint64_t local_contexts =
++            local_model.retained_context_entry_count();
++        const std::uint64_t local_predecessors =
++            local_model.retained_predecessor_id_count();
++        require_throws<std::length_error>(
++            [&] {
++                (void)local_model.create_local_file_or_throw(
++                    "budget/local.bin", 2U, sha256_hex("local-two"));
++            },
++            "local mint crossed the aggregate canonical-byte ceiling",
++            checks);
++        require(
++            local_model.durable_state() == local_baseline &&
++                local_model.last_local_counter() == 1U &&
++                local_model.retained_canonical_bytes() == local_bytes &&
++                local_model.retained_context_entry_count() == local_contexts &&
++                local_model.retained_predecessor_id_count() == local_predecessors,
++            "rejected local mint changed authority or aggregate counters",
++            checks);
++
++        std::cout
++            << "sync replica aggregate budget tests passed ("
++            << checks
++            << " checks, mixed-state exact bytes, restore, and local atomicity)\n";
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr
++            << "sync replica aggregate budget tests failed: "
++            << error.what() << '\n';
++        return 1;
++    }
++}
+diff --git a/tests/sync_replica_allocation_atomicity_test.cpp b/tests/sync_replica_allocation_atomicity_test.cpp
+index 0216c80..ba1518a 100644
+--- a/tests/sync_replica_allocation_atomicity_test.cpp
++++ b/tests/sync_replica_allocation_atomicity_test.cpp
+@@ -120,6 +120,28 @@ struct SweepResult final {
+     std::size_t successful_path_allocations = 0U;
+ };
+ 
++struct RetainedCounters final {
++    std::uint64_t canonical_bytes = 0U;
++    std::uint64_t context_entries = 0U;
++    std::uint64_t predecessor_ids = 0U;
++};
++
++RetainedCounters retained_counters(
++    const anonsync::SyncReplicaDurableState& durable,
++    const anonsync::SyncReplicaModelLimits& limits) {
++    RetainedCounters counters;
++    for (const auto& operation : durable.operations) {
++        counters.canonical_bytes +=
++            anonsync::sync_replica_operation_canonical_size_or_throw(
++                operation, limits);
++        counters.context_entries += static_cast<std::uint64_t>(
++            operation.causal_context.size());
++        counters.predecessor_ids += static_cast<std::uint64_t>(
++            operation.predecessor_operation_ids.size());
++    }
++    return counters;
++}
++
+ SweepResult sweep_local_mint(
+     const anonsync::SyncReplicaDurableState& baseline,
+     const anonsync::SyncReplicaModelLimits& limits,
+@@ -128,16 +150,19 @@ SweepResult sweep_local_mint(
+     std::size_t& checks) {
+     constexpr std::size_t kMaxFailpoint = 4096U;
+     SweepResult result;
++    const RetainedCounters baseline_counters =
++        retained_counters(baseline, limits);
+     for (std::size_t fail_at = 1U;
+          fail_at <= kMaxFailpoint; ++fail_at) {
+         anonsync::SyncReplicaModel model =
+             anonsync::SyncReplicaModel::restore_or_throw(baseline, limits);
+         bool allocation_failed = false;
+         std::size_t attempts = 0U;
++        anonsync::SyncReplicaOperation minted;
+         {
+             AllocationArm arm(fail_at);
+             try {
+-                (void)model.create_local_file_or_throw(
++                minted = model.create_local_file_or_throw(
+                     path, 17U, content_sha256);
+             } catch (const std::bad_alloc&) {
+                 allocation_failed = true;
+@@ -158,7 +183,13 @@ SweepResult sweep_local_mint(
+             require(
+                 !model.local_actor_compromised() &&
+                     model.last_local_counter() == baseline.last_local_counter &&
+-                    model.evidence_count() == baseline.operations.size(),
++                    model.evidence_count() == baseline.operations.size() &&
++                    model.retained_canonical_bytes() ==
++                        baseline_counters.canonical_bytes &&
++                    model.retained_context_entry_count() ==
++                        baseline_counters.context_entries &&
++                    model.retained_predecessor_id_count() ==
++                        baseline_counters.predecessor_ids,
+                 "allocation-failed local mint changed live authority",
+                 checks);
+             continue;
+@@ -172,7 +203,17 @@ SweepResult sweep_local_mint(
+         require(
+             model.last_local_counter() == baseline.last_local_counter + 1U &&
+                 model.evidence_count() == baseline.operations.size() + 1U &&
+-                !model.local_actor_compromised(),
++                !model.local_actor_compromised() &&
++                model.retained_canonical_bytes() ==
++                    baseline_counters.canonical_bytes +
++                        anonsync::sync_replica_operation_canonical_size_or_throw(
++                            minted, limits) &&
++                model.retained_context_entry_count() ==
++                    baseline_counters.context_entries +
++                        minted.causal_context.size() &&
++                model.retained_predecessor_id_count() ==
++                    baseline_counters.predecessor_ids +
++                        minted.predecessor_operation_ids.size(),
+             "successful local mint did not publish one complete operation",
+             checks);
+         return result;
+@@ -188,6 +229,11 @@ SweepResult sweep_remote_admission(
+     std::size_t& checks) {
+     constexpr std::size_t kMaxFailpoint = 4096U;
+     SweepResult result;
++    const RetainedCounters baseline_counters =
++        retained_counters(baseline, limits);
++    const std::uint64_t incoming_canonical_bytes =
++        anonsync::sync_replica_operation_canonical_size_or_throw(
++            incoming, limits);
+     for (std::size_t fail_at = 1U;
+          fail_at <= kMaxFailpoint; ++fail_at) {
+         anonsync::SyncReplicaModel model =
+@@ -218,7 +264,13 @@ SweepResult sweep_remote_admission(
+                 checks);
+             require(
+                 !model.evidence_operation_by_id(incoming.operation_id)
+-                     .has_value(),
++                     .has_value() &&
++                    model.retained_canonical_bytes() ==
++                        baseline_counters.canonical_bytes &&
++                    model.retained_context_entry_count() ==
++                        baseline_counters.context_entries &&
++                    model.retained_predecessor_id_count() ==
++                        baseline_counters.predecessor_ids,
+                 "allocation-failed remote admission leaked the candidate ID",
+                 checks);
+             continue;
+@@ -232,7 +284,16 @@ SweepResult sweep_remote_admission(
+         require(
+             admission == anonsync::SyncReplicaAdmission::InsertedActive &&
+                 model.evidence_count() == baseline.operations.size() + 1U &&
+-                model.operation_by_id(incoming.operation_id).has_value(),
++                model.operation_by_id(incoming.operation_id).has_value() &&
++                model.retained_canonical_bytes() ==
++                    baseline_counters.canonical_bytes +
++                        incoming_canonical_bytes &&
++                model.retained_context_entry_count() ==
++                    baseline_counters.context_entries +
++                        incoming.causal_context.size() &&
++                model.retained_predecessor_id_count() ==
++                    baseline_counters.predecessor_ids +
++                        incoming.predecessor_operation_ids.size(),
+             "successful remote admission did not publish one active operation",
+             checks);
+         return result;
+@@ -283,6 +344,28 @@ int main() {
+             checks);
+ 
+         const SyncReplicaDurableState baseline = seed.durable_state();
++
++        // Idempotent anti-entropy replay must not repeatedly materialize and
++        // hash an envelope that this immutable evidence owner already holds.
++        SyncReplicaModel duplicate_probe =
++            SyncReplicaModel::restore_or_throw(baseline, limits);
++        SyncReplicaAdmission duplicate_admission =
++            SyncReplicaAdmission::InsertedActive;
++        std::size_t duplicate_attempts = 0U;
++        {
++            AllocationArm arm(1U);
++            duplicate_admission =
++                duplicate_probe.accept_remote_or_throw(first_local);
++            duplicate_attempts = arm.attempts();
++            arm.disarm();
++        }
++        require(
++            duplicate_admission == SyncReplicaAdmission::Duplicate &&
++                duplicate_attempts == 0U &&
++                duplicate_probe.durable_state() == baseline,
++            "exact duplicate replay allocated or changed retained evidence",
++            checks);
++
+         const std::string next_path = "fault/local.bin";
+         const std::string next_digest = sha256_hex("second-local");
+         const SweepResult local = sweep_local_mint(
+diff --git a/tools/audit_sync_replica_aggregate_budget.py b/tools/audit_sync_replica_aggregate_budget.py
+new file mode 100755
+index 0000000..8fbba53
+--- /dev/null
++++ b/tools/audit_sync_replica_aggregate_budget.py
+@@ -0,0 +1,302 @@
++#!/usr/bin/env python3
++"""Fail-closed structural audit for aggregate retained-evidence budgets."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++REQUIRED = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_replica_model.hpp"),
++    Path("src/sync_replica_model.cpp"),
++    Path("src/sync_replica_operation_codec.cpp"),
++    Path("src/sync_replica_operation_codec_internal.hpp"),
++    Path("tests/sync_replica_aggregate_budget_test.cpp"),
++    Path("tests/sync_replica_allocation_atomicity_test.cpp"),
++    Path("tools/audit_sync_replica_aggregate_budget.py"),
++    Path("tools/verify_release_package.py"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def ordered(text: str, *tokens: str) -> bool:
++    cursor = -1
++    for token in tokens:
++        cursor = text.find(token, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
++def function_body(text: str, signature: str) -> str:
++    start = text.find(signature)
++    if start < 0:
++        return ""
++    brace = text.find("{", start)
++    if brace < 0:
++        return ""
++    depth = 0
++    for index in range(brace, len(text)):
++        if text[index] == "{":
++            depth += 1
++        elif text[index] == "}":
++            depth -= 1
++            if depth == 0:
++                return text[start:index + 1]
++    return ""
++
++
++def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
++    violations = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-sync-replica-aggregate-budget-audit-v1",
++        "root": str(root),
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if output is None:
++        sys.stdout.write(rendered)
++    else:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++    return 0 if not violations else 1
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root",
++        type=Path,
++        default=Path(__file__).resolve().parents[1],
++    )
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    checks: list[Check] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    missing = [path.as_posix() for path in REQUIRED if not (root / path).is_file()]
++    require(not missing, "required_files_exist", f"missing={missing}")
++    if missing:
++        return emit(root, args.json, checks)
++
++    text = {
++        path.as_posix(): (root / path).read_text(encoding="utf-8")
++        for path in REQUIRED
++    }
++    header = text["src/sync_replica_model.hpp"]
++    model = text["src/sync_replica_model.cpp"]
++    codec = text["src/sync_replica_operation_codec.cpp"]
++    internal = text["src/sync_replica_operation_codec_internal.hpp"]
++    runtime_test = text["tests/sync_replica_aggregate_budget_test.cpp"]
++    allocation_test = text["tests/sync_replica_allocation_atomicity_test.cpp"]
++    cmake = text["CMakeLists.txt"]
++    verifier = text["tools/verify_release_package.py"]
++
++    limit_fields = (
++        "max_retained_canonical_bytes",
++        "max_retained_context_entries",
++        "max_retained_predecessor_ids",
++    )
++    require(
++        all(field in header for field in limit_fields),
++        "three_independent_aggregate_limits_exist",
++        "canonical bytes, context entries, and predecessor IDs have separate ceilings",
++    )
++    require(
++        "256ULL * 1024ULL * 1024ULL" in header
++        and header.count("1000000ULL") >= 2,
++        "defaults_bound_retained_amplification",
++        "default retained bytes and metadata cardinalities are finite",
++    )
++    require(
++        all(
++            f"limits.{aggregate} <\n        limits.{single}" in codec
++            for aggregate, single in (
++                ("max_retained_canonical_bytes", "max_canonical_operation_bytes"),
++                ("max_retained_context_entries", "max_context_entries"),
++                ("max_retained_predecessor_ids", "max_predecessor_ids"),
++            )
++        ),
++        "aggregate_limits_admit_one_legal_envelope",
++        "configuration cannot authorize an envelope that can never be retained",
++    )
++    require(
++        "sync_replica_operation_canonical_size_or_throw" in header
++        and "validate_operation_semantics_or_throw(operation, limits)" in codec,
++        "exact_canonical_size_without_envelope_materialization",
++        "budgeting reuses canonical semantic validation without constructing the encoded envelope",
++    )
++    require(
++        "validate_sync_replica_operation_and_measure_or_throw" in internal
++        and "sha256_hex(encode_after_semantic_validation_or_throw" in codec,
++        "admission_validates_identity_and_measures_once",
++        "remote and restore paths can obtain exact bytes from full identity validation",
++    )
++
++    restore_header = "restore_or_throw(\n        SyncReplicaDurableState durable"
++    require(
++        restore_header in header
++        and "const SyncReplicaDurableState& durable" not in header,
++        "restore_is_consumable_by_value",
++        "rvalue durable snapshots avoid cloning the complete evidence graph",
++    )
++    restore = function_body(
++        model, "SyncReplicaModel SyncReplicaModel::restore_or_throw(")
++    require(
++        "for (SyncReplicaOperation& operation : durable.operations)" in restore
++        and "std::move(operation)" in restore
++        and "std::move(durable.local_operation_ids)" in restore,
++        "restore_moves_owned_graph_payloads",
++        "operation vectors and local authority IDs transfer into the model",
++    )
++    require(
++        ordered(
++            restore,
++            "validate_sync_replica_operation_and_measure_or_throw",
++            "prospective_retained_totals_or_throw",
++            "std::move(operation)",
++            "project_sync_replica_evidence_or_throw",
++            "restored.retained_canonical_bytes_ =",
++        ),
++        "restore_checks_budget_before_publication",
++        "no over-budget durable prefix is published",
++    )
++
++    require(
++        "checked_retained_total_or_throw" in model
++        and "addition > limit - current" in model,
++        "aggregate_addition_is_overflow_safe",
++        "subtraction-based checks reject overflow and limit crossings",
++    )
++    require(
++        all(
++            f"{field}() const noexcept" in header
++            for field in (
++                "retained_canonical_bytes",
++                "retained_context_entry_count",
++                "retained_predecessor_id_count",
++            )
++        ),
++        "exact_live_counters_are_observable",
++        "tests and future persistence owners can attest aggregate charge",
++    )
++
++    local_admission = function_body(
++        model, "SyncReplicaOperation SyncReplicaModel::create_local_operation_or_throw(")
++    require(
++        ordered(
++            local_admission,
++            "sync_replica_operation_canonical_size_or_throw",
++            "prospective_retained_totals_or_throw",
++            "evidence_by_id_.emplace",
++            "project_sync_replica_evidence_or_throw",
++            "retained_canonical_bytes_ =",
++        ),
++        "local_mint_preflights_then_commits_counters",
++        "budget charge is computed before insertion and published after projection",
++    )
++    require(
++        "catch (...)" in local_admission
++        and "evidence_by_id_.erase(inserted.first);" in local_admission,
++        "local_mint_rolls_back_inserted_evidence",
++        "allocation/projection failure cannot leak a charged envelope",
++    )
++
++    remote_admission = function_body(
++        model, "SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(")
++    require(
++        ordered(
++            remote_admission,
++            "const auto duplicate",
++            "return SyncReplicaAdmission::Duplicate",
++            "validate_sync_replica_operation_and_measure_or_throw",
++            "prospective_retained_totals_or_throw",
++            "evidence_by_id_.emplace",
++            "project_sync_replica_evidence_or_throw",
++            "retained_canonical_bytes_ =",
++        ),
++        "exact_duplicate_bypasses_rehash_and_new_evidence_is_preflighted",
++        "byte-identical replay allocates no retained budget or canonical re-encoding work",
++    )
++    require(
++        "catch (...)" in remote_admission
++        and "evidence_by_id_.erase(inserted.first);" in remote_admission,
++        "remote_admission_rolls_back_inserted_evidence",
++        "all throwing projection cutpoints preserve prior aggregate counters",
++    )
++
++    require(
++        all(token in runtime_test for token in (
++            "InsertedActive",
++            "InsertedPending",
++            "InsertedQuarantined",
++            "Duplicate",
++            "restore_or_throw(\n            std::move(move_restore_state)",
++            "aggregate canonical-byte ceiling",
++            "aggregate context-entry ceiling",
++            "aggregate predecessor-ID ceiling",
++            "rejected local mint changed authority or aggregate counters",
++        )),
++        "runtime_test_covers_all_retained_states_and_boundaries",
++        "active/pending/quarantine/duplicate, restore, and local rejection are executable",
++    )
++    require(
++        all(token in allocation_test for token in (
++            "baseline_counters.canonical_bytes",
++            "retained_context_entry_count()",
++            "retained_predecessor_id_count()",
++            "exact duplicate replay allocated or changed retained evidence",
++            "successful remote admission did not publish one active operation",
++        )),
++        "allocation_fault_sweep_attests_counters",
++        "every injected bad_alloc cutpoint checks durable state and aggregate accounting",
++    )
++
++    target = "anonsync_sync_replica_aggregate_budget_test"
++    require(
++        cmake.count(target) >= 5
++        and f"add_test(NAME {target}" in cmake,
++        "runtime_test_is_built_registered_and_sanitized",
++        "the focused proof participates in normal and sanitizer lanes",
++    )
++    require(
++        "anonsync_sync_replica_aggregate_budget_source_audit" in cmake
++        and "audit_sync_replica_aggregate_budget.py" in cmake
++        and "${Python3_EXECUTABLE} -B -S" in cmake,
++        "source_audit_is_hermetically_registered",
++        "CTest executes the audit without site imports or bytecode writes",
++    )
++    require(
++        "revision_number >= 867" in verifier
++        and all(path in verifier for path in (
++            "tests/sync_replica_aggregate_budget_test.cpp",
++            "tools/audit_sync_replica_aggregate_budget.py",
++        )),
++        "release_verifier_requires_rev0867_boundary",
++        "future packages cannot omit this implementation proof",
++    )
++
++    return emit(root, args.json, checks)
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/audit_sync_sqlite_sidecar_snapshot.py b/tools/audit_sync_sqlite_sidecar_snapshot.py
+index 9ddcd7b..c46ed77 100755
+--- a/tools/audit_sync_sqlite_sidecar_snapshot.py
++++ b/tools/audit_sync_sqlite_sidecar_snapshot.py
+@@ -606,7 +606,10 @@ def main() -> int:
+         "add_test(NAME anonsync_sync_manifest_identity_source_audit")
+     require("${Python3_EXECUTABLE} -B -S" in audit_registration,
+             "audit_disables_python_site", "CTest minimizes ambient interpreter startup state")
+-    require(cmake.count("COMMAND ${Python3_EXECUTABLE} -B -S") == 50 and
++    python_command_count = cmake.count("COMMAND ${Python3_EXECUTABLE}")
++    require(python_command_count >= 50 and
++            cmake.count("COMMAND ${Python3_EXECUTABLE} -B -S") ==
++                python_command_count and
+             "COMMAND ${Python3_EXECUTABLE}\n" not in cmake and
+             "COMMAND ${Python3_EXECUTABLE} -S\n" not in cmake,
+             "all_python_audits_are_hermetic", "every registered Python audit disables bytecode writes and ambient site initialization")
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 71d3a66..c87c8f9 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -420,6 +420,11 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tests/sync_replica_hash_graph_projection_test.cpp",
+             "tests/sync_replica_allocation_atomicity_test.cpp",
+         })
++    if revision_number is not None and revision_number >= 867:
++        revision_scoped_required.update({
++            "tests/sync_replica_aggregate_budget_test.cpp",
++            "tools/audit_sync_replica_aggregate_budget.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

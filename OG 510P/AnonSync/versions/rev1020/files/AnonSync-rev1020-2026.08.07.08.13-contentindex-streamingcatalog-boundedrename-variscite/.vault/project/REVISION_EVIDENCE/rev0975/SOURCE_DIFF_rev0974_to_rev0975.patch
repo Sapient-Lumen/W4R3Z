@@ -1,0 +1,1187 @@
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index 219c065870ed7fd6b70a2f327ecc4d3358b135bd..d2e52bc91b96dad5f2d7fc044bd53160715a8a02 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -76,7 +76,7 @@ constexpr std::string_view kHistoricalVersionPinResponseSchema =
+ constexpr std::string_view kHistoricalVersionUnpinResponseSchema =
+     "anonsync.local-historical-version-unpin.response.v1";
+ constexpr std::string_view kRetentionPlanResponseSchema =
+-    "anonsync.local-retention-plan.response.v1";
++    "anonsync.local-retention-plan.response.v2";
+ constexpr std::string_view kUnsupportedResponse =
+     "{\"schema\":\"anonsync.local-status.response.v1\","
+     "\"ok\":false,\"error\":\"unsupported_request\"}";
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index 81a9bcd1dba0a0818e688f83c025bd1ea89f34c8..d6c5db6497d11e0728b11cf51df812fe34b54c1f 100755
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -60,11 +60,34 @@ struct HistoricalPayloadReferenceKeyLess final {
+     }
+ };
+ 
++[[nodiscard]] constexpr bool historical_payload_reference_key_equal(
++    const HistoricalPayloadReferenceKey& left,
++    const HistoricalPayloadReferenceKey& right) noexcept {
++    return left.content_sha256 == right.content_sha256 &&
++           left.size_bytes == right.size_bytes;
++}
++
++// The retention planner first records borrowed references without allocating
++// one tree node per key. It then sorts, folds duplicate roots in place, and
++// linearly merges this projection with the canonical physical inventory.
++// string_view remains valid because the restored model owns every operation
++// for the complete duration of the plan.
++struct HistoricalPayloadReferenceProjectionEntry final {
++    HistoricalPayloadReferenceKey key;
++    std::uint8_t root_mask = 0U;
++};
++
+ constexpr std::uint8_t kHistoricalPayloadCurrentVisibleMask = 1U;
+ constexpr std::uint8_t kHistoricalPayloadSupersededActiveMask = 2U;
+ constexpr std::uint8_t kHistoricalPayloadInactiveEvidenceMask = 4U;
+ constexpr std::uint8_t kHistoricalPayloadExplicitPinMask = 8U;
+ 
++constexpr std::string_view
++    kRetentionPlanUnreferencedCandidateSetDigestDomain =
++        "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1";
++constexpr std::string_view kRetentionPlanDeletionFreeMarkDigestDomain =
++    "anonsync:sync-replica-retention-plan-deletion-free-mark:v1";
++
+ [[nodiscard]] constexpr bool historical_payload_mask_has(
+     std::uint8_t mask,
+     std::uint8_t value) noexcept {
+@@ -5563,9 +5586,17 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         destination += amount;
+     };
+ 
+-    std::map<HistoricalPayloadReferenceKey, std::uint8_t,
+-             HistoricalPayloadReferenceKeyLess>
+-        payload_references;
++    std::vector<HistoricalPayloadReferenceProjectionEntry> payload_references;
++    if (replica_snapshot.historical_version_pins.size() >
++        std::numeric_limits<std::size_t>::max() -
++            replica_snapshot.durable.operations.size()) {
++        throw std::overflow_error(
++            state_->label +
++            " retention-plan reference projection capacity overflows");
++    }
++    payload_references.reserve(
++        replica_snapshot.durable.operations.size() +
++        replica_snapshot.historical_version_pins.size());
+     const auto operation_is_pinned = [&](std::string_view operation_id) {
+         return std::binary_search(
+             replica_snapshot.historical_version_pins.begin(),
+@@ -5587,24 +5618,14 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+                 reachability.retained_union.file_operation_count,
+                 "retained-union file-operation");
+         }
+-        const HistoricalPayloadReferenceKey key{
+-            .content_sha256 = operation.content_sha256,
+-            .size_bytes = operation.size_bytes,
+-        };
+-        const auto [position, inserted] =
+-            payload_references.try_emplace(key, 0U);
+-        if (!historical_payload_mask_has(position->second, class_mask)) {
+-            increment_or_throw(
+-                classification.distinct_content_count,
+-                "reachability distinct-content");
+-        }
+-        if (contributes_to_retained_union && inserted) {
+-            increment_or_throw(
+-                reachability.retained_union.distinct_content_count,
+-                "retained-union distinct-content");
+-        }
+-        position->second = static_cast<std::uint8_t>(
+-            position->second | class_mask);
++        payload_references.push_back(
++            HistoricalPayloadReferenceProjectionEntry{
++                .key = HistoricalPayloadReferenceKey{
++                    .content_sha256 = operation.content_sha256,
++                    .size_bytes = operation.size_bytes,
++                },
++                .root_mask = class_mask,
++            });
+     };
+ 
+     const auto mark_explicit_pin = [&](const SyncReplicaOperation& operation) {
+@@ -5656,6 +5677,80 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+             mark_explicit_pin(operation);
+         });
+ 
++    const HistoricalPayloadReferenceKeyLess reference_key_less;
++    std::sort(
++        payload_references.begin(), payload_references.end(),
++        [&](const HistoricalPayloadReferenceProjectionEntry& left,
++            const HistoricalPayloadReferenceProjectionEntry& right) {
++            return reference_key_less(left.key, right.key);
++        });
++    std::size_t compacted_reference_count = 0U;
++    for (std::size_t read_index = 0U;
++         read_index < payload_references.size(); ++read_index) {
++        if (compacted_reference_count != 0U &&
++            historical_payload_reference_key_equal(
++                payload_references[compacted_reference_count - 1U].key,
++                payload_references[read_index].key)) {
++            payload_references[compacted_reference_count - 1U].root_mask =
++                static_cast<std::uint8_t>(
++                    payload_references[compacted_reference_count - 1U]
++                        .root_mask |
++                    payload_references[read_index].root_mask);
++            continue;
++        }
++        if (compacted_reference_count != read_index) {
++            payload_references[compacted_reference_count] =
++                payload_references[read_index];
++        }
++        ++compacted_reference_count;
++    }
++    payload_references.resize(compacted_reference_count);
++
++    constexpr std::uint8_t kRetainedUnionRootMask =
++        kHistoricalPayloadCurrentVisibleMask |
++        kHistoricalPayloadSupersededActiveMask |
++        kHistoricalPayloadInactiveEvidenceMask;
++    for (const HistoricalPayloadReferenceProjectionEntry& reference :
++         payload_references) {
++        if (historical_payload_mask_has(
++                reference.root_mask,
++                kHistoricalPayloadCurrentVisibleMask)) {
++            increment_or_throw(
++                reachability.current_visible.distinct_content_count,
++                "current-visible distinct content");
++        }
++        if (historical_payload_mask_has(
++                reference.root_mask,
++                kHistoricalPayloadSupersededActiveMask)) {
++            increment_or_throw(
++                reachability.superseded_active.distinct_content_count,
++                "superseded-active distinct content");
++        }
++        if (historical_payload_mask_has(
++                reference.root_mask,
++                kHistoricalPayloadInactiveEvidenceMask)) {
++            increment_or_throw(
++                reachability.inactive_evidence.distinct_content_count,
++                "inactive-evidence distinct content");
++        }
++        if (historical_payload_mask_has(
++                reference.root_mask,
++                kHistoricalPayloadExplicitPinMask)) {
++            increment_or_throw(
++                reachability.explicit_pins.distinct_content_count,
++                "explicit-pin distinct content");
++        }
++        if ((reference.root_mask & kRetainedUnionRootMask) == 0U) {
++            throw std::logic_error(
++                state_->label +
++                " retention-plan explicit pin lacks one retained File "
++                "operation root");
++        }
++        increment_or_throw(
++            reachability.retained_union.distinct_content_count,
++            "retained-union distinct content");
++    }
++
+     const auto account_present = [&]
+         (SyncReplicaHistoricalVersionPayloadReachabilityClass& value,
+          std::uint64_t size_bytes,
+@@ -5670,6 +5765,35 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         increment_or_throw(value.payload_count, field);
+         add_or_throw(value.payload_bytes, size_bytes, field);
+     };
++    const auto account_missing_reference = [&](std::uint8_t root_mask) {
++        if (historical_payload_mask_has(
++                root_mask, kHistoricalPayloadCurrentVisibleMask)) {
++            increment_or_throw(
++                reachability.current_visible.missing_content_count,
++                "current-visible missing content");
++        }
++        if (historical_payload_mask_has(
++                root_mask, kHistoricalPayloadSupersededActiveMask)) {
++            increment_or_throw(
++                reachability.superseded_active.missing_content_count,
++                "superseded-active missing content");
++        }
++        if (historical_payload_mask_has(
++                root_mask, kHistoricalPayloadInactiveEvidenceMask)) {
++            increment_or_throw(
++                reachability.inactive_evidence.missing_content_count,
++                "inactive-evidence missing content");
++        }
++        if (historical_payload_mask_has(
++                root_mask, kHistoricalPayloadExplicitPinMask)) {
++            increment_or_throw(
++                reachability.explicit_pins.missing_content_count,
++                "explicit-pin missing content");
++        }
++        increment_or_throw(
++            reachability.retained_union.missing_content_count,
++            "retained-union missing content");
++    };
+ 
+     const SyncReplicaFileContentInventory content_inventory =
+         payload_snapshot.content_inventory();
+@@ -5697,6 +5821,11 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+             std::distance(payload_digests.begin(), cursor)) + 1U;
+     }
+ 
++    Sha256DigestBuilder candidate_set_digest;
++    append_string(
++        candidate_set_digest,
++        kRetentionPlanUnreferencedCandidateSetDigestDomain);
++    std::size_t reference_index = 0U;
+     for (std::size_t index = 0U; index < payload_digests.size(); ++index) {
+         const std::string& digest = payload_digests[index];
+         const std::optional<std::uint64_t> payload_size =
+@@ -5708,20 +5837,30 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         }
+ 
+         std::uint8_t root_mask = 0U;
+-        const auto found = payload_references.find(
+-            HistoricalPayloadReferenceKey{
+-                .content_sha256 = digest,
+-                .size_bytes = *payload_size,
+-            });
+-        if (found == payload_references.end()) {
++        const HistoricalPayloadReferenceKey physical_key{
++            .content_sha256 = digest,
++            .size_bytes = *payload_size,
++        };
++        while (reference_index < payload_references.size() &&
++               reference_key_less(
++                   payload_references[reference_index].key, physical_key)) {
++            account_missing_reference(
++                payload_references[reference_index].root_mask);
++            ++reference_index;
++        }
++        if (reference_index == payload_references.size() ||
++            !historical_payload_reference_key_equal(
++                payload_references[reference_index].key, physical_key)) {
+             increment_or_throw(
+                 reachability.unreferenced_payload_count,
+                 "unreferenced payload");
+             add_or_throw(
+                 reachability.unreferenced_payload_bytes, *payload_size,
+                 "unreferenced payload bytes");
++            append_string(candidate_set_digest, digest);
++            append_u64(candidate_set_digest, *payload_size);
+         } else {
+-            root_mask = found->second;
++            root_mask = payload_references[reference_index].root_mask;
+             if (historical_payload_mask_has(
+                     root_mask, kHistoricalPayloadCurrentVisibleMask)) {
+                 account_present(
+@@ -5749,7 +5888,7 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+             account_present(
+                 reachability.retained_union, *payload_size,
+                 "retained-union present content");
+-            payload_references.erase(found);
++            ++reference_index;
+         }
+ 
+         const SyncReplicaRetentionPlanDisposition disposition =
+@@ -5796,36 +5935,48 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         });
+     }
+ 
+-    for (const auto& [reference, mask] : payload_references) {
+-        (void)reference;
+-        if (historical_payload_mask_has(
+-                mask, kHistoricalPayloadCurrentVisibleMask)) {
+-            increment_or_throw(
+-                reachability.current_visible.missing_content_count,
+-                "current-visible missing content");
+-        }
+-        if (historical_payload_mask_has(
+-                mask, kHistoricalPayloadSupersededActiveMask)) {
+-            increment_or_throw(
+-                reachability.superseded_active.missing_content_count,
+-                "superseded-active missing content");
+-        }
+-        if (historical_payload_mask_has(
+-                mask, kHistoricalPayloadInactiveEvidenceMask)) {
+-            increment_or_throw(
+-                reachability.inactive_evidence.missing_content_count,
+-                "inactive-evidence missing content");
+-        }
+-        if (historical_payload_mask_has(
+-                mask, kHistoricalPayloadExplicitPinMask)) {
+-            increment_or_throw(
+-                reachability.explicit_pins.missing_content_count,
+-                "explicit-pin missing content");
+-        }
+-        increment_or_throw(
+-            reachability.retained_union.missing_content_count,
+-            "retained-union missing content");
+-    }
++    while (reference_index < payload_references.size()) {
++        account_missing_reference(
++            payload_references[reference_index].root_mask);
++        ++reference_index;
++    }
++
++    append_u64(
++        candidate_set_digest,
++        reachability.unreferenced_payload_count);
++    append_u64(
++        candidate_set_digest,
++        reachability.unreferenced_payload_bytes);
++    plan.unreferenced_candidate_set_digest =
++        candidate_set_digest.finish_hex();
++
++    Sha256DigestBuilder deletion_free_mark_digest;
++    append_string(
++        deletion_free_mark_digest,
++        kRetentionPlanDeletionFreeMarkDigestDomain);
++    append_string(deletion_free_mark_digest, state_->folder_id);
++    append_string(
++        deletion_free_mark_digest, plan.source_operation_set_digest);
++    append_string(
++        deletion_free_mark_digest, plan.source_evidence_set_digest);
++    append_string(
++        deletion_free_mark_digest,
++        plan.source_historical_version_pin_set_digest);
++    append_string(
++        deletion_free_mark_digest, plan.source_visible_state_digest);
++    append_string(
++        deletion_free_mark_digest, plan.source_payload_snapshot_digest);
++    append_string(
++        deletion_free_mark_digest,
++        plan.unreferenced_candidate_set_digest);
++    append_u64(
++        deletion_free_mark_digest,
++        reachability.unreferenced_payload_count);
++    append_u64(
++        deletion_free_mark_digest,
++        reachability.unreferenced_payload_bytes);
++    plan.exact_deletion_free_mark_digest =
++        deletion_free_mark_digest.finish_hex();
+ 
+     const auto validate_class = [&]
+         (const SyncReplicaHistoricalVersionPayloadReachabilityClass& value,
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index 302a73d761b02914792282ce3e07146dbd32dded..4fd02f354fc13ec1dd9b203e77419b0eb7b33830 100755
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -305,8 +305,13 @@ struct SyncReplicaRetentionPlanEntry final {
+ // token is the existing exact v4 historical cutpoint, so pages cannot silently
+ // mix operation, inactive-evidence, pin-policy, or payload snapshots. The
+ // reachability aggregate includes missing referenced content, while entries
+-// enumerate only physical objects in digest order. This object is explanatory
+-// dry-run evidence and deliberately has no reclaimable-authority bit.
++// enumerate only physical objects in digest order. The candidate-set digest is
++// page-invariant and binds every exact physical object that lacks a retained
++// File-operation root. The deletion-free mark digest additionally binds that
++// candidate set to the exact operation/evidence/pin/payload source cutpoint.
++// Neither digest is durable collection authority: this object remains
++// explanatory dry-run evidence and deliberately has no reclaimable-authority
++// bit.
+ struct SyncReplicaRetentionPlan final {
+     SyncReplicaRetentionPlanQuery query;
+     std::uint64_t source_replica_state_generation = 0U;
+@@ -324,6 +329,8 @@ struct SyncReplicaRetentionPlan final {
+     SyncReplicaRetentionPlanClass current_or_explicit_pin;
+     SyncReplicaRetentionPlanClass retained_history_or_evidence;
+     SyncReplicaRetentionPlanClass unreferenced_by_retained_file_operations;
++    std::string unreferenced_candidate_set_digest;
++    std::string exact_deletion_free_mark_digest;
+     std::uint64_t physical_payload_count_after_cursor = 0U;
+     bool entry_limit_frontier_reached = false;
+     std::optional<std::uint64_t> status_byte_limit;
+diff --git a/src/sync_replica_historical_version_inventory_json.cpp b/src/sync_replica_historical_version_inventory_json.cpp
+index 209a44b05a4f946041f969624c8ac576068a49dc..0acba374d3db34251aca94341f29526b84ff27ca 100644
+--- a/src/sync_replica_historical_version_inventory_json.cpp
++++ b/src/sync_replica_historical_version_inventory_json.cpp
+@@ -203,6 +203,7 @@ void append_retention_plan(
+         << ",\"quota_policy_applied\":false"
+         << ",\"grace_period_applied\":false"
+         << ",\"writer_fenced_collection\":false"
++        << ",\"durable_mark_persisted\":false"
+         << ",\"source_replica_state_generation\":"
+         << plan.source_replica_state_generation
+         << ",\"source_operation_set_digest\":";
+@@ -218,6 +219,12 @@ void append_retention_plan(
+     append_json_quoted(output, plan.source_visible_state_digest);
+     output << ",\"source_payload_snapshot_digest\":";
+     append_json_quoted(output, plan.source_payload_snapshot_digest);
++    output << ",\"unreferenced_candidate_set_digest\":";
++    append_json_quoted(
++        output, plan.unreferenced_candidate_set_digest);
++    output << ",\"exact_deletion_free_mark_digest\":";
++    append_json_quoted(
++        output, plan.exact_deletion_free_mark_digest);
+     output << ",\"source_cutpoint\":";
+     append_json_quoted(
+         output,
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index bdb7f281db4425557d29c94da7ea400b2bc794fb..6f7eb909826fbe9f1b44e7d3954d3ba66625034c 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v19";
++    "anonsync.peer-service.status.v20";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index 879f8d8904b085a3b4728399770b9690e89882b5..29f0c42816487ba8db3412cda629c8b221687454 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -357,6 +357,8 @@ void test_historical_inventory_status_byte_frontier() {
+     plan.historical_version_pin_count = 1U;
+     plan.source_visible_state_digest = std::string(64U, 'd');
+     plan.source_payload_snapshot_digest = std::string(64U, 'e');
++    plan.unreferenced_candidate_set_digest = std::string(64U, 'f');
++    plan.exact_deletion_free_mark_digest = std::string(64U, '0');
+     plan.retained_payload_reachability =
+         inventory.retained_payload_reachability.value();
+     plan.current_or_explicit_pin = {1U, 10U};
+@@ -415,8 +417,18 @@ void test_historical_inventory_status_byte_frontier() {
+             stable_plan.find(plan.entries.back().content_sha256) !=
+                 std::string::npos &&
+             stable_plan.find("\"reclaimable_authority\":false") !=
++                std::string::npos &&
++            stable_plan.find("\"durable_mark_persisted\":false") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"unreferenced_candidate_set_digest\":\"" +
++                plan.unreferenced_candidate_set_digest + "\"") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"exact_deletion_free_mark_digest\":\"" +
++                plan.exact_deletion_free_mark_digest + "\"") !=
+                 std::string::npos,
+-        "stable historical status did not retain the deletion-free plan");
++        "stable historical status did not retain the deletion-free mark witness");
+ 
+     anonsync::SyncReplicaRetentionPlan large_plan = plan;
+     large_plan.query.maximum_entries = anonsync::
+@@ -488,8 +500,18 @@ void test_historical_inventory_status_byte_frontier() {
+             bounded_plan.find("\"reclaimable_authority\":false") !=
+                 std::string::npos &&
+             bounded_plan.find("\"writer_fenced_collection\":false") !=
++                std::string::npos &&
++            bounded_plan.find("\"durable_mark_persisted\":false") !=
++                std::string::npos &&
++            bounded_plan.find(
++                "\"unreferenced_candidate_set_digest\":\"" +
++                large_plan.unreferenced_candidate_set_digest + "\"") !=
++                std::string::npos &&
++            bounded_plan.find(
++                "\"exact_deletion_free_mark_digest\":\"" +
++                large_plan.exact_deletion_free_mark_digest + "\"") !=
+                 std::string::npos,
+-        "bounded retention-plan JSON exceeded or concealed its deletion-free status frontier");
++        "bounded retention-plan JSON exceeded or concealed its deletion-free mark frontier");
+ 
+     plan_status.retention_plan_query = large_plan.query;
+     plan_status.last_retention_plan = large_plan;
+@@ -1504,7 +1526,7 @@ int main() {
+                     socket_path, plan_query);
+             require(
+                 accepted_plan ==
+-                    "{\"schema\":\"anonsync.local-retention-plan.response.v1\","
++                    "{\"schema\":\"anonsync.local-retention-plan.response.v2\","
+                     "\"command\":\"retention-plan\","
+                     "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":1,\"maximum_entries\":2,"
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index e31133dc89be2a48b2b24d61e64228edc4e6a88c..28e57de073ebca242706ce3fe919862374c8375b 100755
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -461,6 +461,55 @@ void append_test_string(
+     digest.update(value);
+ }
+ 
++[[nodiscard]] std::string
++retention_unreferenced_candidate_set_digest_for_test(
++    std::vector<std::pair<std::string, std::uint64_t>> candidates) {
++    std::sort(candidates.begin(), candidates.end());
++    anonsync::Sha256DigestBuilder digest;
++    append_test_string(
++        digest,
++        "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1");
++    std::uint64_t total_bytes = 0U;
++    for (const auto& [content_sha256, size_bytes] : candidates) {
++        append_test_string(digest, content_sha256);
++        append_test_u64(digest, size_bytes);
++        if (size_bytes >
++            std::numeric_limits<std::uint64_t>::max() - total_bytes) {
++            fail("retention candidate test bytes overflow");
++        }
++        total_bytes += size_bytes;
++    }
++    append_test_u64(
++        digest, static_cast<std::uint64_t>(candidates.size()));
++    append_test_u64(digest, total_bytes);
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::string retention_deletion_free_mark_digest_for_test(
++    const anonsync::SyncReplicaRetentionPlan& plan,
++    std::string_view folder_id,
++    std::string_view candidate_set_digest) {
++    anonsync::Sha256DigestBuilder digest;
++    append_test_string(
++        digest,
++        "anonsync:sync-replica-retention-plan-deletion-free-mark:v1");
++    append_test_string(digest, folder_id);
++    append_test_string(digest, plan.source_operation_set_digest);
++    append_test_string(digest, plan.source_evidence_set_digest);
++    append_test_string(
++        digest, plan.source_historical_version_pin_set_digest);
++    append_test_string(digest, plan.source_visible_state_digest);
++    append_test_string(digest, plan.source_payload_snapshot_digest);
++    append_test_string(digest, candidate_set_digest);
++    append_test_u64(
++        digest,
++        plan.unreferenced_by_retained_file_operations.payload_count);
++    append_test_u64(
++        digest,
++        plan.unreferenced_by_retained_file_operations.payload_bytes);
++    return digest.finish_hex();
++}
++
+ [[nodiscard]] std::string legacy_catalog_digest_for_test(
+     const anonsync::SyncReplicaFolderCatalogSnapshot& snapshot) {
+     anonsync::Sha256DigestBuilder digest;
+@@ -5866,6 +5915,14 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+     // authority. The missing pinned predecessor remains visible only in the
+     // reachability aggregate because no physical object exists to page.
+     const auto retention_plan = scan->plan_payload_retention_or_throw();
++    const std::string expected_candidate_set_digest =
++        retention_unreferenced_candidate_set_digest_for_test(
++            {{orphan.content_sha256,
++              static_cast<std::uint64_t>(orphan_bytes.size())}});
++    const std::string expected_deletion_free_mark_digest =
++        retention_deletion_free_mark_digest_for_test(
++            retention_plan, Fixture::folder_id,
++            expected_candidate_set_digest);
+     require(
+         retention_plan.source_cutpoint() == exact_cutpoint &&
+             retention_plan.historical_version_pin_count == 1U &&
+@@ -5878,6 +5935,14 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             retention_plan.unreferenced_by_retained_file_operations.payload_count == 1U &&
+             retention_plan.unreferenced_by_retained_file_operations.payload_bytes ==
+                 orphan_bytes.size() &&
++            retention_plan.unreferenced_candidate_set_digest ==
++                expected_candidate_set_digest &&
++            retention_plan.exact_deletion_free_mark_digest ==
++                expected_deletion_free_mark_digest &&
++            anonsync::is_lowercase_sha256_hex(
++                retention_plan.unreferenced_candidate_set_digest) &&
++            anonsync::is_lowercase_sha256_hex(
++                retention_plan.exact_deletion_free_mark_digest) &&
+             retention_plan.physical_payload_count_after_cursor == 2U &&
+             !retention_plan.truncated &&
+             !retention_plan.next_start_after_content_sha256.has_value() &&
+@@ -5938,12 +6003,20 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+         scan->plan_payload_retention_or_throw(second_plan_page);
+     require(
+         second_page.source_cutpoint() == first_page.source_cutpoint() &&
++            first_page.unreferenced_candidate_set_digest ==
++                retention_plan.unreferenced_candidate_set_digest &&
++            second_page.unreferenced_candidate_set_digest ==
++                retention_plan.unreferenced_candidate_set_digest &&
++            first_page.exact_deletion_free_mark_digest ==
++                retention_plan.exact_deletion_free_mark_digest &&
++            second_page.exact_deletion_free_mark_digest ==
++                retention_plan.exact_deletion_free_mark_digest &&
+             second_page.entries.size() == 1U && !second_page.truncated &&
+             !second_page.next_start_after_content_sha256.has_value() &&
+             second_page.physical_payload_count_after_cursor == 1U &&
+             first_page.entries.front().content_sha256 <
+                 second_page.entries.front().content_sha256,
+-        "retention planner did not resume exactly after its physical digest cursor");
++        "retention planner did not resume exactly with one page-invariant mark witness");
+ 
+     auto stale_plan_cutpoint = first_page.source_cutpoint();
+     stale_plan_cutpoint.operation_set_digest = std::string(64U, '0');
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index c0fa8f5d80f55639b9cfc0a9738b7a258f5dfeec..5b5a34f1086b38295be4cbf1bb3eabd7fb682c15 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -151,6 +151,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0973.md"),
+     Path("DELETION_FREE_EXACT_RETENTION_PLAN_AUDIT_rev0974.md"),
+     Path("REVISION_NOTES_rev0974.md"),
++    Path("PAGE_INVARIANT_DELETION_FREE_MARK_WITNESS_AUDIT_rev0975.md"),
++    Path("REVISION_NOTES_rev0975.md"),
+ )
+ 
+ 
+@@ -477,6 +479,10 @@ def main() -> int:
+         "DELETION_FREE_EXACT_RETENTION_PLAN_AUDIT_rev0974.md"
+     ]
+     rev0974_notes = text["REVISION_NOTES_rev0974.md"]
++    retention_mark_witness_design = text[
++        "PAGE_INVARIANT_DELETION_FREE_MARK_WITNESS_AUDIT_rev0975.md"
++    ]
++    rev0975_notes = text["REVISION_NOTES_rev0975.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -653,6 +659,17 @@ def main() -> int:
+         if rev0974_verifier_start >= 0 and rev0974_verifier_end >= 0
+         else ""
+     )
++    rev0975_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 975:"
++    )
++    rev0975_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0975_verifier_start
++    )
++    rev0975_verifier_block = (
++        verifier[rev0975_verifier_start:rev0975_verifier_end]
++        if rev0975_verifier_start >= 0 and rev0975_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -4547,7 +4564,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4961,12 +4978,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v19"'
++        and '"anonsync.peer-service.status.v20"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v19"'
++        and '"anonsync.peer-service.status.v20"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -6452,7 +6469,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6663,7 +6680,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"' in peer_status_h
++        and '"anonsync.peer-service.status.v20"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -6873,7 +6890,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -6889,8 +6906,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v19"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v19"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v20"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v20"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7583,7 +7600,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"' in peer_status_h
++        and '"anonsync.peer-service.status.v20"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7823,7 +7840,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and all(
+             token in peer_status + historical_inventory_json
+             for token in (
+@@ -7971,7 +7988,7 @@ def main() -> int:
+                 r'\"expected_source_cutpoint\"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"' in peer_status_h
++        and '"anonsync.peer-service.status.v20"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -8088,11 +8105,11 @@ def main() -> int:
+                 "historical_version_generation",
+                 "historical_version_failure_class",
+                 "historical_version_source_change_stage",
+-                '"schema": "anonsync.peer-service.status.v19"',
++                '"schema": "anonsync.peer-service.status.v20"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v20"' in service_i2p_ingress_runtime,
+         "rev0968_regressions_bind_token_codec_payload_drift_causal_drift_and_real_service_continuation",
+         "focused C++ tests and real process oracles cover canonical framing, both externally inducible drift classes, exact page-token reuse, stable retained failure evidence, transient matching-step coherence, current schemas, and route status compatibility",
+     )
+@@ -8254,7 +8271,7 @@ def main() -> int:
+                 "status.restore_request.operation_id",
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"' in peer_status_h,
++        and '"anonsync.peer-service.status.v20"' in peer_status_h,
+         "rev0969_full_restore_identity_controls_coalescing_execution_and_status",
+         "a different expected head cannot coalesce with pending work, and stable plus matching transient status retain the exact request and typed source-change stage",
+     )
+@@ -8287,12 +8304,12 @@ def main() -> int:
+                 "restore_current_operation",
+                 "stale exact-current historical restore",
+                 "stale exact-current restore terminated the service",
+-                '"schema": "anonsync.peer-service.status.v19"',
++                '"schema": "anonsync.peer-service.status.v20"',
+                 '"expected_current_operation_id"',
+                 '"historical_version_restore_request"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v20"' in service_i2p_ingress_runtime,
+         "rev0969_regressions_prove_no_payload_work_full_request_coalescing_and_same_pid_stale_failure",
+         "focused C++ and real-process oracles mechanically distinguish the early stale fence from lease access, cover strict framing, and prove the daemon survives a replayed stale operator intent",
+     )
+@@ -8516,7 +8533,7 @@ def main() -> int:
+                 "[--inspection-mode exact|metadata]",
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"' in peer_status_h,
++        and '"anonsync.peer-service.status.v20"' in peer_status_h,
+         "rev0970_cli_socket_and_status_share_one_mode_bearing_contract",
+         "the shipping default remains exact, new clients send one canonical five-field request, legacy three/four-field requests remain exact, and live plus terminal status advance together",
+     )
+@@ -8587,11 +8604,11 @@ def main() -> int:
+                 '"v4:metadata:"',
+                 "causal-metadata historical inspection fabricated",
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v19"',
++                '"schema": "anonsync.peer-service.status.v20"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"'
++        and '"anonsync.peer-service.status.v20"'
+         in service_i2p_ingress_runtime,
+         "rev0970_shipping_process_oracles_require_null_payload_evidence_and_schema_coherence",
+         "one real retained two-peer service executes the metadata CLI, publishes a v2 token and null payload facts, accounts the completed action, and keeps direct plus I2P status readers on v15",
+@@ -8711,7 +8728,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and "append_sync_replica_historical_version_inventory_json" in peer_status
+         and "summary.last_step->historical_version_inventory.reset();" in peer_status,
+         "rev0971_status_uses_the_canonical_encoder_and_retains_one_completed_inventory",
+@@ -8732,10 +8749,10 @@ def main() -> int:
+             for token in (
+                 "historical inventory omitted its status byte limit",
+                 "duplicated the stable history result",
+-                '"schema": "anonsync.peer-service.status.v19"',
++                '"schema": "anonsync.peer-service.status.v20"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v19"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v20"' in service_i2p_ingress_runtime,
+         "rev0971_regressions_prove_the_large_page_frontier_and_single_copy_shipping_status",
+         "the focused C++ oracle constructs the accepted 1,024-entry worst-shape page, while real configured-service and I2P readers require v16, coherent stop reasons, and no duplicate stable inventory in last_step",
+     )
+@@ -8898,10 +8915,10 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and '"anonsync.local-historical-versions.response.v5"' in local_status
+-        and "anonsync.peer-service.status.v19" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v19" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v20" in service_configuration_runtime
++        and "anonsync.peer-service.status.v20" in service_i2p_ingress_runtime
+         and "anonsync.peer-service.status.v16" not in peer_status_h
+         and "anonsync.peer-service.status.v16" not in service_configuration_runtime
+         and "anonsync.peer-service.status.v16" not in service_i2p_ingress_runtime,
+@@ -9200,7 +9217,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9247,10 +9264,10 @@ def main() -> int:
+                 '"historical_version_pins": 1',
+                 '"historical_version_unpins": 1',
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v19"',
++                '"schema": "anonsync.peer-service.status.v20"',
+             )
+         )
+-        and "anonsync.peer-service.status.v19" in service_i2p_ingress_runtime,
++        and "anonsync.peer-service.status.v20" in service_i2p_ingress_runtime,
+         "rev0973_real_process_proves_pin_reinspect_unpin_reinspect_and_schema_coherence",
+         "one retained configured daemon accepts the exact owner commands, survives the corrected validator, exposes durable policy through metadata-only pages, removes it, continues operating, and keeps direct and I2P readers on v18",
+     )
+@@ -9365,7 +9382,15 @@ def main() -> int:
+         )
+         and folder_scan.count(
+             "std::map<HistoricalPayloadReferenceKey, std::uint8_t"
+-        ) >= 2
++        ) >= 1
++        and all(
++            token in folder_scan
++            for token in (
++                "struct HistoricalPayloadReferenceProjectionEntry final",
++                "std::vector<HistoricalPayloadReferenceProjectionEntry>",
++                "historical_payload_reference_key_equal",
++            )
++        )
+         and all(
+             token in folder_scan_h
+             for token in (
+@@ -9433,7 +9458,7 @@ def main() -> int:
+             for token in (
+                 "RetentionPlan",
+                 "retention-plan ",
+-                "anonsync.local-retention-plan.response.v1",
++                "anonsync.local-retention-plan.response.v2",
+                 "SyncReplicaRetentionPlanQuery retention_plan_query",
+                 "different_historical_version_pending",
+                 "request_sync_local_status_retention_plan_or_throw",
+@@ -9455,7 +9480,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v19"' in peer_status_h
++        '"anonsync.peer-service.status.v20"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9505,7 +9530,7 @@ def main() -> int:
+                 "retention planner did not reuse the exact reachability cutpoint and physical partition",
+                 "retention planner lost overlapping current and inactive-evidence roots",
+                 "retention planner promoted an unreferenced physical object into a retained root",
+-                "retention planner did not resume exactly after its physical digest cursor",
++                "retention planner did not resume exactly with one page-invariant mark witness",
+                 "retention planner accepted a stale operation-set cutpoint",
+             )
+         )
+@@ -9514,7 +9539,7 @@ def main() -> int:
+             for token in (
+                 "maximum retention-plan page did not exercise its status byte frontier",
+                 "retention-plan byte frontier changed digest order or lost its exact continuation cursor",
+-                "bounded retention-plan JSON exceeded or concealed its deletion-free status frontier",
++                "bounded retention-plan JSON exceeded or concealed its deletion-free mark frontier",
+                 "generic last_step retained a duplicate retention-plan page",
+             )
+         ),
+@@ -9527,14 +9552,14 @@ def main() -> int:
+             token in service_configuration_runtime
+             for token in (
+                 "owner-only deletion-free retention plan",
+-                "anonsync.local-retention-plan.response.v1",
++                "anonsync.local-retention-plan.response.v2",
+                 "retention plan did not bind the exact pinned source",
+                 "retention plan did not explain the exact pinned payload",
+                 '"historical_version_retention_plans": 1',
+-                '"schema": "anonsync.peer-service.status.v19"',
++                '"schema": "anonsync.peer-service.status.v20"',
+             )
+         )
+-        and "anonsync.peer-service.status.v19" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v20" in service_i2p_ingress_runtime
+         and all(
+             token in service_configuration_runtime
+             for token in (
+@@ -9546,8 +9571,8 @@ def main() -> int:
+                 "current_or_explicit_pin",
+             )
+         ),
+-        "rev0974_real_daemon_proves_pinned_physical_reason_status_v19_and_collection_nonclaims",
+-        "the same retained two-peer service pins a predecessor, obtains its exact physical reason, remains alive, and keeps direct plus I2P readers on the one v19 contract",
++        "rev0975_real_daemon_proves_pinned_physical_reason_status_v20_and_collection_nonclaims",
++        "the same retained two-peer service pins a predecessor, obtains its exact physical reason, exposes canonical witnesses, remains alive, and keeps direct plus I2P readers on the one v20 contract",
+     )
+ 
+     require(
+@@ -9604,6 +9629,153 @@ def main() -> int:
+         "release verification requires the source token, owner projection, canonical renderer, local and peer action lanes, real process oracle, design record, revision notes, structural audit, and package policy",
+     )
+ 
++    require(
++        all(
++            token in retention_plan_owner
++            for token in (
++                "std::vector<HistoricalPayloadReferenceProjectionEntry>",
++                "payload_references.reserve(",
++                "std::sort(",
++                "compacted_reference_count",
++                "historical_payload_reference_key_equal",
++                "reference_index",
++                "account_missing_reference",
++            )
++        )
++        and "std::map<HistoricalPayloadReferenceKey" not in retention_plan_owner
++        and "payload_references.find" not in retention_plan_owner
++        and "payload_references.erase" not in retention_plan_owner,
++        "rev0975_retention_projection_is_one_bounded_sort_fold_and_linear_merge",
++        "the planner borrows immutable operation keys into one contiguous projection, folds duplicate roots in place, and linearly merges the complete physical namespace without per-object tree lookup",
++    )
++
++    require(
++        all(
++            token in folder_scan + folder_scan_h
++            for token in (
++                "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1",
++                "anonsync:sync-replica-retention-plan-deletion-free-mark:v1",
++                "unreferenced_candidate_set_digest",
++                "exact_deletion_free_mark_digest",
++            )
++        )
++        and all(
++            token in retention_plan_owner
++            for token in (
++                "state_->folder_id",
++                "plan.source_operation_set_digest",
++                "plan.source_evidence_set_digest",
++                "plan.source_historical_version_pin_set_digest",
++                "plan.source_visible_state_digest",
++                "plan.source_payload_snapshot_digest",
++                "reachability.unreferenced_payload_count",
++                "reachability.unreferenced_payload_bytes",
++            )
++        )
++        and all(
++            token in historical_inventory_json
++            for token in (
++                "durable_mark_persisted",
++                "unreferenced_candidate_set_digest",
++                "exact_deletion_free_mark_digest",
++            )
++        ),
++        "rev0975_two_domain_separated_page_invariant_witnesses_bind_candidates_to_the_exact_source",
++        "one digest covers the complete canonical unreferenced physical set and one binds it to folder, operation, evidence, pin, visible, and payload cutpoints while JSON explicitly denies durable mark authority",
++    )
++
++    require(
++        all(
++            token in folder_scan_runtime
++            for token in (
++                "retention_unreferenced_candidate_set_digest_for_test",
++                "retention_deletion_free_mark_digest_for_test",
++                "expected_candidate_set_digest",
++                "expected_deletion_free_mark_digest",
++                "one page-invariant mark witness",
++            )
++        )
++        and all(
++            token in local_status_runtime
++            for token in (
++                "durable_mark_persisted",
++                "unreferenced_candidate_set_digest",
++                "exact_deletion_free_mark_digest",
++                "deletion-free mark witness",
++                "deletion-free mark frontier",
++            )
++        )
++        and all(
++            token in service_configuration_runtime
++            for token in (
++                "durable_mark_persisted",
++                "unreferenced_candidate_set_digest",
++                "exact_deletion_free_mark_digest",
++            )
++        ),
++        "rev0975_independent_unit_and_process_oracles_prove_exact_witness_values_and_page_invariance",
++        "focused C++ tests independently frame both SHA-256 streams across complete and paginated output, while status and real-process tests require canonical fields and explicit nonauthority",
++    )
++
++    require(
++        '"anonsync.peer-service.status.v20"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v2" in local_status
++        and "anonsync.peer-service.status.v19" not in peer_status_h
++        and "anonsync.local-retention-plan.response.v1" not in local_status
++        and "anonsync.peer-service.status.v20" in service_i2p_ingress_runtime,
++        "rev0975_local_and_peer_status_advance_together_to_v2_and_v20",
++        "the new mark-witness fields cannot be emitted under the prior response or service schema, and direct plus I2P status oracles share the new contract",
++    )
++
++    require(
++        all(
++            token in normalized_prose(retention_mark_witness_design)
++            for token in (
++                "Borrowed sorted projection and linear merge",
++                "Complete candidate-set digest",
++                "Exact deletion-free mark digest",
++                "durable_mark_persisted",
++                "Contamination and reconstruction audit",
++                "Next safe edge",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0975_notes)
++            for token in (
++                "Page-invariant deletion-free mark witness",
++                "bounded borrowed vector",
++                "durable_mark_persisted:false",
++                "contaminated unsealed worktree",
++            )
++        )
++        and "## Rev0975: page-invariant deletion-free mark witness" in readme,
++        "rev0975_records_complexity_authority_contamination_and_future_collector_boundaries",
++        "the audit, revision notes, and README state the linear projection, exact digest framing, non-durable authority boundary, rejected contamination, and safe durable collector sequence",
++    )
++
++    require(
++        rev0975_verifier_block.count(
++            "if revision_number is not None and revision_number >= 975:"
++        ) == 1
++        and all(
++            token in rev0975_verifier_block
++            for token in (
++                "PAGE_INVARIANT_DELETION_FREE_MARK_WITNESS_AUDIT_rev0975.md",
++                "REVISION_NOTES_rev0975.md",
++                "src/sync_replica_folder_scan_owner.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_replica_historical_version_inventory_json.cpp",
++                "src/sync_replica_peer_service_status.hpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/test_anonsync_service_i2p_ingress.py",
++            )
++        ),
++        "rev0975_package_policy_binds_every_projection_witness_schema_test_and_record_surface",
++        "release verification requires the projection owner, canonical renderer, response schemas, focused and process tests, design record, revision notes, structural audit, and package policy from rev0975 onward",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -9713,6 +9885,17 @@ def main() -> int:
+         "the exact retention planner cannot pass the structural audit until final validation and the visible bootstrap bind the sealed rev0974 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0975" not in rev0975_notes
++        and "VALIDATION_PENDING_REV0975" not in retention_mark_witness_design
++        and "VALIDATION_PENDING_REV0975" not in readme
++        and "ARCHIVE_PENDING_REV0975" not in bootstrap
++        and "CODENAME_PENDING_REV0975" not in bootstrap
++        and "VALIDATION_PENDING_REV0975" not in bootstrap,
++        "rev0975_final_validation_and_visible_release_cutpoint_are_sealed",
++        "the optimized retention projection and mark witness cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0975 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index dced8aab73a6171975b150508b60df73bb2e701f..993caa3e3955ce956e03fb27f7f15e2c7b976ed6 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -737,6 +737,7 @@ def require_retention_plan(plan: Any, label: str) -> None:
+     for forbidden_authority in (
+         "reclaimable_authority", "quota_policy_applied",
+         "grace_period_applied", "writer_fenced_collection",
++        "durable_mark_persisted",
+     ):
+         if plan.get(forbidden_authority) is not False:
+             fail(
+@@ -746,6 +747,8 @@ def require_retention_plan(plan: Any, label: str) -> None:
+         "source_operation_set_digest", "source_evidence_set_digest",
+         "source_historical_version_pin_set_digest",
+         "source_visible_state_digest", "source_payload_snapshot_digest",
++        "unreferenced_candidate_set_digest",
++        "exact_deletion_free_mark_digest",
+     ):
+         if not is_canonical_sha256(plan.get(digest_field)):
+             fail(f"{label} retention plan omitted {digest_field}")
+@@ -1763,7 +1766,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v19",
++                    "schema": "anonsync.peer-service.status.v20",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -3296,7 +3299,7 @@ def main() -> int:
+                 label="owner-only deletion-free retention plan",
+             )
+             expected_retention_plan_response = {
+-                "schema": "anonsync.local-retention-plan.response.v1",
++                "schema": "anonsync.local-retention-plan.response.v2",
+                 "command": "retention-plan",
+                 "terminal_class": "accepted",
+                 "request_generation": retention_plan_generation,
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index acc87f00163c3d09f2b0886dfcefde59f3ee426d..a46c57b06c3b0e0bb4c251a4d141e363117c93eb 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v19"
++                    value.get("schema") == "anonsync.peer-service.status.v20"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 3f24ce6109cccf064ab45913f32f27fa13233426..c2ad7e32ab5479a2777fb58278077d6ead945450 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1546,6 +1546,23 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 975:
++        revision_scoped_required.update({
++            "PAGE_INVARIANT_DELETION_FREE_MARK_WITNESS_AUDIT_rev0975.md",
++            "REVISION_NOTES_rev0975.md",
++            "README.md",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_historical_version_inventory_json.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

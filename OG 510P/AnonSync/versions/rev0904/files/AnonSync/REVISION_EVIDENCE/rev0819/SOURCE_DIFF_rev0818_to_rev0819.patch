@@ -1,0 +1,1497 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -572,6 +572,21 @@
+ target_compile_options(anonsync_sync_atomic_file_publication_cutpoint_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
++  # Link-time wrapping makes any future unlinkat() call observable and turns the
++  # historical identity-check/path-delete race into a deterministic regression.
++  add_executable(anonsync_sync_atomic_file_publication_unlink_authority_test
++    tests/sync_atomic_file_publication_unlink_authority_test.cpp)
++  target_include_directories(anonsync_sync_atomic_file_publication_unlink_authority_test PRIVATE
++    ${CMAKE_CURRENT_SOURCE_DIR}/src)
++  target_link_libraries(anonsync_sync_atomic_file_publication_unlink_authority_test PRIVATE
++    anonsync_sync_atomic_file_publication)
++  target_compile_options(anonsync_sync_atomic_file_publication_unlink_authority_test PRIVATE
++    -Wall -Wextra -Wpedantic)
++  target_link_options(anonsync_sync_atomic_file_publication_unlink_authority_test PRIVATE
++    -Wl,--wrap=unlinkat)
++endif()
++
+ add_executable(anonsync_sync_checkpoint_scheduler_policy_test
+   tests/sync_checkpoint_scheduler_policy_test.cpp)
+ target_include_directories(anonsync_sync_checkpoint_scheduler_policy_test PRIVATE
+@@ -988,6 +1003,16 @@
+       "focused persistence boundary must not depend on anonsync_core_lib: ${ANONSYNC_FOCUSED_BOUNDARY_TARGET}")
+   endif()
+ endforeach()
++if(TARGET anonsync_sync_atomic_file_publication_unlink_authority_test)
++  get_target_property(ANONSYNC_UNLINK_AUTHORITY_LINK_LIBRARIES
++    anonsync_sync_atomic_file_publication_unlink_authority_test LINK_LIBRARIES)
++  list(FIND ANONSYNC_UNLINK_AUTHORITY_LINK_LIBRARIES anonsync_core_lib
++    ANONSYNC_UNLINK_AUTHORITY_CORE_LINK_INDEX)
++  if(NOT ANONSYNC_UNLINK_AUTHORITY_CORE_LINK_INDEX EQUAL -1)
++    message(FATAL_ERROR
++      "focused unlink-authority proof must not link anonsync_core_lib")
++  endif()
++endif()
+ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+   set(ANONSYNC_SANITIZER_COMPILE_TARGETS
+     anonsync_core_lib
+@@ -1055,6 +1080,10 @@
+     anonsync_peer_ingress_retention_integrity_test
+     anonsync_peer_ingress_schema_attestation_test
+     anonsync_peer_ingress_connection_profile_test)
++  if(TARGET anonsync_sync_atomic_file_publication_unlink_authority_test)
++    list(APPEND ANONSYNC_SANITIZER_COMPILE_TARGETS
++      anonsync_sync_atomic_file_publication_unlink_authority_test)
++  endif()
+   if(TARGET anonsync_sqlite_transaction_allocator_fault_test)
+     list(APPEND ANONSYNC_SANITIZER_COMPILE_TARGETS
+       anonsync_sqlite_transaction_allocator_fault_test)
+@@ -1112,6 +1141,10 @@
+       anonsync_peer_ingress_connection_profile_test)
+     target_link_options(${tgt} PRIVATE -fsanitize=address,undefined)
+   endforeach()
++  if(TARGET anonsync_sync_atomic_file_publication_unlink_authority_test)
++    target_link_options(anonsync_sync_atomic_file_publication_unlink_authority_test PRIVATE
++      -fsanitize=address,undefined)
++  endif()
+   if(TARGET anonsync_sqlite_transaction_allocator_fault_test)
+     target_link_options(anonsync_sqlite_transaction_allocator_fault_test PRIVATE
+       -fsanitize=address,undefined)
+@@ -1135,6 +1168,13 @@
+   COMMAND anonsync_sync_atomic_file_publication_state_test)
+ add_test(NAME anonsync_sync_atomic_file_publication_cutpoint_test
+   COMMAND anonsync_sync_atomic_file_publication_cutpoint_test)
++if(TARGET anonsync_sync_atomic_file_publication_unlink_authority_test)
++  add_test(NAME anonsync_sync_atomic_file_publication_unlink_authority_test
++    COMMAND anonsync_sync_atomic_file_publication_unlink_authority_test)
++  set_tests_properties(
++    anonsync_sync_atomic_file_publication_unlink_authority_test
++    PROPERTIES TIMEOUT 30)
++endif()
+ set_tests_properties(
+   anonsync_sync_atomic_file_publication_test
+   anonsync_sync_atomic_file_publication_state_test
+--- a/src/sync_atomic_file_publication.cpp
++++ b/src/sync_atomic_file_publication.cpp
+@@ -52,44 +52,51 @@
+     observer(AtomicFilePublicationObservation{
+                  cutpoint,
+                  progress.outcome(),
+-                 progress.temp_cleanup_authorized()},
++                 progress.residue()},
+              observer_context);
+ }
+ 
+ std::string publication_failure_message(
+     const std::string& label,
+     SyncAtomicFilePublicationOutcome outcome,
++    SyncAtomicFilePublicationResidue residue,
+     const std::string& detail) {
++    const std::string residue_notice =
++        residue == SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain
++            ? "; a temporary artifact may remain; no pathname cleanup authority is implied"
++            : "";
+     switch (outcome) {
+         case SyncAtomicFilePublicationOutcome::NotPublished:
+             return label +
+                    " failed before this attempt replaced the final directory entry: " +
+-                   detail;
++                   detail + residue_notice;
+         case SyncAtomicFilePublicationOutcome::PublishedDurabilityIndeterminate:
+             return label +
+                    " replaced the final directory entry, but parent-directory durability is indeterminate: " +
+-                   detail;
++                   detail + residue_notice;
+         case SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced:
+             return label +
+                    " replaced and directory-synced the final entry, but finalization failed: " +
+-                   detail;
+-    }
+-    return label + " publication failed: " + detail;
++                   detail + residue_notice;
++    }
++    return label + " publication failed: " + detail + residue_notice;
+ }
+ 
+ [[noreturn]] void rethrow_publication_failure(
+     const std::string& label,
+     const AtomicFilePublicationProgress& progress) {
+     const SyncAtomicFilePublicationOutcome outcome = progress.outcome();
++    const SyncAtomicFilePublicationResidue residue = progress.residue();
+     try {
+         throw;
+     } catch (const std::exception& error) {
+         std::throw_with_nested(SyncAtomicFilePublicationError(
+-            outcome, publication_failure_message(label, outcome, error.what())));
++            outcome, residue,
++            publication_failure_message(label, outcome, residue, error.what())));
+     } catch (...) {
+         std::throw_with_nested(SyncAtomicFilePublicationError(
+-            outcome,
+-            publication_failure_message(label, outcome,
++            outcome, residue,
++            publication_failure_message(label, outcome, residue,
+                                         "non-standard exception")));
+     }
+ }
+@@ -267,6 +274,14 @@
+     }
+ }
+ 
++void sanitize_windows_temp_handle_noexcept(HANDLE handle) noexcept {
++    if (handle == INVALID_HANDLE_VALUE) return;
++    LARGE_INTEGER zero{};
++    if (::SetFilePointerEx(handle, zero, nullptr, FILE_BEGIN) == 0) return;
++    if (::SetEndOfFile(handle) == 0) return;
++    (void)::FlushFileBuffers(handle);
++}
++
+ void publish_windows_or_throw(const fs::path& final_path,
+                               const std::string& payload,
+                               const std::string& label,
+@@ -316,6 +331,7 @@
+         throw std::runtime_error(label +
+                                  " could not reserve a unique temp file");
+     }
++    progress.mark_temp_reserved();
+ 
+     try {
+         observe_publication_frontier(observer, observer_context,
+@@ -354,6 +370,11 @@
+                                      AtomicFilePublicationCutpoint::NamespacePublished,
+                                      progress);
+     } catch (...) {
++        if (progress.residue() ==
++                SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain &&
++            temp.valid()) {
++            sanitize_windows_temp_handle_noexcept(temp.get());
++        }
+         // Windows pathname identity cannot be re-proven after the handle is
+         // closed for MoveFileExW. Leaving a writer-owned residue is safer than
+         // deleting a path that another principal may have replaced.
+@@ -462,17 +483,6 @@
+     }
+ }
+ 
+-bool temp_name_matches_inode(int directory_fd,
+-                             const std::string& temp_basename,
+-                             const struct stat& expected) noexcept {
+-    struct stat observed {};
+-    if (::fstatat(directory_fd, temp_basename.c_str(), &observed,
+-                  AT_SYMLINK_NOFOLLOW) != 0) {
+-        return false;
+-    }
+-    return S_ISREG(observed.st_mode) && same_inode(observed, expected);
+-}
+-
+ bool temp_name_is_private_single_link_inode(
+     int directory_fd,
+     const std::string& temp_basename,
+@@ -486,13 +496,44 @@
+            observed.st_nlink == 1 && (observed.st_mode & 0077) == 0;
+ }
+ 
+-void cleanup_owned_temp_noexcept(int directory_fd,
+-                                 const std::string& temp_basename,
+-                                 const struct stat& expected) noexcept {
+-    if (!temp_name_matches_inode(directory_fd, temp_basename, expected)) {
+-        return;
+-    }
+-    (void)::unlinkat(directory_fd, temp_basename.c_str(), 0);
++void sanitize_unpublished_temp_fd_noexcept(int fd) noexcept {
++    if (fd < 0) return;
++
++    // The descriptor is durable identity evidence for the exact inode this
++    // attempt created. Pathname deletion is deliberately absent: POSIX has no
++    // compare-and-unlink primitive, so fstatat(name) followed by unlinkat(name)
++    // can delete a replacement installed between those two calls.
++    int chmod_rc;
++    do {
++        chmod_rc = ::fchmod(fd, S_IRUSR | S_IWUSR);
++    } while (chmod_rc != 0 && errno == EINTR);
++
++    int truncate_rc;
++    do {
++        truncate_rc = ::ftruncate(fd, 0);
++    } while (truncate_rc != 0 && errno == EINTR);
++    if (truncate_rc != 0) return;
++
++    int sync_rc;
++    do {
++        sync_rc = ::fsync(fd);
++    } while (sync_rc != 0 && errno == EINTR);
++    (void)sync_rc;
++    (void)chmod_rc;
++}
++
++bool temp_residue_may_remain(
++    const AtomicFilePublicationProgress& progress) noexcept {
++    return progress.residue() ==
++           SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain;
++}
++
++void sanitize_unpublished_temp_noexcept(
++    const AtomicFilePublicationProgress& progress,
++    const OwnedFd& temp) noexcept {
++    if (temp_residue_may_remain(progress) && temp.valid()) {
++        sanitize_unpublished_temp_fd_noexcept(temp.get());
++    }
+ }
+ 
+ int parent_directory_open_flags() noexcept {
+@@ -672,19 +713,17 @@
+     auto [temp, temp_basename] = create_unique_temp_at_or_throw(
+         directory.get(), final_basename, label);
+     struct stat temp_identity {};
+-    bool temp_identity_known = false;
++    progress.mark_temp_reserved();
+     try {
+         if (::fstat(temp.get(), &temp_identity) != 0) {
+             const int error = errno;
+             throw std::runtime_error(label + " temp file fstat failed: " +
+                                      system_error_text(error));
+         }
+-        temp_identity_known = true;
+         if (!S_ISREG(temp_identity.st_mode) || temp_identity.st_nlink != 1) {
+             throw std::runtime_error(
+                 label + " newly created temp object is not a singly linked regular file");
+         }
+-        progress.authorize_temp_cleanup();
+         observe_publication_frontier(observer, observer_context,
+                                      AtomicFilePublicationCutpoint::TempReserved,
+                                      progress);
+@@ -749,11 +788,7 @@
+             AtomicFilePublicationCutpoint::ParentDirectoryDescriptorClosed,
+             progress);
+     } catch (...) {
+-        if (progress.temp_cleanup_authorized() && temp_identity_known &&
+-            directory.valid()) {
+-            cleanup_owned_temp_noexcept(directory.get(), temp_basename,
+-                                        temp_identity);
+-        }
++        sanitize_unpublished_temp_noexcept(progress, temp);
+         throw;
+     }
+ }
+--- a/src/sync_atomic_file_publication.hpp
++++ b/src/sync_atomic_file_publication.hpp
+@@ -19,6 +19,18 @@
+ [[nodiscard]] const char* sync_atomic_file_publication_outcome_name(
+     SyncAtomicFilePublicationOutcome outcome) noexcept;
+ 
++// Describes whether an unsuccessful attempt may have left an artifact related
++// to its temporary inode or pathname. This is deliberately not a cleanup
++// capability: another actor can replace a name between an identity check and
++// unlinkat(), so the publisher never performs guessed failure-path deletion.
++enum class SyncAtomicFilePublicationResidue {
++    None,
++    TemporaryArtifactMayRemain
++};
++
++[[nodiscard]] const char* sync_atomic_file_publication_residue_name(
++    SyncAtomicFilePublicationResidue residue) noexcept;
++
+ // Runtime publication failures carry machine-readable effect classification so
+ // callers never need to infer retry authority from diagnostic text. Existing
+ // std::exception handlers remain source-compatible.
+@@ -26,12 +38,21 @@
+ public:
+     SyncAtomicFilePublicationError(
+         SyncAtomicFilePublicationOutcome outcome,
++        SyncAtomicFilePublicationResidue residue,
++        std::string message);
++
++    // Retained for source compatibility with code that manually constructs the
++    // exception. Runtime publication failures use the three-argument overload.
++    SyncAtomicFilePublicationError(
++        SyncAtomicFilePublicationOutcome outcome,
+         std::string message);
+ 
+     [[nodiscard]] SyncAtomicFilePublicationOutcome outcome() const noexcept;
++    [[nodiscard]] SyncAtomicFilePublicationResidue residue() const noexcept;
+ 
+ private:
+     SyncAtomicFilePublicationOutcome outcome_;
++    SyncAtomicFilePublicationResidue residue_;
+ };
+ 
+ // Publishes one complete payload by creating a writer-owned file in the
+@@ -42,6 +63,11 @@
+ // identity is re-proven immediately before rename and again after directory
+ // synchronization. Those are point-in-time observations: without external
+ // coordination, another principal may rebind the pathname after either check.
++// Pre-publication failures may leave an artifact related to the temp inode or
++// its pathname. The implementation best-effort sanitizes only the exact
++// retained handle; the typed error reports possible residue instead of racing
++// a conditional pathname deletion or claiming that a later path still denotes
++// the writer-created inode.
+ void write_sync_json_file_atomically_no_symlink_or_throw(
+     const std::filesystem::path& final_path,
+     const std::string& payload,
+--- a/src/sync_atomic_file_publication_internal.hpp
++++ b/src/sync_atomic_file_publication_internal.hpp
+@@ -26,7 +26,7 @@
+ struct AtomicFilePublicationObservation {
+     AtomicFilePublicationCutpoint cutpoint;
+     SyncAtomicFilePublicationOutcome outcome;
+-    bool temp_cleanup_authorized;
++    SyncAtomicFilePublicationResidue residue;
+ };
+ 
+ using AtomicFilePublicationObserver = void (*)(
+--- a/src/sync_atomic_file_publication_state.cpp
++++ b/src/sync_atomic_file_publication_state.cpp
+@@ -17,33 +17,62 @@
+     return "unknown";
+ }
+ 
++const char* sync_atomic_file_publication_residue_name(
++    SyncAtomicFilePublicationResidue residue) noexcept {
++    switch (residue) {
++        case SyncAtomicFilePublicationResidue::None:
++            return "none";
++        case SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain:
++            return "temporary_artifact_may_remain";
++    }
++    return "unknown";
++}
++
++SyncAtomicFilePublicationError::SyncAtomicFilePublicationError(
++    SyncAtomicFilePublicationOutcome outcome,
++    SyncAtomicFilePublicationResidue residue,
++    std::string message)
++    : std::runtime_error(std::move(message)),
++      outcome_(outcome),
++      residue_(residue) {}
++
+ SyncAtomicFilePublicationError::SyncAtomicFilePublicationError(
+     SyncAtomicFilePublicationOutcome outcome,
+     std::string message)
+-    : std::runtime_error(std::move(message)), outcome_(outcome) {}
++    : SyncAtomicFilePublicationError(outcome,
++                                     SyncAtomicFilePublicationResidue::None,
++                                     std::move(message)) {}
+ 
+ SyncAtomicFilePublicationOutcome
+ SyncAtomicFilePublicationError::outcome() const noexcept {
+     return outcome_;
+ }
+ 
++SyncAtomicFilePublicationResidue
++SyncAtomicFilePublicationError::residue() const noexcept {
++    return residue_;
++}
++
+ namespace atomic_file_publication_detail {
+ 
+-void AtomicFilePublicationProgress::authorize_temp_cleanup() noexcept {
+-    if (!namespace_published_) temp_cleanup_authorized_ = true;
++void AtomicFilePublicationProgress::mark_temp_reserved() noexcept {
++    if (!namespace_published_) temp_artifact_may_remain_ = true;
+ }
+ 
+ void AtomicFilePublicationProgress::mark_namespace_published() noexcept {
+     namespace_published_ = true;
+-    temp_cleanup_authorized_ = false;
++    temp_artifact_may_remain_ = false;
+ }
+ 
+ void AtomicFilePublicationProgress::mark_directory_synced() noexcept {
+     if (namespace_published_) directory_synced_ = true;
+ }
+ 
+-bool AtomicFilePublicationProgress::temp_cleanup_authorized() const noexcept {
+-    return temp_cleanup_authorized_ && !namespace_published_;
++SyncAtomicFilePublicationResidue
++AtomicFilePublicationProgress::residue() const noexcept {
++    return temp_artifact_may_remain_ && !namespace_published_
++               ? SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain
++               : SyncAtomicFilePublicationResidue::None;
+ }
+ 
+ bool AtomicFilePublicationProgress::namespace_published() const noexcept {
+--- a/src/sync_atomic_file_publication_state.hpp
++++ b/src/sync_atomic_file_publication_state.hpp
+@@ -9,17 +9,17 @@
+ // effect and before any callback, diagnostic construction, or later syscall.
+ class AtomicFilePublicationProgress final {
+ public:
+-    void authorize_temp_cleanup() noexcept;
++    void mark_temp_reserved() noexcept;
+     void mark_namespace_published() noexcept;
+     void mark_directory_synced() noexcept;
+ 
+-    [[nodiscard]] bool temp_cleanup_authorized() const noexcept;
++    [[nodiscard]] SyncAtomicFilePublicationResidue residue() const noexcept;
+     [[nodiscard]] bool namespace_published() const noexcept;
+     [[nodiscard]] bool directory_synced() const noexcept;
+     [[nodiscard]] SyncAtomicFilePublicationOutcome outcome() const noexcept;
+ 
+ private:
+-    bool temp_cleanup_authorized_ = false;
++    bool temp_artifact_may_remain_ = false;
+     bool namespace_published_ = false;
+     bool directory_synced_ = false;
+ };
+--- a/tests/sync_atomic_file_publication_cutpoint_test.cpp
++++ b/tests/sync_atomic_file_publication_cutpoint_test.cpp
+@@ -26,6 +26,7 @@
+ namespace fs = std::filesystem;
+ using anonsync::SyncAtomicFilePublicationError;
+ using anonsync::SyncAtomicFilePublicationOutcome;
++using anonsync::SyncAtomicFilePublicationResidue;
+ using anonsync::atomic_file_publication_detail::AtomicFilePublicationCutpoint;
+ using anonsync::atomic_file_publication_detail::AtomicFilePublicationObservation;
+ 
+@@ -104,6 +105,20 @@
+     std::sort(result.begin(), result.end());
+     return result;
+ }
++
++#if !defined(_WIN32)
++bool is_private_regular_file_with_size(const fs::path& path,
++                                       std::uintmax_t expected_size) {
++    struct stat status_buffer {};
++    if (::lstat(path.c_str(), &status_buffer) != 0 ||
++        !S_ISREG(status_buffer.st_mode) ||
++        (status_buffer.st_mode & 0077) != 0) {
++        return false;
++    }
++    std::error_code ec;
++    return fs::file_size(path, ec) == expected_size && !ec;
++}
++#endif
+ 
+ const std::vector<AtomicFilePublicationCutpoint>& posix_cutpoints() {
+     static const std::vector<AtomicFilePublicationCutpoint> points = {
+@@ -142,6 +157,13 @@
+     return SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced;
+ }
+ 
++SyncAtomicFilePublicationResidue expected_residue(
++    AtomicFilePublicationCutpoint point) {
++    return is_prepublication(point)
++               ? SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain
++               : SyncAtomicFilePublicationResidue::None;
++}
++
+ struct RecordingContext {
+     std::vector<AtomicFilePublicationObservation> observations;
+ };
+@@ -164,7 +186,7 @@
+     AtomicFilePublicationObservation observation{
+         AtomicFilePublicationCutpoint::TempReserved,
+         SyncAtomicFilePublicationOutcome::NotPublished,
+-        false};
++        SyncAtomicFilePublicationResidue::None};
+ };
+ 
+ void throw_observer(const AtomicFilePublicationObservation& observation,
+@@ -302,7 +324,7 @@
+         bool order_matches = recording.observations.size() ==
+                              posix_cutpoints().size();
+         bool classifications_match = order_matches;
+-        bool cleanup_matches = order_matches;
++        bool residue_matches = order_matches;
+         for (std::size_t index = 0;
+              index < recording.observations.size() &&
+              index < posix_cutpoints().size();
+@@ -313,17 +335,16 @@
+             classifications_match =
+                 classifications_match &&
+                 observed.outcome == expected_outcome(observed.cutpoint);
+-            cleanup_matches =
+-                cleanup_matches &&
+-                observed.temp_cleanup_authorized ==
+-                    is_prepublication(observed.cutpoint);
++            residue_matches =
++                residue_matches &&
++                observed.residue == expected_residue(observed.cutpoint);
+         }
+         state.check(order_matches,
+                     "normal publication frontier order is exact");
+         state.check(classifications_match,
+                     "every frontier carries the expected typed outcome");
+-        state.check(cleanup_matches,
+-                    "cleanup authority exists only before namespace publication");
++        state.check(residue_matches,
++                    "every frontier reports exact possible temp-residue state");
+         state.check(read_binary(final_path) == new_payload,
+                     "normal observed publication preserves exact bytes");
+         state.check(publication_temps(root.path()).empty(),
+@@ -341,6 +362,8 @@
+         bool rebind_typed = false;
+         SyncAtomicFilePublicationOutcome rebind_outcome =
+             SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced;
++        SyncAtomicFilePublicationResidue rebind_residue =
++            SyncAtomicFilePublicationResidue::None;
+         std::string rebind_message;
+         try {
+             anonsync::atomic_file_publication_detail::
+@@ -350,22 +373,32 @@
+         } catch (const SyncAtomicFilePublicationError& error) {
+             rebind_typed = true;
+             rebind_outcome = error.outcome();
++            rebind_residue = error.residue();
+             rebind_message = error.what();
+         }
+         state.check(rebind_context.fired && rebind_typed,
+                     "parent rebind is detected after temp synchronization");
+         state.check(
+             rebind_outcome == SyncAtomicFilePublicationOutcome::NotPublished &&
+-                rebind_message.find("no longer names the retained directory identity") !=
++                rebind_residue ==
++                    SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain &&
++                rebind_message.find(
++                    "no longer names the retained directory identity") !=
++                    std::string::npos &&
++                rebind_message.find("temporary artifact may remain") !=
+                     std::string::npos,
+-            "parent rebind failure is typed not-published");
++            "parent rebind failure reports outcome and possible residue");
+         state.check(!fs::exists(rebind_parent / "report.json"),
+                     "rebound configured parent receives no publication");
+         state.check(read_binary(displaced_parent / "report.json") == old_payload,
+                     "detached original parent retains prior final generation");
++        const std::vector<fs::path> rebind_temps =
++            publication_temps(displaced_parent);
+         state.check(publication_temps(rebind_parent).empty() &&
+-                        publication_temps(displaced_parent).empty(),
+-                    "parent rebind cleanup removes the exact owned temp");
++                        rebind_temps.size() == 1 &&
++                        is_private_regular_file_with_size(rebind_temps.front(), 0),
++                    "parent rebind leaves one sanitized private residue in the retained directory");
++        for (const fs::path& temp : rebind_temps) fs::remove(temp);
+ 
+         const fs::path late_rebind_parent = root.path() / "late-rebind-parent";
+         const fs::path late_displaced_parent =
+@@ -380,6 +413,8 @@
+         bool late_rebind_typed = false;
+         SyncAtomicFilePublicationOutcome late_rebind_outcome =
+             SyncAtomicFilePublicationOutcome::NotPublished;
++        SyncAtomicFilePublicationResidue late_rebind_residue =
++            SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain;
+         std::string late_rebind_message;
+         try {
+             anonsync::atomic_file_publication_detail::
+@@ -389,6 +424,7 @@
+         } catch (const SyncAtomicFilePublicationError& error) {
+             late_rebind_typed = true;
+             late_rebind_outcome = error.outcome();
++            late_rebind_residue = error.residue();
+             late_rebind_message = error.what();
+         }
+         state.check(late_rebind_context.fired && late_rebind_typed,
+@@ -396,6 +432,7 @@
+         state.check(
+             late_rebind_outcome ==
+                     SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced &&
++                late_rebind_residue == SyncAtomicFilePublicationResidue::None &&
+                 late_rebind_message.find(
+                     "no longer names the retained directory identity") !=
+                     std::string::npos,
+@@ -415,6 +452,8 @@
+         bool stale_typed_nested = false;
+         SyncAtomicFilePublicationOutcome stale_typed_outer_outcome =
+             SyncAtomicFilePublicationOutcome::NotPublished;
++        SyncAtomicFilePublicationResidue stale_typed_outer_residue =
++            SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain;
+         try {
+             anonsync::atomic_file_publication_detail::
+                 write_sync_json_file_atomically_with_observer_or_throw(
+@@ -423,14 +462,16 @@
+         } catch (const SyncAtomicFilePublicationError& error) {
+             stale_typed_outer_caught = true;
+             stale_typed_outer_outcome = error.outcome();
++            stale_typed_outer_residue = error.residue();
+             stale_typed_nested = has_stale_typed_nested_cause(error);
+         }
+         state.check(stale_typed_context.fired && stale_typed_outer_caught,
+                     "already-typed nested failures are recomposed");
+         state.check(
+             stale_typed_outer_outcome ==
+-                SyncAtomicFilePublicationOutcome::PublishedDurabilityIndeterminate,
+-            "outer typed outcome reflects the actual completed effects");
++                    SyncAtomicFilePublicationOutcome::PublishedDurabilityIndeterminate &&
++                stale_typed_outer_residue == SyncAtomicFilePublicationResidue::None,
++            "outer typed status reflects the actual completed effects");
+         state.check(stale_typed_nested,
+                     "stale typed failure remains available as nested evidence");
+ 
+@@ -442,6 +483,8 @@
+         bool mode_error_caught = false;
+         SyncAtomicFilePublicationOutcome mode_outcome =
+             SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced;
++        SyncAtomicFilePublicationResidue mode_residue =
++            SyncAtomicFilePublicationResidue::None;
+         std::string mode_message;
+         try {
+             anonsync::atomic_file_publication_detail::
+@@ -451,18 +494,26 @@
+         } catch (const SyncAtomicFilePublicationError& error) {
+             mode_error_caught = true;
+             mode_outcome = error.outcome();
++            mode_residue = error.residue();
+             mode_message = error.what();
+         }
+         state.check(mode_context.fired && mode_error_caught,
+                     "widened temp permissions are detected before rename");
+         state.check(
+             mode_outcome == SyncAtomicFilePublicationOutcome::NotPublished &&
+-                mode_message.find("private singly linked") != std::string::npos,
+-            "temp permission mutation is typed not-published");
++                mode_residue ==
++                    SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain &&
++                mode_message.find("private singly linked") != std::string::npos &&
++                mode_message.find("temporary artifact may remain") !=
++                    std::string::npos,
++            "temp permission mutation is typed not-published with residue");
+         state.check(read_binary(mode_final) == old_payload,
+                     "temp permission mutation preserves prior generation");
+-        state.check(publication_temps(mode_parent).empty(),
+-                    "temp permission mutation cleans the exact owned name");
++        const std::vector<fs::path> mode_temps = publication_temps(mode_parent);
++        state.check(mode_temps.size() == 1 &&
++                        is_private_regular_file_with_size(mode_temps.front(), 0),
++                    "temp permission mutation leaves one re-privatized empty residue");
++        for (const fs::path& temp : mode_temps) fs::remove(temp);
+ 
+         for (AtomicFilePublicationCutpoint point : posix_cutpoints()) {
+             write_binary(final_path, old_payload);
+@@ -474,6 +525,8 @@
+             bool nested_cause = false;
+             SyncAtomicFilePublicationOutcome actual_outcome =
+                 SyncAtomicFilePublicationOutcome::NotPublished;
++            SyncAtomicFilePublicationResidue actual_residue =
++                SyncAtomicFilePublicationResidue::None;
+             std::string message;
+             try {
+                 anonsync::atomic_file_publication_detail::
+@@ -483,6 +536,7 @@
+             } catch (const SyncAtomicFilePublicationError& error) {
+                 typed_error_caught = true;
+                 actual_outcome = error.outcome();
++                actual_residue = error.residue();
+                 message = error.what();
+                 nested_cause = has_injected_nested_cause(error);
+             }
+@@ -493,14 +547,29 @@
+                         point_name + " throw is classified by typed error");
+             state.check(actual_outcome == expected_outcome(point),
+                         point_name + " throw reports exact effect outcome");
++            state.check(actual_residue == expected_residue(point),
++                        point_name + " throw reports exact residue state");
+             state.check(message.find(point_name) != std::string::npos &&
+-                            nested_cause,
++                            nested_cause &&
++                            (!is_prepublication(point) ||
++                             message.find("temporary artifact may remain") !=
++                                 std::string::npos),
+                         point_name + " throw preserves diagnostic and nested cause");
+             state.check(read_binary(final_path) ==
+                             (is_prepublication(point) ? old_payload : new_payload),
+                         point_name + " throw leaves the expected visible generation");
+-            state.check(publication_temps(root.path()).empty(),
+-                        point_name + " caught failure leaves no owned residue");
++            const std::vector<fs::path> caught_temps =
++                publication_temps(root.path());
++            state.check(
++                is_prepublication(point)
++                    ? caught_temps.size() == 1 &&
++                          is_private_regular_file_with_size(caught_temps.front(), 0)
++                    : caught_temps.empty(),
++                point_name +
++                    (is_prepublication(point)
++                         ? " caught failure leaves one sanitized private residue"
++                         : " caught postpublication failure leaves no temp residue"));
++            for (const fs::path& temp : caught_temps) fs::remove(temp);
+         }
+ 
+         constexpr int kCrashExitBase = 120;
+--- a/tests/sync_atomic_file_publication_state_test.cpp
++++ b/tests/sync_atomic_file_publication_state_test.cpp
+@@ -34,13 +34,14 @@
+ int main() {
+     using anonsync::SyncAtomicFilePublicationError;
+     using anonsync::SyncAtomicFilePublicationOutcome;
++    using anonsync::SyncAtomicFilePublicationResidue;
+     using anonsync::atomic_file_publication_detail::AtomicFilePublicationProgress;
+ 
+     TestState state;
+     AtomicFilePublicationProgress progress;
+ 
+-    state.check(!progress.temp_cleanup_authorized(),
+-                "initial state has no cleanup authority");
++    state.check(progress.residue() == SyncAtomicFilePublicationResidue::None,
++                "initial state has no possible temp residue");
+     state.check(!progress.namespace_published(),
+                 "initial state has no namespace effect");
+     state.check(!progress.directory_synced(),
+@@ -51,23 +52,31 @@
+     state.check(std::string(anonsync::sync_atomic_file_publication_outcome_name(
+                     progress.outcome())) == "not_published",
+                 "not-published outcome has stable machine name");
++    state.check(std::string(anonsync::sync_atomic_file_publication_residue_name(
++                    progress.residue())) == "none",
++                "no-residue state has stable machine name");
+ 
+     progress.mark_directory_synced();
+     state.check(!progress.directory_synced(),
+                 "directory sync cannot precede namespace publication");
+ 
+-    progress.authorize_temp_cleanup();
+-    state.check(progress.temp_cleanup_authorized(),
+-                "owned temp enables pre-publication cleanup");
++    progress.mark_temp_reserved();
++    state.check(progress.residue() ==
++                    SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain,
++                "reserved temp records possible pre-publication residue");
+     state.check(progress.outcome() ==
+                     SyncAtomicFilePublicationOutcome::NotPublished,
+-                "temp ownership does not imply publication");
++                "temp reservation does not imply publication");
++    state.check(std::string(anonsync::sync_atomic_file_publication_residue_name(
++                    progress.residue())) ==
++                    "temporary_artifact_may_remain",
++                "possible residue has stable machine name");
+ 
+     progress.mark_namespace_published();
+     state.check(progress.namespace_published(),
+                 "namespace publication is retained");
+-    state.check(!progress.temp_cleanup_authorized(),
+-                "namespace publication permanently revokes temp cleanup");
++    state.check(progress.residue() == SyncAtomicFilePublicationResidue::None,
++                "namespace publication consumes the temp artifact name");
+     state.check(progress.outcome() ==
+                     SyncAtomicFilePublicationOutcome::PublishedDurabilityIndeterminate,
+                 "rename without directory sync is indeterminate");
+@@ -76,9 +85,9 @@
+                     "published_durability_indeterminate",
+                 "indeterminate outcome has stable machine name");
+ 
+-    progress.authorize_temp_cleanup();
+-    state.check(!progress.temp_cleanup_authorized(),
+-                "cleanup authority cannot reopen after publication");
++    progress.mark_temp_reserved();
++    state.check(progress.residue() == SyncAtomicFilePublicationResidue::None,
++                "possible temp residue cannot reopen after publication");
+ 
+     progress.mark_directory_synced();
+     state.check(progress.directory_synced(),
+@@ -94,15 +103,20 @@
+     progress.mark_namespace_published();
+     progress.mark_directory_synced();
+     state.check(progress.outcome() ==
+-                    SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced,
+-                "repeated monotone evidence cannot regress outcome");
++                    SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced &&
++                    progress.residue() == SyncAtomicFilePublicationResidue::None,
++                "repeated monotone evidence cannot regress outcome or residue");
+ 
+     const SyncAtomicFilePublicationError error(
+         SyncAtomicFilePublicationOutcome::PublishedDurabilityIndeterminate,
++        SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain,
+         "typed publication failure");
+     state.check(error.outcome() ==
+                     SyncAtomicFilePublicationOutcome::PublishedDurabilityIndeterminate,
+                 "typed exception retains machine-readable outcome");
++    state.check(error.residue() ==
++                    SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain,
++                "typed exception retains machine-readable residue");
+     state.check(std::string(error.what()) == "typed publication failure",
+                 "typed exception retains diagnostic text");
+     bool runtime_error_compatible = false;
+@@ -114,5 +128,12 @@
+     state.check(runtime_error_compatible,
+                 "typed exception remains runtime_error-compatible");
+ 
++    const SyncAtomicFilePublicationError compatibility_error(
++        SyncAtomicFilePublicationOutcome::NotPublished,
++        "compatibility publication failure");
++    state.check(compatibility_error.residue() ==
++                    SyncAtomicFilePublicationResidue::None,
++                "two-argument compatibility constructor defaults to no residue");
++
+     return state.finish();
+ }
+--- a/tests/sync_atomic_file_publication_unlink_authority_test.cpp
++++ b/tests/sync_atomic_file_publication_unlink_authority_test.cpp
+@@ -0,0 +1,341 @@
++#include "sync_atomic_file_publication.hpp"
++#include "sync_atomic_file_publication_internal.hpp"
++
++#include <algorithm>
++#include <atomic>
++#include <cerrno>
++#include <chrono>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++namespace {
++
++namespace fs = std::filesystem;
++using anonsync::SyncAtomicFilePublicationError;
++using anonsync::SyncAtomicFilePublicationOutcome;
++using anonsync::SyncAtomicFilePublicationResidue;
++using anonsync::atomic_file_publication_detail::AtomicFilePublicationCutpoint;
++using anonsync::atomic_file_publication_detail::AtomicFilePublicationObservation;
++
++std::atomic<int> g_unlinkat_calls{0};
++std::atomic<bool> g_arm_replacement{false};
++std::atomic<bool> g_replacement_installed{false};
++std::atomic<bool> g_foreign_replacement_deleted{false};
++
++constexpr const char* kDisplacedOriginalName =
++    ".anonsync-unlink-authority-displaced-original";
++constexpr const char* kForeignPayload = "foreign-owner-payload";
++
++bool is_publication_temp_name(const std::string& name) {
++    return name.rfind(".anonsync-publish-v1-", 0) == 0 &&
++           name.size() >= 4 && name.substr(name.size() - 4) == ".tmp";
++}
++
++bool write_all_noexcept(int fd, const char* bytes, std::size_t size) noexcept {
++    const char* cursor = bytes;
++    std::size_t remaining = size;
++    while (remaining != 0) {
++        const ssize_t written = ::write(fd, cursor, remaining);
++        if (written < 0) {
++            if (errno == EINTR) continue;
++            return false;
++        }
++        if (written == 0) return false;
++        cursor += written;
++        remaining -= static_cast<std::size_t>(written);
++    }
++    return true;
++}
++
++class TestState final {
++public:
++    void check(bool condition, const std::string& label) {
++        ++total_;
++        if (condition) {
++            ++passed_;
++        } else {
++            std::cerr << "FAIL: " << label << '\n';
++        }
++    }
++
++    int finish() const {
++        std::cout << "sync atomic unlink authority: " << passed_ << "/"
++                  << total_ << " checks passed\n";
++        return passed_ == total_ ? 0 : 1;
++    }
++
++private:
++    int total_ = 0;
++    int passed_ = 0;
++};
++
++class TemporaryDirectory final {
++public:
++    TemporaryDirectory() {
++        const fs::path base = fs::temp_directory_path();
++        const auto seed = static_cast<std::uint64_t>(
++            std::chrono::steady_clock::now().time_since_epoch().count());
++        for (std::uint64_t attempt = 0; attempt != 4096; ++attempt) {
++            path_ = base / ("anonsync-unlink-authority-" +
++                            std::to_string(seed) + "-" +
++                            std::to_string(attempt));
++            std::error_code ec;
++            if (fs::create_directory(path_, ec)) return;
++        }
++        throw std::runtime_error(
++            "could not create unlink-authority test directory");
++    }
++
++    ~TemporaryDirectory() {
++        std::error_code ec;
++        fs::remove_all(path_, ec);
++    }
++
++    const fs::path& path() const noexcept { return path_; }
++
++private:
++    fs::path path_;
++};
++
++void write_binary(const fs::path& path, const std::string& bytes) {
++    std::ofstream out(path, std::ios::binary | std::ios::trunc);
++    if (!out) throw std::runtime_error("could not open test file for write");
++    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
++    if (!out) throw std::runtime_error("could not write test file");
++}
++
++std::string read_binary(const fs::path& path) {
++    std::ifstream in(path, std::ios::binary);
++    if (!in) throw std::runtime_error("could not open test file for read");
++    return std::string(std::istreambuf_iterator<char>(in),
++                       std::istreambuf_iterator<char>());
++}
++
++std::vector<fs::path> publication_temps(const fs::path& directory) {
++    std::vector<fs::path> result;
++    for (const fs::directory_entry& entry : fs::directory_iterator(directory)) {
++        if (is_publication_temp_name(entry.path().filename().string())) {
++            result.push_back(entry.path());
++        }
++    }
++    std::sort(result.begin(), result.end());
++    return result;
++}
++
++bool is_private_empty_regular_file(const fs::path& path) {
++    struct stat status_buffer {};
++    if (::lstat(path.c_str(), &status_buffer) != 0 ||
++        !S_ISREG(status_buffer.st_mode) ||
++        (status_buffer.st_mode & 0077) != 0) {
++        return false;
++    }
++    std::error_code ec;
++    return fs::file_size(path, ec) == 0 && !ec;
++}
++
++class InjectedFailure final : public std::runtime_error {
++public:
++    InjectedFailure() : std::runtime_error("injected failure after payload") {}
++};
++
++void fail_after_payload(const AtomicFilePublicationObservation& observation,
++                        void*) {
++    if (observation.cutpoint != AtomicFilePublicationCutpoint::PayloadWritten) {
++        return;
++    }
++    g_arm_replacement.store(true, std::memory_order_release);
++    throw InjectedFailure();
++}
++
++struct NameRebindContext {
++    fs::path directory;
++    fs::path original_temp_path;
++    bool fired = false;
++};
++
++void replace_temp_name_then_fail(
++    const AtomicFilePublicationObservation& observation,
++    void* raw_context) {
++    if (observation.cutpoint != AtomicFilePublicationCutpoint::PayloadWritten) {
++        return;
++    }
++    auto& context = *static_cast<NameRebindContext*>(raw_context);
++    const std::vector<fs::path> temps = publication_temps(context.directory);
++    if (temps.size() != 1) {
++        throw std::runtime_error(
++            "name rebind expected exactly one publication temp");
++    }
++    context.original_temp_path = temps.front();
++    const fs::path displaced = context.directory / kDisplacedOriginalName;
++    fs::rename(context.original_temp_path, displaced);
++    write_binary(context.original_temp_path, kForeignPayload);
++    if (::chmod(context.original_temp_path.c_str(), 0644) != 0) {
++        throw std::runtime_error("name rebind replacement chmod failed");
++    }
++    context.fired = true;
++    throw InjectedFailure();
++}
++
++}  // namespace
++
++extern "C" int __real_unlinkat(int directory_fd,
++                                const char* pathname,
++                                int flags);
++
++extern "C" int __wrap_unlinkat(int directory_fd,
++                                const char* pathname,
++                                int flags) {
++    g_unlinkat_calls.fetch_add(1, std::memory_order_relaxed);
++    if (pathname != nullptr &&
++        g_arm_replacement.exchange(false, std::memory_order_acq_rel)) {
++        (void)__real_unlinkat(directory_fd, kDisplacedOriginalName, 0);
++        if (::renameat(directory_fd, pathname, directory_fd,
++                       kDisplacedOriginalName) == 0) {
++            int replacement_fd;
++            do {
++                replacement_fd = ::openat(directory_fd, pathname,
++                                          O_WRONLY | O_CREAT | O_EXCL, 0644);
++            } while (replacement_fd < 0 && errno == EINTR);
++            if (replacement_fd >= 0) {
++                const std::string foreign = kForeignPayload;
++                const bool written = write_all_noexcept(
++                    replacement_fd, foreign.data(), foreign.size());
++                int close_result;
++                do {
++                    close_result = ::close(replacement_fd);
++                } while (close_result != 0 && errno == EINTR);
++                if (written && close_result == 0) {
++                    g_replacement_installed.store(true,
++                                                  std::memory_order_release);
++                }
++            }
++        }
++        const int result = __real_unlinkat(directory_fd, pathname, flags);
++        if (result == 0 &&
++            g_replacement_installed.load(std::memory_order_acquire)) {
++            struct stat status_buffer {};
++            if (::fstatat(directory_fd, pathname, &status_buffer,
++                          AT_SYMLINK_NOFOLLOW) != 0 && errno == ENOENT) {
++                g_foreign_replacement_deleted.store(true,
++                                                     std::memory_order_release);
++            }
++        }
++        return result;
++    }
++    return __real_unlinkat(directory_fd, pathname, flags);
++}
++
++int main() {
++    try {
++        TestState state;
++        TemporaryDirectory root;
++        const fs::path final_path = root.path() / "report.json";
++        const fs::path displaced = root.path() / kDisplacedOriginalName;
++        const std::string old_payload = "{\"generation\":\"old\"}\n";
++        const std::string new_payload(64 * 1024 + 7, 'N');
++
++        write_binary(final_path, old_payload);
++        bool typed_error_caught = false;
++        SyncAtomicFilePublicationOutcome outcome =
++            SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced;
++        SyncAtomicFilePublicationResidue residue =
++            SyncAtomicFilePublicationResidue::None;
++        try {
++            anonsync::atomic_file_publication_detail::
++                write_sync_json_file_atomically_with_observer_or_throw(
++                    final_path, new_payload, "unlink authority trace",
++                    &fail_after_payload, nullptr);
++        } catch (const SyncAtomicFilePublicationError& error) {
++            typed_error_caught = true;
++            outcome = error.outcome();
++            residue = error.residue();
++        }
++        g_arm_replacement.store(false, std::memory_order_release);
++
++        state.check(
++            typed_error_caught &&
++                outcome == SyncAtomicFilePublicationOutcome::NotPublished &&
++                residue ==
++                    SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain,
++            "pre-publication failure reports exact outcome and residue");
++        state.check(g_unlinkat_calls.load(std::memory_order_acquire) == 0,
++                    "failure handling performs no pathname deletion");
++        state.check(
++            !g_replacement_installed.load(std::memory_order_acquire) &&
++                !g_foreign_replacement_deleted.load(std::memory_order_acquire),
++            "no check-use window can delete a foreign replacement");
++        state.check(read_binary(final_path) == old_payload,
++                    "failure preserves the prior final generation");
++        const std::vector<fs::path> residue_temps =
++            publication_temps(root.path());
++        state.check(residue_temps.size() == 1 &&
++                        is_private_empty_regular_file(residue_temps.front()),
++                    "exact temp descriptor is sanitized and residue is retained");
++        state.check(!fs::exists(displaced),
++                    "test wrapper never displaced the writer inode");
++        for (const fs::path& temp : residue_temps) fs::remove(temp);
++
++        g_unlinkat_calls.store(0, std::memory_order_release);
++        g_arm_replacement.store(false, std::memory_order_release);
++        g_replacement_installed.store(false, std::memory_order_release);
++        g_foreign_replacement_deleted.store(false,
++                                             std::memory_order_release);
++
++        NameRebindContext rebind_context{root.path(), fs::path{}, false};
++        bool rebind_typed = false;
++        SyncAtomicFilePublicationOutcome rebind_outcome =
++            SyncAtomicFilePublicationOutcome::PublishedAndDirectorySynced;
++        SyncAtomicFilePublicationResidue rebind_residue =
++            SyncAtomicFilePublicationResidue::None;
++        try {
++            anonsync::atomic_file_publication_detail::
++                write_sync_json_file_atomically_with_observer_or_throw(
++                    final_path, new_payload, "name rebind authority trace",
++                    &replace_temp_name_then_fail, &rebind_context);
++        } catch (const SyncAtomicFilePublicationError& error) {
++            rebind_typed = true;
++            rebind_outcome = error.outcome();
++            rebind_residue = error.residue();
++        }
++
++        state.check(
++            rebind_context.fired && rebind_typed &&
++                rebind_outcome == SyncAtomicFilePublicationOutcome::NotPublished &&
++                rebind_residue ==
++                    SyncAtomicFilePublicationResidue::TemporaryArtifactMayRemain,
++            "name rebind still reports possible residue without cleanup authority");
++        state.check(g_unlinkat_calls.load(std::memory_order_acquire) == 0,
++                    "name rebind failure still performs no pathname deletion");
++        state.check(read_binary(rebind_context.original_temp_path) ==
++                        kForeignPayload,
++                    "foreign replacement remains byte-exact and unsanitized");
++        struct stat replacement_status {};
++        state.check(
++            ::lstat(rebind_context.original_temp_path.c_str(),
++                    &replacement_status) == 0 &&
++                (replacement_status.st_mode & 0044) == 0044,
++            "descriptor sanitation does not chmod the foreign replacement");
++        state.check(is_private_empty_regular_file(displaced),
++                    "sanitation follows the exact writer descriptor after name rebind");
++        state.check(read_binary(final_path) == old_payload,
++                    "name rebind failure preserves the prior final generation");
++
++        std::error_code cleanup_error;
++        fs::remove(rebind_context.original_temp_path, cleanup_error);
++        cleanup_error.clear();
++        fs::remove(displaced, cleanup_error);
++        return state.finish();
++    } catch (const std::exception& error) {
++        std::cerr << "FATAL: " << error.what() << '\n';
++        return 2;
++    }
++}
+--- a/tools/audit_sync_atomic_file_publication.py
++++ b/tools/audit_sync_atomic_file_publication.py
+@@ -48,6 +48,7 @@
+         "test": root / "tests/sync_atomic_file_publication_test.cpp",
+         "state_test": root / "tests/sync_atomic_file_publication_state_test.cpp",
+         "cutpoint_test": root / "tests/sync_atomic_file_publication_cutpoint_test.cpp",
++        "unlink_test": root / "tests/sync_atomic_file_publication_unlink_authority_test.cpp",
+         "audit": root / "tools/audit_sync_atomic_file_publication.py",
+         "cmake": root / "CMakeLists.txt",
+         "domain": root / "src/sync_domain.cpp",
+@@ -84,6 +85,7 @@
+     test = text["test"]
+     state_test = text["state_test"]
+     cutpoint_test = text["cutpoint_test"]
++    unlink_test = text["unlink_test"]
+     audit_source = text["audit"]
+     cmake = text["cmake"]
+     domain = text["domain"]
+@@ -100,7 +102,7 @@
+     check(
+         "required_files_exist",
+         not missing,
+-        "public/internal APIs, state owner, syscall owner, three tests, audit, callers, and verifier are present",
++        "public/internal APIs, state owner, syscall owner, four tests, audit, callers, and verifier are present",
+     )
+ 
+     declarations = [
+@@ -119,13 +121,17 @@
+         "NotPublished",
+         "PublishedDurabilityIndeterminate",
+         "PublishedAndDirectorySynced",
++        "enum class SyncAtomicFilePublicationResidue",
++        "TemporaryArtifactMayRemain",
++        "sync_atomic_file_publication_residue_name(",
+         "class SyncAtomicFilePublicationError : public std::runtime_error",
+         "SyncAtomicFilePublicationOutcome outcome() const noexcept",
++        "SyncAtomicFilePublicationResidue residue() const noexcept",
+     ]
+     check(
+         "public_failures_are_machine_classified",
+         all(token in header for token in public_outcome_tokens),
+-        "callers can distinguish no rename, rename with uncertain directory durability, and directory-synced publication without parsing text",
++        "callers can distinguish publication effects and possible temp residue without parsing diagnostic text",
+     )
+ 
+     check(
+@@ -146,10 +152,10 @@
+     )
+ 
+     state_tokens = [
+-        "authorize_temp_cleanup() noexcept",
++        "mark_temp_reserved() noexcept",
+         "mark_namespace_published() noexcept",
+         "mark_directory_synced() noexcept",
+-        "temp_cleanup_authorized() const noexcept",
++        "SyncAtomicFilePublicationResidue residue() const noexcept",
+         "SyncAtomicFilePublicationOutcome outcome() const noexcept",
+     ]
+     check(
+@@ -157,13 +163,13 @@
+         all(token in state_header for token in state_tokens)
+         and "std::string" not in state_header
+         and "std::vector" not in state_header,
+-        "effect classification changes require only noexcept boolean state transitions",
++        "effect and residue classification require only noexcept boolean state transitions",
+     )
+ 
+     check(
+         "state_model_is_monotone",
+-        "temp_cleanup_authorized_ = false;" in state_source
+-        and "if (!namespace_published_) temp_cleanup_authorized_ = true;"
++        "temp_artifact_may_remain_ = false;" in state_source
++        and "if (!namespace_published_) temp_artifact_may_remain_ = true;"
+         in state_source
+         and "if (namespace_published_) directory_synced_ = true;" in state_source
+         and ordered(
+@@ -176,7 +182,7 @@
+                 "NotPublished",
+             ],
+         ),
+-        "publication revokes cleanup permanently and directory durability cannot exist before rename",
++        "publication consumes possible temp residue permanently and directory durability cannot exist before rename",
+     )
+ 
+     core_sources = source_list_block(cmake, "ANONSYNC_CORE_SOURCES")
+@@ -285,8 +291,7 @@
+ 
+     check(
+         "temp_path_ownership_is_inode_and_privacy_bound",
+-        "temp_name_matches_inode" in source
+-        and "temp_name_is_private_single_link_inode" in source
++        "temp_name_is_private_single_link_inode" in source
+         and "same_inode(observed, expected)" in source
+         and "observed.st_nlink == 1" in source
+         and "(observed.st_mode & 0077) == 0" in source
+@@ -304,7 +309,7 @@
+     )
+ 
+     posix_transition_order = [
+-        "progress.authorize_temp_cleanup();",
++        "progress.mark_temp_reserved();",
+         "AtomicFilePublicationCutpoint::TempReserved",
+         "AtomicFilePublicationCutpoint::PayloadWritten",
+         "AtomicFilePublicationCutpoint::TempFileSynced",
+@@ -324,7 +329,7 @@
+     check(
+         "kernel_effects_advance_state_before_observation",
+         ordered(source, posix_transition_order),
+-        "rename and directory fsync advance allocation-free state before any injectable callback",
++        "temp reservation, rename, and directory fsync advance allocation-free state before any injectable callback",
+     )
+ 
+     check(
+@@ -334,25 +339,52 @@
+         and "publication_failure_message" in source
+         and "catch (const SyncAtomicFilePublicationError&)" not in source
+         and "PublishedDurabilityIndeterminate" in source
+-        and "PublishedAndDirectorySynced" in source,
+-        "preflight, write, sync, rename, already-typed callback, and close failures share one typed composition boundary",
+-    )
+-
+-    cleanup_slice_match = re.search(
+-        r"void cleanup_owned_temp_noexcept\((.*?)\n\}", source, re.DOTALL
+-    )
+-    cleanup_slice = cleanup_slice_match.group(0) if cleanup_slice_match else ""
+-    check(
+-        "cleanup_never_deletes_a_guessed_or_postpublication_temp",
+-        "temp_name_matches_inode" in cleanup_slice
+-        and "::unlinkat" in cleanup_slice
+-        and "if (progress.temp_cleanup_authorized() && temp_identity_known &&"
+-        in source
+-        and "mark_namespace_published" in state_source
+-        and "temp_cleanup_authorized_ = false;" in state_source
+-        and "could not remove stale temp" not in source
+-        and "fs::remove(tmp_path" not in source,
+-        "failure cleanup requires exact inode evidence and a state token permanently revoked by rename",
++        and "PublishedAndDirectorySynced" in source
++        and "const SyncAtomicFilePublicationResidue residue = progress.residue();"
++        in source,
++        "preflight, write, sync, rename, already-typed callback, and close failures share one typed composition boundary with current effect and residue state",
++    )
++
++    check(
++        "failure_path_uses_descriptor_sanitization_not_path_deletion",
++        re.search(r"::unlinkat\s*\(", source) is None
++        and re.search(r"::unlink\s*\(", source) is None
++        and "DeleteFileA(" not in source
++        and "DeleteFileW(" not in source
++        and "fs::remove(" not in source
++        and "sanitize_unpublished_temp_fd_noexcept" in source
++        and "::fchmod(fd, S_IRUSR | S_IWUSR)" in source
++        and "::ftruncate(fd, 0)" in source
++        and "::fsync(fd)" in source
++        and "sanitize_unpublished_temp_noexcept(progress, temp);" in source
++        and "sanitize_windows_temp_handle_noexcept(temp.get());" in source
++        and "compare-and-unlink primitive" in source
++        and "TemporaryArtifactMayRemain" in source,
++        "failure handling sanitizes only the retained writer handle, reports residue, and performs no guessed pathname deletion",
++    )
++
++    check(
++        "temp_residue_is_recorded_before_first_postcreate_failure",
++        source.count("progress.mark_temp_reserved();") == 2
++        and ordered(
++            source,
++            [
++                "if (!temp.valid())",
++                "progress.mark_temp_reserved();",
++                "try {",
++                "AtomicFilePublicationCutpoint::TempReserved",
++            ],
++        )
++        and ordered(
++            source,
++            [
++                "auto [temp, temp_basename] = create_unique_temp_at_or_throw(",
++                "progress.mark_temp_reserved();",
++                "try {",
++                "if (::fstat(temp.get(), &temp_identity) != 0)",
++            ],
++        ),
++        "both platform paths record possible residue immediately after successful reservation and before any later fallible operation",
+     )
+ 
+     required_test_tokens = [
+@@ -378,17 +410,21 @@
+ 
+     state_test_tokens = [
+         "initial outcome is not published",
++        "initial state has no possible temp residue",
+         "directory sync cannot precede namespace publication",
+-        "namespace publication permanently revokes temp cleanup",
+-        "cleanup authority cannot reopen after publication",
+-        "repeated monotone evidence cannot regress outcome",
++        "reserved temp records possible pre-publication residue",
++        "namespace publication consumes the temp artifact name",
++        "possible temp residue cannot reopen after publication",
++        "repeated monotone evidence cannot regress outcome or residue",
+         "typed exception retains machine-readable outcome",
++        "typed exception retains machine-readable residue",
++        "two-argument compatibility constructor defaults to no residue",
+         "typed exception remains runtime_error-compatible",
+     ]
+     check(
+         "pure_state_test_covers_monotonicity_and_api_compatibility",
+         all(token in state_test for token in state_test_tokens),
+-        "the no-filesystem test proves all three outcomes, cleanup revocation, idempotence, and exception compatibility",
++        "the no-filesystem test proves all outcomes, residue monotonicity, stable names, idempotence, and exception compatibility",
+     )
+ 
+     cutpoint_tokens = [
+@@ -405,21 +441,42 @@
+         "ParentDirectoryDescriptorClosed",
+         "throw_observer",
+         "has_injected_nested_cause",
+-        "caught failure leaves no owned residue",
++        "throw reports exact residue state",
++        "caught failure leaves one sanitized private residue",
+         "parent rebind is detected after temp synchronization",
+         "detached original parent retains prior final generation",
++        "parent rebind leaves one sanitized private residue in the retained directory",
+         "post-sync parent rebind cannot return false success",
+         "late detached parent contains the exact synced generation",
+         "already-typed nested failures are recomposed",
+-        "outer typed outcome reflects the actual completed effects",
++        "outer typed status reflects the actual completed effects",
+         "stale typed failure remains available as nested evidence",
++        "temp permission mutation leaves one re-privatized empty residue",
+     ]
+     check(
+         "caught_failure_oracle_covers_every_frontier",
+         all(token in cutpoint_test for token in cutpoint_tokens)
+         and "for (AtomicFilePublicationCutpoint point : posix_cutpoints())"
+         in cutpoint_test,
+-        "each completed effect is interrupted by a thrown exception and checked for outcome, visible generation, nested cause, and cleanup",
++        "each completed effect is interrupted by a thrown exception and checked for outcome, residue, visible generation, nested cause, and descriptor-bound sanitation",
++    )
++
++    unlink_authority_tokens = [
++        "__wrap_unlinkat",
++        "foreign-owner-payload",
++        "replace_temp_name_then_fail",
++        "failure handling performs no pathname deletion",
++        "no check-use window can delete a foreign replacement",
++        "exact temp descriptor is sanitized and residue is retained",
++        "foreign replacement remains byte-exact and unsanitized",
++        "descriptor sanitation does not chmod the foreign replacement",
++        "sanitation follows the exact writer descriptor after name rebind",
++    ]
++    check(
++        "unlink_authority_regression_proves_check_use_gap_closed",
++        all(token in unlink_test for token in unlink_authority_tokens)
++        and "-Wl,--wrap=unlinkat" in cmake,
++        "the focused Linux proof detects any pathname deletion and independently proves sanitation remains bound to the writer descriptor after name replacement",
+     )
+ 
+     check(
+@@ -471,8 +528,10 @@
+     ]
+     check(
+         "focused_libraries_and_tests_are_guarded_from_core_linkage",
+-        all(target in focused_loop for target in guarded_targets),
+-        "configure-time no-core dependency guard covers the classifier, syscall owner, and all focused proofs",
++        all(target in focused_loop for target in guarded_targets)
++        and "ANONSYNC_UNLINK_AUTHORITY_LINK_LIBRARIES" in cmake
++        and "focused unlink-authority proof must not link anonsync_core_lib" in cmake,
++        "configure-time no-core dependency guards cover the classifier, syscall owner, and all focused proofs",
+     )
+ 
+     sanitizer_compile = source_list_block(cmake, "ANONSYNC_SANITIZER_COMPILE_TARGETS")
+@@ -499,7 +558,11 @@
+                 "anonsync_sync_atomic_file_publication_cutpoint_test",
+                 "anonsync_sync_atomic_file_publication_test",
+             ]
+-        ),
++        )
++        and "list(APPEND ANONSYNC_SANITIZER_COMPILE_TARGETS" in cmake
++        and "anonsync_sync_atomic_file_publication_unlink_authority_test" in cmake
++        and "target_link_options(anonsync_sync_atomic_file_publication_unlink_authority_test PRIVATE" in cmake
++        and "-fsanitize=address,undefined" in cmake,
+         "classifier, implementation, and all regression executables receive ASan/UBSan instrumentation and link flags",
+     )
+ 
+@@ -507,14 +570,16 @@
+         "add_test(NAME anonsync_sync_atomic_file_publication_test",
+         "add_test(NAME anonsync_sync_atomic_file_publication_state_test",
+         "add_test(NAME anonsync_sync_atomic_file_publication_cutpoint_test",
++        "add_test(NAME anonsync_sync_atomic_file_publication_unlink_authority_test",
+         "add_test(NAME anonsync_sync_atomic_file_publication_source_audit",
+     ]
+     check(
+         "runtime_and_source_audits_are_release_tests",
+         all(token in cmake for token in ctest_targets)
+         and "TIMEOUT 90" in cmake
++        and "PROPERTIES TIMEOUT 30" in cmake
+         and "audit_sync_atomic_file_publication.py" in cmake,
+-        "CTest registers the race/path corpus, pure model, cutpoint oracle, and structural audit",
++        "CTest registers the race/path corpus, pure model, cutpoint oracle, unlink-authority proof, and structural audit",
+     )
+ 
+     verifier_required = [
+@@ -526,6 +591,7 @@
+         "tests/sync_atomic_file_publication_test.cpp",
+         "tests/sync_atomic_file_publication_state_test.cpp",
+         "tests/sync_atomic_file_publication_cutpoint_test.cpp",
++        "tests/sync_atomic_file_publication_unlink_authority_test.cpp",
+         "tools/audit_sync_atomic_file_publication.py",
+     ]
+     check(
+@@ -540,9 +606,11 @@
+         and "public_failures_are_machine_classified" in audit_source
+         and "caught_failure_oracle_covers_every_frontier" in audit_source
+         and "process_exit_oracle_covers_namespace_frontiers" in audit_source
+-        and "cleanup_never_deletes_a_guessed_or_postpublication_temp"
++        and "failure_path_uses_descriptor_sanitization_not_path_deletion"
++        in audit_source
++        and "unlink_authority_regression_proves_check_use_gap_closed"
+         in audit_source,
+-        "the audit itself contains substantive architecture, transition-order, exception, crash, and cleanup checks",
++        "the audit itself contains substantive architecture, transition-order, exception, crash, descriptor-sanitation, and unlink-authority checks",
+     )
+ 
+     passed = sum(1 for item in checks if item["passed"])
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -135,6 +135,7 @@
+         "tests/sync_atomic_file_publication_test.cpp",
+         "tests/sync_atomic_file_publication_state_test.cpp",
+         "tests/sync_atomic_file_publication_cutpoint_test.cpp",
++        "tests/sync_atomic_file_publication_unlink_authority_test.cpp",
+         "tests/peer_ingress_schema_attestation_test.cpp",
+         "tests/persistence/sqlite_persistence_process_authority_fork_test.cpp",
+         "tools/audit_sqlite_process_authority.py",

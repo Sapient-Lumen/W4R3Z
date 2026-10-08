@@ -1,0 +1,3 @@
+# Rev0979 research and speculation note
+
+The durable mark deliberately separates an observation from authority. Atomic replacement can establish which record bytes won a namespace race, but it cannot by itself establish trusted time, database anti-rollback, remote-filesystem lock behavior, or that a candidate remains unreferenced after the writer fence is released. The next useful research edge is a small executable model for collection staging: mark, reacquire all roots, exact-inode quarantine rename, restart, complete byte reproof, and final unlink. The model should include clock rollback, SQLite backup restore, ENOSPC at every publication point, noncooperating writers, and network filesystems where advisory-lock semantics differ from qualified local Linux behavior.

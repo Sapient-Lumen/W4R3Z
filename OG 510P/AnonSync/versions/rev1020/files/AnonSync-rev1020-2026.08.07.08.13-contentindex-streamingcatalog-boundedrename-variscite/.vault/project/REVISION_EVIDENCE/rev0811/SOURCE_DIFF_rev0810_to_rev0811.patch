@@ -1,0 +1,3612 @@
+--- a/include/anonsync_core.hpp
++++ b/include/anonsync_core.hpp
+@@ -1580,6 +1580,8 @@
+ struct SyncSessionCheckpointOptions {
+     std::string sqlite_path;
+     std::string session_id;
++    SyncSessionCheckpointDaemonOwnerCapability daemon_owner_capability;
++    std::uint64_t owner_fence_now_epoch = 1;
+     bool reset_existing_session_rows = true;
+     bool require_converged_session = true;
+     bool require_committed_cleanup = true;
+--- a/include/anonsync_core_internal.hpp
++++ b/include/anonsync_core_internal.hpp
+@@ -109,6 +109,34 @@
+ bool sync_internal_valid_sync_id(const std::string& value);
+ std::filesystem::path sync_internal_absolute_lexically_normal_path_or_throw(const std::string& raw_path,
+                                                                             const std::string& label);
++
++// Internal orchestration surface for a mutation that must cross the durable
++// checkpoint owner fence.  The capability is minted by the database and must
++// be presented to every recipient transaction; the caller is also responsible
++// for retiring the exact generation when its mutation scope ends.
++struct SyncInternalCheckpointMutationOwnerLease final {
++    SyncSessionCheckpointDaemonOwnerCapability capability;
++    bool acquired = false;
++    bool reclaimed_expired = false;
++    std::uint64_t acquired_at_epoch = 0;
++    std::uint64_t expires_at_epoch = 0;
++};
++
++SyncValidationResult sync_internal_acquire_checkpoint_mutation_owner_lease(
++    const std::string& sqlite_path,
++    const std::string& session_id,
++    const std::string& daemon_id,
++    const std::string& worker_id,
++    std::uint64_t acquired_at_epoch,
++    std::uint64_t owner_lock_seconds,
++    SyncInternalCheckpointMutationOwnerLease& out);
++
++SyncValidationResult sync_internal_release_checkpoint_mutation_owner_lease(
++    const std::string& sqlite_path,
++    const std::string& session_id,
++    const SyncSessionCheckpointDaemonOwnerCapability& capability,
++    std::uint64_t released_at_epoch);
++
+ SyncValidationResult sync_internal_validate_peer_transport_envelope_bounds(
+     const SyncPeerChunkResponseBatchEnvelope& batch,
+     std::uint64_t max_response_count,
+--- a/src/sync_checkpoint_owner_fence.cpp
++++ b/src/sync_checkpoint_owner_fence.cpp
+@@ -14,6 +14,12 @@
+ 
+ namespace anonsync::sync_checkpoint_owner_fence_internal {
+ namespace {
++
++constexpr std::string_view kOwnerModeTable =
++    "sync_session_checkpoint_owner_modes";
++constexpr std::string_view kOwnerLockTable =
++    "sync_session_resume_transfer_daemon_owner_locks";
++constexpr std::string_view kOwnerRequiredMode = "owner-required";
+ 
+ bool ascii_lower_alnum(char c) noexcept {
+     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+@@ -64,8 +70,15 @@
+     }
+     if (sqlite3_txn_state(db, "main") != SQLITE_TXN_WRITE) {
+         throw std::logic_error(
+-            context + " owner fence must run inside the recipient write transaction");
+-    }
++            context +
++            " owner fence must run inside the recipient write transaction");
++    }
++}
++
++bool owner_mode_table_exists_or_throw(sqlite3* db,
++                                      const std::string& context) {
++    return sqlite_table_exists_or_throw(
++        db, std::string(kOwnerModeTable), context + " owner mode table probe");
+ }
+ 
+ sync_checkpoint_owner_fence_policy::StoredOwnerLockEvidence
+@@ -77,14 +90,11 @@
+     Evidence stored;
+ 
+     // Older checkpoint databases legitimately predate the owner table. An
+-    // absent table is therefore represented as absent durable ownership, but
+-    // the pure policy still rejects an invented capability. Once the table is
+-    // present, every row is interpreted exactly and malformed evidence fails
+-    // closed.
++    // absent table is represented as absent durable ownership. Once the table
++    // is present, every row is interpreted exactly and malformed evidence
++    // fails closed.
+     if (!sqlite_table_exists_or_throw(
+-            db,
+-            "sync_session_resume_transfer_daemon_owner_locks",
+-            context + " owner table probe")) {
++            db, std::string(kOwnerLockTable), context + " owner table probe")) {
+         return stored;
+     }
+ 
+@@ -143,7 +153,247 @@
+     return stored;
+ }
+ 
++sync_checkpoint_owner_fence_policy::StoredOwnerModeEvidence
++load_stored_owner_mode_evidence_or_throw(sqlite3* db,
++                                         const std::string& session_id,
++                                         const std::string& context) {
++    using Evidence =
++        sync_checkpoint_owner_fence_policy::StoredOwnerModeEvidence;
++    Evidence mode;
++    if (!owner_mode_table_exists_or_throw(db, context)) return mode;
++
++    SyncSqliteStmt stmt = sqlite_prepare_or_throw(
++        db,
++        "SELECT session_id, ownership_mode, latest_owner_lock_epoch, "
++        "mode_updated_at_epoch, administrative_disable_evidence_id "
++        "FROM sync_session_checkpoint_owner_modes WHERE session_id=?;",
++        context + " owner mode row prepare");
++    sqlite_bind_text_or_throw(
++        stmt.stmt, 1, session_id, context + " owner mode row session");
++    const int rc = sqlite3_step(stmt.stmt);
++    if (rc == SQLITE_DONE) return mode;
++    if (rc != SQLITE_ROW) {
++        throw std::runtime_error(
++            sqlite_error_message(db, context + " owner mode row query"));
++    }
++
++    mode.present = true;
++    mode.session_id = sqlite_column_text_or_throw(
++        stmt.stmt, 0, context + " owner mode session column");
++    mode.ownership_mode = sqlite_column_text_or_throw(
++        stmt.stmt, 1, context + " owner mode state column");
++    mode.latest_owner_lock_epoch = sqlite_column_u64_or_throw(
++        stmt.stmt, 2, context + " owner mode generation column");
++    mode.mode_updated_at_epoch = sqlite_column_u64_or_throw(
++        stmt.stmt, 3, context + " owner mode update column");
++    mode.administrative_disable_evidence_id = sqlite_column_text_or_throw(
++        stmt.stmt, 4, context + " owner mode disable evidence column");
++    if (sqlite3_step(stmt.stmt) != SQLITE_DONE) {
++        throw std::runtime_error(context + " owner mode row is not unique");
++    }
++    return mode;
++}
++
++sync_checkpoint_owner_fence_policy::StoredOwnerModeEvidence
++backfill_legacy_owner_mode_in_write_transaction_or_throw(
++    sqlite3* db,
++    const sync_checkpoint_owner_fence_policy::StoredOwnerLockEvidence& stored,
++    const std::string& context) {
++    require_write_transaction_or_throw(db, context);
++    if (!stored.present) return {};
++    if (!owner_mode_table_exists_or_throw(db, context)) {
++        throw std::runtime_error(
++            context +
++            " sticky owner mode table is missing for durable owner evidence");
++    }
++
++    SyncSqliteStmt insert_stmt = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO sync_session_checkpoint_owner_modes"
++        "(session_id, ownership_mode, latest_owner_lock_epoch, "
++        "mode_updated_at_epoch, administrative_disable_evidence_id) "
++        "SELECT ?, 'owner-required', ?, ?, '' "
++        "WHERE NOT EXISTS(SELECT 1 FROM sync_session_checkpoint_owner_modes "
++        "WHERE session_id=?);",
++        context + " legacy owner mode backfill prepare");
++    sqlite_bind_text_or_throw(
++        insert_stmt.stmt, 1, stored.session_id, context + " legacy mode session");
++    sqlite_bind_u64_or_throw(
++        insert_stmt.stmt,
++        2,
++        stored.owner_lock_epoch,
++        context + " legacy mode generation");
++    sqlite_bind_u64_or_throw(
++        insert_stmt.stmt,
++        3,
++        stored.updated_at_epoch,
++        context + " legacy mode update");
++    sqlite_bind_text_or_throw(
++        insert_stmt.stmt, 4, stored.session_id, context + " legacy mode guard");
++    sqlite_step_done_or_throw(
++        insert_stmt.stmt, context + " legacy owner mode backfill");
++
++    const auto mode = load_stored_owner_mode_evidence_or_throw(
++        db, stored.session_id, context + " legacy mode proof");
++    if (!mode.present || mode.session_id != stored.session_id ||
++        mode.ownership_mode != kOwnerRequiredMode ||
++        mode.latest_owner_lock_epoch != stored.owner_lock_epoch ||
++        mode.mode_updated_at_epoch != stored.updated_at_epoch ||
++        !mode.administrative_disable_evidence_id.empty()) {
++        throw std::runtime_error(
++            context + " legacy owner mode backfill did not reload exact evidence");
++    }
++    return mode;
++}
++
++sync_checkpoint_owner_fence_policy::StoredOwnerModeEvidence
++load_or_backfill_owner_mode_in_write_transaction_or_throw(
++    sqlite3* db,
++    const std::string& session_id,
++    const sync_checkpoint_owner_fence_policy::StoredOwnerLockEvidence& stored,
++    const std::string& context) {
++    auto mode = load_stored_owner_mode_evidence_or_throw(db, session_id, context);
++    if (!mode.present && stored.present) {
++        mode = backfill_legacy_owner_mode_in_write_transaction_or_throw(
++            db, stored, context);
++    }
++    return mode;
++}
++
++void write_next_owner_mode_generation_or_throw(
++    sqlite3* db,
++    const sync_checkpoint_owner_fence_policy::StoredOwnerModeEvidence& existing,
++    const std::string& session_id,
++    std::uint64_t next_generation,
++    std::uint64_t acquired_at_epoch,
++    const std::string& context) {
++    if (!owner_mode_table_exists_or_throw(db, context)) {
++        throw std::runtime_error(
++            context +
++            " cannot mint owner authority without the sticky owner mode table");
++    }
++
++    if (!existing.present) {
++        SyncSqliteStmt insert_stmt = sqlite_prepare_or_throw(
++            db,
++            "INSERT INTO sync_session_checkpoint_owner_modes"
++            "(session_id, ownership_mode, latest_owner_lock_epoch, "
++            "mode_updated_at_epoch, administrative_disable_evidence_id) "
++            "VALUES(?,'owner-required',?,?,'');",
++            context + " owner mode insert prepare");
++        sqlite_bind_text_or_throw(
++            insert_stmt.stmt, 1, session_id, context + " owner mode insert session");
++        sqlite_bind_u64_or_throw(
++            insert_stmt.stmt,
++            2,
++            next_generation,
++            context + " owner mode insert generation");
++        sqlite_bind_u64_or_throw(
++            insert_stmt.stmt,
++            3,
++            acquired_at_epoch,
++            context + " owner mode insert update");
++        sqlite_step_done_or_throw(
++            insert_stmt.stmt, context + " owner mode insert row");
++        if (sqlite3_changes(db) != 1) {
++            throw std::runtime_error(
++                context + " owner mode insert did not affect exactly one row");
++        }
++        return;
++    }
++
++    SyncSqliteStmt update_stmt = sqlite_prepare_or_throw(
++        db,
++        "UPDATE sync_session_checkpoint_owner_modes "
++        "SET ownership_mode='owner-required', latest_owner_lock_epoch=?, "
++        "mode_updated_at_epoch=?, administrative_disable_evidence_id='' "
++        "WHERE session_id=? AND ownership_mode=? "
++        "AND latest_owner_lock_epoch=? AND mode_updated_at_epoch=? "
++        "AND administrative_disable_evidence_id=?;",
++        context + " owner mode update prepare");
++    sqlite_bind_u64_or_throw(
++        update_stmt.stmt,
++        1,
++        next_generation,
++        context + " owner mode next generation");
++    sqlite_bind_u64_or_throw(
++        update_stmt.stmt,
++        2,
++        acquired_at_epoch,
++        context + " owner mode next update");
++    sqlite_bind_text_or_throw(
++        update_stmt.stmt, 3, session_id, context + " owner mode update session");
++    sqlite_bind_text_or_throw(
++        update_stmt.stmt,
++        4,
++        existing.ownership_mode,
++        context + " owner mode prior state");
++    sqlite_bind_u64_or_throw(
++        update_stmt.stmt,
++        5,
++        existing.latest_owner_lock_epoch,
++        context + " owner mode prior generation");
++    sqlite_bind_u64_or_throw(
++        update_stmt.stmt,
++        6,
++        existing.mode_updated_at_epoch,
++        context + " owner mode prior update");
++    sqlite_bind_text_or_throw(
++        update_stmt.stmt,
++        7,
++        existing.administrative_disable_evidence_id,
++        context + " owner mode prior disable evidence");
++    sqlite_step_done_or_throw(
++        update_stmt.stmt, context + " owner mode compare-and-replace");
++    if (sqlite3_changes(db) != 1) {
++        throw std::runtime_error(
++            context +
++            " owner mode compare-and-replace did not affect exactly one row");
++    }
++}
++
+ }  // namespace
++
++void ensure_checkpoint_owner_mode_schema_or_throw(
++    sqlite3* db,
++    const std::string& context) {
++    if (db == nullptr) {
++        throw std::invalid_argument(context + " database handle is null");
++    }
++    sqlite_exec_or_throw(
++        db,
++        "CREATE TABLE IF NOT EXISTS sync_session_checkpoint_owner_modes("
++        "session_id TEXT NOT NULL PRIMARY KEY,"
++        "ownership_mode TEXT NOT NULL CHECK(ownership_mode IN "
++        "('owner-required','administratively-disabled')),"
++        "latest_owner_lock_epoch INTEGER NOT NULL "
++        "CHECK(latest_owner_lock_epoch > 0),"
++        "mode_updated_at_epoch INTEGER NOT NULL "
++        "CHECK(mode_updated_at_epoch > 0),"
++        "administrative_disable_evidence_id TEXT NOT NULL,"
++        "CHECK((ownership_mode='owner-required' AND "
++        "administrative_disable_evidence_id='') OR "
++        "(ownership_mode='administratively-disabled' AND "
++        "administrative_disable_evidence_id LIKE "
++        "'sync-checkpoint-owner-admin-disable:v1:%')));",
++        context + " create sticky owner mode schema");
++
++    if (!sqlite_table_exists_or_throw(
++            db, std::string(kOwnerLockTable), context + " legacy owner probe")) {
++        return;
++    }
++    sqlite_exec_or_throw(
++        db,
++        "INSERT INTO sync_session_checkpoint_owner_modes"
++        "(session_id, ownership_mode, latest_owner_lock_epoch, "
++        "mode_updated_at_epoch, administrative_disable_evidence_id) "
++        "SELECT owner.session_id, 'owner-required', owner.owner_lock_epoch, "
++        "owner.updated_at_epoch, '' "
++        "FROM sync_session_resume_transfer_daemon_owner_locks AS owner "
++        "WHERE NOT EXISTS(SELECT 1 FROM sync_session_checkpoint_owner_modes AS mode "
++        "WHERE mode.session_id=owner.session_id);",
++        context + " backfill legacy sticky owner modes");
++}
+ 
+ std::string owner_lock_id_or_throw(const std::string& session_id,
+                                    const std::string& daemon_id,
+@@ -180,14 +430,16 @@
+ 
+     const auto existing =
+         load_stored_owner_lock_evidence_or_throw(db, session_id, context);
++    const auto mode =
++        load_stored_owner_mode_evidence_or_throw(db, session_id, context);
+     sync_checkpoint_owner_fence_policy::AcquisitionRequest request;
+     request.session_id = session_id;
+     request.daemon_id = daemon_id;
+     request.worker_id = worker_id;
+     request.acquired_at_epoch = acquired_at_epoch;
+     request.owner_lock_seconds = owner_lock_seconds;
+-    const auto decision =
+-        sync_checkpoint_owner_fence_policy::plan_acquisition(existing, request);
++    const auto decision = sync_checkpoint_owner_fence_policy::plan_acquisition(
++        mode, existing, request);
+     if (!decision.allowed) {
+         std::string detail = decision.reason;
+         if (existing.present && existing.lock_state == "held") {
+@@ -206,9 +458,18 @@
+     out.owner_lock_epoch = decision.owner_lock_epoch;
+     out.acquired_at_epoch = acquired_at_epoch;
+     out.expires_at_epoch = decision.expires_at_epoch;
++    out.acquired = true;
+     out.reclaimed_expired = decision.reclaimed_expired;
+     out.owner_lock_id = owner_lock_id_or_throw(
+         session_id, daemon_id, worker_id, out.owner_lock_epoch);
++
++    write_next_owner_mode_generation_or_throw(
++        db,
++        mode,
++        session_id,
++        out.owner_lock_epoch,
++        out.acquired_at_epoch,
++        context);
+ 
+     if (existing.present) {
+         SyncSqliteStmt update_stmt = sqlite_prepare_or_throw(
+@@ -228,11 +489,20 @@
+         sqlite_bind_u64_or_throw(
+             update_stmt.stmt, 4, out.owner_lock_epoch, context + " update epoch");
+         sqlite_bind_u64_or_throw(
+-            update_stmt.stmt, 5, out.acquired_at_epoch, context + " update acquired");
+-        sqlite_bind_u64_or_throw(
+-            update_stmt.stmt, 6, out.expires_at_epoch, context + " update expires");
+-        sqlite_bind_u64_or_throw(
+-            update_stmt.stmt, 7, out.acquired_at_epoch, context + " update updated");
++            update_stmt.stmt,
++            5,
++            out.acquired_at_epoch,
++            context + " update acquired");
++        sqlite_bind_u64_or_throw(
++            update_stmt.stmt,
++            6,
++            out.expires_at_epoch,
++            context + " update expires");
++        sqlite_bind_u64_or_throw(
++            update_stmt.stmt,
++            7,
++            out.acquired_at_epoch,
++            context + " update updated");
+         sqlite_bind_text_or_throw(
+             update_stmt.stmt, 8, session_id, context + " update session");
+         sqlite_bind_u64_or_throw(
+@@ -251,8 +521,8 @@
+             db,
+             "INSERT INTO sync_session_resume_transfer_daemon_owner_locks"
+             "(session_id, daemon_id, worker_id, owner_lock_id, owner_lock_epoch, "
+-            "acquired_at_epoch, expires_at_epoch, released_at_epoch, lock_state, updated_at_epoch) "
+-            "VALUES(?,?,?,?,?,?,?,0,'held',?);",
++            "acquired_at_epoch, expires_at_epoch, released_at_epoch, lock_state, "
++            "updated_at_epoch) VALUES(?,?,?,?,?,?,?,0,'held',?);",
+             context + " insert prepare");
+         sqlite_bind_text_or_throw(
+             insert_stmt.stmt, 1, session_id, context + " insert session");
+@@ -265,11 +535,20 @@
+         sqlite_bind_u64_or_throw(
+             insert_stmt.stmt, 5, out.owner_lock_epoch, context + " insert epoch");
+         sqlite_bind_u64_or_throw(
+-            insert_stmt.stmt, 6, out.acquired_at_epoch, context + " insert acquired");
+-        sqlite_bind_u64_or_throw(
+-            insert_stmt.stmt, 7, out.expires_at_epoch, context + " insert expires");
+-        sqlite_bind_u64_or_throw(
+-            insert_stmt.stmt, 8, out.acquired_at_epoch, context + " insert updated");
++            insert_stmt.stmt,
++            6,
++            out.acquired_at_epoch,
++            context + " insert acquired");
++        sqlite_bind_u64_or_throw(
++            insert_stmt.stmt,
++            7,
++            out.expires_at_epoch,
++            context + " insert expires");
++        sqlite_bind_u64_or_throw(
++            insert_stmt.stmt,
++            8,
++            out.acquired_at_epoch,
++            context + " insert updated");
+         sqlite_step_done_or_throw(insert_stmt.stmt, context + " insert row");
+         if (sqlite3_changes(db) != 1) {
+             throw std::runtime_error(
+@@ -280,8 +559,9 @@
+     SyncSqliteStmt proof_stmt = sqlite_prepare_or_throw(
+         db,
+         "SELECT daemon_id, worker_id, owner_lock_id, owner_lock_epoch, "
+-        "acquired_at_epoch, expires_at_epoch, released_at_epoch, lock_state, updated_at_epoch "
+-        "FROM sync_session_resume_transfer_daemon_owner_locks WHERE session_id=?;",
++        "acquired_at_epoch, expires_at_epoch, released_at_epoch, lock_state, "
++        "updated_at_epoch FROM sync_session_resume_transfer_daemon_owner_locks "
++        "WHERE session_id=?;",
+         context + " proof prepare");
+     sqlite_bind_text_or_throw(
+         proof_stmt.stmt, 1, session_id, context + " proof session");
+@@ -296,20 +576,35 @@
+         sqlite_column_text_or_throw(
+             proof_stmt.stmt, 2, context + " proof id") == out.owner_lock_id &&
+         sqlite_column_u64_or_throw(
+-            proof_stmt.stmt, 3, context + " proof epoch") == out.owner_lock_epoch &&
++            proof_stmt.stmt, 3, context + " proof epoch") ==
++            out.owner_lock_epoch &&
+         sqlite_column_u64_or_throw(
+-            proof_stmt.stmt, 4, context + " proof acquired") == out.acquired_at_epoch &&
++            proof_stmt.stmt, 4, context + " proof acquired") ==
++            out.acquired_at_epoch &&
+         sqlite_column_u64_or_throw(
+-            proof_stmt.stmt, 5, context + " proof expires") == out.expires_at_epoch &&
++            proof_stmt.stmt, 5, context + " proof expires") ==
++            out.expires_at_epoch &&
+         sqlite_column_u64_or_throw(
+             proof_stmt.stmt, 6, context + " proof released") == 0 &&
+         sqlite_column_text_or_throw(
+             proof_stmt.stmt, 7, context + " proof state") == "held" &&
+         sqlite_column_u64_or_throw(
+-            proof_stmt.stmt, 8, context + " proof updated") == out.acquired_at_epoch;
++            proof_stmt.stmt, 8, context + " proof updated") ==
++            out.acquired_at_epoch;
+     if (!exact || sqlite3_step(proof_stmt.stmt) != SQLITE_DONE) {
+         throw std::runtime_error(
+             context + " proof did not reload exact minted evidence");
++    }
++
++    const auto mode_proof = load_stored_owner_mode_evidence_or_throw(
++        db, session_id, context + " owner mode proof");
++    if (!mode_proof.present ||
++        mode_proof.ownership_mode != kOwnerRequiredMode ||
++        mode_proof.latest_owner_lock_epoch != out.owner_lock_epoch ||
++        mode_proof.mode_updated_at_epoch != out.acquired_at_epoch ||
++        !mode_proof.administrative_disable_evidence_id.empty()) {
++        throw std::runtime_error(
++            context + " proof did not reload exact sticky owner mode evidence");
+     }
+     return out;
+ }
+@@ -329,23 +624,34 @@
+ 
+     SyncSqliteStmt acquired_stmt = sqlite_prepare_or_throw(
+         db,
+-        "SELECT acquired_at_epoch FROM sync_session_resume_transfer_daemon_owner_locks "
++        "SELECT acquired_at_epoch FROM "
++        "sync_session_resume_transfer_daemon_owner_locks "
+         "WHERE session_id=? AND owner_lock_id=? AND owner_lock_epoch=? "
+-        "AND daemon_id=? AND worker_id=? AND lock_state='held' AND released_at_epoch=0;",
++        "AND daemon_id=? AND worker_id=? AND lock_state='held' "
++        "AND released_at_epoch=0;",
+         context + " release proof prepare");
+     sqlite_bind_text_or_throw(
+         acquired_stmt.stmt, 1, session_id, context + " release proof session");
+     sqlite_bind_text_or_throw(
+-        acquired_stmt.stmt, 2, capability.owner_lock_id, context + " release proof id");
++        acquired_stmt.stmt,
++        2,
++        capability.owner_lock_id,
++        context + " release proof id");
+     sqlite_bind_u64_or_throw(
+         acquired_stmt.stmt,
+         3,
+         capability.owner_lock_epoch,
+         context + " release proof epoch");
+     sqlite_bind_text_or_throw(
+-        acquired_stmt.stmt, 4, capability.daemon_id, context + " release proof daemon");
+-    sqlite_bind_text_or_throw(
+-        acquired_stmt.stmt, 5, capability.worker_id, context + " release proof worker");
++        acquired_stmt.stmt,
++        4,
++        capability.daemon_id,
++        context + " release proof daemon");
++    sqlite_bind_text_or_throw(
++        acquired_stmt.stmt,
++        5,
++        capability.worker_id,
++        context + " release proof worker");
+     if (sqlite3_step(acquired_stmt.stmt) != SQLITE_ROW) {
+         throw std::runtime_error(context + " exact owner row was not found");
+     }
+@@ -386,6 +692,41 @@
+     if (sqlite3_changes(db) != 1) {
+         throw std::runtime_error(
+             context + " release did not affect exactly one live generation");
++    }
++
++    const auto mode = load_stored_owner_mode_evidence_or_throw(
++        db, session_id, context + " release owner mode");
++    if (!mode.present) {
++        throw std::runtime_error(
++            context + " release lost sticky owner mode evidence");
++    }
++    SyncSqliteStmt mode_stmt = sqlite_prepare_or_throw(
++        db,
++        "UPDATE sync_session_checkpoint_owner_modes "
++        "SET mode_updated_at_epoch=? "
++        "WHERE session_id=? AND ownership_mode='owner-required' "
++        "AND latest_owner_lock_epoch=? AND mode_updated_at_epoch=? "
++        "AND administrative_disable_evidence_id='';",
++        context + " release owner mode prepare");
++    sqlite_bind_u64_or_throw(
++        mode_stmt.stmt, 1, released_at_epoch, context + " release mode update");
++    sqlite_bind_text_or_throw(
++        mode_stmt.stmt, 2, session_id, context + " release mode session");
++    sqlite_bind_u64_or_throw(
++        mode_stmt.stmt,
++        3,
++        capability.owner_lock_epoch,
++        context + " release mode generation");
++    sqlite_bind_u64_or_throw(
++        mode_stmt.stmt,
++        4,
++        mode.mode_updated_at_epoch,
++        context + " release mode prior update");
++    sqlite_step_done_or_throw(
++        mode_stmt.stmt, context + " release owner mode row");
++    if (sqlite3_changes(db) != 1) {
++        throw std::runtime_error(
++            context + " release did not advance exact sticky owner mode row");
+     }
+ }
+ 
+@@ -399,16 +740,173 @@
+ 
+     const auto stored = load_stored_owner_lock_evidence_or_throw(
+         db, session_id, context);
++    const auto mode = load_or_backfill_owner_mode_in_write_transaction_or_throw(
++        db, session_id, stored, context);
+     sync_checkpoint_owner_fence_policy::RecipientRequest request;
+     request.session_id = session_id;
+     request.observed_at_epoch = observed_at_epoch;
+     request.capability = capability;
+-    const auto decision =
+-        sync_checkpoint_owner_fence_policy::authorize_recipient(stored, request);
++    const auto decision = sync_checkpoint_owner_fence_policy::authorize_recipient(
++        mode, stored, request);
+     if (!decision.allowed) {
+         throw std::runtime_error(
+             context + " recipient owner fence rejected: " + decision.reason);
+     }
+ }
+ 
++CheckpointRootResetPermit::CheckpointRootResetPermit(
++    SyncSqliteTransactionAuthority transaction_authority,
++    sqlite3* db,
++    std::string session_id,
++    bool owner_mode_present,
++    std::string ownership_mode,
++    std::uint64_t latest_owner_lock_epoch,
++    std::uint64_t previous_mode_updated_at_epoch,
++    std::string administrative_disable_evidence_id,
++    std::uint64_t reset_at_epoch)
++    : transaction_authority_(std::move(transaction_authority)),
++      db_(db),
++      session_id_(std::move(session_id)),
++      owner_mode_present_(owner_mode_present),
++      ownership_mode_(std::move(ownership_mode)),
++      latest_owner_lock_epoch_(latest_owner_lock_epoch),
++      previous_mode_updated_at_epoch_(previous_mode_updated_at_epoch),
++      administrative_disable_evidence_id_(
++          std::move(administrative_disable_evidence_id)),
++      reset_at_epoch_(reset_at_epoch) {}
++
++CheckpointRootResetPermit
++authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++    sqlite3* db,
++    const SyncSqliteTransactionAuthority& transaction_authority,
++    const std::string& session_id,
++    const SyncSessionCheckpointDaemonOwnerCapability& capability,
++    std::uint64_t reset_at_epoch,
++    const std::string& context) {
++    require_write_transaction_or_throw(db, context);
++    if (!transaction_authority.authorizes_write(db)) {
++        throw std::logic_error(
++            context +
++            " checkpoint root reset requires the exact live typed write transaction authority");
++    }
++    require_recipient_write_authority_or_throw(
++        db, session_id, capability, reset_at_epoch, context);
++
++    const auto mode = load_stored_owner_mode_evidence_or_throw(
++        db, session_id, context + " reset mode snapshot");
++    return CheckpointRootResetPermit(
++        transaction_authority,
++        db,
++        session_id,
++        mode.present,
++        mode.ownership_mode,
++        mode.latest_owner_lock_epoch,
++        mode.mode_updated_at_epoch,
++        mode.administrative_disable_evidence_id,
++        reset_at_epoch);
++}
++
++void delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
++    sqlite3* db,
++    CheckpointRootResetPermit& permit,
++    const std::string& context) {
++    require_write_transaction_or_throw(db, context);
++    if (permit.consumed_) {
++        throw std::logic_error(
++            context + " checkpoint root reset permit was already consumed");
++    }
++    if (permit.db_ == nullptr || permit.db_ != db ||
++        !permit.transaction_authority_.authorizes_write(db)) {
++        throw std::logic_error(
++            context +
++            " checkpoint root reset permit does not bind this live write transaction");
++    }
++    if (!portable_sync_id(permit.session_id_) || permit.reset_at_epoch_ == 0) {
++        throw std::logic_error(
++            context + " checkpoint root reset permit contains malformed evidence");
++    }
++
++    SyncSqliteStmt delete_stmt = sqlite_prepare_or_throw(
++        db,
++        "DELETE FROM sync_session_checkpoints WHERE session_id=?;",
++        context + " checkpoint root delete prepare");
++    sqlite_bind_text_or_throw(
++        delete_stmt.stmt,
++        1,
++        permit.session_id_,
++        context + " checkpoint root delete session");
++    sqlite_step_done_or_throw(
++        delete_stmt.stmt, context + " checkpoint root delete row");
++
++    if (permit.owner_mode_present_) {
++        SyncSqliteStmt mode_stmt = sqlite_prepare_or_throw(
++            db,
++            "UPDATE sync_session_checkpoint_owner_modes "
++            "SET mode_updated_at_epoch=? "
++            "WHERE session_id=? AND ownership_mode=? "
++            "AND latest_owner_lock_epoch=? AND mode_updated_at_epoch=? "
++            "AND administrative_disable_evidence_id=?;",
++            context + " checkpoint root reset sticky mode prepare");
++        sqlite_bind_u64_or_throw(
++            mode_stmt.stmt,
++            1,
++            permit.reset_at_epoch_,
++            context + " checkpoint root reset mode update");
++        sqlite_bind_text_or_throw(
++            mode_stmt.stmt,
++            2,
++            permit.session_id_,
++            context + " checkpoint root reset mode session");
++        sqlite_bind_text_or_throw(
++            mode_stmt.stmt,
++            3,
++            permit.ownership_mode_,
++            context + " checkpoint root reset mode state");
++        sqlite_bind_u64_or_throw(
++            mode_stmt.stmt,
++            4,
++            permit.latest_owner_lock_epoch_,
++            context + " checkpoint root reset mode generation");
++        sqlite_bind_u64_or_throw(
++            mode_stmt.stmt,
++            5,
++            permit.previous_mode_updated_at_epoch_,
++            context + " checkpoint root reset prior mode update");
++        sqlite_bind_text_or_throw(
++            mode_stmt.stmt,
++            6,
++            permit.administrative_disable_evidence_id_,
++            context + " checkpoint root reset disable evidence");
++        sqlite_step_done_or_throw(
++            mode_stmt.stmt, context + " checkpoint root reset sticky mode row");
++        if (sqlite3_changes(db) != 1) {
++            throw std::runtime_error(
++                context +
++                " checkpoint root reset did not preserve and advance exact sticky owner mode evidence");
++        }
++
++        const auto proof = load_stored_owner_mode_evidence_or_throw(
++            db, permit.session_id_, context + " checkpoint root reset mode proof");
++        if (!proof.present || proof.session_id != permit.session_id_ ||
++            proof.ownership_mode != permit.ownership_mode_ ||
++            proof.latest_owner_lock_epoch != permit.latest_owner_lock_epoch_ ||
++            proof.mode_updated_at_epoch != permit.reset_at_epoch_ ||
++            proof.administrative_disable_evidence_id !=
++                permit.administrative_disable_evidence_id_) {
++            throw std::runtime_error(
++                context +
++                " checkpoint root reset did not reload exact sticky owner mode evidence");
++        }
++    } else {
++        const auto proof = load_stored_owner_mode_evidence_or_throw(
++            db, permit.session_id_, context + " unowned reset mode proof");
++        if (proof.present) {
++            throw std::runtime_error(
++                context + " unowned checkpoint root reset gained unexpected owner mode");
++        }
++    }
++
++    permit.consumed_ = true;
++}
++
+ }  // namespace anonsync::sync_checkpoint_owner_fence_internal
+--- a/src/sync_checkpoint_owner_fence.hpp
++++ b/src/sync_checkpoint_owner_fence.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "anonsync_sync_checkpoint_owner_fence.hpp"
++#include "sync_sqlite_support.hpp"
+ 
+ #include <cstdint>
+ #include <string>
+@@ -8,6 +9,13 @@
+ struct sqlite3;
+ 
+ namespace anonsync::sync_checkpoint_owner_fence_internal {
++
++// The sticky mode row deliberately has no foreign key to the checkpoint root.
++// It is the durable memory that ownership once existed, so release and
++// checkpoint replacement cannot silently return the session to unowned mode.
++void ensure_checkpoint_owner_mode_schema_or_throw(
++    sqlite3* db,
++    const std::string& context);
+ 
+ struct MintedDaemonOwnerLockRecord final {
+     std::string daemon_id;
+@@ -58,4 +66,68 @@
+     std::uint64_t observed_at_epoch,
+     const std::string& context);
+ 
++// A root reset is destructive and its foreign-key cascade retires the current
++// owner row.  The permit is constructible only after the exact recipient fence
++// has run on a live typed write-transaction generation.  The delete consumes
++// that permit and advances the independent sticky-mode timestamp before the
++// checkpoint root can be repopulated by the caller.
++class CheckpointRootResetPermit final {
++public:
++    CheckpointRootResetPermit(const CheckpointRootResetPermit&) = delete;
++    CheckpointRootResetPermit& operator=(const CheckpointRootResetPermit&) =
++        delete;
++    CheckpointRootResetPermit(CheckpointRootResetPermit&&) = delete;
++    CheckpointRootResetPermit& operator=(CheckpointRootResetPermit&&) = delete;
++
++private:
++    CheckpointRootResetPermit(
++        SyncSqliteTransactionAuthority transaction_authority,
++        sqlite3* db,
++        std::string session_id,
++        bool owner_mode_present,
++        std::string ownership_mode,
++        std::uint64_t latest_owner_lock_epoch,
++        std::uint64_t previous_mode_updated_at_epoch,
++        std::string administrative_disable_evidence_id,
++        std::uint64_t reset_at_epoch);
++
++    SyncSqliteTransactionAuthority transaction_authority_;
++    sqlite3* db_ = nullptr;
++    std::string session_id_;
++    bool owner_mode_present_ = false;
++    std::string ownership_mode_;
++    std::uint64_t latest_owner_lock_epoch_ = 0;
++    std::uint64_t previous_mode_updated_at_epoch_ = 0;
++    std::string administrative_disable_evidence_id_;
++    std::uint64_t reset_at_epoch_ = 0;
++    bool consumed_ = false;
++
++    friend CheckpointRootResetPermit
++    authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++        sqlite3*,
++        const SyncSqliteTransactionAuthority&,
++        const std::string&,
++        const SyncSessionCheckpointDaemonOwnerCapability&,
++        std::uint64_t,
++        const std::string&);
++    friend void delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
++        sqlite3*,
++        CheckpointRootResetPermit&,
++        const std::string&);
++};
++
++[[nodiscard]] CheckpointRootResetPermit
++authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++    sqlite3* db,
++    const SyncSqliteTransactionAuthority& transaction_authority,
++    const std::string& session_id,
++    const SyncSessionCheckpointDaemonOwnerCapability& capability,
++    std::uint64_t reset_at_epoch,
++    const std::string& context);
++
++void delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
++    sqlite3* db,
++    CheckpointRootResetPermit& permit,
++    const std::string& context);
++
+ }  // namespace anonsync::sync_checkpoint_owner_fence_internal
+--- a/src/sync_checkpoint_owner_fence_policy.cpp
++++ b/src/sync_checkpoint_owner_fence_policy.cpp
+@@ -10,6 +10,9 @@
+ 
+ constexpr std::uint64_t kMaxDurableSqliteInteger =
+     static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
++constexpr std::string_view kOwnerRequiredMode = "owner-required";
++constexpr std::string_view kAdministrativelyDisabledMode =
++    "administratively-disabled";
+ 
+ bool ascii_lower_alnum(char c) noexcept {
+     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+@@ -37,6 +40,14 @@
+ bool owner_lock_id_shape(std::string_view value) noexcept {
+     constexpr std::string_view prefix =
+         "sync-resume-daemon-owner-lock:v1:";
++    return value.starts_with(prefix) &&
++           lowercase_sha256(value.substr(prefix.size()));
++}
++
++bool administrative_disable_evidence_id_shape(
++    std::string_view value) noexcept {
++    constexpr std::string_view prefix =
++        "sync-checkpoint-owner-admin-disable:v1:";
+     return value.starts_with(prefix) &&
+            lowercase_sha256(value.substr(prefix.size()));
+ }
+@@ -88,6 +99,59 @@
+     return "stored owner row has an unsupported lock state";
+ }
+ 
++std::string validate_mode_evidence(const StoredOwnerModeEvidence& mode) {
++    if (!mode.present) return {};
++    if (!portable_sync_id(mode.session_id)) {
++        return "stored owner mode row contains a non-portable session identity";
++    }
++    if (mode.latest_owner_lock_epoch == 0) {
++        return "stored owner mode latest generation is zero";
++    }
++    if (mode.latest_owner_lock_epoch > kMaxDurableSqliteInteger ||
++        mode.mode_updated_at_epoch == 0 ||
++        mode.mode_updated_at_epoch > kMaxDurableSqliteInteger) {
++        return "stored owner mode row exceeds SQLite signed integer range";
++    }
++    if (mode.ownership_mode == kOwnerRequiredMode) {
++        if (!mode.administrative_disable_evidence_id.empty()) {
++            return "owner-required mode carries administrative-disable evidence";
++        }
++        return {};
++    }
++    if (mode.ownership_mode == kAdministrativelyDisabledMode) {
++        if (!administrative_disable_evidence_id_shape(
++                mode.administrative_disable_evidence_id)) {
++            return "administratively-disabled mode lacks canonical disable evidence";
++        }
++        return {};
++    }
++    return "stored owner mode row has an unsupported ownership mode";
++}
++
++std::string validate_combined_evidence(
++    const StoredOwnerModeEvidence& mode,
++    const StoredOwnerLockEvidence& stored) {
++    if (const std::string error = validate_mode_evidence(mode); !error.empty()) {
++        return error;
++    }
++    if (const std::string error = validate_stored_evidence(stored);
++        !error.empty()) {
++        return error;
++    }
++    if (!mode.present || !stored.present) return {};
++    if (mode.session_id != stored.session_id) {
++        return "owner mode and owner row belong to different sessions";
++    }
++    if (mode.latest_owner_lock_epoch != stored.owner_lock_epoch) {
++        return "owner mode latest generation does not match the durable owner row";
++    }
++    if (mode.ownership_mode == kAdministrativelyDisabledMode &&
++        stored.lock_state == "held") {
++        return "administratively-disabled mode contradicts a held owner row";
++    }
++    return {};
++}
++
+ RecipientDecision recipient_failure(std::string reason,
+                                     bool required = false) {
+     RecipientDecision out;
+@@ -113,6 +177,7 @@
+ }
+ 
+ AcquisitionDecision plan_acquisition(
++    const StoredOwnerModeEvidence& mode,
+     const StoredOwnerLockEvidence& stored,
+     const AcquisitionRequest& request) {
+     AcquisitionDecision out;
+@@ -140,45 +205,62 @@
+     out.expires_at_epoch =
+         request.acquired_at_epoch + request.owner_lock_seconds;
+ 
+-    const std::string stored_error = validate_stored_evidence(stored);
+-    if (!stored_error.empty()) {
+-        out.reason = stored_error;
+-        return out;
+-    }
+-    if (!stored.present) {
+-        out.allowed = true;
+-        out.owner_lock_epoch = 1;
+-        return out;
+-    }
+-    if (stored.session_id != request.session_id) {
++    if (const std::string error = validate_combined_evidence(mode, stored);
++        !error.empty()) {
++        out.reason = error;
++        return out;
++    }
++    if (mode.present && mode.session_id != request.session_id) {
++        out.reason = "stored owner mode row belongs to another session";
++        return out;
++    }
++    if (stored.present && stored.session_id != request.session_id) {
+         out.reason = "stored owner row belongs to another session";
+         return out;
+     }
+-    if (request.acquired_at_epoch < stored.acquired_at_epoch ||
+-        (stored.lock_state == "released" &&
+-         request.acquired_at_epoch < stored.released_at_epoch)) {
++    if (mode.present &&
++        request.acquired_at_epoch < mode.mode_updated_at_epoch) {
++        out.reason = "acquisition clock regressed behind durable owner mode evidence";
++        return out;
++    }
++    if (stored.present &&
++        (request.acquired_at_epoch < stored.acquired_at_epoch ||
++         (stored.lock_state == "released" &&
++          request.acquired_at_epoch < stored.released_at_epoch))) {
+         out.reason = "acquisition clock regressed behind durable owner evidence";
+         return out;
+     }
+-    if (stored.lock_state == "held" &&
++    if (stored.present && stored.lock_state == "held" &&
+         request.acquired_at_epoch < stored.expires_at_epoch) {
+         out.reason = "owner lock is still live";
+         return out;
+     }
+-    if (stored.owner_lock_epoch == kMaxDurableSqliteInteger) {
++
++    std::uint64_t latest_generation = 0;
++    if (mode.present) {
++        latest_generation = mode.latest_owner_lock_epoch;
++    } else if (stored.present) {
++        // Deterministic legacy migration: the pre-sticky owner row is already
++        // proof that the session crossed the ownership boundary.
++        latest_generation = stored.owner_lock_epoch;
++    }
++    if (latest_generation == kMaxDurableSqliteInteger) {
+         out.reason = "owner generation is exhausted";
+         return out;
+     }
+ 
+     out.allowed = true;
+-    out.owner_lock_epoch = stored.owner_lock_epoch + 1;
+-    out.reclaimed_expired = stored.lock_state == "held" &&
++    out.owner_lock_epoch = latest_generation + 1;
++    out.reclaimed_expired = stored.present && stored.lock_state == "held" &&
+                             request.acquired_at_epoch >=
+                                 stored.expires_at_epoch;
++    out.reactivated_administratively_disabled_mode =
++        mode.present && mode.ownership_mode == kAdministrativelyDisabledMode;
+     return out;
+ }
+ 
+ RecipientDecision authorize_recipient(
++    const StoredOwnerModeEvidence& mode,
+     const StoredOwnerLockEvidence& stored,
+     const RecipientRequest& request) {
+     if (!portable_sync_id(request.session_id)) {
+@@ -188,36 +270,65 @@
+     if (request.observed_at_epoch == 0) {
+         return recipient_failure("recipient observation time is zero");
+     }
++    if (request.observed_at_epoch > kMaxDurableSqliteInteger) {
++        return recipient_failure(
++            "recipient observation time exceeds SQLite signed integer range");
++    }
+     if (!capability_is_empty(request.capability) &&
+         !capability_is_complete(request.capability)) {
+         return recipient_failure(
+             "presented owner capability is only partially populated", true);
+     }
+ 
+-    const std::string stored_error = validate_stored_evidence(stored);
+-    if (!stored_error.empty()) {
+-        return recipient_failure(stored_error, stored.present);
+-    }
++    if (const std::string error = validate_combined_evidence(mode, stored);
++        !error.empty()) {
++        return recipient_failure(error, mode.present || stored.present);
++    }
++    if (mode.present && mode.session_id != request.session_id) {
++        return recipient_failure(
++            "durable owner mode row belongs to another session", true);
++    }
++    if (stored.present && stored.session_id != request.session_id) {
++        return recipient_failure(
++            "durable owner row belongs to another session", true);
++    }
++    if (mode.present && request.observed_at_epoch < mode.mode_updated_at_epoch) {
++        return recipient_failure(
++            "recipient clock regressed behind owner mode evidence", true);
++    }
++
++    if (mode.present &&
++        mode.ownership_mode == kAdministrativelyDisabledMode) {
++        if (!capability_is_empty(request.capability)) {
++            return recipient_failure(
++                "owner capability was presented after administrative disable");
++        }
++        return {true, "", false};
++    }
++
+     if (!stored.present) {
++        if (mode.present) {
++            return recipient_failure(
++                "sticky owner mode has no live durable generation; acquire a successor before mutation",
++                true);
++        }
+         if (!capability_is_empty(request.capability)) {
+             return recipient_failure(
+                 "owner capability was presented but no durable owner row exists");
+         }
+         return {true, "", false};
+     }
+-    if (stored.session_id != request.session_id) {
+-        return recipient_failure(
+-            "durable owner row belongs to another session", true);
+-    }
++
++    // A legacy owner row without a mode row is still sticky: durable evidence
++    // that ownership once existed must not be laundered into unowned mutation.
+     if (stored.lock_state == "released") {
+-        // Once release is durable, an absent capability is not trying to act as
+-        // that generation. Its caller clock is therefore irrelevant to the
+-        // retired row; only an attempted reuse of the old capability is denied.
+         if (!capability_is_empty(request.capability)) {
+             return recipient_failure(
+-                "released owner generation cannot authorize a mutation");
+-        }
+-        return {true, "", false};
++                "released owner generation cannot authorize a mutation", true);
++        }
++        return recipient_failure(
++            "sticky owner mode remains required after release; acquire a successor before mutation",
++            true);
+     }
+ 
+     if (request.observed_at_epoch < stored.acquired_at_epoch) {
+--- a/src/sync_checkpoint_owner_fence_policy.hpp
++++ b/src/sync_checkpoint_owner_fence_policy.hpp
+@@ -22,6 +22,20 @@
+     bool owner_lock_id_is_canonical = false;
+ };
+ 
++// Sticky ownership lives outside the checkpoint root's foreign-key cascade.
++// A mode row means that this session has crossed the ownership boundary at
++// least once.  `owner-required` remains in force across release and root reset;
++// `administratively-disabled` is a separately evidenced escape hatch whose
++// production transition is intentionally not exposed by this policy module.
++struct StoredOwnerModeEvidence final {
++    bool present = false;
++    std::string session_id;
++    std::string ownership_mode;
++    std::uint64_t latest_owner_lock_epoch = 0;
++    std::uint64_t mode_updated_at_epoch = 0;
++    std::string administrative_disable_evidence_id;
++};
++
+ struct AcquisitionRequest final {
+     std::string session_id;
+     std::string daemon_id;
+@@ -36,6 +50,7 @@
+     std::uint64_t owner_lock_epoch = 0;
+     std::uint64_t expires_at_epoch = 0;
+     bool reclaimed_expired = false;
++    bool reactivated_administratively_disabled_mode = false;
+ };
+ 
+ struct RecipientRequest final {
+@@ -57,10 +72,12 @@
+     const SyncSessionCheckpointDaemonOwnerCapability& capability) noexcept;
+ 
+ [[nodiscard]] AcquisitionDecision plan_acquisition(
++    const StoredOwnerModeEvidence& mode,
+     const StoredOwnerLockEvidence& stored,
+     const AcquisitionRequest& request);
+ 
+ [[nodiscard]] RecipientDecision authorize_recipient(
++    const StoredOwnerModeEvidence& mode,
+     const StoredOwnerLockEvidence& stored,
+     const RecipientRequest& request);
+ 
+--- a/src/sync_domain.cpp
++++ b/src/sync_domain.cpp
+@@ -2670,6 +2670,9 @@
+             "PRIMARY KEY(session_id, path, review_event_idempotency_key));",
+             label);
+     ensure_sync_session_apply_intents_conflict_copy_path_column_or_throw(db, label);
++    sync_checkpoint_owner_fence_internal::
++        ensure_checkpoint_owner_mode_schema_or_throw(
++            db, label + " sticky owner mode");
+ }
+ 
+ std::string sync_session_checkpoint_idempotency_key(const SyncFakePeerFileFetchSessionOptions& run_options,
+@@ -6393,6 +6396,9 @@
+     out = SyncSessionCheckpointResult{};
+     if (options.sqlite_path.empty()) return fail_result("sync session checkpoint sqlite_path is required");
+     if (!valid_sync_id(options.session_id)) return fail_result("sync session checkpoint session_id must be lowercase portable sync id");
++    if (options.reset_existing_session_rows && options.owner_fence_now_epoch == 0) {
++        return fail_result("sync session checkpoint owner_fence_now_epoch must be positive for root reset");
++    }
+ 
+     try {
+         validate_fake_session_result_for_checkpoint_or_throw(run_options, session_result, options);
+@@ -6438,9 +6444,10 @@
+                 handle.db, "sync session checkpoint durability profile");
+         ensure_sync_session_checkpoint_schema_or_throw(handle.db, "sync session checkpoint could not create schema");
+ 
+-        bool committed = false;
+-        try {
+-            sqlite_exec_or_throw(handle.db, "BEGIN IMMEDIATE;", "sync session checkpoint could not begin transaction");
++        SyncSqliteTransaction transaction(
++            handle.db,
++            "sync session checkpoint persistence",
++            SyncSqliteTransactionMode::Immediate);
+             put_sync_session_checkpoint_meta_or_throw(
+                 handle.db, "schema_version", "rev0720-sync-session-checkpoint-v4",
+                 "sync session checkpoint schema version meta");
+@@ -6466,11 +6473,19 @@
+                 durability_profile.rollback_journal_fallback_active ? "true" : "false",
+                 "sync session checkpoint sqlite rollback fallback meta");
+             if (options.reset_existing_session_rows) {
+-                SyncSqliteStmt del = sqlite_prepare_or_throw(handle.db,
+-                    "DELETE FROM sync_session_checkpoints WHERE session_id=?;",
+-                    "sync session checkpoint could not prepare session reset");
+-                sqlite_bind_text_or_throw(del.stmt, 1, options.session_id, "sync session checkpoint reset bind session_id");
+-                sqlite_step_done_or_throw(del.stmt, "sync session checkpoint could not reset existing session rows");
++                auto reset_permit = sync_checkpoint_owner_fence_internal::
++                    authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++                        handle.db,
++                        transaction.authority(),
++                        options.session_id,
++                        options.daemon_owner_capability,
++                        options.owner_fence_now_epoch,
++                        "sync session checkpoint root reset");
++                sync_checkpoint_owner_fence_internal::
++                    delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
++                        handle.db,
++                        reset_permit,
++                        "sync session checkpoint root reset");
+             }
+ 
+             {
+@@ -6654,14 +6669,7 @@
+                 }
+             }
+ 
+-            sqlite_exec_or_throw(handle.db, "COMMIT;", "sync session checkpoint could not commit transaction");
+-            committed = true;
+-        } catch (...) {
+-            if (!committed) {
+-                try { sqlite_exec_or_throw(handle.db, "ROLLBACK;", "sync session checkpoint rollback failed"); } catch (...) {}
+-            }
+-            throw;
+-        }
++            transaction.commit();
+ 
+         out.sqlite_path = sqlite_path.generic_string();
+         out.session_id = options.session_id;
+@@ -8542,6 +8550,61 @@
+ 
+ 
+ }  // namespace
++
++SyncValidationResult sync_internal_acquire_checkpoint_mutation_owner_lease(
++    const std::string& sqlite_path,
++    const std::string& session_id,
++    const std::string& daemon_id,
++    const std::string& worker_id,
++    std::uint64_t acquired_at_epoch,
++    std::uint64_t owner_lock_seconds,
++    SyncInternalCheckpointMutationOwnerLease& out) {
++    out = SyncInternalCheckpointMutationOwnerLease{};
++    try {
++        const ResumeTransferDaemonOwnerLockRecord record =
++            acquire_resume_transfer_daemon_owner_lock_or_throw(
++                sqlite_path,
++                session_id,
++                daemon_id,
++                worker_id,
++                acquired_at_epoch,
++                owner_lock_seconds);
++        out.capability.session_id = session_id;
++        out.capability.daemon_id = record.daemon_id;
++        out.capability.worker_id = record.worker_id;
++        out.capability.owner_lock_id = record.owner_lock_id;
++        out.capability.owner_lock_epoch = record.owner_lock_epoch;
++        out.acquired = record.acquired;
++        out.reclaimed_expired = record.reclaimed_expired;
++        out.acquired_at_epoch = record.acquired_at_epoch;
++        out.expires_at_epoch = record.expires_at_epoch;
++        if (!out.acquired) {
++            return fail_result(
++                "sync checkpoint mutation owner lease was not durably acquired");
++        }
++        return ok_result();
++    } catch (const std::exception& e) {
++        return fail_result(
++            std::string("sync checkpoint mutation owner lease acquisition failed: ") +
++            e.what());
++    }
++}
++
++SyncValidationResult sync_internal_release_checkpoint_mutation_owner_lease(
++    const std::string& sqlite_path,
++    const std::string& session_id,
++    const SyncSessionCheckpointDaemonOwnerCapability& capability,
++    std::uint64_t released_at_epoch) {
++    try {
++        release_resume_transfer_daemon_owner_lock_or_throw(
++            sqlite_path, session_id, capability, released_at_epoch);
++        return ok_result();
++    } catch (const std::exception& e) {
++        return fail_result(
++            std::string("sync checkpoint mutation owner lease release failed: ") +
++            e.what());
++    }
++}
+ 
+ bool sync_checkpoint_apply_intent_routes_remote_file_bytes_to_staging(const std::string& source_action,
+                                                                       const std::string& local_action);
+--- a/src/sync_domain_selftests.cpp
++++ b/src/sync_domain_selftests.cpp
+@@ -4870,6 +4870,16 @@
+                             workflow_report.at("ok").boolean(false) &&
+                             workflow_report.at("workflow").at("repair_attempted").boolean(false) &&
+                             workflow_report.at("workflow").at("daemon_attempted").boolean(false) &&
++                            workflow_report.at("repair_owner_lock").at("acquire_attempted").boolean(false) &&
++                            workflow_report.at("repair_owner_lock").at("acquired").boolean(false) &&
++                            workflow_report.at("repair_owner_lock").at("release_attempted").boolean(false) &&
++                            workflow_report.at("repair_owner_lock").at("released").boolean(false) &&
++                            workflow_report.at("repair_owner_lock").at("daemon_id").str() == "sync-operator-repair" &&
++                            workflow_report.at("repair_owner_lock").at("worker_id").str() == "worker-workflow-repair" &&
++                            workflow_report.at("repair_owner_lock").at("owner_lock_epoch").integer(-1) > 0 &&
++                            workflow_report.at("repair_owner_lock").at("owner_lock_id").str().rfind("sync-resume-daemon-owner-lock:v1:", 0) == 0 &&
++                            workflow_report.at("repair_owner_lock").at("acquire_reason").str().empty() &&
++                            workflow_report.at("repair_owner_lock").at("release_reason").str().empty() &&
+                             workflow_report.at("initial_status_report").at("status").at("suggested_next_action").str() == "review-sidecar-events" &&
+                             workflow_report.at("repair_reset_report").at("repair_reset").at("workorder_rows_reset").integer(-1) == static_cast<long long>(pending_materialize_entry->chunks.size()) &&
+                             workflow_report.at("after_repair_status_report").at("status").at("pending_sidecar_review_events").integer(-1) == 0 &&
+@@ -4948,9 +4958,25 @@
+                     fs::remove_all(workflow_staging_root, apply_cleanup_ec);
+                     if (apply_cleanup_ec) throw std::runtime_error("could not remove operator recovery workflow staging root: " + apply_cleanup_ec.message());
+                 }
++                SyncInternalCheckpointMutationOwnerLease sidecar_operator_owner_lease;
++                SyncValidationResult sidecar_operator_owner_acquire =
++                    sync_internal_acquire_checkpoint_mutation_owner_lease(
++                        startup_review_daemon_checkpoint_db.string(),
++                        "session-main",
++                        "daemon-sidecar-operator",
++                        "worker-sidecar-operator",
++                        1015,
++                        10,
++                        sidecar_operator_owner_lease);
++                require(sidecar_operator_owner_acquire.ok &&
++                            sidecar_operator_owner_lease.acquired &&
++                            sidecar_operator_owner_lease.capability.owner_lock_epoch != 0,
++                        "sync session checkpoint sidecar operator fixture acquires an exact successor owner generation before mutation");
+                 SyncSessionCheckpointBoundPeerSidecarReviewEventQuarantineOptions sidecar_review_quarantine_options;
+                 sidecar_review_quarantine_options.sqlite_path = startup_review_daemon_checkpoint_db.string();
+                 sidecar_review_quarantine_options.session_id = "session-main";
++                sidecar_review_quarantine_options.daemon_owner_capability =
++                    sidecar_operator_owner_lease.capability;
+                 sidecar_review_quarantine_options.path = pending_materialize_path;
+                 sidecar_review_quarantine_options.review_event_idempotency_key = review_report_after_rerun.events[0].review_event_idempotency_key;
+                 sidecar_review_quarantine_options.decision_operator_id = "operator-sidecar-review-alpha";
+@@ -5024,6 +5050,8 @@
+                 SyncSessionCheckpointBoundPeerSidecarReviewEventRepairResetOptions sidecar_review_repair_options;
+                 sidecar_review_repair_options.sqlite_path = startup_review_daemon_checkpoint_db.string();
+                 sidecar_review_repair_options.session_id = "session-main";
++                sidecar_review_repair_options.daemon_owner_capability =
++                    sidecar_operator_owner_lease.capability;
+                 sidecar_review_repair_options.staging_root_path = claimed_write_options.staging_root_path;
+                 sidecar_review_repair_options.path = pending_materialize_path;
+                 sidecar_review_repair_options.review_event_idempotency_key = sidecar_review_quarantine_options.review_event_idempotency_key;
+@@ -5064,6 +5092,14 @@
+                         sidecar_review_repair_replay_result.workorder_rows_reset == 0 &&
+                         sidecar_review_repair_replay_result.workorder_rows_already_reset == pending_materialize_entry->chunks.size(),
+                         "sync session checkpoint sidecar review repair reset is idempotent after operator repair evidence is present");
++                SyncValidationResult sidecar_operator_owner_release =
++                    sync_internal_release_checkpoint_mutation_owner_lease(
++                        startup_review_daemon_checkpoint_db.string(),
++                        "session-main",
++                        sidecar_operator_owner_lease.capability,
++                        1016);
++                require(sidecar_operator_owner_release.ok,
++                        "sync session checkpoint sidecar operator fixture retires its exact generation before the CLI acquires a successor");
+                 const fs::path sidecar_repair_cli_report_path = fs::temp_directory_path() / ("anonsync-sync-sidecar-repair-cli-" + std::to_string(selftest_ticks) + ".json");
+                 fs::remove(sidecar_repair_cli_report_path, apply_cleanup_ec);
+                 int sidecar_repair_cli_rc = run_sync_checkpoint_sidecar_repair_reset_command(startup_review_daemon_checkpoint_db.string(),
+--- a/src/sync_operator_cli.cpp
++++ b/src/sync_operator_cli.cpp
+@@ -7,6 +7,7 @@
+ #include <sstream>
+ #include <stdexcept>
+ #include <string>
++#include <utility>
+ 
+ namespace anonsync {
+ namespace fs = std::filesystem;
+@@ -33,6 +34,60 @@
+     return absolute.lexically_normal();
+ }
+ 
++class SyncOperatorRepairOwnerLeaseGuard final {
++public:
++    SyncOperatorRepairOwnerLeaseGuard() = default;
++    SyncOperatorRepairOwnerLeaseGuard(
++        const SyncOperatorRepairOwnerLeaseGuard&) = delete;
++    SyncOperatorRepairOwnerLeaseGuard& operator=(
++        const SyncOperatorRepairOwnerLeaseGuard&) = delete;
++    SyncOperatorRepairOwnerLeaseGuard(
++        SyncOperatorRepairOwnerLeaseGuard&&) = delete;
++    SyncOperatorRepairOwnerLeaseGuard& operator=(
++        SyncOperatorRepairOwnerLeaseGuard&&) = delete;
++
++    ~SyncOperatorRepairOwnerLeaseGuard() {
++        if (armed_) {
++            (void)sync_internal_release_checkpoint_mutation_owner_lease(
++                sqlite_path_, session_id_, capability_, release_at_epoch_);
++        }
++    }
++
++    void arm(
++        std::string sqlite_path,
++        std::string session_id,
++        SyncSessionCheckpointDaemonOwnerCapability capability,
++        std::uint64_t release_at_epoch) {
++        if (armed_) {
++            throw std::logic_error(
++                "sync operator repair owner lease guard was already armed");
++        }
++        sqlite_path_ = std::move(sqlite_path);
++        session_id_ = std::move(session_id);
++        capability_ = std::move(capability);
++        release_at_epoch_ = release_at_epoch;
++        armed_ = true;
++    }
++
++    SyncValidationResult release_now() {
++        if (!armed_) {
++            return {false,
++                    "sync operator repair owner lease guard is not armed"};
++        }
++        SyncValidationResult released =
++            sync_internal_release_checkpoint_mutation_owner_lease(
++                sqlite_path_, session_id_, capability_, release_at_epoch_);
++        if (released.ok) armed_ = false;
++        return released;
++    }
++
++private:
++    std::string sqlite_path_;
++    std::string session_id_;
++    SyncSessionCheckpointDaemonOwnerCapability capability_;
++    std::uint64_t release_at_epoch_ = 0;
++    bool armed_ = false;
++};
+ 
+ }  // namespace
+ 
+@@ -690,7 +745,39 @@
+         options.repair_worker_lease_seconds = sync_cli_positive_u64_or_throw(repair_worker_lease_seconds, "sync sidecar repair reset repair_worker_lease_seconds");
+         options.workorder_retry_backoff_seconds = sync_cli_u64_or_throw(workorder_retry_backoff_seconds, "sync sidecar repair reset workorder_retry_backoff_seconds");
+         SyncSessionCheckpointBoundPeerSidecarReviewEventRepairResetResult result;
+-        SyncValidationResult run = repair_reset_sync_session_checkpoint_bound_peer_sidecar_review_event(options, result);
++        SyncInternalCheckpointMutationOwnerLease owner_lease;
++        SyncValidationResult run =
++            sync_internal_acquire_checkpoint_mutation_owner_lease(
++                options.sqlite_path,
++                options.session_id,
++                "sync-operator-repair-cli",
++                options.repair_worker_id,
++                options.repair_at_epoch,
++                60,
++                owner_lease);
++        SyncOperatorRepairOwnerLeaseGuard owner_guard;
++        if (run.ok) {
++            options.daemon_owner_capability = owner_lease.capability;
++            owner_guard.arm(options.sqlite_path,
++                            options.session_id,
++                            owner_lease.capability,
++                            options.repair_at_epoch);
++            try {
++                run = repair_reset_sync_session_checkpoint_bound_peer_sidecar_review_event(
++                    options, result);
++            } catch (const std::exception& e) {
++                run = {
++                    false,
++                    std::string(
++                        "sync sidecar repair reset threw after owner acquisition: ") +
++                        e.what()};
++            }
++            const SyncValidationResult release_run = owner_guard.release_now();
++            if (!release_run.ok) {
++                if (run.ok) run = release_run;
++                else run.reason += "; " + release_run.reason;
++            }
++        }
+         write_sync_cli_report_json_or_throw(report_path, sync_checkpoint_sidecar_repair_reset_report_json(run, options, result), "sync checkpoint sidecar repair reset report");
+         if (!run.ok) {
+             std::cerr << run.reason << "\n";
+@@ -785,6 +872,8 @@
+     SyncSessionCheckpointOperatorStatusOptions status_options;
+     bool repair_enabled = false;
+     SyncSessionCheckpointBoundPeerSidecarReviewEventRepairResetOptions repair_options;
++    std::string repair_owner_daemon_id = "sync-operator-repair";
++    std::uint64_t repair_owner_lock_seconds = 60;
+     bool daemon_enabled = false;
+     SyncSessionCheckpointResumeTransferWorkorderDaemonLoopOptions daemon_options;
+ };
+@@ -908,6 +997,21 @@
+                                                                                               "repair_at_epoch",
+                                                                                               "sync operator recovery workflow repair");
+             parsed.repair_options.repair_worker_id = sync_workflow_string_field_or_throw(repair, "repair_worker_id", "sync operator recovery workflow repair");
++            parsed.repair_owner_daemon_id = sync_workflow_optional_string_field(
++                repair, "owner_daemon_id", "sync-operator-repair");
++            if (!sync_internal_valid_sync_id(parsed.repair_owner_daemon_id)) {
++                throw std::runtime_error(
++                    "sync operator recovery workflow repair owner_daemon_id must be a lowercase portable sync id");
++            }
++            parsed.repair_owner_lock_seconds = sync_workflow_optional_u64_field(
++                repair,
++                "owner_lock_seconds",
++                60,
++                "sync operator recovery workflow repair");
++            if (parsed.repair_owner_lock_seconds == 0) {
++                throw std::runtime_error(
++                    "sync operator recovery workflow repair owner_lock_seconds must be positive");
++            }
+             parsed.repair_options.repair_worker_lease_epoch = sync_workflow_optional_u64_field(repair,
+                                                                                                "repair_worker_lease_epoch",
+                                                                                                1,
+@@ -1025,6 +1129,11 @@
+                                                         const SyncSessionCheckpointBoundPeerSidecarReviewEventRepairResetOptions& repair_options,
+                                                         const SyncSessionCheckpointBoundPeerSidecarReviewEventRepairResetResult& repair_result,
+                                                         const std::string& repair_report,
++                                                        bool repair_owner_acquire_attempted,
++                                                        const SyncValidationResult& repair_owner_acquire_run,
++                                                        const SyncInternalCheckpointMutationOwnerLease& repair_owner_lease,
++                                                        bool repair_owner_release_attempted,
++                                                        const SyncValidationResult& repair_owner_release_run,
+                                                         const SyncValidationResult& after_repair_status_run,
+                                                         const SyncSessionCheckpointOperatorStatusResult& after_repair_status,
+                                                         const std::string& after_repair_status_report,
+@@ -1088,6 +1197,21 @@
+         << "    \"final_status_loaded\": " << sync_cli_json_bool(final_status.status_loaded) << ",\n"
+         << "    \"final_suggested_next_action\": \"" << json_escape(final_status.suggested_next_action) << "\"\n"
+         << "  },\n"
++        << "  \"repair_owner_lock\": {\n"
++        << "    \"acquire_attempted\": " << sync_cli_json_bool(repair_owner_acquire_attempted) << ",\n"
++        << "    \"acquired\": " << sync_cli_json_bool(repair_owner_lease.acquired) << ",\n"
++        << "    \"reclaimed_expired\": " << sync_cli_json_bool(repair_owner_lease.reclaimed_expired) << ",\n"
++        << "    \"release_attempted\": " << sync_cli_json_bool(repair_owner_release_attempted) << ",\n"
++        << "    \"released\": " << sync_cli_json_bool(repair_owner_release_attempted && repair_owner_release_run.ok) << ",\n"
++        << "    \"daemon_id\": \"" << json_escape(repair_owner_lease.capability.daemon_id) << "\",\n"
++        << "    \"worker_id\": \"" << json_escape(repair_owner_lease.capability.worker_id) << "\",\n"
++        << "    \"owner_lock_id\": \"" << json_escape(repair_owner_lease.capability.owner_lock_id) << "\",\n"
++        << "    \"owner_lock_epoch\": " << repair_owner_lease.capability.owner_lock_epoch << ",\n"
++        << "    \"acquired_at_epoch\": " << repair_owner_lease.acquired_at_epoch << ",\n"
++        << "    \"expires_at_epoch\": " << repair_owner_lease.expires_at_epoch << ",\n"
++        << "    \"acquire_reason\": \"" << json_escape(repair_owner_acquire_run.reason) << "\",\n"
++        << "    \"release_reason\": \"" << json_escape(repair_owner_release_run.reason) << "\"\n"
++        << "  },\n"
+         << "  \"initial_status_report\": " << report_or_null(initial_status_report) << ",\n"
+         << "  \"repair_reset_report\": " << report_or_null(repair_report) << ",\n"
+         << "  \"after_repair_status_report\": " << report_or_null(after_repair_status_report) << ",\n"
+@@ -1124,11 +1248,59 @@
+         SyncValidationResult repair_run = sync_operator_cli_ok_result();
+         SyncSessionCheckpointBoundPeerSidecarReviewEventRepairResetResult repair_result;
+         std::string repair_report;
++        bool repair_owner_acquire_attempted = false;
++        SyncValidationResult repair_owner_acquire_run =
++            sync_operator_cli_ok_result();
++        SyncInternalCheckpointMutationOwnerLease repair_owner_lease;
++        bool repair_owner_release_attempted = false;
++        SyncValidationResult repair_owner_release_run =
++            sync_operator_cli_ok_result();
++        SyncOperatorRepairOwnerLeaseGuard repair_owner_guard;
+         if (config.repair_enabled) {
+             if (initial_status_run.ok && initial_status.pending_sidecar_review_events != 0 && initial_status.suggested_next_action == "review-sidecar-events") {
+                 repair_attempted = true;
+-                repair_run = repair_reset_sync_session_checkpoint_bound_peer_sidecar_review_event(config.repair_options,
+-                                                                                                  repair_result);
++                repair_owner_acquire_attempted = true;
++                repair_owner_acquire_run =
++                    sync_internal_acquire_checkpoint_mutation_owner_lease(
++                        config.repair_options.sqlite_path,
++                        config.repair_options.session_id,
++                        config.repair_owner_daemon_id,
++                        config.repair_options.repair_worker_id,
++                        config.repair_options.repair_at_epoch,
++                        config.repair_owner_lock_seconds,
++                        repair_owner_lease);
++                if (!repair_owner_acquire_run.ok) {
++                    repair_run = repair_owner_acquire_run;
++                } else {
++                    config.repair_options.daemon_owner_capability =
++                        repair_owner_lease.capability;
++                    repair_owner_guard.arm(
++                        config.repair_options.sqlite_path,
++                        config.repair_options.session_id,
++                        repair_owner_lease.capability,
++                        config.repair_options.repair_at_epoch);
++                    try {
++                        repair_run =
++                            repair_reset_sync_session_checkpoint_bound_peer_sidecar_review_event(
++                                config.repair_options, repair_result);
++                    } catch (const std::exception& e) {
++                        repair_run = {
++                            false,
++                            std::string(
++                                "sync operator recovery workflow repair threw after owner acquisition: ") +
++                                e.what()};
++                    }
++                    repair_owner_release_attempted = true;
++                    repair_owner_release_run = repair_owner_guard.release_now();
++                    if (!repair_owner_release_run.ok) {
++                        if (repair_run.ok) {
++                            repair_run = repair_owner_release_run;
++                        } else {
++                            repair_run.reason += "; " +
++                                                 repair_owner_release_run.reason;
++                        }
++                    }
++                }
+                 repair_report = sync_checkpoint_sidecar_repair_reset_report_json(repair_run,
+                                                                                  config.repair_options,
+                                                                                  repair_result);
+@@ -1213,6 +1385,11 @@
+                                                                                config.repair_options,
+                                                                                repair_result,
+                                                                                repair_report,
++                                                                               repair_owner_acquire_attempted,
++                                                                               repair_owner_acquire_run,
++                                                                               repair_owner_lease,
++                                                                               repair_owner_release_attempted,
++                                                                               repair_owner_release_run,
+                                                                                after_repair_status_run,
+                                                                                after_repair_status,
+                                                                                after_repair_status_report,
+--- a/tests/sync_checkpoint_owner_fence_policy_test.cpp
++++ b/tests/sync_checkpoint_owner_fence_policy_test.cpp
+@@ -10,8 +10,9 @@
+ 
+ using anonsync::SyncSessionCheckpointDaemonOwnerCapability;
+ using anonsync::sync_checkpoint_owner_fence_policy::AcquisitionRequest;
++using anonsync::sync_checkpoint_owner_fence_policy::RecipientRequest;
+ using anonsync::sync_checkpoint_owner_fence_policy::StoredOwnerLockEvidence;
+-using anonsync::sync_checkpoint_owner_fence_policy::RecipientRequest;
++using anonsync::sync_checkpoint_owner_fence_policy::StoredOwnerModeEvidence;
+ 
+ std::string owner_id(char digest = 'a') {
+     return "sync-resume-daemon-owner-lock:v1:" + std::string(64, digest);
+@@ -35,6 +36,26 @@
+     return out;
+ }
+ 
++StoredOwnerModeEvidence required_mode(std::uint64_t generation = 7,
++                                      std::uint64_t updated = 100) {
++    StoredOwnerModeEvidence out;
++    out.present = true;
++    out.session_id = "session-a";
++    out.ownership_mode = "owner-required";
++    out.latest_owner_lock_epoch = generation;
++    out.mode_updated_at_epoch = updated;
++    return out;
++}
++
++StoredOwnerModeEvidence disabled_mode(std::uint64_t generation = 7,
++                                      std::uint64_t updated = 250) {
++    auto out = required_mode(generation, updated);
++    out.ownership_mode = "administratively-disabled";
++    out.administrative_disable_evidence_id =
++        "sync-checkpoint-owner-admin-disable:v1:" + std::string(64, 'd');
++    return out;
++}
++
+ SyncSessionCheckpointDaemonOwnerCapability capability_for(
+     const StoredOwnerLockEvidence& stored) {
+     SyncSessionCheckpointDaemonOwnerCapability capability;
+@@ -77,7 +98,7 @@
+     request.acquired_at_epoch = 100;
+     request.owner_lock_seconds = 50;
+ 
+-    const auto first = plan_acquisition({}, request);
++    const auto first = plan_acquisition({}, {}, request);
+     require(first.allowed && first.owner_lock_epoch == 1 &&
+                 first.expires_at_epoch == 150 && !first.reclaimed_expired,
+             "first owner acquisition did not mint generation one", checks);
+@@ -87,34 +108,57 @@
+     released.released_at_epoch = 120;
+     released.updated_at_epoch = 120;
+     request.acquired_at_epoch = 121;
+-    const auto second = plan_acquisition(released, request);
++    const auto second = plan_acquisition(required_mode(1, 120), released, request);
+     require(second.allowed && second.owner_lock_epoch == 2 &&
+                 !second.reclaimed_expired,
+-            "released owner takeover did not increment generation", checks);
++            "released owner takeover did not increment sticky generation", checks);
++
++    request.acquired_at_epoch = 160;
++    const auto after_reset =
++        plan_acquisition(required_mode(2, 150), {}, request);
++    require(after_reset.allowed && after_reset.owner_lock_epoch == 3,
++            "owner-row absence after reset reused or lost sticky generation", checks);
++
++    request.acquired_at_epoch = 260;
++    const auto reactivated =
++        plan_acquisition(disabled_mode(9, 250), {}, request);
++    require(reactivated.allowed && reactivated.owner_lock_epoch == 10 &&
++                reactivated.reactivated_administratively_disabled_mode,
++            "administratively disabled mode did not reactivate with a new generation",
++            checks);
+ 
+     StoredOwnerLockEvidence expired = held_owner(41, 100, 150);
+     request.acquired_at_epoch = 150;
+-    const auto takeover = plan_acquisition(expired, request);
++    const auto takeover =
++        plan_acquisition(required_mode(41, 100), expired, request);
+     require(takeover.allowed && takeover.owner_lock_epoch == 42 &&
+                 takeover.reclaimed_expired,
+             "expired owner takeover did not increment generation", checks);
+ 
+     request.acquired_at_epoch = 149;
+-    const auto live = plan_acquisition(expired, request);
++    const auto live = plan_acquisition(required_mode(41, 100), expired, request);
+     require(!live.allowed && live.reason.find("still live") != std::string::npos,
+             "live owner was overwritten", checks);
+ 
+     request.acquired_at_epoch = 99;
+-    const auto regressed = plan_acquisition(expired, request);
++    const auto regressed =
++        plan_acquisition(required_mode(41, 100), expired, request);
+     require(!regressed.allowed &&
+                 regressed.reason.find("regressed") != std::string::npos,
+             "acquisition clock regression was accepted", checks);
+ 
+-    StoredOwnerLockEvidence exhausted = expired;
+-    exhausted.owner_lock_epoch = static_cast<std::uint64_t>(
+-        std::numeric_limits<std::int64_t>::max());
++    auto mismatched_mode = required_mode(40, 100);
+     request.acquired_at_epoch = 150;
+-    const auto overflow = plan_acquisition(exhausted, request);
++    const auto mismatched = plan_acquisition(mismatched_mode, expired, request);
++    require(!mismatched.allowed &&
++                mismatched.reason.find("does not match") != std::string::npos,
++            "mode/owner generation disagreement was accepted", checks);
++
++    StoredOwnerModeEvidence exhausted = required_mode(
++        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()),
++        100);
++    request.acquired_at_epoch = 150;
++    const auto overflow = plan_acquisition(exhausted, {}, request);
+     require(!overflow.allowed &&
+                 overflow.reason.find("exhausted") != std::string::npos,
+             "owner generation overflow was accepted", checks);
+@@ -122,7 +166,7 @@
+     request.acquired_at_epoch = static_cast<std::uint64_t>(
+         std::numeric_limits<std::int64_t>::max());
+     request.owner_lock_seconds = 1;
+-    const auto timestamp_range = plan_acquisition({}, request);
++    const auto timestamp_range = plan_acquisition({}, {}, request);
+     require(!timestamp_range.allowed &&
+                 timestamp_range.reason.find("SQLite signed integer range") !=
+                     std::string::npos,
+@@ -135,30 +179,41 @@
+     request.session_id = "session-a";
+     request.observed_at_epoch = 150;
+ 
+-    const auto unlocked = authorize_recipient({}, request);
++    const auto unlocked = authorize_recipient({}, {}, request);
+     require(unlocked.allowed && !unlocked.owner_capability_required,
+-            "capability-free mutation without owner row was rejected", checks);
++            "capability-free mutation before ownership was rejected", checks);
++
++    request.observed_at_epoch =
++        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + 1;
++    const auto out_of_range_observation = authorize_recipient({}, {}, request);
++    require(!out_of_range_observation.allowed &&
++                out_of_range_observation.reason.find(
++                    "SQLite signed integer range") != std::string::npos,
++            "recipient accepted an observation outside SQLite durable integer range",
++            checks);
++    request.observed_at_epoch = 150;
+ 
+     request.capability = capability_for(held_owner());
+-    const auto invented = authorize_recipient({}, request);
++    const auto invented = authorize_recipient({}, {}, request);
+     require(!invented.allowed,
+             "invented capability without durable owner row was accepted", checks);
+ 
+     const StoredOwnerLockEvidence held = held_owner();
++    const StoredOwnerModeEvidence mode = required_mode();
+     request.capability = {};
+-    const auto missing = authorize_recipient(held, request);
++    const auto missing = authorize_recipient(mode, held, request);
+     require(!missing.allowed && missing.owner_capability_required,
+             "live owner did not require a capability", checks);
+ 
+     request.capability = capability_for(held);
+-    const auto exact = authorize_recipient(held, request);
++    const auto exact = authorize_recipient(mode, held, request);
+     require(exact.allowed && exact.owner_capability_required,
+             "exact live owner capability was rejected", checks);
+ 
+     auto stale = request.capability;
+     --stale.owner_lock_epoch;
+     request.capability = stale;
+-    const auto stale_generation = authorize_recipient(held, request);
++    const auto stale_generation = authorize_recipient(mode, held, request);
+     require(!stale_generation.allowed &&
+                 stale_generation.reason.find("does not match") !=
+                     std::string::npos,
+@@ -166,24 +221,24 @@
+ 
+     request.capability = capability_for(held);
+     request.capability.daemon_id = "daemon-b";
+-    require(!authorize_recipient(held, request).allowed,
++    require(!authorize_recipient(mode, held, request).allowed,
+             "wrong daemon identity was accepted", checks);
+     request.capability = capability_for(held);
+     request.capability.worker_id = "worker-b";
+-    require(!authorize_recipient(held, request).allowed,
++    require(!authorize_recipient(mode, held, request).allowed,
+             "wrong worker identity was accepted", checks);
+     request.capability = capability_for(held);
+     request.capability.owner_lock_id = owner_id('b');
+-    require(!authorize_recipient(held, request).allowed,
++    require(!authorize_recipient(mode, held, request).allowed,
+             "wrong owner lock id was accepted", checks);
+     request.capability = capability_for(held);
+     request.capability.session_id = "session-b";
+-    require(!authorize_recipient(held, request).allowed,
++    require(!authorize_recipient(mode, held, request).allowed,
+             "cross-session owner capability was accepted", checks);
+ 
+     request.capability = capability_for(held);
+     request.observed_at_epoch = held.expires_at_epoch;
+-    const auto expired = authorize_recipient(held, request);
++    const auto expired = authorize_recipient(mode, held, request);
+     require(!expired.allowed && expired.reason.find("expired") != std::string::npos,
+             "expired owner capability authorized a mutation", checks);
+ 
+@@ -193,11 +248,25 @@
+     released.updated_at_epoch = 160;
+     request.observed_at_epoch = 161;
+     request.capability = {};
+-    require(authorize_recipient(released, request).allowed,
+-            "released owner row did not restore capability-free mutation", checks);
++    require(!authorize_recipient(required_mode(7, 160), released, request).allowed,
++            "release erased sticky ownership", checks);
++    require(!authorize_recipient({}, released, request).allowed,
++            "legacy released owner row was laundered into unowned mode", checks);
++
+     request.capability = capability_for(released);
+-    require(!authorize_recipient(released, request).allowed,
++    require(!authorize_recipient(required_mode(7, 160), released, request).allowed,
+             "released capability authorized a mutation", checks);
++
++    request.capability = {};
++    require(!authorize_recipient(required_mode(7, 170), {}, request).allowed,
++            "root-reset owner gap admitted an empty capability", checks);
++
++    request.observed_at_epoch = 260;
++    require(authorize_recipient(disabled_mode(), {}, request).allowed,
++            "administratively disabled mode did not admit empty capability", checks);
++    request.capability = capability_for(held);
++    require(!authorize_recipient(disabled_mode(), {}, request).allowed,
++            "administratively disabled mode accepted an owner capability", checks);
+ }
+ 
+ void test_hostile_durable_rows(std::uint64_t& checks) {
+@@ -211,39 +280,54 @@
+ 
+     StoredOwnerLockEvidence malformed = held_owner();
+     malformed.owner_lock_id_is_canonical = false;
+-    require(!plan_acquisition(malformed, acquisition).allowed &&
+-                !authorize_recipient(malformed, recipient).allowed,
++    require(!plan_acquisition(required_mode(), malformed, acquisition).allowed &&
++                !authorize_recipient(required_mode(), malformed, recipient).allowed,
+             "noncanonical owner id was accepted", checks);
+ 
+     malformed = held_owner();
+     malformed.lock_state = "held";
+     malformed.released_at_epoch = 101;
+-    require(!plan_acquisition(malformed, acquisition).allowed &&
+-                !authorize_recipient(malformed, recipient).allowed,
++    require(!plan_acquisition(required_mode(), malformed, acquisition).allowed &&
++                !authorize_recipient(required_mode(), malformed, recipient).allowed,
+             "held/released contradiction was accepted", checks);
+ 
+     malformed = held_owner();
+     malformed.expires_at_epoch = malformed.acquired_at_epoch;
+-    require(!plan_acquisition(malformed, acquisition).allowed &&
+-                !authorize_recipient(malformed, recipient).allowed,
++    require(!plan_acquisition(required_mode(), malformed, acquisition).allowed &&
++                !authorize_recipient(required_mode(), malformed, recipient).allowed,
+             "zero-width owner lease was accepted", checks);
+ 
+     malformed = held_owner();
+     malformed.lock_state = "unknown";
+-    require(!plan_acquisition(malformed, acquisition).allowed &&
+-                !authorize_recipient(malformed, recipient).allowed,
++    require(!plan_acquisition(required_mode(), malformed, acquisition).allowed &&
++                !authorize_recipient(required_mode(), malformed, recipient).allowed,
+             "unknown owner state was accepted", checks);
+ 
+     malformed = held_owner();
+     malformed.owner_lock_epoch = static_cast<std::uint64_t>(
+         std::numeric_limits<std::int64_t>::max()) + 1;
+-    require(!plan_acquisition(malformed, acquisition).allowed &&
+-                !authorize_recipient(malformed, recipient).allowed,
++    require(!plan_acquisition(required_mode(), malformed, acquisition).allowed &&
++                !authorize_recipient(required_mode(), malformed, recipient).allowed,
+             "out-of-range durable owner integer was accepted", checks);
++
++    auto malformed_mode = required_mode();
++    malformed_mode.administrative_disable_evidence_id = "forged";
++    require(!plan_acquisition(malformed_mode, held_owner(), acquisition).allowed &&
++                !authorize_recipient(malformed_mode, held_owner(), recipient).allowed,
++            "owner-required mode accepted disable evidence", checks);
++
++    malformed_mode = disabled_mode();
++    malformed_mode.administrative_disable_evidence_id = "forged";
++    require(!plan_acquisition(malformed_mode, {}, acquisition).allowed &&
++                !authorize_recipient(malformed_mode, {}, recipient).allowed,
++            "disabled mode accepted noncanonical administrative evidence", checks);
++
++    require(!authorize_recipient(disabled_mode(), held_owner(), recipient).allowed,
++            "disabled mode contradicted by held owner row was accepted", checks);
+ 
+     recipient.capability = capability_for(held_owner());
+     recipient.capability.owner_lock_id.clear();
+-    require(!authorize_recipient(held_owner(), recipient).allowed,
++    require(!authorize_recipient(required_mode(), held_owner(), recipient).allowed,
+             "partial owner capability was accepted", checks);
+ }
+ 
+--- a/tests/sync_checkpoint_owner_fence_sqlite_test.cpp
++++ b/tests/sync_checkpoint_owner_fence_sqlite_test.cpp
+@@ -7,6 +7,7 @@
+ #include <filesystem>
+ #include <functional>
+ #include <iostream>
++#include <limits>
+ #include <stdexcept>
+ #include <string>
+ #include <string_view>
+@@ -17,6 +18,7 @@
+ using anonsync::SyncSqliteDb;
+ using anonsync::SyncSqliteStmt;
+ using anonsync::SyncSqliteTransaction;
++using anonsync::SyncSqliteTransactionAuthority;
+ using anonsync::SyncSqliteTransactionMode;
+ using anonsync::sync_checkpoint_owner_fence_internal::MintedDaemonOwnerLockRecord;
+ 
+@@ -39,8 +41,8 @@
+     TemporaryPath() {
+         const auto base = std::filesystem::temp_directory_path();
+         for (std::uint64_t i = 1; i < 10000; ++i) {
+-            const auto candidate = base / (
+-                "anonsync-owner-fence-sqlite-" + std::to_string(i) + ".db");
++            const auto candidate = base /
++                ("anonsync-owner-fence-sqlite-" + std::to_string(i) + ".db");
+             std::error_code ec;
+             if (!std::filesystem::exists(candidate, ec)) {
+                 path_ = candidate;
+@@ -58,10 +60,20 @@
+         std::filesystem::remove(path_.string() + "-journal", ec);
+     }
+ 
+-    const std::filesystem::path& get() const noexcept { return path_; }
++    [[nodiscard]] const std::filesystem::path& get() const noexcept {
++        return path_;
++    }
+ 
+ private:
+     std::filesystem::path path_;
++};
++
++struct ModeSnapshot final {
++    bool present = false;
++    std::string ownership_mode;
++    std::uint64_t latest_owner_lock_epoch = 0;
++    std::uint64_t mode_updated_at_epoch = 0;
++    std::string administrative_disable_evidence_id;
+ };
+ 
+ SyncSessionCheckpointDaemonOwnerCapability capability(
+@@ -92,24 +104,57 @@
+     return out;
+ }
+ 
++void insert_root(SyncSqliteDb& db, const std::string& session_id) {
++    SyncSqliteStmt stmt = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "INSERT INTO sync_session_checkpoints(session_id) VALUES(?) "
++        "ON CONFLICT(session_id) DO NOTHING;",
++        "owner fence SQLite test insert checkpoint root");
++    anonsync::sqlite_bind_text_or_throw(
++        stmt.stmt, 1, session_id, "insert checkpoint root session");
++    anonsync::sqlite_step_done_or_throw(
++        stmt.stmt, "insert checkpoint root row");
++}
++
+ void create_schema(SyncSqliteDb& db) {
+     anonsync::sqlite_exec_or_throw(
+         db.db,
++        "PRAGMA foreign_keys=ON;"
++        "CREATE TABLE sync_session_checkpoints("
++        "session_id TEXT PRIMARY KEY NOT NULL);"
+         "CREATE TABLE sync_session_resume_transfer_daemon_owner_locks("
+-        "session_id TEXT PRIMARY KEY NOT NULL,"
++        "session_id TEXT NOT NULL PRIMARY KEY "
++        "REFERENCES sync_session_checkpoints(session_id) ON DELETE CASCADE,"
+         "daemon_id TEXT NOT NULL,"
+         "worker_id TEXT NOT NULL,"
+         "owner_lock_id TEXT NOT NULL,"
+-        "owner_lock_epoch INTEGER NOT NULL,"
+-        "acquired_at_epoch INTEGER NOT NULL,"
+-        "expires_at_epoch INTEGER NOT NULL,"
+-        "released_at_epoch INTEGER NOT NULL,"
+-        "updated_at_epoch INTEGER NOT NULL,"
+-        "lock_state TEXT NOT NULL);"
++        "owner_lock_epoch INTEGER NOT NULL CHECK(owner_lock_epoch > 0),"
++        "acquired_at_epoch INTEGER NOT NULL CHECK(acquired_at_epoch > 0),"
++        "expires_at_epoch INTEGER NOT NULL "
++        "CHECK(expires_at_epoch > acquired_at_epoch),"
++        "released_at_epoch INTEGER NOT NULL "
++        "CHECK(released_at_epoch = 0 OR released_at_epoch >= acquired_at_epoch),"
++        "lock_state TEXT NOT NULL CHECK(lock_state IN ('held','released')),"
++        "updated_at_epoch INTEGER NOT NULL "
++        "CHECK(updated_at_epoch >= acquired_at_epoch));"
+         "CREATE TABLE recipient_effects("
+         "session_id TEXT PRIMARY KEY NOT NULL, effects INTEGER NOT NULL);"
+-        "INSERT INTO recipient_effects(session_id,effects) VALUES('session-a',0);",
++        "INSERT INTO recipient_effects(session_id,effects) "
++        "VALUES('session-a',0);",
+         "owner fence SQLite test schema");
++
++    for (const std::string session_id : {
++             "session-a",
++             "session-mint",
++             "session-reset",
++             "session-legacy",
++             "session-permit",
++             "session-disabled"}) {
++        insert_root(db, session_id);
++    }
++    anonsync::sync_checkpoint_owner_fence_internal::
++        ensure_checkpoint_owner_mode_schema_or_throw(
++            db.db, "owner fence SQLite test sticky schema");
+ }
+ 
+ void store_owner(SyncSqliteDb& db,
+@@ -124,28 +169,62 @@
+         db.db,
+         "INSERT OR REPLACE INTO sync_session_resume_transfer_daemon_owner_locks("
+         "session_id,daemon_id,worker_id,owner_lock_id,owner_lock_epoch,"
+-        "acquired_at_epoch,expires_at_epoch,released_at_epoch,updated_at_epoch,lock_state)"
+-        "VALUES(?,?,?,?,?,?,?,?,?,?);",
++        "acquired_at_epoch,expires_at_epoch,released_at_epoch,updated_at_epoch,"
++        "lock_state) VALUES(?,?,?,?,?,?,?,?,?,?);",
+         "owner fence SQLite test store owner");
+-    anonsync::sqlite_bind_text_or_throw(stmt.stmt, 1, owner.session_id, "store session");
+-    anonsync::sqlite_bind_text_or_throw(stmt.stmt, 2, owner.daemon_id, "store daemon");
+-    anonsync::sqlite_bind_text_or_throw(stmt.stmt, 3, owner.worker_id, "store worker");
++    anonsync::sqlite_bind_text_or_throw(
++        stmt.stmt, 1, owner.session_id, "store session");
++    anonsync::sqlite_bind_text_or_throw(
++        stmt.stmt, 2, owner.daemon_id, "store daemon");
++    anonsync::sqlite_bind_text_or_throw(
++        stmt.stmt, 3, owner.worker_id, "store worker");
+     anonsync::sqlite_bind_text_or_throw(
+         stmt.stmt,
+         4,
+         override_lock_id.empty() ? owner.owner_lock_id : override_lock_id,
+         "store lock id");
+-    anonsync::sqlite_bind_u64_or_throw(stmt.stmt, 5, owner.owner_lock_epoch, "store generation");
+-    anonsync::sqlite_bind_u64_or_throw(stmt.stmt, 6, acquired_at, "store acquired");
+-    anonsync::sqlite_bind_u64_or_throw(stmt.stmt, 7, expires_at, "store expires");
+-    anonsync::sqlite_bind_u64_or_throw(stmt.stmt, 8, released_at, "store released");
+-    anonsync::sqlite_bind_u64_or_throw(stmt.stmt, 9, updated_at, "store updated");
+-    anonsync::sqlite_bind_text_or_throw(stmt.stmt, 10, state, "store state");
++    anonsync::sqlite_bind_u64_or_throw(
++        stmt.stmt, 5, owner.owner_lock_epoch, "store generation");
++    anonsync::sqlite_bind_u64_or_throw(
++        stmt.stmt, 6, acquired_at, "store acquired");
++    anonsync::sqlite_bind_u64_or_throw(
++        stmt.stmt, 7, expires_at, "store expires");
++    anonsync::sqlite_bind_u64_or_throw(
++        stmt.stmt, 8, released_at, "store released");
++    anonsync::sqlite_bind_u64_or_throw(
++        stmt.stmt, 9, updated_at, "store updated");
++    anonsync::sqlite_bind_text_or_throw(
++        stmt.stmt, 10, state, "store state");
+     anonsync::sqlite_step_done_or_throw(stmt.stmt, "store owner row");
+ }
+ 
+-bool throws_with(const std::function<void()>& operation,
+-                 std::string_view expected_text) {
++void store_disabled_mode(SyncSqliteDb& db,
++                         const std::string& session_id,
++                         std::uint64_t generation,
++                         std::uint64_t updated_at_epoch) {
++    const std::string evidence =
++        "sync-checkpoint-owner-admin-disable:v1:" + std::string(64, 'a');
++    SyncSqliteStmt stmt = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "INSERT INTO sync_session_checkpoint_owner_modes("
++        "session_id,ownership_mode,latest_owner_lock_epoch,"
++        "mode_updated_at_epoch,administrative_disable_evidence_id) "
++        "VALUES(?,'administratively-disabled',?,?,?);",
++        "owner fence SQLite test disabled mode prepare");
++    anonsync::sqlite_bind_text_or_throw(
++        stmt.stmt, 1, session_id, "disabled mode session");
++    anonsync::sqlite_bind_u64_or_throw(
++        stmt.stmt, 2, generation, "disabled mode generation");
++    anonsync::sqlite_bind_u64_or_throw(
++        stmt.stmt, 3, updated_at_epoch, "disabled mode update");
++    anonsync::sqlite_bind_text_or_throw(
++        stmt.stmt, 4, evidence, "disabled mode evidence");
++    anonsync::sqlite_step_done_or_throw(
++        stmt.stmt, "disabled mode row");
++}
++
++[[nodiscard]] bool throws_with(const std::function<void()>& operation,
++                               std::string_view expected_text) {
+     try {
+         operation();
+     } catch (const std::exception& error) {
+@@ -155,7 +234,66 @@
+     return false;
+ }
+ 
+-std::uint64_t effect_count(SyncSqliteDb& db) {
++[[nodiscard]] std::uint64_t session_count(SyncSqliteDb& db,
++                                          const std::string& sql,
++                                          const std::string& session_id,
++                                          const std::string& label) {
++    return anonsync::sqlite_count_for_session_or_throw(
++        db.db, sql, session_id, label);
++}
++
++[[nodiscard]] std::uint64_t root_count(SyncSqliteDb& db,
++                                       const std::string& session_id) {
++    return session_count(
++        db,
++        "SELECT COUNT(*) FROM sync_session_checkpoints WHERE session_id=?;",
++        session_id,
++        "owner fence SQLite test checkpoint root count");
++}
++
++[[nodiscard]] std::uint64_t owner_count(SyncSqliteDb& db,
++                                        const std::string& session_id) {
++    return session_count(
++        db,
++        "SELECT COUNT(*) FROM "
++        "sync_session_resume_transfer_daemon_owner_locks WHERE session_id=?;",
++        session_id,
++        "owner fence SQLite test owner count");
++}
++
++[[nodiscard]] ModeSnapshot mode_snapshot(SyncSqliteDb& db,
++                                         const std::string& session_id) {
++    ModeSnapshot out;
++    SyncSqliteStmt stmt = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "SELECT ownership_mode,latest_owner_lock_epoch,mode_updated_at_epoch,"
++        "administrative_disable_evidence_id "
++        "FROM sync_session_checkpoint_owner_modes WHERE session_id=?;",
++        "owner fence SQLite test mode snapshot prepare");
++    anonsync::sqlite_bind_text_or_throw(
++        stmt.stmt, 1, session_id, "mode snapshot session");
++    const int rc = sqlite3_step(stmt.stmt);
++    if (rc == SQLITE_DONE) return out;
++    if (rc != SQLITE_ROW) {
++        throw std::runtime_error("mode snapshot query failed");
++    }
++    out.present = true;
++    out.ownership_mode = anonsync::sqlite_column_text_or_throw(
++        stmt.stmt, 0, "mode snapshot state");
++    out.latest_owner_lock_epoch = anonsync::sqlite_column_u64_or_throw(
++        stmt.stmt, 1, "mode snapshot generation");
++    out.mode_updated_at_epoch = anonsync::sqlite_column_u64_or_throw(
++        stmt.stmt, 2, "mode snapshot update");
++    out.administrative_disable_evidence_id =
++        anonsync::sqlite_column_text_or_throw(
++            stmt.stmt, 3, "mode snapshot disable evidence");
++    if (sqlite3_step(stmt.stmt) != SQLITE_DONE) {
++        throw std::runtime_error("mode snapshot row is not unique");
++    }
++    return out;
++}
++
++[[nodiscard]] std::uint64_t effect_count(SyncSqliteDb& db) {
+     SyncSqliteStmt stmt = anonsync::sqlite_prepare_or_throw(
+         db.db,
+         "SELECT effects FROM recipient_effects WHERE session_id='session-a';",
+@@ -174,366 +312,720 @@
+ void apply_effect(SyncSqliteDb& db) {
+     anonsync::sqlite_exec_or_throw(
+         db.db,
+-        "UPDATE recipient_effects SET effects=effects+1 WHERE session_id='session-a';",
++        "UPDATE recipient_effects SET effects=effects+1 "
++        "WHERE session_id='session-a';",
+         "owner fence SQLite test apply effect");
++}
++
++[[nodiscard]] bool foreign_keys_enabled(SyncSqliteDb& db) {
++    SyncSqliteStmt stmt = anonsync::sqlite_prepare_or_throw(
++        db.db, "PRAGMA foreign_keys;", "owner fence foreign key pragma");
++    if (sqlite3_step(stmt.stmt) != SQLITE_ROW) {
++        throw std::runtime_error("foreign key pragma row missing");
++    }
++    const bool enabled = anonsync::sqlite_column_u64_or_throw(
++                             stmt.stmt, 0, "foreign key pragma value") == 1;
++    if (sqlite3_step(stmt.stmt) != SQLITE_DONE) {
++        throw std::runtime_error("foreign key pragma returned extra rows");
++    }
++    return enabled;
++}
++
++[[nodiscard]] bool mode_table_has_no_foreign_keys(SyncSqliteDb& db) {
++    SyncSqliteStmt stmt = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "PRAGMA main.foreign_key_list(sync_session_checkpoint_owner_modes);",
++        "owner fence mode foreign key list");
++    return sqlite3_step(stmt.stmt) == SQLITE_DONE;
+ }
+ 
+ }  // namespace
+ 
+ int main() {
+     TestState test;
+-    TemporaryPath temp;
+-    SyncSqliteDb db;
+-    const int open_rc = sqlite3_open_v2(
+-        temp.get().string().c_str(),
+-        db.db.out(),
+-        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+-        nullptr);
+-    if (open_rc != SQLITE_OK) {
+-        std::cerr << "could not open test database\n";
+-        return 2;
+-    }
+-    create_schema(db);
+-
+-    const auto owner_a = capability("session-a", "daemon-a", "worker-a", 1);
+-    const auto owner_b = capability("session-a", "daemon-b", "worker-b", 2);
+-    SyncSessionCheckpointDaemonOwnerCapability empty;
+-
+-    test.check(owner_a.owner_lock_id.starts_with(
+-                   "sync-resume-daemon-owner-lock:v1:"),
+-               "canonical owner id namespace");
+-    test.check(owner_a.owner_lock_id.size() == 97,
+-               "canonical owner id digest geometry");
+-    test.check(owner_a.owner_lock_id != owner_b.owner_lock_id,
+-               "generation and identity alter owner id");
+-
+-    MintedDaemonOwnerLockRecord minted_one;
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "database mint generation one", SyncSqliteTransactionMode::Immediate);
+-        minted_one = anonsync::sync_checkpoint_owner_fence_internal::
+-            acquire_owner_generation_in_write_transaction_or_throw(
+-                db.db,
+-                "session-mint",
+-                "daemon-mint-a",
+-                "worker-mint-a",
+-                100,
+-                50,
+-                "database mint generation one");
+-        transaction.commit();
+-    }
+-    test.check(minted_one.owner_lock_epoch == 1 &&
+-                   minted_one.acquired_at_epoch == 100 &&
+-                   minted_one.expires_at_epoch == 150 &&
+-                   !minted_one.reclaimed_expired,
+-               "database acquisition mints generation one from an absent row");
+-    test.check(
+-        minted_one.owner_lock_id ==
+-            anonsync::sync_checkpoint_owner_fence_internal::owner_lock_id_or_throw(
+-                "session-mint",
+-                minted_one.daemon_id,
+-                minted_one.worker_id,
+-                minted_one.owner_lock_epoch),
+-        "database acquisition returns exact canonical minted evidence");
+-
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "database live owner refusal", SyncSqliteTransactionMode::Immediate);
+-        test.check(
+-            throws_with(
+-                [&] {
+-                    (void)anonsync::sync_checkpoint_owner_fence_internal::
+-                        acquire_owner_generation_in_write_transaction_or_throw(
+-                            db.db,
+-                            "session-mint",
+-                            "daemon-mint-b",
+-                            "worker-mint-b",
+-                            149,
+-                            50,
+-                            "database live owner refusal");
+-                },
+-                "still live"),
+-            "database acquisition cannot overwrite a live generation");
+-        transaction.rollback();
+-    }
+-
+-    const auto minted_one_capability =
+-        capability_from_minted("session-mint", minted_one);
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "database exact release", SyncSqliteTransactionMode::Immediate);
+-        anonsync::sync_checkpoint_owner_fence_internal::
+-            release_owner_generation_in_write_transaction_or_throw(
+-                db.db,
+-                "session-mint",
+-                minted_one_capability,
+-                120,
+-                "database exact release");
+-        transaction.commit();
+-    }
+-
+-    MintedDaemonOwnerLockRecord minted_two;
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "database mint generation two", SyncSqliteTransactionMode::Immediate);
+-        minted_two = anonsync::sync_checkpoint_owner_fence_internal::
+-            acquire_owner_generation_in_write_transaction_or_throw(
+-                db.db,
+-                "session-mint",
+-                "daemon-mint-b",
+-                "worker-mint-b",
+-                121,
+-                50,
+-                "database mint generation two");
+-        transaction.commit();
+-    }
+-    test.check(minted_two.owner_lock_epoch == minted_one.owner_lock_epoch + 1 &&
+-                   minted_two.owner_lock_id != minted_one.owner_lock_id &&
+-                   !minted_two.reclaimed_expired,
+-               "database release and reacquisition mint the next generation");
+-
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "database stale release", SyncSqliteTransactionMode::Immediate);
++    try {
++        TemporaryPath temp;
++        SyncSqliteDb db;
++        const int open_rc = sqlite3_open_v2(
++            temp.get().string().c_str(),
++            db.db.out(),
++            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
++            nullptr);
++        if (open_rc != SQLITE_OK) {
++            std::cerr << "could not open test database\n";
++            return 2;
++        }
++        create_schema(db);
++
++        const auto owner_a = capability(
++            "session-a", "daemon-a", "worker-a", 1);
++        SyncSessionCheckpointDaemonOwnerCapability empty;
++
++        test.check(foreign_keys_enabled(db),
++                   "foreign key cascades are active in the focused fixture");
++        test.check(mode_table_has_no_foreign_keys(db),
++                   "sticky owner mode is independent of checkpoint-root cascades");
++        test.check(owner_a.owner_lock_id.starts_with(
++                       "sync-resume-daemon-owner-lock:v1:"),
++                   "canonical owner id namespace");
++        test.check(owner_a.owner_lock_id.size() == 97,
++                   "canonical owner id digest geometry");
++
++        MintedDaemonOwnerLockRecord minted_one;
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "database mint generation one",
++                SyncSqliteTransactionMode::Immediate);
++            minted_one = anonsync::sync_checkpoint_owner_fence_internal::
++                acquire_owner_generation_in_write_transaction_or_throw(
++                    db.db,
++                    "session-mint",
++                    "daemon-mint-a",
++                    "worker-mint-a",
++                    100,
++                    50,
++                    "database mint generation one");
++            transaction.commit();
++        }
++        const auto minted_one_capability =
++            capability_from_minted("session-mint", minted_one);
++        const auto mint_mode_one = mode_snapshot(db, "session-mint");
++        test.check(minted_one.acquired && minted_one.owner_lock_epoch == 1 &&
++                       minted_one.acquired_at_epoch == 100 &&
++                       minted_one.expires_at_epoch == 150 &&
++                       !minted_one.reclaimed_expired,
++                   "database acquisition mints generation one from absent evidence");
++        test.check(mint_mode_one.present &&
++                       mint_mode_one.ownership_mode == "owner-required" &&
++                       mint_mode_one.latest_owner_lock_epoch == 1 &&
++                       mint_mode_one.mode_updated_at_epoch == 100 &&
++                       mint_mode_one.administrative_disable_evidence_id.empty(),
++                   "generation mint durably activates sticky owner-required mode");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "database live owner refusal",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        (void)anonsync::sync_checkpoint_owner_fence_internal::
++                            acquire_owner_generation_in_write_transaction_or_throw(
++                                db.db,
++                                "session-mint",
++                                "daemon-mint-b",
++                                "worker-mint-b",
++                                149,
++                                50,
++                                "database live owner refusal");
++                    },
++                    "still live"),
++                "database acquisition cannot overwrite a live generation");
++            transaction.rollback();
++        }
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "database exact release",
++                SyncSqliteTransactionMode::Immediate);
++            anonsync::sync_checkpoint_owner_fence_internal::
++                release_owner_generation_in_write_transaction_or_throw(
++                    db.db,
++                    "session-mint",
++                    minted_one_capability,
++                    120,
++                    "database exact release");
++            transaction.commit();
++        }
++        const auto released_mode = mode_snapshot(db, "session-mint");
++        test.check(released_mode.present &&
++                       released_mode.ownership_mode == "owner-required" &&
++                       released_mode.latest_owner_lock_epoch == 1 &&
++                       released_mode.mode_updated_at_epoch == 120,
++                   "release preserves sticky owner-required mode and generation");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "database released empty refusal",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-mint",
++                                empty,
++                                121,
++                                "database released empty refusal");
++                    },
++                    "remains required after release"),
++                "release cannot reopen capability-free mutation");
++            transaction.rollback();
++        }
++
++        MintedDaemonOwnerLockRecord minted_two;
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "database mint generation two",
++                SyncSqliteTransactionMode::Immediate);
++            minted_two = anonsync::sync_checkpoint_owner_fence_internal::
++                acquire_owner_generation_in_write_transaction_or_throw(
++                    db.db,
++                    "session-mint",
++                    "daemon-mint-b",
++                    "worker-mint-b",
++                    121,
++                    50,
++                    "database mint generation two");
++            transaction.commit();
++        }
++        const auto minted_two_capability =
++            capability_from_minted("session-mint", minted_two);
++        test.check(minted_two.acquired &&
++                       minted_two.owner_lock_epoch == 2 &&
++                       minted_two.owner_lock_id != minted_one.owner_lock_id &&
++                       !minted_two.reclaimed_expired,
++                   "release and reacquisition mint the next sticky generation");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "database stale release",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            release_owner_generation_in_write_transaction_or_throw(
++                                db.db,
++                                "session-mint",
++                                minted_one_capability,
++                                122,
++                                "database stale release");
++                    },
++                    "does not match the live durable generation"),
++                "stale generation cannot release its successor");
++            transaction.rollback();
++        }
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "database generation two recipient",
++                SyncSqliteTransactionMode::Immediate);
++            anonsync::sync_checkpoint_owner_fence_internal::
++                require_recipient_write_authority_or_throw(
++                    db.db,
++                    "session-mint",
++                    minted_two_capability,
++                    130,
++                    "database generation two recipient");
++            transaction.rollback();
++        }
++        test.check(true,
++                   "newly minted durable generation authorizes its exact recipient");
++
+         test.check(
+             throws_with(
+                 [&] {
+                     anonsync::sync_checkpoint_owner_fence_internal::
+-                        release_owner_generation_in_write_transaction_or_throw(
++                        require_recipient_write_authority_or_throw(
+                             db.db,
+-                            "session-mint",
+-                            minted_one_capability,
+-                            122,
+-                            "database stale release");
++                            "session-a",
++                            empty,
++                            5,
++                            "outside transaction");
+                 },
+-                "does not match the live durable generation"),
+-            "stale generation cannot release its successor");
+-        transaction.rollback();
+-    }
+-
+-    const auto minted_two_capability =
+-        capability_from_minted("session-mint", minted_two);
+-    bool generation_two_authorized = false;
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "database generation two recipient", SyncSqliteTransactionMode::Immediate);
++                "inside the recipient write transaction"),
++            "recipient check refuses preflight-only observation");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db, "absent owner", SyncSqliteTransactionMode::Immediate);
++            anonsync::sync_checkpoint_owner_fence_internal::
++                require_recipient_write_authority_or_throw(
++                    db.db, "session-a", empty, 5, "absent owner");
++            apply_effect(db);
++            transaction.commit();
++        }
++        test.check(effect_count(db) == 1,
++                   "empty capability may mutate before ownership ever exists");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db, "invented owner", SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-a",
++                                owner_a,
++                                5,
++                                "invented owner");
++                    },
++                    "no durable owner row exists"),
++                "capability cannot invent an absent durable owner");
++            transaction.rollback();
++        }
++
++        store_owner(db, owner_a, 10, 30, 0, 10, "held");
++        {
++            SyncSqliteTransaction transaction(
++                db.db, "legacy exact owner", SyncSqliteTransactionMode::Immediate);
++            anonsync::sync_checkpoint_owner_fence_internal::
++                require_recipient_write_authority_or_throw(
++                    db.db, "session-a", owner_a, 20, "legacy exact owner");
++            apply_effect(db);
++            transaction.commit();
++        }
++        const auto legacy_backfill = mode_snapshot(db, "session-a");
++        test.check(effect_count(db) == 2,
++                   "exact legacy generation authorizes recipient mutation");
++        test.check(legacy_backfill.present &&
++                       legacy_backfill.ownership_mode == "owner-required" &&
++                       legacy_backfill.latest_owner_lock_epoch == 1 &&
++                       legacy_backfill.mode_updated_at_epoch == 10,
++                   "recipient boundary backfills legacy ownership as sticky");
++
++        auto partial = owner_a;
++        partial.owner_lock_id.clear();
++        {
++            SyncSqliteTransaction transaction(
++                db.db, "partial capability", SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-a",
++                                partial,
++                                20,
++                                "partial capability");
++                    },
++                    "partially populated"),
++                "partial capability is rejected");
++            transaction.rollback();
++        }
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db, "session-a release", SyncSqliteTransactionMode::Immediate);
++            anonsync::sync_checkpoint_owner_fence_internal::
++                release_owner_generation_in_write_transaction_or_throw(
++                    db.db, "session-a", owner_a, 21, "session-a release");
++            transaction.commit();
++        }
++        MintedDaemonOwnerLockRecord owner_b_minted;
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "session-a successor",
++                SyncSqliteTransactionMode::Immediate);
++            owner_b_minted = anonsync::sync_checkpoint_owner_fence_internal::
++                acquire_owner_generation_in_write_transaction_or_throw(
++                    db.db,
++                    "session-a",
++                    "daemon-b",
++                    "worker-b",
++                    22,
++                    40,
++                    "session-a successor");
++            transaction.commit();
++        }
++        const auto owner_b = capability_from_minted(
++            "session-a", owner_b_minted);
++        {
++            SyncSqliteTransaction transaction(
++                db.db, "stale generation", SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-a",
++                                owner_a,
++                                23,
++                                "stale generation");
++                    },
++                    "does not match the live durable generation"),
++                "generation one is fenced after generation two takeover");
++            transaction.rollback();
++        }
++        test.check(effect_count(db) == 2,
++                   "stale generation produces no recipient effect");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db, "exact owner b", SyncSqliteTransactionMode::Immediate);
++            anonsync::sync_checkpoint_owner_fence_internal::
++                require_recipient_write_authority_or_throw(
++                    db.db, "session-a", owner_b, 23, "exact owner b");
++            apply_effect(db);
++            transaction.commit();
++        }
++        test.check(effect_count(db) == 3,
++                   "new durable generation can mutate after takeover");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db, "expired owner b", SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-a",
++                                owner_b,
++                                62,
++                                "expired owner b");
++                    },
++                    "expired"),
++                "generation expires at its exclusive upper bound");
++            transaction.rollback();
++        }
++
++        store_owner(
++            db,
++            owner_b,
++            70,
++            90,
++            0,
++            70,
++            "held",
++            "sync-resume-daemon-owner-lock:v1:" + std::string(64, '0'));
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "forged durable row",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-a",
++                                owner_b,
++                                80,
++                                "forged durable row");
++                    },
++                    "does not bind"),
++                "forged durable owner id fails canonical recomputation");
++            transaction.rollback();
++        }
++        test.check(effect_count(db) == 3,
++                   "malformed durable evidence produces no effect");
++
++        const auto legacy_released = capability(
++            "session-legacy", "daemon-legacy", "worker-legacy", 1);
++        store_owner(db, legacy_released, 10, 30, 20, 20, "released");
+         anonsync::sync_checkpoint_owner_fence_internal::
+-            require_recipient_write_authority_or_throw(
+-                db.db,
+-                "session-mint",
+-                minted_two_capability,
+-                130,
+-                "database generation two recipient");
+-        generation_two_authorized = true;
+-        transaction.rollback();
+-    }
+-    test.check(generation_two_authorized,
+-               "newly minted durable generation authorizes its exact recipient");
+-
+-    test.check(throws_with(
+-                   [&] {
+-                       anonsync::sync_checkpoint_owner_fence_internal::
+-                           require_recipient_write_authority_or_throw(
+-                               db.db,
+-                               "session-a",
+-                               empty,
+-                               5,
+-                               "outside transaction");
+-                   },
+-                   "inside the recipient write transaction"),
+-               "recipient check refuses preflight-only observation");
+-
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "absent owner", SyncSqliteTransactionMode::Immediate);
+-        anonsync::sync_checkpoint_owner_fence_internal::
+-            require_recipient_write_authority_or_throw(
+-                db.db, "session-a", empty, 5, "absent owner");
+-        apply_effect(db);
+-        transaction.commit();
+-    }
+-    test.check(effect_count(db) == 1,
+-               "empty capability may mutate before durable ownership exists");
+-
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "invented owner", SyncSqliteTransactionMode::Immediate);
+-        test.check(throws_with(
+-                       [&] {
+-                           anonsync::sync_checkpoint_owner_fence_internal::
+-                               require_recipient_write_authority_or_throw(
+-                                   db.db,
+-                                   "session-a",
+-                                   owner_a,
+-                                   5,
+-                                   "invented owner");
+-                       },
+-                       "invented"),
+-                   "capability cannot invent an absent durable owner");
+-        transaction.rollback();
+-    }
+-
+-    store_owner(db, owner_a, 10, 30, 0, 10, "held");
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "exact owner a", SyncSqliteTransactionMode::Immediate);
+-        anonsync::sync_checkpoint_owner_fence_internal::
+-            require_recipient_write_authority_or_throw(
+-                db.db, "session-a", owner_a, 20, "exact owner a");
+-        apply_effect(db);
+-        transaction.commit();
+-    }
+-    test.check(effect_count(db) == 2,
+-               "exact live generation authorizes recipient mutation");
+-
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "missing capability", SyncSqliteTransactionMode::Immediate);
+-        test.check(throws_with(
+-                       [&] {
+-                           anonsync::sync_checkpoint_owner_fence_internal::
+-                               require_recipient_write_authority_or_throw(
+-                                   db.db,
+-                                   "session-a",
+-                                   empty,
+-                                   20,
+-                                   "missing capability");
+-                       },
+-                       "requires its exact capability"),
+-                   "live owner rejects empty capability");
+-        transaction.rollback();
+-    }
+-
+-    auto partial = owner_a;
+-    partial.owner_lock_id.clear();
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "partial capability", SyncSqliteTransactionMode::Immediate);
+-        test.check(throws_with(
+-                       [&] {
+-                           anonsync::sync_checkpoint_owner_fence_internal::
+-                               require_recipient_write_authority_or_throw(
+-                                   db.db,
+-                                   "session-a",
+-                                   partial,
+-                                   20,
+-                                   "partial capability");
+-                       },
+-                       "partial"),
+-                   "partial capability is rejected");
+-        transaction.rollback();
+-    }
+-
+-    store_owner(db, owner_b, 31, 60, 0, 31, "held");
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "stale generation", SyncSqliteTransactionMode::Immediate);
+-        test.check(throws_with(
+-                       [&] {
+-                           anonsync::sync_checkpoint_owner_fence_internal::
+-                               require_recipient_write_authority_or_throw(
+-                                   db.db,
+-                                   "session-a",
+-                                   owner_a,
+-                                   40,
+-                                   "stale generation");
+-                       },
+-                       "does not match the live durable generation"),
+-                   "generation one is fenced after generation two takeover");
+-        transaction.rollback();
+-    }
+-    test.check(effect_count(db) == 2,
+-               "stale generation produces no recipient effect");
+-
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "exact owner b", SyncSqliteTransactionMode::Immediate);
+-        anonsync::sync_checkpoint_owner_fence_internal::
+-            require_recipient_write_authority_or_throw(
+-                db.db, "session-a", owner_b, 40, "exact owner b");
+-        apply_effect(db);
+-        transaction.commit();
+-    }
+-    test.check(effect_count(db) == 3,
+-               "new durable generation can mutate after takeover");
+-
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "expired owner b", SyncSqliteTransactionMode::Immediate);
+-        test.check(throws_with(
+-                       [&] {
+-                           anonsync::sync_checkpoint_owner_fence_internal::
+-                               require_recipient_write_authority_or_throw(
+-                                   db.db,
+-                                   "session-a",
+-                                   owner_b,
+-                                   60,
+-                                   "expired owner b");
+-                       },
+-                       "expired"),
+-                   "generation expires at its exclusive upper bound");
+-        transaction.rollback();
+-    }
+-
+-    store_owner(db, owner_b, 31, 60, 61, 61, "released");
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "released empty", SyncSqliteTransactionMode::Immediate);
+-        anonsync::sync_checkpoint_owner_fence_internal::
+-            require_recipient_write_authority_or_throw(
+-                db.db, "session-a", empty, 5, "released empty");
+-        apply_effect(db);
+-        transaction.commit();
+-    }
+-    test.check(effect_count(db) == 4,
+-               "released generation retires capability requirement");
+-
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "retired capability", SyncSqliteTransactionMode::Immediate);
+-        test.check(throws_with(
+-                       [&] {
+-                           anonsync::sync_checkpoint_owner_fence_internal::
+-                               require_recipient_write_authority_or_throw(
+-                                   db.db,
+-                                   "session-a",
+-                                   owner_b,
+-                                   62,
+-                                   "retired capability");
+-                       },
+-                       "retired"),
+-                   "released generation rejects its retired capability");
+-        transaction.rollback();
+-    }
+-
+-    store_owner(
+-        db,
+-        owner_b,
+-        70,
+-        90,
+-        0,
+-        70,
+-        "held",
+-        "sync-resume-daemon-owner-lock:v1:" + std::string(64, '0'));
+-    {
+-        SyncSqliteTransaction transaction(
+-            db.db, "forged durable row", SyncSqliteTransactionMode::Immediate);
+-        test.check(throws_with(
+-                       [&] {
+-                           anonsync::sync_checkpoint_owner_fence_internal::
+-                               require_recipient_write_authority_or_throw(
+-                                   db.db,
+-                                   "session-a",
+-                                   owner_b,
+-                                   80,
+-                                   "forged durable row");
+-                       },
+-                       "does not bind"),
+-                   "forged durable owner id fails canonical recomputation");
+-        transaction.rollback();
+-    }
+-    test.check(effect_count(db) == 4,
+-               "malformed durable evidence produces no effect");
++            ensure_checkpoint_owner_mode_schema_or_throw(
++                db.db, "legacy released startup migration");
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "legacy released empty refusal",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-legacy",
++                                empty,
++                                21,
++                                "legacy released empty refusal");
++                    },
++                    "remains required after release"),
++                "startup migration makes a legacy released owner sticky");
++            transaction.rollback();
++        }
++
++        MintedDaemonOwnerLockRecord reset_owner;
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "reset owner generation one",
++                SyncSqliteTransactionMode::Immediate);
++            reset_owner = anonsync::sync_checkpoint_owner_fence_internal::
++                acquire_owner_generation_in_write_transaction_or_throw(
++                    db.db,
++                    "session-reset",
++                    "daemon-reset-a",
++                    "worker-reset-a",
++                    200,
++                    100,
++                    "reset owner generation one");
++            transaction.commit();
++        }
++        const auto reset_capability =
++            capability_from_minted("session-reset", reset_owner);
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "authorized checkpoint root reset",
++                SyncSqliteTransactionMode::Immediate);
++            auto permit = anonsync::sync_checkpoint_owner_fence_internal::
++                authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++                    db.db,
++                    transaction.authority(),
++                    "session-reset",
++                    reset_capability,
++                    220,
++                    "authorized checkpoint root reset");
++            anonsync::sync_checkpoint_owner_fence_internal::
++                delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
++                    db.db, permit, "authorized checkpoint root reset");
++            const auto reset_mode = mode_snapshot(db, "session-reset");
++            test.check(root_count(db, "session-reset") == 0 &&
++                           owner_count(db, "session-reset") == 0,
++                       "root reset executes the real foreign-key owner cascade");
++            test.check(reset_mode.present &&
++                           reset_mode.ownership_mode == "owner-required" &&
++                           reset_mode.latest_owner_lock_epoch == 1 &&
++                           reset_mode.mode_updated_at_epoch == 220,
++                       "sticky mode survives and advances across root cascade");
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
++                                db.db,
++                                permit,
++                                "reused checkpoint root reset permit");
++                    },
++                    "already consumed"),
++                "checkpoint root reset permit is single-use");
++            insert_root(db, "session-reset");
++            transaction.commit();
++        }
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "post-reset empty refusal",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-reset",
++                                empty,
++                                221,
++                                "post-reset empty refusal");
++                    },
++                    "acquire a successor"),
++                "checkpoint reset cannot launder ownership into unowned mode");
++            transaction.rollback();
++        }
++
++        MintedDaemonOwnerLockRecord reset_successor;
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "post-reset successor",
++                SyncSqliteTransactionMode::Immediate);
++            reset_successor = anonsync::sync_checkpoint_owner_fence_internal::
++                acquire_owner_generation_in_write_transaction_or_throw(
++                    db.db,
++                    "session-reset",
++                    "daemon-reset-b",
++                    "worker-reset-b",
++                    221,
++                    100,
++                    "post-reset successor");
++            transaction.commit();
++        }
++        const auto reset_successor_capability = capability_from_minted(
++            "session-reset", reset_successor);
++        test.check(reset_successor.acquired &&
++                       reset_successor.owner_lock_epoch == 2,
++                   "successor after root reset advances the surviving generation");
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "post-reset stale generation",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-reset",
++                                reset_capability,
++                                222,
++                                "post-reset stale generation");
++                    },
++                    "does not match the live durable generation"),
++                "pre-reset generation is fenced by the post-reset successor");
++            anonsync::sync_checkpoint_owner_fence_internal::
++                require_recipient_write_authority_or_throw(
++                    db.db,
++                    "session-reset",
++                    reset_successor_capability,
++                    222,
++                    "post-reset exact successor");
++            transaction.rollback();
++        }
++        test.check(true,
++                   "post-reset successor authorizes its exact recipient");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "out-of-range unowned reset refusal",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        (void)anonsync::sync_checkpoint_owner_fence_internal::
++                            authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++                                db.db,
++                                transaction.authority(),
++                                "session-permit",
++                                empty,
++                                static_cast<std::uint64_t>(
++                                    std::numeric_limits<std::int64_t>::max()) + 1,
++                                "out-of-range unowned reset refusal");
++                    },
++                    "SQLite signed integer range"),
++                "unowned root reset rejects observation time outside durable integer range");
++            transaction.rollback();
++        }
++        test.check(root_count(db, "session-permit") == 1,
++                   "out-of-range reset leaves checkpoint root untouched");
++
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "default authority reset refusal",
++                SyncSqliteTransactionMode::Immediate);
++            const SyncSqliteTransactionAuthority no_authority;
++            test.check(
++                throws_with(
++                    [&] {
++                        (void)anonsync::sync_checkpoint_owner_fence_internal::
++                            authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++                                db.db,
++                                no_authority,
++                                "session-permit",
++                                empty,
++                                300,
++                                "default authority reset refusal");
++                    },
++                    "exact live typed write transaction authority"),
++                "root reset refuses an observation-only transaction state");
++            transaction.rollback();
++        }
++
++        {
++            SyncSqliteTransaction first_transaction(
++                db.db,
++                "stale reset permit issue",
++                SyncSqliteTransactionMode::Immediate);
++            auto stale_permit = anonsync::sync_checkpoint_owner_fence_internal::
++                authorize_checkpoint_root_reset_in_write_transaction_or_throw(
++                    db.db,
++                    first_transaction.authority(),
++                    "session-permit",
++                    empty,
++                    301,
++                    "stale reset permit issue");
++            first_transaction.rollback();
++
++            SyncSqliteTransaction second_transaction(
++                db.db,
++                "stale reset permit consume",
++                SyncSqliteTransactionMode::Immediate);
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            delete_checkpoint_root_with_permit_in_write_transaction_or_throw(
++                                db.db,
++                                stale_permit,
++                                "stale reset permit consume");
++                    },
++                    "does not bind this live write transaction"),
++                "reset permit cannot cross typed transaction generations");
++            second_transaction.rollback();
++        }
++        test.check(root_count(db, "session-permit") == 1,
++                   "stale reset permit leaves checkpoint root untouched");
++
++        store_disabled_mode(db, "session-disabled", 7, 400);
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "administratively disabled empty recipient",
++                SyncSqliteTransactionMode::Immediate);
++            anonsync::sync_checkpoint_owner_fence_internal::
++                require_recipient_write_authority_or_throw(
++                    db.db,
++                    "session-disabled",
++                    empty,
++                    401,
++                    "administratively disabled empty recipient");
++            test.check(
++                throws_with(
++                    [&] {
++                        anonsync::sync_checkpoint_owner_fence_internal::
++                            require_recipient_write_authority_or_throw(
++                                db.db,
++                                "session-disabled",
++                                owner_a,
++                                401,
++                                "administratively disabled owner recipient");
++                    },
++                    "after administrative disable"),
++                "administrative disable rejects residual owner capabilities");
++            transaction.rollback();
++        }
++
++        MintedDaemonOwnerLockRecord disabled_reactivated;
++        {
++            SyncSqliteTransaction transaction(
++                db.db,
++                "administratively disabled reactivation",
++                SyncSqliteTransactionMode::Immediate);
++            disabled_reactivated = anonsync::sync_checkpoint_owner_fence_internal::
++                acquire_owner_generation_in_write_transaction_or_throw(
++                    db.db,
++                    "session-disabled",
++                    "daemon-disabled-next",
++                    "worker-disabled-next",
++                    402,
++                    50,
++                    "administratively disabled reactivation");
++            transaction.commit();
++        }
++        const auto reactivated_mode = mode_snapshot(db, "session-disabled");
++        test.check(disabled_reactivated.owner_lock_epoch == 8 &&
++                       reactivated_mode.present &&
++                       reactivated_mode.ownership_mode == "owner-required" &&
++                       reactivated_mode.latest_owner_lock_epoch == 8 &&
++                       reactivated_mode.administrative_disable_evidence_id.empty(),
++                   "new acquisition explicitly reactivates disabled mode at next generation");
++    } catch (const std::exception& error) {
++        ++test.failed;
++        std::cerr << "UNCAUGHT: " << error.what() << '\n';
++    }
+ 
+     std::cout << "sync checkpoint owner fence SQLite checks: "
+               << test.passed << '/' << (test.passed + test.failed)
+--- a/tools/audit_sync_checkpoint_owner_fence.py
++++ b/tools/audit_sync_checkpoint_owner_fence.py
+@@ -77,6 +77,7 @@
+ 
+     cmake = (root / "CMakeLists.txt").read_text()
+     core_header = (root / "include/anonsync_core.hpp").read_text()
++    core_internal_header = (root / "include/anonsync_core_internal.hpp").read_text()
+     capability_header = (
+         root / "include/anonsync_sync_checkpoint_owner_fence.hpp"
+     ).read_text()
+@@ -87,6 +88,7 @@
+     domain = (root / "src/sync_domain.cpp").read_text()
+     peer = (root / "src/sync_peer_ingestion.cpp").read_text()
+     scheduler = (root / "src/sync_checkpoint_scheduler.cpp").read_text()
++    operator_cli = (root / "src/sync_operator_cli.cpp").read_text()
+     selftests = (root / "src/sync_domain_selftests.cpp").read_text()
+     policy_test = (root / "tests/sync_checkpoint_owner_fence_policy_test.cpp").read_text()
+     sqlite_test = (root / "tests/sync_checkpoint_owner_fence_sqlite_test.cpp").read_text()
+@@ -206,19 +208,22 @@
+     )
+ 
+     policy_required = [
+-        "out.owner_lock_epoch = 1;",
+-        "out.owner_lock_epoch = stored.owner_lock_epoch + 1;",
++        "latest_generation + 1",
++        "mode.latest_owner_lock_epoch",
+         "owner generation is exhausted",
+         "stored owner row exceeds SQLite signed integer range",
++        "stored owner mode row exceeds SQLite signed integer range",
+         "owner lease expiration exceeds SQLite signed integer range",
+         "owner lock is still live",
+-        "acquisition clock regressed behind durable owner evidence",
++        "acquisition clock regressed behind durable owner mode evidence",
+         "presented owner capability is only partially populated",
+         "live durable owner row requires its exact capability",
+         "presented owner capability does not match the live durable generation",
+-        "released owner generation cannot authorize a mutation",
++        "sticky owner mode remains required after release",
++        "sticky owner mode has no live durable generation",
+         "durable owner generation is expired",
+         "stored owner lock id does not bind its row identities and generation",
++        "administratively-disabled mode lacks canonical disable evidence",
+     ]
+     check(
+         "pure_policy_fail_closes_generation_and_capability_geometry",
+@@ -229,16 +234,153 @@
+     runtime_required = [
+         'sqlite3_txn_state(db, "main") != SQLITE_TXN_WRITE',
+         "inside the recipient write transaction",
+-        "sqlite_table_exists_or_throw",
++        "load_stored_owner_lock_evidence_or_throw",
++        "load_or_backfill_owner_mode_in_write_transaction_or_throw",
+         "owner_lock_id_or_throw(",
+         "stored.owner_lock_id_is_canonical",
+-        "authorize_recipient(stored, request)",
++        "authorize_recipient(",
++        "mode, stored, request",
+         "recipient owner fence rejected",
+     ]
+     check(
+         "recipient_runtime_rechecks_exact_durable_state_in_write_transaction",
+         all(token in runtime for token in runtime_required),
+         "recipient reads the row, recomputes the canonical id, and invokes policy on the write snapshot",
++    )
++
++    checkpoint_options = struct_slice(core_header, "SyncSessionCheckpointOptions")
++    check(
++        "checkpoint_root_reset_api_carries_exact_owner_and_observation_evidence",
++        "SyncSessionCheckpointDaemonOwnerCapability daemon_owner_capability;"
++        in checkpoint_options
++        and "std::uint64_t owner_fence_now_epoch = 1;" in checkpoint_options
++        and checkpoint_options.find("daemon_owner_capability")
++        < checkpoint_options.find("reset_existing_session_rows"),
++        "destructive checkpoint replacement carries recipient capability and explicit fence time",
++    )
++
++    mode_schema = function_slice(
++        runtime,
++        "void ensure_checkpoint_owner_mode_schema_or_throw(",
++        "std::string owner_lock_id_or_throw(",
++    )
++    check(
++        "sticky_owner_mode_schema_is_outside_checkpoint_cascade",
++        "CREATE TABLE IF NOT EXISTS sync_session_checkpoint_owner_modes" in mode_schema
++        and "session_id TEXT NOT NULL PRIMARY KEY" in mode_schema
++        and "REFERENCES" not in mode_schema
++        and "ON DELETE" not in mode_schema,
++        "mode memory has no foreign key or cascade edge to the replaceable checkpoint root",
++    )
++
++    check(
++        "checkpoint_schema_delegates_sticky_mode_ownership",
++        "ensure_checkpoint_owner_mode_schema_or_throw(" in domain
++        and domain.find("ensure_checkpoint_owner_mode_schema_or_throw(")
++        > domain.find("sync_session_resume_transfer_daemon_owner_locks"),
++        "the domain creates its owner child row then delegates independent mode migration to the focused boundary",
++    )
++
++    release_slice = function_slice(
++        runtime,
++        "void release_owner_generation_in_write_transaction_or_throw(",
++        "void require_recipient_write_authority_or_throw(",
++    )
++    check(
++        "release_retires_generation_without_disabling_sticky_ownership",
++        "lock_state='released'" in release_slice
++        and "UPDATE sync_session_checkpoint_owner_modes" in release_slice
++        and "ownership_mode='owner-required'" in release_slice
++        and "administratively-disabled" not in release_slice,
++        "release advances owner-required mode but exposes no capability-free transition",
++    )
++
++    permit_class = runtime_header[
++        runtime_header.find("class CheckpointRootResetPermit final") :
++        runtime_header.find(
++            "authorize_checkpoint_root_reset_in_write_transaction_or_throw(",
++            runtime_header.find("class CheckpointRootResetPermit final"),
++        )
++    ]
++    check(
++        "checkpoint_root_reset_permit_is_private_nontransferable_and_single_use",
++        "private:" in permit_class
++        and "CheckpointRootResetPermit(const CheckpointRootResetPermit&) = delete;"
++        in permit_class
++        and "CheckpointRootResetPermit(CheckpointRootResetPermit&&) = delete;"
++        in permit_class
++        and "bool consumed_ = false;" in permit_class,
++        "only the focused authorizer can mint a noncopyable, nonmovable one-shot reset capability",
++    )
++
++    reset_authorize = function_slice(
++        runtime,
++        "authorize_checkpoint_root_reset_in_write_transaction_or_throw(",
++        "void delete_checkpoint_root_with_permit_in_write_transaction_or_throw(",
++    )
++    reset_delete = function_slice(
++        runtime,
++        "void delete_checkpoint_root_with_permit_in_write_transaction_or_throw(",
++    )
++    check(
++        "root_reset_binds_recipient_evidence_to_exact_typed_transaction_generation",
++        "transaction_authority.authorizes_write(db)" in reset_authorize
++        and "require_recipient_write_authority_or_throw(" in reset_authorize
++        and "permit.transaction_authority_.authorizes_write(db)" in reset_delete
++        and "permit.consumed_" in reset_delete,
++        "authorization and consumption both verify the same live typed write-transaction generation",
++    )
++
++    active_cpp = [
++        path
++        for path in root.rglob("*.cpp")
++        if "REVISION_EVIDENCE" not in path.parts
++        and not any(part.startswith("build") for part in path.relative_to(root).parts)
++    ]
++    root_delete_users = [
++        path.relative_to(root).as_posix()
++        for path in active_cpp
++        if "DELETE FROM sync_session_checkpoints" in path.read_text(errors="replace")
++    ]
++    check(
++        "checkpoint_root_delete_has_one_focused_invariant_owner",
++        root_delete_users == ["src/sync_checkpoint_owner_fence.cpp"]
++        and "DELETE FROM sync_session_checkpoints" in reset_delete,
++        f"active root-delete SQL owners={root_delete_users}",
++    )
++
++    persist_slice = function_slice(
++        domain,
++        "SyncValidationResult persist_sync_fake_peer_session_checkpoint(",
++        "SyncValidationResult load_sync_session_checkpoint_resume_view(",
++    )
++    persist_tx = persist_slice.find("SyncSqliteTransaction transaction(")
++    permit_issue = persist_slice.find(
++        "authorize_checkpoint_root_reset_in_write_transaction_or_throw("
++    )
++    root_delete = persist_slice.find(
++        "delete_checkpoint_root_with_permit_in_write_transaction_or_throw("
++    )
++    root_insert = persist_slice.find("INSERT INTO sync_session_checkpoints")
++    persist_commit = persist_slice.find("transaction.commit()")
++    check(
++        "checkpoint_replacement_uses_typed_raii_transaction_and_ordered_reset_permit",
++        0 <= persist_tx < permit_issue < root_delete < root_insert < persist_commit
++        and "BEGIN IMMEDIATE;" not in persist_slice
++        and '"COMMIT;"' not in persist_slice
++        and '"ROLLBACK;"' not in persist_slice
++        and "transaction.authority()" in persist_slice,
++        f"positions transaction={persist_tx} authorize={permit_issue} delete={root_delete} insert={root_insert} commit={persist_commit}",
++    )
++
++    check(
++        "administrative_disable_is_modeled_but_not_forgeable_by_production_api",
++        "administratively-disabled" in policy
++        and "sync-checkpoint-owner-admin-disable:v1:" in policy
++        and "SET ownership_mode='administratively-disabled'" not in runtime
++        and "disable_owner" not in runtime_header.lower()
++        and "administrative_disable" not in capability_header,
++        "policy can interpret separately evidenced disable state, but this revision exposes no transition that fabricates it",
+     )
+ 
+     public_users = include_users(root, "anonsync_sync_checkpoint_owner_fence.hpp")
+@@ -350,6 +492,95 @@
+         "domain owns database open/schema/commit while the focused boundary owns row interpretation and mutation",
+     )
+ 
++    internal_lease_struct = struct_slice(
++        core_internal_header, "SyncInternalCheckpointMutationOwnerLease"
++    )
++    internal_acquire = function_slice(
++        domain,
++        "SyncValidationResult sync_internal_acquire_checkpoint_mutation_owner_lease(",
++        "SyncValidationResult sync_internal_release_checkpoint_mutation_owner_lease(",
++    )
++    internal_release = function_slice(
++        domain,
++        "SyncValidationResult sync_internal_release_checkpoint_mutation_owner_lease(",
++        "bool sync_checkpoint_apply_intent_routes_remote_file_bytes_to_staging(",
++    )
++    check(
++        "internal_mutation_lease_is_database_minted_and_exactly_retired",
++        "SyncSessionCheckpointDaemonOwnerCapability capability;"
++        in internal_lease_struct
++        and "std::uint64_t acquired_at_epoch = 0;" in internal_lease_struct
++        and "std::uint64_t expires_at_epoch = 0;" in internal_lease_struct
++        and "acquire_resume_transfer_daemon_owner_lock_or_throw(" in internal_acquire
++        and "out.capability.owner_lock_id = record.owner_lock_id;" in internal_acquire
++        and "out.capability.owner_lock_epoch = record.owner_lock_epoch;"
++        in internal_acquire
++        and "release_resume_transfer_daemon_owner_lock_or_throw(" in internal_release
++        and "sqlite_path, session_id, capability, released_at_epoch" in internal_release,
++        "cross-translation-unit orchestration can only receive database-minted evidence and retire that exact capability",
++    )
++
++    repair_guard = function_slice(
++        operator_cli,
++        "class SyncOperatorRepairOwnerLeaseGuard final",
++        "std::string sync_cli_json_bool",
++    )
++    check(
++        "operator_repair_owner_guard_is_scoped_and_nontransferable",
++        "const SyncOperatorRepairOwnerLeaseGuard&) = delete;" in repair_guard
++        and "SyncOperatorRepairOwnerLeaseGuard&&) = delete;" in repair_guard
++        and "~SyncOperatorRepairOwnerLeaseGuard()" in repair_guard
++        and "sync_internal_release_checkpoint_mutation_owner_lease(" in repair_guard
++        and "if (released.ok) armed_ = false;" in repair_guard,
++        "the repair owner lease cannot be copied or moved and has a no-throw cleanup fallback",
++    )
++
++    standalone_repair = function_slice(
++        operator_cli,
++        "int run_sync_checkpoint_sidecar_repair_reset_command(",
++        "int run_sync_checkpoint_daemon_run_command(",
++    )
++    workflow_repair = function_slice(
++        operator_cli,
++        "int run_sync_checkpoint_operator_recovery_workflow_command(",
++    )
++    standalone_acquire = standalone_repair.find(
++        "sync_internal_acquire_checkpoint_mutation_owner_lease("
++    )
++    standalone_propagate = standalone_repair.find(
++        "options.daemon_owner_capability = owner_lease.capability;"
++    )
++    standalone_mutate = standalone_repair.find(
++        "repair_reset_sync_session_checkpoint_bound_peer_sidecar_review_event("
++    )
++    standalone_release = standalone_repair.find("owner_guard.release_now()")
++    workflow_acquire = workflow_repair.find(
++        "sync_internal_acquire_checkpoint_mutation_owner_lease("
++    )
++    workflow_propagate = workflow_repair.find(
++        "config.repair_options.daemon_owner_capability ="
++    )
++    workflow_mutate = workflow_repair.find(
++        "repair_reset_sync_session_checkpoint_bound_peer_sidecar_review_event("
++    )
++    workflow_release = workflow_repair.find("repair_owner_guard.release_now()")
++    check(
++        "operator_repair_paths_acquire_propagate_and_release_exact_authority",
++        0
++        <= standalone_acquire
++        < standalone_propagate
++        < standalone_mutate
++        < standalone_release
++        and 0
++        <= workflow_acquire
++        < workflow_propagate
++        < workflow_mutate
++        < workflow_release
++        and "repair_owner_lock" in workflow_repair
++        and "repair_owner_release_run" in workflow_repair,
++        "both standalone and workflow repair paths mint before mutation, pass the exact capability, retire afterward, and report release evidence",
++    )
++
+     recipient_source = domain + "\n" + peer
+     fence_contexts = [
+         "bound peer chunk acceptance db advance",
+@@ -460,15 +691,20 @@
+ 
+     policy_test_tokens = [
+         "first owner acquisition did not mint generation one",
+-        "released owner takeover did not increment generation",
++        "released owner takeover did not increment sticky generation",
++        "owner-row absence after reset reused or lost sticky generation",
++        "administratively disabled mode did not reactivate with a new generation",
+         "expired owner takeover did not increment generation",
+         "live owner was overwritten",
+         "acquisition clock regression was accepted",
++        "mode/owner generation disagreement was accepted",
+         "owner generation overflow was accepted",
+         "owner lease exceeded SQLite durable integer range",
+         "out-of-range durable owner integer was accepted",
+         "partial owner capability was accepted",
+         "expired owner capability authorized a mutation",
++        "release erased sticky ownership",
++        "root-reset owner gap admitted an empty capability",
+         "noncanonical owner id was accepted",
+     ]
+     check(
+@@ -479,9 +715,10 @@
+     )
+ 
+     sqlite_test_tokens = [
+-        "database acquisition mints generation one from an absent row",
++        "database acquisition mints generation one from absent evidence",
+         "database acquisition cannot overwrite a live generation",
+-        "database release and reacquisition mint the next generation",
++        "release cannot reopen capability-free mutation",
++        "release and reacquisition mint the next sticky generation",
+         "stale generation cannot release its successor",
+         "newly minted durable generation authorizes its exact recipient",
+         "inside the recipient write transaction",
+@@ -490,12 +727,16 @@
+         "new durable generation can mutate after takeover",
+         "forged durable owner id fails canonical recomputation",
+         "malformed durable evidence produces no effect",
++        "root reset executes the real foreign-key owner cascade",
++        "sticky mode survives and advances across root cascade",
++        "checkpoint reset cannot launder ownership into unowned mode",
++        "reset permit cannot cross typed transaction generations",
+     ]
+     check(
+         "focused_sqlite_recipient_proof_demonstrates_no_stale_effect",
+         all(token in sqlite_test for token in sqlite_test_tokens)
+         and "effect_count(db) == 2" in sqlite_test
+-        and "effect_count(db) == 4" in sqlite_test,
++        and "effect_count(db) == 3" in sqlite_test,
+         "database mint/release plus A->B takeover reject stale authority in immediate transactions without recipient effects",
+     )
+ 
+@@ -507,6 +748,23 @@
+         and "mints the first durable generation" in selftests
+         and "mints the next durable generation" in selftests,
+         "full-domain fixture proves first mint and expired-owner successor generation",
++    )
++
++    check(
++        "domain_corpus_proves_operator_repair_owner_lifecycle",
++        "repair_owner_lock" in selftests
++        and 'at("acquire_attempted").boolean(false)' in selftests
++        and 'at("release_attempted").boolean(false)' in selftests
++        and 'at("released").boolean(false)' in selftests
++        and "sidecar operator fixture acquires an exact successor owner generation before mutation"
++        in selftests
++        and "sidecar operator fixture retires its exact generation before the CLI acquires a successor"
++        in selftests
++        and "sidecar_review_quarantine_options.daemon_owner_capability ="
++        in selftests
++        and "sidecar_review_repair_options.daemon_owner_capability ="
++        in selftests,
++        "the full-domain corpus proves workflow, direct operator, and standalone CLI capability lifecycles",
+     )
+ 
+     focused_targets = foreach_block(cmake, "ANONSYNC_FOCUSED_BOUNDARY_TARGET")

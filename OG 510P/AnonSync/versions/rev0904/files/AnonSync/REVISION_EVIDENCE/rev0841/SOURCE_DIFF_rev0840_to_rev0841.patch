@@ -1,0 +1,1441 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -277,6 +277,21 @@
+ target_include_directories(anonsync_canonical_projection_verifier PUBLIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
+ target_compile_options(anonsync_canonical_projection_verifier PRIVATE
++  -Wall -Wextra -Wpedantic)
++
++# A terminal-effect signature is authority only over one exact owning payload.
++# This leaf freezes all covered fields, frames v3 signing bytes without ambient
++# locale or delimiters, bounds the document, and emits the JSON from that same
++# frozen value. The core retains v2 read compatibility but mints only v3.
++set(ANONSYNC_EFFECT_TRANSITION_INTENT_PUBLICATION_SOURCE
++  src/persistence/effect_transition_intent_publication.cpp)
++add_library(anonsync_effect_transition_intent_publication STATIC
++  ${ANONSYNC_EFFECT_TRANSITION_INTENT_PUBLICATION_SOURCE})
++target_include_directories(anonsync_effect_transition_intent_publication PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
++target_link_libraries(anonsync_effect_transition_intent_publication PRIVATE
++  anonsync_sha256_digest)
++target_compile_options(anonsync_effect_transition_intent_publication PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
+ # SQLite projection decoding owns column-map and field semantics while routing
+@@ -631,6 +646,7 @@
+     "${ANONSYNC_SQLITE_LIVE_BACKUP_SOURCE}"
+     "${ANONSYNC_SQLITE_VERIFICATION_BUDGET_SOURCE}"
+     "${ANONSYNC_SQLITE_SNAPSHOT_SEAL_SOURCE}"
++    "${ANONSYNC_EFFECT_TRANSITION_INTENT_PUBLICATION_SOURCE}"
+     "${ANONSYNC_CANONICAL_PROJECTION_VERIFIER_SOURCE}"
+     "${ANONSYNC_SQLITE_PROJECTION_DECODER_SOURCE}"
+     "${ANONSYNC_SHA256_DIGEST_SOURCE}"
+@@ -671,6 +687,7 @@
+     anonsync_sqlite_live_backup
+     anonsync_sqlite_verification_budget
+     anonsync_sqlite_snapshot_seal
++    anonsync_effect_transition_intent_publication
+     anonsync_sha256_digest
+     anonsync_sqlite_replay_ledger_write_gate
+     anonsync_sqlite_replay_ledger_restore_lock
+@@ -1359,6 +1376,15 @@
+ target_link_libraries(anonsync_canonical_projection_verifier_test PRIVATE
+   anonsync_canonical_projection_verifier)
+ target_compile_options(anonsync_canonical_projection_verifier_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++add_executable(anonsync_effect_transition_intent_publication_test
++  tests/persistence/effect_transition_intent_publication_tests.cpp)
++target_include_directories(anonsync_effect_transition_intent_publication_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src
++  ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
++target_link_libraries(anonsync_effect_transition_intent_publication_test PRIVATE
++  anonsync_effect_transition_intent_publication)
++target_compile_options(anonsync_effect_transition_intent_publication_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ add_executable(anonsync_sqlite_projection_decoder_test
+   tests/persistence/sqlite_projection_decoder_tests.cpp)
+@@ -1477,6 +1503,8 @@
+     anonsync_sqlite_snapshot_seal
+     anonsync_sqlite_snapshot_seal_test
+     anonsync_sqlite_snapshot_geometry_binding_test
++    anonsync_effect_transition_intent_publication
++    anonsync_effect_transition_intent_publication_test
+     anonsync_canonical_projection_verifier
+     anonsync_sqlite_projection_decoder
+     anonsync_canonical_projection_verifier_test
+@@ -1596,6 +1624,7 @@
+     anonsync_sqlite_live_backup
+     anonsync_sqlite_verification_budget
+     anonsync_sqlite_snapshot_seal
++    anonsync_effect_transition_intent_publication
+     anonsync_canonical_projection_verifier
+     anonsync_sqlite_projection_decoder
+     anonsync_sqlite_runtime
+@@ -1613,6 +1642,7 @@
+     anonsync_sqlite_persistence_process_authority_fork_test
+     anonsync_sqlite_snapshot_seal_test
+     anonsync_sqlite_snapshot_geometry_binding_test
++    anonsync_effect_transition_intent_publication_test
+     anonsync_sqlite_snapshot_sidecar_binding_test
+     anonsync_sqlite_replay_ledger_schema_integrity_test
+     anonsync_sqlite_restore_namespace_authority_test
+@@ -1711,6 +1741,7 @@
+       anonsync_sqlite_persistence_process_authority_fork_test
+       anonsync_sqlite_snapshot_seal_test
+       anonsync_sqlite_snapshot_geometry_binding_test
++      anonsync_effect_transition_intent_publication_test
+       anonsync_sqlite_snapshot_sidecar_binding_test
+       anonsync_sqlite_replay_ledger_schema_integrity_test
+       anonsync_sqlite_restore_namespace_authority_test
+@@ -1830,6 +1861,8 @@
+   COMMAND anonsync_sqlite_runtime_payload_store_test)
+ add_test(NAME anonsync_canonical_projection_verifier_test
+   COMMAND anonsync_canonical_projection_verifier_test)
++add_test(NAME anonsync_effect_transition_intent_publication_test
++  COMMAND anonsync_effect_transition_intent_publication_test)
+ add_test(NAME anonsync_sqlite_projection_decoder_test
+   COMMAND anonsync_sqlite_projection_decoder_test)
+ add_test(NAME anonsync_peer_ingress_projection_integrity_test
+--- /dev/null
++++ b/src/persistence/effect_transition_intent_publication.cpp
+@@ -0,0 +1,452 @@
++#include "effect_transition_intent_publication.hpp"
++#include "sha256_digest.hpp"
++
++#include <array>
++#include <charconv>
++#include <stdexcept>
++#include <system_error>
++#include <utility>
++
++namespace anonsync::persistence {
++namespace {
++
++class BoundedMachineText final {
++public:
++    explicit BoundedMachineText(std::size_t maximum_bytes)
++        : maximum_bytes_(maximum_bytes) {
++        value_.reserve(maximum_bytes_ < 4096 ? maximum_bytes_ : 4096);
++    }
++
++    void append(std::string_view text) {
++        if (text.size() > maximum_bytes_ - value_.size()) {
++            throw std::runtime_error("effect transition machine text exceeds byte budget");
++        }
++        value_.append(text);
++    }
++
++    void append(char c) {
++        if (value_.size() == maximum_bytes_) {
++            throw std::runtime_error("effect transition machine text exceeds byte budget");
++        }
++        value_.push_back(c);
++    }
++
++    template <typename Integer>
++    void append_decimal(Integer value) {
++        std::array<char, 32> buffer{};
++        const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
++        if (result.ec != std::errc{}) {
++            throw std::runtime_error("effect transition integer formatting failed");
++        }
++        append(std::string_view(buffer.data(),
++                                static_cast<std::size_t>(result.ptr - buffer.data())));
++    }
++
++    [[nodiscard]] std::string finish() && { return std::move(value_); }
++
++private:
++    std::size_t maximum_bytes_;
++    std::string value_;
++};
++
++bool is_lower_hex_sha256(std::string_view value) noexcept {
++    if (value.size() != 64) return false;
++    for (const char c : value) {
++        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
++    }
++    return true;
++}
++
++bool is_sha256_or_genesis(std::string_view value) noexcept {
++    return value == "GENESIS" || is_lower_hex_sha256(value);
++}
++
++bool contains_ascii_control(std::string_view value) noexcept {
++    for (const unsigned char c : value) {
++        if (c < 0x20 || c == 0x7f) return true;
++    }
++    return false;
++}
++
++bool is_well_formed_utf8(std::string_view value) noexcept {
++    const auto* bytes = reinterpret_cast<const unsigned char*>(value.data());
++    std::size_t index = 0;
++    while (index < value.size()) {
++        const unsigned char lead = bytes[index];
++        if (lead <= 0x7fU) {
++            ++index;
++            continue;
++        }
++
++        std::size_t continuation_count = 0;
++        std::uint32_t code_point = 0;
++        std::uint32_t minimum = 0;
++        if (lead >= 0xc2U && lead <= 0xdfU) {
++            continuation_count = 1;
++            code_point = lead & 0x1fU;
++            minimum = 0x80U;
++        } else if (lead >= 0xe0U && lead <= 0xefU) {
++            continuation_count = 2;
++            code_point = lead & 0x0fU;
++            minimum = 0x800U;
++        } else if (lead >= 0xf0U && lead <= 0xf4U) {
++            continuation_count = 3;
++            code_point = lead & 0x07U;
++            minimum = 0x10000U;
++        } else {
++            return false;
++        }
++        if (continuation_count > value.size() - index - 1) return false;
++
++        for (std::size_t offset = 1; offset <= continuation_count; ++offset) {
++            const unsigned char next = bytes[index + offset];
++            if ((next & 0xc0U) != 0x80U) return false;
++            code_point = (code_point << 6U) | (next & 0x3fU);
++        }
++        if (code_point < minimum || code_point > 0x10ffffU ||
++            (code_point >= 0xd800U && code_point <= 0xdfffU)) {
++            return false;
++        }
++        index += continuation_count + 1;
++    }
++    return true;
++}
++
++bool is_base64url_without_padding(std::string_view value) noexcept {
++    if (value.empty()) return false;
++    for (const char c : value) {
++        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
++              (c >= '0' && c <= '9') || c == '-' || c == '_')) {
++            return false;
++        }
++    }
++    return true;
++}
++
++int two_digits(std::string_view text, std::size_t pos) noexcept {
++    if (pos + 1 >= text.size() || text[pos] < '0' || text[pos] > '9' ||
++        text[pos + 1] < '0' || text[pos + 1] > '9') {
++        return -1;
++    }
++    return (text[pos] - '0') * 10 + (text[pos + 1] - '0');
++}
++
++int four_digits(std::string_view text, std::size_t pos) noexcept {
++    int value = 0;
++    for (std::size_t i = 0; i < 4; ++i) {
++        if (pos + i >= text.size() || text[pos + i] < '0' ||
++            text[pos + i] > '9') {
++            return -1;
++        }
++        value = value * 10 + (text[pos + i] - '0');
++    }
++    return value;
++}
++
++bool is_leap_year(int year) noexcept {
++    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
++}
++
++int days_in_month(int year, int month) noexcept {
++    static constexpr std::array<int, 13> days{
++        0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
++    if (month == 2) return is_leap_year(year) ? 29 : 28;
++    if (month < 1 || month > 12) return 0;
++    return days[static_cast<std::size_t>(month)];
++}
++
++bool is_canonical_utc(std::string_view text) noexcept {
++    if (text.size() != 20 || text[4] != '-' || text[7] != '-' ||
++        text[10] != 'T' || text[13] != ':' || text[16] != ':' ||
++        text[19] != 'Z') {
++        return false;
++    }
++    const int year = four_digits(text, 0);
++    const int month = two_digits(text, 5);
++    const int day = two_digits(text, 8);
++    const int hour = two_digits(text, 11);
++    const int minute = two_digits(text, 14);
++    const int second = two_digits(text, 17);
++    return year >= 1970 && month >= 1 && month <= 12 && day >= 1 &&
++           day <= days_in_month(year, month) && hour >= 0 && hour <= 23 &&
++           minute >= 0 && minute <= 59 && second >= 0 && second <= 59;
++}
++
++void require_nonempty_bounded_control_free(std::string_view value,
++                                           std::size_t maximum_bytes,
++                                           std::string_view label) {
++    if (value.empty()) {
++        throw std::runtime_error(std::string(label) + " is empty");
++    }
++    if (value.size() > maximum_bytes) {
++        throw std::runtime_error(std::string(label) + " exceeds byte budget");
++    }
++    if (contains_ascii_control(value)) {
++        throw std::runtime_error(std::string(label) + " contains an ASCII control");
++    }
++    if (!is_well_formed_utf8(value)) {
++        throw std::runtime_error(std::string(label) + " is not well-formed UTF-8");
++    }
++}
++
++void validate_v3_fields_or_throw(const EffectTransitionIntentPayloadFields& fields) {
++    if (!is_lower_hex_sha256(fields.intent_id)) {
++        throw std::runtime_error("effect transition v3 intent_id is not lowercase sha256 hex");
++    }
++    if (fields.intent_subject != kEffectTransitionIntentSubject) {
++        throw std::runtime_error("effect transition v3 subject mismatch");
++    }
++    if (!is_canonical_utc(fields.issued_at)) {
++        throw std::runtime_error("effect transition v3 issued_at is not canonical UTC");
++    }
++    if (fields.ledger_backend != kEffectTransitionIntentLedgerBackend) {
++        throw std::runtime_error("effect transition v3 ledger backend mismatch");
++    }
++    if (!is_lower_hex_sha256(fields.ledger_instance_id)) {
++        throw std::runtime_error("effect transition v3 ledger_instance_id is invalid");
++    }
++    if (!is_sha256_or_genesis(fields.prepared_ledger_head_hash)) {
++        throw std::runtime_error("effect transition v3 prepared ledger head is invalid");
++    }
++    if (!is_sha256_or_genesis(fields.effect_transition_previous_hash)) {
++        throw std::runtime_error("effect transition v3 previous transition head is invalid");
++    }
++    if (!is_lower_hex_sha256(fields.effect_idempotency_key)) {
++        throw std::runtime_error("effect transition v3 effect key is invalid");
++    }
++    if (fields.prepared_sequence <= 0 ||
++        fields.prepared_sequence > kEffectTransitionIntentMaximumExactJsonInteger) {
++        throw std::runtime_error("effect transition v3 prepared_sequence is outside exact JSON range");
++    }
++    if (!is_lower_hex_sha256(fields.prepared_entry_hash)) {
++        throw std::runtime_error("effect transition v3 prepared entry hash is invalid");
++    }
++    if (fields.terminal_state != "applied" && fields.terminal_state != "failed" &&
++        fields.terminal_state != "compensated") {
++        throw std::runtime_error("effect transition v3 terminal_state is invalid");
++    }
++    if (!is_lower_hex_sha256(fields.result_digest_sha256)) {
++        throw std::runtime_error("effect transition v3 result digest is invalid");
++    }
++    require_nonempty_bounded_control_free(fields.transition_reason,
++                                          kEffectTransitionIntentMaximumReasonBytes,
++                                          "effect transition v3 reason");
++}
++
++void append_line(BoundedMachineText& out, std::string_view value) {
++    out.append(value);
++    out.append('\n');
++}
++
++void append_component(BoundedMachineText& out, std::string_view value) {
++    out.append_decimal(value.size());
++    out.append(':');
++    out.append(value);
++}
++
++void append_named_component(BoundedMachineText& out,
++                            std::string_view name,
++                            std::string_view value) {
++    append_component(out, name);
++    append_component(out, value);
++}
++
++std::string decimal_text(std::int64_t value) {
++    BoundedMachineText out(32);
++    out.append_decimal(value);
++    return std::move(out).finish();
++}
++
++void append_json_string(BoundedMachineText& out, std::string_view value) {
++    static constexpr char hex[] = "0123456789abcdef";
++    out.append('"');
++    for (const unsigned char c : value) {
++        switch (c) {
++            case '"': out.append("\\\""); break;
++            case '\\': out.append("\\\\"); break;
++            case '\b': out.append("\\b"); break;
++            case '\f': out.append("\\f"); break;
++            case '\n': out.append("\\n"); break;
++            case '\r': out.append("\\r"); break;
++            case '\t': out.append("\\t"); break;
++            default:
++                if (c < 0x20) {
++                    out.append("\\u00");
++                    out.append(hex[(c >> 4U) & 0x0fU]);
++                    out.append(hex[c & 0x0fU]);
++                } else {
++                    out.append(static_cast<char>(c));
++                }
++        }
++    }
++    out.append('"');
++}
++
++void append_json_member_prefix(BoundedMachineText& out,
++                               std::string_view indentation,
++                               std::string_view name) {
++    out.append(indentation);
++    append_json_string(out, name);
++    out.append(": ");
++}
++
++}  // namespace
++
++std::string effect_transition_intent_v2_signing_input_or_throw(
++    const EffectTransitionIntentPayloadFields& fields) {
++    BoundedMachineText out(kEffectTransitionIntentMaximumLegacySigningInputBytes);
++    append_line(out, kEffectTransitionIntentV2Format);
++    append_line(out, fields.intent_id);
++    append_line(out, fields.intent_subject);
++    append_line(out, fields.issued_at);
++    append_line(out, fields.ledger_backend);
++    append_line(out, fields.ledger_instance_id);
++    append_line(out, fields.prepared_ledger_head_hash);
++    append_line(out, fields.effect_transition_previous_hash);
++    append_line(out, fields.effect_idempotency_key);
++    out.append_decimal(fields.prepared_sequence);
++    out.append('\n');
++    append_line(out, fields.prepared_entry_hash);
++    append_line(out, fields.terminal_state);
++    append_line(out, fields.result_digest_sha256);
++    append_line(out, fields.transition_reason);
++    return std::move(out).finish();
++}
++
++FrozenEffectTransitionIntentV3Payload
++FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++    EffectTransitionIntentPayloadFields fields) {
++    validate_v3_fields_or_throw(fields);
++    return FrozenEffectTransitionIntentV3Payload(std::move(fields));
++}
++
++std::string effect_transition_intent_v3_signing_input_or_throw(
++    const FrozenEffectTransitionIntentV3Payload& payload) {
++    const auto& fields = payload.fields();
++    BoundedMachineText out(kEffectTransitionIntentMaximumSigningInputBytes);
++    out.append("anonsync-length-prefixed-tuple-v1");
++    append_component(out, kEffectTransitionIntentV3Format);
++    append_named_component(out, "intent_id", fields.intent_id);
++    append_named_component(out, "intent_subject", fields.intent_subject);
++    append_named_component(out, "issued_at", fields.issued_at);
++    append_named_component(out, "ledger_backend", fields.ledger_backend);
++    append_named_component(out, "ledger_instance_id", fields.ledger_instance_id);
++    append_named_component(out, "prepared_ledger_head_hash",
++                           fields.prepared_ledger_head_hash);
++    append_named_component(out, "effect_transition_previous_hash",
++                           fields.effect_transition_previous_hash);
++    append_named_component(out, "effect_idempotency_key",
++                           fields.effect_idempotency_key);
++    append_named_component(out, "prepared_sequence",
++                           decimal_text(fields.prepared_sequence));
++    append_named_component(out, "prepared_entry_hash", fields.prepared_entry_hash);
++    append_named_component(out, "terminal_state", fields.terminal_state);
++    append_named_component(out, "result_digest_sha256",
++                           fields.result_digest_sha256);
++    append_named_component(out, "transition_reason", fields.transition_reason);
++    return std::move(out).finish();
++}
++
++EffectTransitionIntentV3Publication
++EffectTransitionIntentV3Publication::bind_or_throw(
++    FrozenEffectTransitionIntentV3Payload payload,
++    std::string payload_signing_input_sha256,
++    EffectTransitionIntentSignatureFields signature) {
++    if (!is_lower_hex_sha256(payload_signing_input_sha256)) {
++        throw std::runtime_error("effect transition v3 signing-input digest is invalid");
++    }
++    const std::string exact_signing_input =
++        effect_transition_intent_v3_signing_input_or_throw(payload);
++    if (payload_signing_input_sha256 != anonsync::sha256_hex(exact_signing_input)) {
++        throw std::runtime_error(
++            "effect transition v3 signing-input digest does not bind the frozen payload");
++    }
++    require_nonempty_bounded_control_free(
++        signature.kid, kEffectTransitionIntentMaximumSignerKidBytes,
++        "effect transition v3 signer kid");
++    if (signature.signature_b64url.size() >
++        kEffectTransitionIntentMaximumSignatureBytes) {
++        throw std::runtime_error("effect transition v3 signature exceeds byte budget");
++    }
++    if (!is_base64url_without_padding(signature.signature_b64url)) {
++        throw std::runtime_error("effect transition v3 signature is not base64url");
++    }
++    return EffectTransitionIntentV3Publication(
++        std::move(payload), std::move(payload_signing_input_sha256),
++        std::move(signature));
++}
++
++std::string encode_effect_transition_intent_v3_json_or_throw(
++    const EffectTransitionIntentV3Publication& publication) {
++    const auto& fields = publication.payload().fields();
++    const auto& signature = publication.signature();
++    BoundedMachineText out(kEffectTransitionIntentMaximumJsonBytes);
++
++    out.append("{\n");
++    append_json_member_prefix(out, "  ", "format");
++    append_json_string(out, kEffectTransitionIntentV3Format);
++    out.append(",\n  \"payload\": {\n");
++    append_json_member_prefix(out, "    ", "format");
++    append_json_string(out, kEffectTransitionIntentV3PayloadFormat);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "intent_id");
++    append_json_string(out, fields.intent_id);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "intent_subject");
++    append_json_string(out, fields.intent_subject);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "issued_at");
++    append_json_string(out, fields.issued_at);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "ledger_backend");
++    append_json_string(out, fields.ledger_backend);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "ledger_instance_id");
++    append_json_string(out, fields.ledger_instance_id);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "prepared_ledger_head_hash");
++    append_json_string(out, fields.prepared_ledger_head_hash);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "effect_transition_previous_hash");
++    append_json_string(out, fields.effect_transition_previous_hash);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "effect_idempotency_key");
++    append_json_string(out, fields.effect_idempotency_key);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "prepared_sequence");
++    out.append_decimal(fields.prepared_sequence);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "prepared_entry_hash");
++    append_json_string(out, fields.prepared_entry_hash);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "terminal_state");
++    append_json_string(out, fields.terminal_state);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "result_digest_sha256");
++    append_json_string(out, fields.result_digest_sha256);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "transition_reason");
++    append_json_string(out, fields.transition_reason);
++    out.append("\n  },\n");
++    append_json_member_prefix(out, "  ", "payload_signing_input_sha256");
++    append_json_string(out, publication.payload_signing_input_sha256());
++    out.append(",\n  \"signature\": {\n");
++    append_json_member_prefix(out, "    ", "alg");
++    append_json_string(out, "RS256");
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "kid");
++    append_json_string(out, signature.kid);
++    out.append(",\n");
++    append_json_member_prefix(out, "    ", "signature_b64url");
++    append_json_string(out, signature.signature_b64url);
++    out.append("\n  },\n");
++    append_json_member_prefix(out, "  ", "blocked_claim");
++    append_json_string(
++        out,
++        "rev0841 frozen relay publication; not HSM custody, remote delivery proof, or distributed exactly-once semantics.");
++    out.append("\n}\n");
++
++    return std::move(out).finish();
++}
++
++}  // namespace anonsync::persistence
+--- /dev/null
++++ b/src/persistence/effect_transition_intent_publication.hpp
+@@ -0,0 +1,121 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <string>
++#include <string_view>
++#include <utility>
++
++namespace anonsync::persistence {
++
++inline constexpr std::string_view kEffectTransitionIntentV2Format =
++    "anonsync-effect-transition-intent-v2-ledger-instance";
++inline constexpr std::string_view kEffectTransitionIntentV2PayloadFormat =
++    "anonsync-effect-transition-intent-payload-v2-ledger-instance";
++inline constexpr std::string_view kEffectTransitionIntentV3Format =
++    "anonsync-effect-transition-intent-v3-framed-publication";
++inline constexpr std::string_view kEffectTransitionIntentV3PayloadFormat =
++    "anonsync-effect-transition-intent-payload-v3-framed-publication";
++inline constexpr std::string_view kEffectTransitionIntentSubject =
++    "sqlite-wal-effect-terminal-transition";
++inline constexpr std::string_view kEffectTransitionIntentLedgerBackend =
++    "sqlite-wal";
++
++inline constexpr std::size_t kEffectTransitionIntentMaximumJsonBytes = 16 * 1024;
++inline constexpr std::size_t kEffectTransitionIntentMaximumSigningInputBytes =
++    4 * 1024;
++inline constexpr std::size_t kEffectTransitionIntentMaximumLegacySigningInputBytes =
++    16 * 1024;
++inline constexpr std::size_t kEffectTransitionIntentMaximumReasonBytes = 1024;
++inline constexpr std::size_t kEffectTransitionIntentMaximumSignerKidBytes = 256;
++inline constexpr std::size_t kEffectTransitionIntentMaximumSignatureBytes = 8192;
++inline constexpr std::int64_t kEffectTransitionIntentMaximumExactJsonInteger =
++    9007199254740991LL;
++
++// An owning copy of every value covered by an effect-transition signature.
++// Fixed fields remain explicit so parsing, trust evaluation, signing, and
++// publication can all consume one exact snapshot rather than rereading Json.
++struct EffectTransitionIntentPayloadFields final {
++    std::string intent_id;
++    std::string intent_subject;
++    std::string issued_at;
++    std::string ledger_backend;
++    std::string ledger_instance_id;
++    std::string prepared_ledger_head_hash;
++    std::string effect_transition_previous_hash;
++    std::string effect_idempotency_key;
++    std::int64_t prepared_sequence{};
++    std::string prepared_entry_hash;
++    std::string terminal_state;
++    std::string result_digest_sha256;
++    std::string transition_reason;
++};
++
++// V2 remains a read-compatibility format. This function preserves its exact
++// newline-delimited bytes while making integer spelling independent of locale.
++[[nodiscard]] std::string effect_transition_intent_v2_signing_input_or_throw(
++    const EffectTransitionIntentPayloadFields& fields);
++
++// V3 rejects delimiter-bearing controls and freezes every signed field before
++// either the signing input or JSON document can be emitted.
++class FrozenEffectTransitionIntentV3Payload final {
++public:
++    [[nodiscard]] static FrozenEffectTransitionIntentV3Payload freeze_or_throw(
++        EffectTransitionIntentPayloadFields fields);
++
++    [[nodiscard]] const EffectTransitionIntentPayloadFields& fields() const noexcept {
++        return fields_;
++    }
++
++private:
++    explicit FrozenEffectTransitionIntentV3Payload(
++        EffectTransitionIntentPayloadFields fields)
++        : fields_(std::move(fields)) {}
++
++    EffectTransitionIntentPayloadFields fields_;
++};
++
++[[nodiscard]] std::string effect_transition_intent_v3_signing_input_or_throw(
++    const FrozenEffectTransitionIntentV3Payload& payload);
++
++struct EffectTransitionIntentSignatureFields final {
++    std::string kid;
++    std::string signature_b64url;
++};
++
++class EffectTransitionIntentV3Publication final {
++public:
++    [[nodiscard]] static EffectTransitionIntentV3Publication bind_or_throw(
++        FrozenEffectTransitionIntentV3Payload payload,
++        std::string payload_signing_input_sha256,
++        EffectTransitionIntentSignatureFields signature);
++
++    [[nodiscard]] const FrozenEffectTransitionIntentV3Payload& payload() const noexcept {
++        return payload_;
++    }
++    [[nodiscard]] const std::string& payload_signing_input_sha256() const noexcept {
++        return payload_signing_input_sha256_;
++    }
++    [[nodiscard]] const EffectTransitionIntentSignatureFields& signature() const noexcept {
++        return signature_;
++    }
++
++private:
++    EffectTransitionIntentV3Publication(
++        FrozenEffectTransitionIntentV3Payload payload,
++        std::string payload_signing_input_sha256,
++        EffectTransitionIntentSignatureFields signature)
++        : payload_(std::move(payload)),
++          payload_signing_input_sha256_(
++              std::move(payload_signing_input_sha256)),
++          signature_(std::move(signature)) {}
++
++    FrozenEffectTransitionIntentV3Payload payload_;
++    std::string payload_signing_input_sha256_;
++    EffectTransitionIntentSignatureFields signature_;
++};
++
++[[nodiscard]] std::string encode_effect_transition_intent_v3_json_or_throw(
++    const EffectTransitionIntentV3Publication& publication);
++
++}  // namespace anonsync::persistence
+--- a/src/reporting_selftests.cpp
++++ b/src/reporting_selftests.cpp
+@@ -7,6 +7,7 @@
+ #include <cstdlib>
+ #include <chrono>
+ #include <filesystem>
++#include <locale>
+ #include <thread>
+ #include <unistd.h>
+ #include <sqlite3.h>
+@@ -16,6 +17,24 @@
+ 
+ 
+ namespace {
++
++class RelayGroupedNumberPunctuation final : public std::numpunct<char> {
++protected:
++    char do_thousands_sep() const override { return '_'; }
++    std::string do_grouping() const override { return "\3"; }
++};
++
++class ScopedRelayGlobalLocale final {
++public:
++    explicit ScopedRelayGlobalLocale(const std::locale& replacement)
++        : previous_(std::locale::global(replacement)) {}
++    ScopedRelayGlobalLocale(const ScopedRelayGlobalLocale&) = delete;
++    ScopedRelayGlobalLocale& operator=(const ScopedRelayGlobalLocale&) = delete;
++    ~ScopedRelayGlobalLocale() { std::locale::global(previous_); }
++
++private:
++    std::locale previous_;
++};
+ 
+ std::string selftest_sqlite_text(sqlite3_stmt* statement, int column) {
+     return persistence::sqlite_exact_text_or_throw(
+@@ -2537,18 +2556,25 @@
+         Json early = read_json(early_report_path);
+         if (!early.at("claimed").boolean(true) && !early.at("downstream_touched").boolean(true) && !early.at("transition_closed").boolean(true)) passed++;
+         else { failed++; std::cerr << "effect relay double-claimed fresh inflight lease\n"; }
+-        int reconcile_rc = run_sqlite_effect_relay_once_command(ledger_path,
+-                                                                downstream_path,
+-                                                                "relay-worker-C",
+-                                                                t_stale,
+-                                                                60,
+-                                                                "applied",
+-                                                                key_path,
+-                                                                root.kid,
+-                                                                trust_path,
+-                                                                trust_sha,
+-                                                                reconcile_report_path,
+-                                                                false);
++        int reconcile_rc = 0;
++        {
++            const std::locale grouped(
++                std::locale::classic(), new RelayGroupedNumberPunctuation);
++            const ScopedRelayGlobalLocale restore_locale(grouped);
++            reconcile_rc = run_sqlite_effect_relay_once_command(
++                ledger_path,
++                downstream_path,
++                "relay-worker-C",
++                t_stale,
++                60,
++                "applied",
++                key_path,
++                root.kid,
++                trust_path,
++                trust_sha,
++                reconcile_report_path,
++                false);
++        }
+         if (reconcile_rc == 0) passed++;
+         else { failed++; std::cerr << "effect relay stale reconciliation command failed\n"; }
+         Json reconcile = read_json(reconcile_report_path);
+--- a/src/sqlite_replay_ledger.cpp
++++ b/src/sqlite_replay_ledger.cpp
+@@ -10,6 +10,7 @@
+ #include "sqlite_replay_ledger_selftest_bridge.hpp"
+ #include "sqlite_snapshot_seal.hpp"
+ #include "sqlite_verification_budget.hpp"
++#include "effect_transition_intent_publication.hpp"
+ 
+ #include <sqlite3.h>
+ 
+@@ -20,7 +21,9 @@
+ #include <filesystem>
+ #include <exception>
+ #include <functional>
++#include <locale>
+ #include <map>
++#include <optional>
+ 
+ #include <fcntl.h>
+ #include <sys/file.h>
+@@ -35,6 +38,7 @@
+ // rev0621 translation unit: SQLite/WAL signed snapshot manifests bind outer revision fields to signed payload fields before trust allowlist checks.
+ // rev0631 translation unit: terminal-effect transition intents are bound to a per-ledger instance id so signed closure cannot be replayed onto a differently initialized ledger with matching heads; byte-for-byte clones retain the same identity.
+ // rev0631 translation unit: raw terminal-effect transition API is fail-closed; only signed, digest-pinned transition intents bound to this ledger_instance_id may append terminal state.
++// rev0841 translation unit: the relay freezes every signed field into the v3 publication owner before signing or JSON emission; v2 remains read-compatible with locale-free integer spelling.
+ // rev0601 translation unit: production-shaped replay-ledger backend factory with SQLite/WAL candidate backend.
+ namespace {
+ 
+@@ -70,9 +74,6 @@
+ const char* kEffectRelayResultMaterialVersion = "anonsync-relay-downstream-result-v2-provenance-bound";
+ constexpr std::string_view kEffectTransitionMaterialVersion =
+     kSqliteLedgerEntryMaterialVersion;
+-const char* kEffectTransitionIntentSubject = "sqlite-wal-effect-terminal-transition";
+-const char* kEffectTransitionIntentFormat = "anonsync-effect-transition-intent-v2-ledger-instance";
+-const char* kEffectTransitionIntentPayloadFormat = "anonsync-effect-transition-intent-payload-v2-ledger-instance";
+ const char* kEffectTransitionTrustProfileFormat = "anonsync-effect-transition-trust-profile-v2";
+ 
+ bool is_terminal_effect_state(const std::string& value) {
+@@ -629,6 +630,7 @@
+ 
+ std::string snapshot_manifest_signing_input(const Json& payload) {
+     std::ostringstream in;
++    in.imbue(std::locale::classic());
+     in << "anonsync-sqlite-snapshot-manifest-v2\n"
+        << payload.at("manifest_revision_id").str() << "\n"
+        << payload.at("parent_revision").str() << "\n"
+@@ -858,27 +860,37 @@
+     return value == "GENESIS" || is_lower_hex_sha256(value);
+ }
+ 
+-std::string effect_transition_intent_signing_input(const Json& payload) {
+-    std::ostringstream in;
+-    in << kEffectTransitionIntentFormat << "\n"
+-       << payload.at("intent_id").str() << "\n"
+-       << payload.at("intent_subject").str() << "\n"
+-       << payload.at("issued_at").str() << "\n"
+-       << payload.at("ledger_backend").str() << "\n"
+-       << payload.at("ledger_instance_id").str() << "\n"
+-       << payload.at("prepared_ledger_head_hash").str() << "\n"
+-       << payload.at("effect_transition_previous_hash").str() << "\n"
+-       << payload.at("effect_idempotency_key").str() << "\n"
+-       << payload.at("prepared_sequence").integer() << "\n"
+-       << payload.at("prepared_entry_hash").str() << "\n"
+-       << payload.at("terminal_state").str() << "\n"
+-       << payload.at("result_digest_sha256").str() << "\n"
+-       << payload.at("transition_reason").str() << "\n";
+-    return in.str();
+-}
+-
+-void validate_effect_transition_intent_payload(const Json& payload) {
+-    if (payload.at("format").str() != kEffectTransitionIntentPayloadFormat) throw std::runtime_error("effect transition intent payload has unsupported format");
++enum class EffectTransitionIntentEncoding {
++    LegacyV2,
++    FramedV3,
++};
++
++persistence::EffectTransitionIntentPayloadFields
++effect_transition_intent_payload_fields(const Json& payload) {
++    persistence::EffectTransitionIntentPayloadFields fields;
++    fields.intent_id = payload.at("intent_id").str();
++    fields.intent_subject = payload.at("intent_subject").str();
++    fields.issued_at = payload.at("issued_at").str();
++    fields.ledger_backend = payload.at("ledger_backend").str();
++    fields.ledger_instance_id = payload.at("ledger_instance_id").str();
++    fields.prepared_ledger_head_hash =
++        payload.at("prepared_ledger_head_hash").str();
++    fields.effect_transition_previous_hash =
++        payload.at("effect_transition_previous_hash").str();
++    fields.effect_idempotency_key =
++        payload.at("effect_idempotency_key").str();
++    fields.prepared_sequence = payload.at("prepared_sequence").integer();
++    fields.prepared_entry_hash = payload.at("prepared_entry_hash").str();
++    fields.terminal_state = payload.at("terminal_state").str();
++    fields.result_digest_sha256 = payload.at("result_digest_sha256").str();
++    fields.transition_reason = payload.at("transition_reason").str();
++    return fields;
++}
++
++void validate_effect_transition_intent_payload(
++    const Json& payload,
++    std::string_view expected_payload_format) {
++    if (payload.at("format").str() != expected_payload_format) throw std::runtime_error("effect transition intent payload has unsupported format");
+     require_nonempty_string_field(payload, "intent_id", "effect transition intent payload");
+     require_nonempty_string_field(payload, "intent_subject", "effect transition intent payload");
+     require_nonempty_string_field(payload, "issued_at", "effect transition intent payload");
+@@ -891,8 +903,8 @@
+     require_nonempty_string_field(payload, "terminal_state", "effect transition intent payload");
+     require_nonempty_string_field(payload, "result_digest_sha256", "effect transition intent payload");
+     require_nonempty_string_field(payload, "transition_reason", "effect transition intent payload");
+-    if (payload.at("intent_subject").str() != kEffectTransitionIntentSubject) throw std::runtime_error("effect transition intent subject mismatch");
+-    if (payload.at("ledger_backend").str() != "sqlite-wal") throw std::runtime_error("effect transition intent ledger_backend must be sqlite-wal");
++    if (payload.at("intent_subject").str() != persistence::kEffectTransitionIntentSubject) throw std::runtime_error("effect transition intent subject mismatch");
++    if (payload.at("ledger_backend").str() != persistence::kEffectTransitionIntentLedgerBackend) throw std::runtime_error("effect transition intent ledger_backend must be sqlite-wal");
+     if (!is_lower_hex_sha256(payload.at("ledger_instance_id").str())) throw std::runtime_error("effect transition intent has invalid ledger_instance_id");
+     if (!is_sha256_or_genesis(payload.at("prepared_ledger_head_hash").str())) throw std::runtime_error("effect transition intent has invalid prepared_ledger_head_hash");
+     if (!is_sha256_or_genesis(payload.at("effect_transition_previous_hash").str())) throw std::runtime_error("effect transition intent has invalid effect_transition_previous_hash");
+@@ -901,23 +913,27 @@
+     if (!is_lower_hex_sha256(payload.at("prepared_entry_hash").str())) throw std::runtime_error("effect transition intent has invalid prepared_entry_hash");
+     if (!is_terminal_effect_state(payload.at("terminal_state").str())) throw std::runtime_error("effect transition intent has unsupported terminal_state");
+     if (!is_lower_hex_sha256(payload.at("result_digest_sha256").str())) throw std::runtime_error("effect transition intent has invalid result_digest_sha256");
+-    if (payload.at("transition_reason").str().size() > 1024) throw std::runtime_error("effect transition intent transition_reason is too long");
++    if (payload.at("transition_reason").str().size() > persistence::kEffectTransitionIntentMaximumReasonBytes) throw std::runtime_error("effect transition intent transition_reason is too long");
+     (void)parse_strict_utc_epoch(payload.at("issued_at").str(), "effect transition intent issued_at");
+ }
+ 
+-const Json& trusted_effect_transition_signer(const Json& trust, const Json& payload, const std::string& kid, const std::string& alg) {
++const Json& trusted_effect_transition_signer(
++    const Json& trust,
++    const persistence::EffectTransitionIntentPayloadFields& fields,
++    const std::string& kid,
++    const std::string& alg) {
+     if (trust.at("format").str() != kEffectTransitionTrustProfileFormat) throw std::runtime_error("effect transition trust profile has unsupported format");
+     require_nonempty_string_field(trust, "verification_time", "effect transition trust profile");
+     if (!trust.at("max_intent_age_seconds").is_number() || trust.at("max_intent_age_seconds").integer() <= 0) {
+         throw std::runtime_error("effect transition trust profile requires positive max_intent_age_seconds");
+     }
+-    const long long issued_epoch = parse_strict_utc_epoch(payload.at("issued_at").str(), "effect transition intent issued_at");
++    const long long issued_epoch = parse_strict_utc_epoch(fields.issued_at, "effect transition intent issued_at");
+     const long long verification_epoch = parse_strict_utc_epoch(trust.at("verification_time").str(), "effect transition trust profile verification_time");
+     const long long max_age = trust.at("max_intent_age_seconds").integer();
+     if (issued_epoch > verification_epoch) throw std::runtime_error("effect transition intent issued after verifier time");
+     if (verification_epoch - issued_epoch > max_age) throw std::runtime_error("effect transition intent is older than trust-profile max age");
+-    if (trust.at("required_intent_subject").str() != kEffectTransitionIntentSubject) throw std::runtime_error("effect transition trust profile subject requirement mismatch");
+-    if (trust.at("allowed_terminal_states").is_array() && !json_string_array_contains(trust.at("allowed_terminal_states"), payload.at("terminal_state").str())) {
++    if (trust.at("required_intent_subject").str() != persistence::kEffectTransitionIntentSubject) throw std::runtime_error("effect transition trust profile subject requirement mismatch");
++    if (trust.at("allowed_terminal_states").is_array() && !json_string_array_contains(trust.at("allowed_terminal_states"), fields.terminal_state)) {
+         throw std::runtime_error("effect transition trust profile terminal_state allowlist mismatch");
+     }
+     const Json& signers = trust.at("trusted_signers");
+@@ -952,36 +968,76 @@
+ 
+ VerifiedEffectTransitionIntent verify_effect_transition_intent_text_with_trust_profile_text(const std::string& intent_text, const std::string& trust_profile_text) {
+     if (intent_text.empty()) throw std::runtime_error("effect transition signed intent text is required");
++    if (intent_text.size() > persistence::kEffectTransitionIntentMaximumJsonBytes) throw std::runtime_error("effect transition signed intent exceeds byte budget");
+     if (trust_profile_text.empty()) throw std::runtime_error("effect transition trust profile text is required");
+     Json intent = parse_json_text(intent_text);
+     Json trust = parse_json_text(trust_profile_text);
+-    if (intent.at("format").str() != kEffectTransitionIntentFormat) throw std::runtime_error("effect transition intent has unsupported format");
++    const std::string outer_format = intent.at("format").str();
++    EffectTransitionIntentEncoding encoding;
++    std::string_view expected_payload_format;
++    if (outer_format == persistence::kEffectTransitionIntentV2Format) {
++        encoding = EffectTransitionIntentEncoding::LegacyV2;
++        expected_payload_format =
++            persistence::kEffectTransitionIntentV2PayloadFormat;
++    } else if (outer_format == persistence::kEffectTransitionIntentV3Format) {
++        encoding = EffectTransitionIntentEncoding::FramedV3;
++        expected_payload_format =
++            persistence::kEffectTransitionIntentV3PayloadFormat;
++    } else {
++        throw std::runtime_error("effect transition intent has unsupported format");
++    }
+     const Json& payload = intent.at("payload");
+     const Json& sig = intent.at("signature");
+     if (!payload.is_object() || !sig.is_object()) throw std::runtime_error("effect transition intent missing payload or signature object");
+-    validate_effect_transition_intent_payload(payload);
++    validate_effect_transition_intent_payload(payload, expected_payload_format);
+     const std::string alg = sig.at("alg").str();
+     const std::string kid = sig.at("kid").str();
+     if (alg != "RS256" || kid.empty()) throw std::runtime_error("effect transition intent requires RS256 and nonempty kid");
+-    const Json& signer = trusted_effect_transition_signer(trust, payload, kid, alg);
++    persistence::EffectTransitionIntentPayloadFields legacy_fields;
++    std::optional<persistence::EffectTransitionIntentV3Publication>
++        v3_publication;
++    std::string signing_input;
++    const persistence::EffectTransitionIntentPayloadFields* exact_fields = nullptr;
++    if (encoding == EffectTransitionIntentEncoding::LegacyV2) {
++        legacy_fields = effect_transition_intent_payload_fields(payload);
++        signing_input =
++            persistence::effect_transition_intent_v2_signing_input_or_throw(
++                legacy_fields);
++        exact_fields = &legacy_fields;
++    } else {
++        auto frozen =
++            persistence::FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++                effect_transition_intent_payload_fields(payload));
++        signing_input =
++            persistence::effect_transition_intent_v3_signing_input_or_throw(
++                frozen);
++        v3_publication.emplace(
++            persistence::EffectTransitionIntentV3Publication::bind_or_throw(
++                std::move(frozen),
++                intent.at("payload_signing_input_sha256").str(),
++                persistence::EffectTransitionIntentSignatureFields{
++                    kid, sig.at("signature_b64url").str()}));
++        exact_fields = &v3_publication->payload().fields();
++    }
++    const Json& signer =
++        trusted_effect_transition_signer(trust, *exact_fields, kid, alg);
+     const Json& jwk = signer.at("jwk");
+     PKeyPtr pkey = jwk_to_pkey(jwk.at("n").str(), jwk.at("e").str());
+     std::string verify_reason;
+-    const std::string signing_input = effect_transition_intent_signing_input(payload);
+     if (intent.at("payload_signing_input_sha256").str() != sha256_hex(signing_input)) throw std::runtime_error("effect transition intent signing-input digest mismatch");
+     if (!verify_rs256(pkey.get(), signing_input, sig.at("signature_b64url").str(), verify_reason)) throw std::runtime_error("effect transition intent signature verification failed: " + verify_reason);
+     VerifiedEffectTransitionIntent out;
+-    out.intent_id = payload.at("intent_id").str();
+-    out.issued_at = payload.at("issued_at").str();
+-    out.ledger_instance_id = payload.at("ledger_instance_id").str();
+-    out.effect_idempotency_key = payload.at("effect_idempotency_key").str();
+-    out.prepared_sequence = payload.at("prepared_sequence").integer();
+-    out.prepared_entry_hash = payload.at("prepared_entry_hash").str();
+-    out.terminal_state = payload.at("terminal_state").str();
+-    out.result_digest_sha256 = payload.at("result_digest_sha256").str();
+-    out.transition_reason = payload.at("transition_reason").str();
+-    out.prepared_ledger_head_hash = payload.at("prepared_ledger_head_hash").str();
+-    out.effect_transition_previous_hash = payload.at("effect_transition_previous_hash").str();
++    out.intent_id = exact_fields->intent_id;
++    out.issued_at = exact_fields->issued_at;
++    out.ledger_instance_id = exact_fields->ledger_instance_id;
++    out.effect_idempotency_key = exact_fields->effect_idempotency_key;
++    out.prepared_sequence = exact_fields->prepared_sequence;
++    out.prepared_entry_hash = exact_fields->prepared_entry_hash;
++    out.terminal_state = exact_fields->terminal_state;
++    out.result_digest_sha256 = exact_fields->result_digest_sha256;
++    out.transition_reason = exact_fields->transition_reason;
++    out.prepared_ledger_head_hash = exact_fields->prepared_ledger_head_hash;
++    out.effect_transition_previous_hash = exact_fields->effect_transition_previous_hash;
+     out.signer_kid = kid;
+     out.intent_sha256 = sha256_hex(intent_text);
+     return out;
+@@ -2221,6 +2277,7 @@
+                 db, "sqlite-wal effect pending report close read-only failed");
+ 
+             std::ostringstream out;
++            out.imbue(std::locale::classic());
+             out << "{\n"
+                 << "  \"format\": \"anonsync-sqlite-effect-pending-report-v5-outbox-claim\",\n"
+                 << "  \"backend_name\": \"sqlite-wal\",\n"
+@@ -3364,6 +3421,7 @@
+ 
+ std::string sqlite_effect_outbox_claim_report_json(const EffectOutboxClaimResult& claim, long long lease_seconds) {
+     std::ostringstream out;
++    out.imbue(std::locale::classic());
+     out << "{\n"
+         << "  \"format\": \"" << json_escape(kEffectOutboxClaimFormat) << "\",\n"
+         << "  \"backend_name\": \"sqlite-wal\",\n"
+@@ -3430,7 +3488,13 @@
+     if (downstream_path.empty()) throw std::runtime_error("sqlite-wal effect relay requires a downstream store path");
+     if (!is_terminal_effect_state(terminal_state)) throw std::runtime_error("sqlite-wal effect relay requires terminal_state applied|failed|compensated");
+     if (signer_private_key_pem_path.empty()) throw std::runtime_error("sqlite-wal effect relay requires signer private-key PEM path");
+-    if (signer_kid.empty() || contains_disallowed_security_control(signer_kid)) throw std::runtime_error("sqlite-wal effect relay requires nonempty control-free signer kid");
++    if (signer_kid.empty() ||
++        signer_kid.size() >
++            persistence::kEffectTransitionIntentMaximumSignerKidBytes ||
++        contains_disallowed_security_control(signer_kid)) {
++        throw std::runtime_error(
++            "sqlite-wal effect relay requires bounded control-free signer kid");
++    }
+     if (trust_profile_path.empty() || !is_lower_hex_sha256(trust_profile_sha256)) throw std::runtime_error("sqlite-wal effect relay requires digest-pinned transition trust profile");
+     if (relay_report_path.empty()) throw std::runtime_error("sqlite-wal effect relay requires a relay report path");
+ }
+@@ -3687,8 +3751,8 @@
+                                                          const std::string& transition_reason,
+                                                          const std::string& signer_kid,
+                                                          EVP_PKEY* private_key) {
+-    const std::string issued_at = strict_utc_from_epoch(claim.claimed_at_epoch);
+-    const std::string intent_id = sha256_hex(length_prefixed_security_tuple("anonsync-effect-relay-transition-intent-v1", {
++    persistence::EffectTransitionIntentPayloadFields fields;
++    fields.intent_id = sha256_hex(length_prefixed_security_tuple("anonsync-effect-relay-transition-intent-v1", {
+         {"ledger_instance_id", claim.ledger_instance_id},
+         {"decision_head_hash", claim.decision_head_hash},
+         {"effect_transition_head_hash", claim.effect_transition_head_hash},
+@@ -3698,51 +3762,34 @@
+         {"worker_claim_id", claim.worker_claim_id},
+         {"result_digest_sha256", downstream.result_digest_sha256},
+     }));
+-    std::ostringstream signing;
+-    signing << kEffectTransitionIntentFormat << "\n"
+-            << intent_id << "\n"
+-            << kEffectTransitionIntentSubject << "\n"
+-            << issued_at << "\n"
+-            << "sqlite-wal" << "\n"
+-            << claim.ledger_instance_id << "\n"
+-            << claim.decision_head_hash << "\n"
+-            << claim.effect_transition_head_hash << "\n"
+-            << claim.effect_idempotency_key << "\n"
+-            << claim.prepared_sequence << "\n"
+-            << claim.prepared_entry_hash << "\n"
+-            << downstream.terminal_state << "\n"
+-            << downstream.result_digest_sha256 << "\n"
+-            << transition_reason << "\n";
+-    const std::string signing_input = signing.str();
++    fields.intent_subject =
++        std::string(persistence::kEffectTransitionIntentSubject);
++    fields.issued_at = strict_utc_from_epoch(claim.claimed_at_epoch);
++    fields.ledger_backend =
++        std::string(persistence::kEffectTransitionIntentLedgerBackend);
++    fields.ledger_instance_id = claim.ledger_instance_id;
++    fields.prepared_ledger_head_hash = claim.decision_head_hash;
++    fields.effect_transition_previous_hash = claim.effect_transition_head_hash;
++    fields.effect_idempotency_key = claim.effect_idempotency_key;
++    fields.prepared_sequence = claim.prepared_sequence;
++    fields.prepared_entry_hash = claim.prepared_entry_hash;
++    fields.terminal_state = downstream.terminal_state;
++    fields.result_digest_sha256 = downstream.result_digest_sha256;
++    fields.transition_reason = transition_reason;
++
++    auto frozen =
++        persistence::FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++            std::move(fields));
++    const std::string signing_input =
++        persistence::effect_transition_intent_v3_signing_input_or_throw(frozen);
+     const std::string signature = sign_rs256(private_key, signing_input);
+-    std::ostringstream out;
+-    out << "{\n"
+-        << "  \"format\": \"" << json_escape(kEffectTransitionIntentFormat) << "\",\n"
+-        << "  \"payload\": {\n"
+-        << "    \"format\": \"" << json_escape(kEffectTransitionIntentPayloadFormat) << "\",\n"
+-        << "    \"intent_id\": \"" << json_escape(intent_id) << "\",\n"
+-        << "    \"intent_subject\": \"" << json_escape(kEffectTransitionIntentSubject) << "\",\n"
+-        << "    \"issued_at\": \"" << json_escape(issued_at) << "\",\n"
+-        << "    \"ledger_backend\": \"sqlite-wal\",\n"
+-        << "    \"ledger_instance_id\": \"" << json_escape(claim.ledger_instance_id) << "\",\n"
+-        << "    \"prepared_ledger_head_hash\": \"" << json_escape(claim.decision_head_hash) << "\",\n"
+-        << "    \"effect_transition_previous_hash\": \"" << json_escape(claim.effect_transition_head_hash) << "\",\n"
+-        << "    \"effect_idempotency_key\": \"" << json_escape(claim.effect_idempotency_key) << "\",\n"
+-        << "    \"prepared_sequence\": " << claim.prepared_sequence << ",\n"
+-        << "    \"prepared_entry_hash\": \"" << json_escape(claim.prepared_entry_hash) << "\",\n"
+-        << "    \"terminal_state\": \"" << json_escape(downstream.terminal_state) << "\",\n"
+-        << "    \"result_digest_sha256\": \"" << json_escape(downstream.result_digest_sha256) << "\",\n"
+-        << "    \"transition_reason\": \"" << json_escape(transition_reason) << "\"\n"
+-        << "  },\n"
+-        << "  \"payload_signing_input_sha256\": \"" << sha256_hex(signing_input) << "\",\n"
+-        << "  \"signature\": {\n"
+-        << "    \"alg\": \"RS256\",\n"
+-        << "    \"kid\": \"" << json_escape(signer_kid) << "\",\n"
+-        << "    \"signature_b64url\": \"" << signature << "\"\n"
+-        << "  },\n"
+-        << "  \"blocked_claim\": \"rev0635 local relay harness intent; not HSM custody, remote delivery proof, or distributed exactly-once semantics.\"\n"
+-        << "}\n";
+-    return out.str();
++    auto publication =
++        persistence::EffectTransitionIntentV3Publication::bind_or_throw(
++            std::move(frozen), sha256_hex(signing_input),
++            persistence::EffectTransitionIntentSignatureFields{
++                signer_kid, signature});
++    return persistence::encode_effect_transition_intent_v3_json_or_throw(
++        publication);
+ }
+ 
+ RelayTransitionAuthority load_and_preflight_relay_transition_authority(const std::string& signer_private_key_pem_path,
+@@ -3848,6 +3895,7 @@
+ 
+ std::string sqlite_effect_relay_report_json_impl(const EffectRelayOnceResult& result, long long lease_seconds, const std::string& format, const std::string& revision_id, bool include_adapter_config, bool include_registry_handle) {
+     std::ostringstream out;
++    out.imbue(std::locale::classic());
+     out << "{\n"
+         << "  \"format\": \"" << json_escape(format) << "\",\n"
+         << "  \"backend_name\": \"sqlite-wal\",\n"
+--- /dev/null
++++ b/tests/persistence/effect_transition_intent_publication_tests.cpp
+@@ -0,0 +1,318 @@
++#include "effect_transition_intent_publication.hpp"
++#include "sha256_digest.hpp"
++
++#include <iostream>
++#include <locale>
++#include <stdexcept>
++#include <string>
++#include <utility>
++
++namespace {
++
++using anonsync::persistence::EffectTransitionIntentPayloadFields;
++using anonsync::persistence::EffectTransitionIntentSignatureFields;
++using anonsync::persistence::EffectTransitionIntentV3Publication;
++using anonsync::persistence::FrozenEffectTransitionIntentV3Payload;
++using anonsync::persistence::effect_transition_intent_v2_signing_input_or_throw;
++using anonsync::persistence::effect_transition_intent_v3_signing_input_or_throw;
++using anonsync::persistence::encode_effect_transition_intent_v3_json_or_throw;
++
++class GroupedNumberPunctuation final : public std::numpunct<char> {
++protected:
++    char do_thousands_sep() const override { return '_'; }
++    std::string do_grouping() const override { return "\3"; }
++};
++
++class ScopedGlobalLocale final {
++public:
++    explicit ScopedGlobalLocale(const std::locale& replacement)
++        : previous_(std::locale::global(replacement)) {}
++    ScopedGlobalLocale(const ScopedGlobalLocale&) = delete;
++    ScopedGlobalLocale& operator=(const ScopedGlobalLocale&) = delete;
++    ~ScopedGlobalLocale() { std::locale::global(previous_); }
++
++private:
++    std::locale previous_;
++};
++
++void require(bool condition, const std::string& message, int& checks) {
++    if (!condition) throw std::runtime_error(message);
++    ++checks;
++}
++
++template <typename Callable>
++void require_throws(Callable&& callable, const std::string& message, int& checks) {
++    try {
++        callable();
++    } catch (const std::exception&) {
++        ++checks;
++        return;
++    }
++    throw std::runtime_error(message);
++}
++
++EffectTransitionIntentPayloadFields valid_fields() {
++    EffectTransitionIntentPayloadFields fields;
++    fields.intent_id = std::string(64, '1');
++    fields.intent_subject = "sqlite-wal-effect-terminal-transition";
++    fields.issued_at = "2026-07-19T12:34:56Z";
++    fields.ledger_backend = "sqlite-wal";
++    fields.ledger_instance_id = std::string(64, '2');
++    fields.prepared_ledger_head_hash = std::string(64, '3');
++    fields.effect_transition_previous_hash = "GENESIS";
++    fields.effect_idempotency_key = std::string(64, '4');
++    fields.prepared_sequence = 7000;
++    fields.prepared_entry_hash = std::string(64, '5');
++    fields.terminal_state = "applied";
++    fields.result_digest_sha256 = std::string(64, '6');
++    fields.transition_reason = "relay applied exact result";
++    return fields;
++}
++
++EffectTransitionIntentV3Publication publication_from(
++    EffectTransitionIntentPayloadFields fields,
++    std::string kid = "relay-signing-key-A",
++    std::string signature = "AbCdEf0123_-") {
++    auto frozen = FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++        std::move(fields));
++    const std::string signing_input =
++        effect_transition_intent_v3_signing_input_or_throw(frozen);
++    return EffectTransitionIntentV3Publication::bind_or_throw(
++        std::move(frozen), anonsync::sha256_hex(signing_input),
++        EffectTransitionIntentSignatureFields{
++            std::move(kid), std::move(signature)});
++}
++
++}  // namespace
++
++int main() {
++    int checks = 0;
++    try {
++        const auto fields = valid_fields();
++        auto frozen = FrozenEffectTransitionIntentV3Payload::freeze_or_throw(fields);
++        const std::string v3 = effect_transition_intent_v3_signing_input_or_throw(frozen);
++        require(v3.starts_with("anonsync-length-prefixed-tuple-v1"),
++                "v3 signing input lost its framing domain", checks);
++        require(v3.find("17:prepared_sequence4:7000") != std::string::npos,
++                "v3 signing input does not frame prepared_sequence", checks);
++        require(v3.find("transition_reason") != std::string::npos,
++                "v3 signing input omitted transition reason", checks);
++
++        const std::string v2 = effect_transition_intent_v2_signing_input_or_throw(fields);
++        require(v2.starts_with(
++                    "anonsync-effect-transition-intent-v2-ledger-instance\n"),
++                "v2 compatibility prefix changed", checks);
++        require(v2.find("\n7000\n") != std::string::npos,
++                "v2 integer spelling changed", checks);
++
++        {
++            const std::locale grouped(std::locale::classic(),
++                                      new GroupedNumberPunctuation);
++            const ScopedGlobalLocale restore(grouped);
++            const std::string grouped_v2 =
++                effect_transition_intent_v2_signing_input_or_throw(fields);
++            const std::string grouped_v3 =
++                effect_transition_intent_v3_signing_input_or_throw(frozen);
++            const std::string grouped_json =
++                encode_effect_transition_intent_v3_json_or_throw(
++                    publication_from(fields));
++            require(grouped_v2 == v2,
++                    "v2 signing bytes depend on the process-global locale", checks);
++            require(grouped_v3 == v3,
++                    "v3 signing bytes depend on the process-global locale", checks);
++            require(grouped_json.find("\"prepared_sequence\": 7000") !=
++                        std::string::npos,
++                    "v3 JSON integer depends on the process-global locale", checks);
++            require(grouped_json.find("7_000") == std::string::npos,
++                    "v3 JSON contains a grouped integer", checks);
++        }
++
++        {
++            auto mutable_fields = valid_fields();
++            auto snapshot =
++                FrozenEffectTransitionIntentV3Payload::freeze_or_throw(mutable_fields);
++            const std::string before =
++                effect_transition_intent_v3_signing_input_or_throw(snapshot);
++            mutable_fields.prepared_sequence = 9000;
++            mutable_fields.transition_reason = "mutated broad model";
++            const std::string after =
++                effect_transition_intent_v3_signing_input_or_throw(snapshot);
++            require(before == after,
++                    "frozen payload changed after source mutation", checks);
++            require(snapshot.fields().prepared_sequence == 7000 &&
++                        snapshot.fields().transition_reason ==
++                            "relay applied exact result",
++                    "frozen payload retained aliases to source fields", checks);
++        }
++
++        {
++            auto escaped = valid_fields();
++            escaped.transition_reason = "quoted \\\"value\\\" and slash \\\\";
++            const std::string json = encode_effect_transition_intent_v3_json_or_throw(
++                publication_from(std::move(escaped), "kid-with-dash", "A_b-9"));
++            require(json.starts_with("{\n"), "v3 JSON lost object framing", checks);
++            require(json.ends_with("}\n"), "v3 JSON lost final newline", checks);
++            require(json.find("anonsync-effect-transition-intent-v3-framed-publication") !=
++                        std::string::npos,
++                    "v3 JSON omitted outer format", checks);
++            require(json.find("anonsync-effect-transition-intent-payload-v3-framed-publication") !=
++                        std::string::npos,
++                    "v3 JSON omitted payload format", checks);
++            require(json.find(R"(quoted \\\"value\\\" and slash \\\\)") !=
++                        std::string::npos,
++                    "v3 JSON did not escape string bytes", checks);
++            require(json.size() <=
++                        anonsync::persistence::kEffectTransitionIntentMaximumJsonBytes,
++                    "v3 JSON exceeded its declared byte ceiling", checks);
++        }
++
++        {
++            auto changed = valid_fields();
++            changed.transition_reason = "different exact result";
++            auto changed_frozen =
++                FrozenEffectTransitionIntentV3Payload::freeze_or_throw(changed);
++            require(effect_transition_intent_v3_signing_input_or_throw(changed_frozen) !=
++                        v3,
++                    "different payloads produced identical framed bytes", checks);
++        }
++
++        {
++            auto maximum_reason = valid_fields();
++            maximum_reason.transition_reason.assign(
++                anonsync::persistence::kEffectTransitionIntentMaximumReasonBytes,
++                'r');
++            (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++                maximum_reason);
++            ++checks;
++            maximum_reason.transition_reason.push_back('r');
++            require_throws(
++                [&] {
++                    (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++                        maximum_reason);
++                },
++                "v3 accepted an oversized transition reason", checks);
++        }
++
++        {
++            auto control_reason = valid_fields();
++            control_reason.transition_reason = "line one\nline two";
++            require_throws(
++                [&] {
++                    (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++                        control_reason);
++                },
++                "v3 accepted delimiter-bearing reason text", checks);
++        }
++
++        {
++            auto malformed_reason = valid_fields();
++            malformed_reason.transition_reason = std::string("\xc3\x28", 2);
++            require_throws(
++                [&] {
++                    (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++                        malformed_reason);
++                },
++                "v3 accepted malformed UTF-8 reason text", checks);
++        }
++
++        {
++            auto bad = valid_fields();
++            bad.intent_id = "human-readable-id";
++            require_throws(
++                [&] {
++                    (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(bad);
++                },
++                "v3 accepted a non-digest intent id", checks);
++            bad = valid_fields();
++            bad.issued_at = "2026-02-30T00:00:00Z";
++            require_throws(
++                [&] {
++                    (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(bad);
++                },
++                "v3 accepted an impossible UTC date", checks);
++            bad = valid_fields();
++            bad.prepared_sequence = 0;
++            require_throws(
++                [&] {
++                    (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(bad);
++                },
++                "v3 accepted a nonpositive sequence", checks);
++            bad = valid_fields();
++            bad.prepared_sequence =
++                anonsync::persistence::kEffectTransitionIntentMaximumExactJsonInteger;
++            const auto maximum_integer_payload =
++                FrozenEffectTransitionIntentV3Payload::freeze_or_throw(bad);
++            require(effect_transition_intent_v3_signing_input_or_throw(
++                        maximum_integer_payload)
++                        .find("16:9007199254740991") != std::string::npos,
++                    "v3 did not preserve the maximum exact JSON integer", checks);
++            bad = valid_fields();
++            bad.prepared_sequence =
++                anonsync::persistence::kEffectTransitionIntentMaximumExactJsonInteger + 1;
++            require_throws(
++                [&] {
++                    (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(bad);
++                },
++                "v3 accepted an inexact JSON integer", checks);
++            bad = valid_fields();
++            bad.terminal_state = "prepared";
++            require_throws(
++                [&] {
++                    (void)FrozenEffectTransitionIntentV3Payload::freeze_or_throw(bad);
++                },
++                "v3 accepted a nonterminal state", checks);
++        }
++
++        {
++            require_throws(
++                [&] {
++                    (void)publication_from(valid_fields(), std::string(257, 'k'));
++                },
++                "v3 accepted an oversized signer kid", checks);
++            require_throws(
++                [&] {
++                    (void)publication_from(valid_fields(), "kid\nline");
++                },
++                "v3 accepted a control-bearing signer kid", checks);
++            require_throws(
++                [&] {
++                    (void)publication_from(
++                        valid_fields(), std::string("kid-\xc3\x28", 6));
++                },
++                "v3 accepted a malformed UTF-8 signer kid", checks);
++            require_throws(
++                [&] {
++                    (void)publication_from(valid_fields(), "kid", "has=padding");
++                },
++                "v3 accepted padded/non-base64url signature text", checks);
++            require_throws(
++                [&] {
++                    auto payload =
++                        FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++                            valid_fields());
++                    (void)EffectTransitionIntentV3Publication::bind_or_throw(
++                        std::move(payload), "not-a-digest",
++                        EffectTransitionIntentSignatureFields{"kid", "Ab_9"});
++                },
++                "v3 accepted an invalid signing-input digest", checks);
++            require_throws(
++                [&] {
++                    auto payload =
++                        FrozenEffectTransitionIntentV3Payload::freeze_or_throw(
++                            valid_fields());
++                    (void)EffectTransitionIntentV3Publication::bind_or_throw(
++                        std::move(payload), std::string(64, 'f'),
++                        EffectTransitionIntentSignatureFields{"kid", "Ab_9"});
++                },
++                "v3 accepted a digest for a different frozen payload", checks);
++        }
++
++        std::cout << "effect transition intent publication: " << checks
++                  << " checks passed\n";
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "effect transition intent publication: " << error.what()
++                  << '\n';
++        return 1;
++    }
++}

@@ -1,0 +1,3 @@
+# Rev0981 research note
+
+The design follows two conservative recovery principles. First, an observation command should open only the minimum authority required to observe, so a token known to be stale cannot cause recovery or checkpoint side effects merely by opening a writer. Second, a durable transition must not perform ordinary allocation after commit if that allocation can convert success into an exception report. The resulting two-stage ceremony uses read-only preflight for known-stale rejection and transactional reproof for race safety. Because lineage remains in the restored database image, this is continuity metadata rather than external anti-rollback proof.

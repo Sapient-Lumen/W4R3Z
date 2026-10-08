@@ -1,0 +1,66 @@
+# Evidence index — AnonSync rev0837
+
+Indexed files: **60**. The index excludes its own JSON and Markdown representations.
+
+| Path | Bytes | SHA-256 |
+|---|---:|---|
+| `ACTIVE_IMPLEMENTATION_PROJECTION.json` | 39019 | `4176c57e29c1e576ba1467e794b2a5052276dc26f42e1fc4905b3526f309fb36` |
+| `AUDIT.md` | 4090 | `02d41d03b644b62249828c4706fef44937cb6ca57ef36c57575f645c57b1483f` |
+| `CHANGESET.json` | 1786 | `932680581c8724937a733970e012916feb6ec32eb606b6945a5df88be60b8997` |
+| `COMMANDS.tsv` | 2006 | `d6f018dd4fcf86fe01255c0bef03efcac7de77a2d112d08a51df6e3e3d903c1e` |
+| `LINEAGE.json` | 722 | `52c5b8dda60a3189fd5ba1fd28c8b04796acad45f3ebd8c7ae1eb3110acc0f53` |
+| `LINEAGE.md` | 882 | `17468d69ef70d040d359476cf585fad4979778f087551f02941ded5a3ebde1cb` |
+| `NEXT_WORK.md` | 2274 | `d58f015f07851572a3ebae0c5e9a7050893df635f740d2093dd587ca4e3a35bc` |
+| `RESEARCH.md` | 3502 | `e0adb5e074f0052304442b1bc448ef26340f39881a00e936a580f64e8c2af339` |
+| `SOURCE_DIFF_rev0836_to_rev0837.patch` | 70012 | `ada26c2347cc273f5d5003dcf1c61cff98e56714e7b2411704df0acf29543900` |
+| `SOURCE_NAME_STATUS.txt` | 310 | `45b98b6ebff9d040d64efc4592323447c687f6f6e6364a9b59c7c5f897257263` |
+| `SOURCE_NUMSTAT.txt` | 339 | `e8d63f415db6408e4f332bdb73c7d49b6cdf172df42c1340e0e8181d336d3e69` |
+| `SOURCE_SHORTSTAT.txt` | 54 | `3be3c4fb0a327addd18d610fc15c2dc361d1dab36ee1f54ce0c792600fefe3e8` |
+| `SOURCE_STAT.txt` | 651 | `2569d062d1a90eb207faefb75d043bcc87bea0824a89f52df995c281e04ce105` |
+| `TOOLCHAIN.txt` | 595 | `48a0f7991544ad68f42cc925fcbf6e2bf8e6903765c3ee969e9834ddc0d5250f` |
+| `audits/audit_sync_bounded_regular_file.json` | 5000 | `32e4aa70643b2b66436b6037a5326a95e03bda0c0a75d16abede70b98cd74cfa` |
+| `audits/audit_sync_bounded_regular_file.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `defect/PARENT_DEFECT_WITNESSES.md` | 1027 | `5b6b33f2b00c8e8006ae134fabd2f6fb7d190b4c257003f4987ac6e63bbdb862` |
+| `defect/parent-fifo.log` | 68 | `eaab61205d277d51b7d1b1f59fbadbc32f39ca03bc450bd4fd9c301465b026a8` |
+| `defect/parent-prefix.log` | 73 | `b44e7389b465ba5af8f75eddf0f1d4690259e43d7d9765c7a493a7e3511e2db0` |
+| `defect/parent_bounded_reader_witness.cpp` | 5682 | `0607c5c57822ae2023f3c3266e20d5e21fac5026c1ce25a29c5a44cb353a34a7` |
+| `defect/parent_helper.slice.cpp` | 2756 | `9f338990b9facf7081fa65d899025ff4a250d06a2be44f8a83b022e6d83e3fb2` |
+| `defect/parent_helper.slice.sha256` | 90 | `f687031f34035b1bea6b50ec7a57a9b6a5b72086a9f4103a416ee361823c716a` |
+| `inventory/BOUNDED_READER_DEPENDENCY_INVENTORY.json` | 3897 | `5f7c1dbdc2280b70cfa37965f7e48ccef9ffeeb465dfd2540984be7f57547464` |
+| `inventory/BOUNDED_READER_DEPENDENCY_INVENTORY.md` | 761 | `c9e0dfe010cb4d6cd7c13931f82596c73f92c3ed3f3a0b417c092486c6db1206` |
+| `inventory/core-target-query.txt` | 72 | `124c088a1eb7fa4526a41621ede3152645749473547406f405f6a06d948af06e` |
+| `inventory/graphviz.log` | 244 | `5a181f4a782b59f6f02b5b31c7729573f9a59d646010f84256c327048c5afa52` |
+| `inventory/leaf-target-query.txt` | 106 | `810b69c89128afc2b262db195adc8b0dd8637653ab165b964e3a0182237ac52e` |
+| `inventory/runtime-target-commands.txt` | 1486 | `a6ab94e949c260d0cb15b23107d740b505ade31c23bad0087b39932e25f8da51` |
+| `inventory/runtime-target-query.txt` | 333 | `e67f375557c75bd349af9b03b626a0af6d76c14aff51958743036fdb0b62d427` |
+| `inventory/syscall-target-commands.txt` | 1640 | `591fdfb60a4260818c807312bdf2075e8390fa61d9f03b9835aa1d9b84df9d2c` |
+| `inventory/syscall-target-query.txt` | 365 | `918df1119db15ab7fc3ecdf4e111cd1e524651dbc4b592773e1d771ebcb1e185` |
+| `inventory/target-graph.dot` | 28456 | `2f8803305ea12c893ea788360aa1e3134529f5a82c904002ce9acf381d1847ca` |
+| `lineage/parent-archive.sha256` | 171 | `63f17762908c1284da8815ca340e1ebd0d639cd8ad5c2c0cc2aead59d6e27cdc` |
+| `lineage/parent-directory-verification.json` | 3664 | `205232ecbb75231be7b363fdb5a39971b7224189bd1b9367f71a6fcdc05bb1e4` |
+| `lineage/parent-zip-verification.json` | 4179 | `23250d10a7e64cab5d0d754eae868659598604f6aa83f8fb532f675b8b1b9cde` |
+| `repository_metrics.json` | 2569 | `c8c6dbce60bc0b85a6d5881e96a79d398d6aeca08090b0021a6b278b3a5cd59e` |
+| `validation/VALIDATION_SUMMARY.json` | 2637 | `c73bc84e584787913d13633b12514148738cb6f0b3cc6db6b3a74eb3b33a7af0` |
+| `validation/captured-at.txt` | 26 | `92540dded3ca8742fb5a15223bd316332cbba4261fa4f0b7db779ac3ec98f196` |
+| `validation/clang17-focused-37-of-37.log` | 2538 | `0b1a9d5664fb3d9360eb3ab438268b5f093db3db952eef23d8976e9e121edb37` |
+| `validation/ctest-final-127-of-127.json` | 21767 | `f1dc62e277935ca49613424ac77783cc28b6a500968c14371393b19d048f352e` |
+| `validation/ctest-final-127-of-127.txt` | 11220 | `c175944e93f106c42dd72c74302ee917fd3d828caf57b8fea755d86aa8f98d94` |
+| `validation/ctest-final-shard-001-020.log` | 3522 | `cad6ece49d23d74f018e13c39ec5a952c41641f284b553a0988644c18530c424` |
+| `validation/ctest-final-shard-021-030.log` | 1929 | `8b66f7fa0705cdbb031b93dbe1da6e3f0813780dfb163759cb46574b86015397` |
+| `validation/ctest-final-shard-031-040.log` | 1977 | `46e633e0af59a41a876266355f47cca356faaada0369319f6fdaf5c69f8e8d7c` |
+| `validation/ctest-final-shard-041-050.log` | 1937 | `41f5f8b7bfb1f594337e9932726a240ed4db36e302edcc6a557065a37a7b84e0` |
+| `validation/ctest-final-shard-051-060.log` | 2020 | `413044c255098bb073fd085ecb95d6eb387663770c1573902f07d8b753af4870` |
+| `validation/ctest-final-shard-061-090.log` | 4992 | `d6f198dcc0958815783a07011e487e52889dcb225bbea73a0c57a8a8352144d9` |
+| `validation/ctest-final-shard-091-127.log` | 6311 | `369b36137786c494469e5b06c1d61e94095fa21207fa7e64c2c45b0d3f0b3c0f` |
+| `validation/ctest-inventory-127.json` | 12408 | `f49d6fe57ed81f0ef706980d07945a1465fcbf289dc1ddf01d3f531665b04456` |
+| `validation/ctest-inventory-127.txt` | 7763 | `41616617cf30541615ad4541ff373a136ac5ecc9f93d081e526eb2920e8206ab` |
+| `validation/final-dependency-closure-zero-compile-link.log` | 22 | `8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794` |
+| `validation/final-source-hygiene.log` | 380 | `96aa2f0182b53b2500863d8a17b3c0fbd528a1b314d30fec40ab892c199a7f43` |
+| `validation/focused-repeat-740-of-740.log` | 2951 | `3818c0125aa94ca1c61971e34fe57620778aade072e6ab1b92e73acb008e7c7a` |
+| `validation/focused-runtime-12-of-12.log` | 46 | `e5d8b982278ef9633304aa88254cef11fa0b7732491b892269f52ebd7132cc58` |
+| `validation/focused-syscall-25-of-25.log` | 54 | `f9cf780544051d393b84b9f9674f17931de56fc29b2004fa05ad81caf4ee2d3a` |
+| `validation/gcc14-asan-ubsan-focused-37-of-37.log` | 193 | `2c64439a46660efce969e6b0403b89b5bc9d0f7a185deceb6da65ae405410257` |
+| `validation/gcc14-asan-ubsan-focused-build.log` | 1476 | `4c371973ce44a3d18eb71a63bd79833e4c293074149203fae97d03beb0dafc6e` |
+| `validation/gcc14-final-all-target-build.log` | 1658 | `18ce9a60ed96f677499835e51d54d9e8e8eb247e7d8242281b3dc77237ba826e` |
+| `validation/gcc14-ninja-configure.log` | 881 | `a5732e0c7a2a67891edaedb75c03cb7b9bd7fba502a323b6bf4cfc9abcbf79e2` |
+| `validation/source-patch-compare.json` | 459 | `4b74af8ebea2269efc83ad79e792d138764250ff4611146d970bfbaad869516b` |

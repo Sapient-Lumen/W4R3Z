@@ -1,0 +1,2340 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 90ef7fb..a154efb 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -651,11 +651,21 @@ target_link_libraries(anonsync_sync_replica_model PUBLIC
+ target_compile_options(anonsync_sync_replica_model PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++# Accepted liveness observations are a separate authority from lease state.
++# Keep the tiny forward-only primitive independently compilable and auditable.
++set(ANONSYNC_SYNC_REPLICA_OUTBOX_TIME_FENCE_SOURCE
++  src/sync_replica_outbox_time_fence.cpp)
++add_library(anonsync_sync_replica_outbox_time_fence STATIC
++  ${ANONSYNC_SYNC_REPLICA_OUTBOX_TIME_FENCE_SOURCE})
++target_include_directories(anonsync_sync_replica_outbox_time_fence PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_compile_options(anonsync_sync_replica_outbox_time_fence PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ # Delivery attempts are operational state, but settlement is still authority.
+ # This pure policy owner mints one fresh receipt per lease, fences expired
+-# receipts, rejects durable liveness rollback, preserves retry backoff, and
+-# keeps time-dependent policy separate from immutable replica evidence and
+-# SQLite transaction mechanics.
++# receipts, retains exact retry-release provenance, and keeps time-dependent
++# policy separate from immutable replica evidence and SQLite mechanics.
+ set(ANONSYNC_SYNC_REPLICA_OUTBOX_LEASE_SOURCE
+   src/sync_replica_outbox_lease.cpp)
+ add_library(anonsync_sync_replica_outbox_lease STATIC
+@@ -664,7 +674,8 @@ target_include_directories(anonsync_sync_replica_outbox_lease PUBLIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+ target_link_libraries(anonsync_sync_replica_outbox_lease PUBLIC
+   anonsync_sha256_digest
+-  anonsync_sync_manifest_validation)
++  anonsync_sync_manifest_validation
++  anonsync_sync_replica_outbox_time_fence)
+ target_compile_options(anonsync_sync_replica_outbox_lease PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
+@@ -1562,6 +1573,15 @@ target_link_libraries(anonsync_sync_replica_outbox_lease_test PRIVATE
+ target_compile_options(anonsync_sync_replica_outbox_lease_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++add_executable(anonsync_sync_replica_outbox_time_fence_test
++  tests/sync_replica_outbox_time_fence_test.cpp)
++target_include_directories(anonsync_sync_replica_outbox_time_fence_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_outbox_time_fence_test PRIVATE
++  anonsync_sync_replica_outbox_time_fence)
++target_compile_options(anonsync_sync_replica_outbox_time_fence_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ add_executable(anonsync_sync_replica_sqlite_owner_test
+   tests/sync_replica_sqlite_owner_test.cpp)
+ target_include_directories(anonsync_sync_replica_sqlite_owner_test PRIVATE
+@@ -2433,7 +2453,9 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_sync_replica_allocation_atomicity_test
+     anonsync_sync_replica_aggregate_budget_test
+     anonsync_sync_replica_capacity_backpressure_test
++    anonsync_sync_replica_outbox_time_fence
+     anonsync_sync_replica_outbox_lease_test
++    anonsync_sync_replica_outbox_time_fence_test
+     anonsync_sync_replica_sqlite_owner_test
+     anonsync_fuzz_json_codec
+     anonsync_fuzz_jwt_codec
+@@ -2510,6 +2532,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_sync_replica_aggregate_budget_test
+       anonsync_sync_replica_capacity_backpressure_test
+       anonsync_sync_replica_outbox_lease_test
++      anonsync_sync_replica_outbox_time_fence_test
+       anonsync_sync_replica_sqlite_owner_test
+       anonsync_fuzz_json_codec
+       anonsync_fuzz_jwt_codec
+@@ -2648,6 +2671,8 @@ set_tests_properties(anonsync_sync_replica_capacity_backpressure_test
+   PROPERTIES TIMEOUT 30)
+ add_test(NAME anonsync_sync_replica_outbox_lease_test
+   COMMAND anonsync_sync_replica_outbox_lease_test)
++add_test(NAME anonsync_sync_replica_outbox_time_fence_test
++  COMMAND anonsync_sync_replica_outbox_time_fence_test)
+ add_test(NAME anonsync_sync_replica_sqlite_owner_test
+   COMMAND anonsync_sync_replica_sqlite_owner_test)
+ set_tests_properties(anonsync_sync_replica_sqlite_owner_test
+diff --git a/src/sync_replica_outbox_lease.cpp b/src/sync_replica_outbox_lease.cpp
+index 611a1a0..df4f328 100644
+--- a/src/sync_replica_outbox_lease.cpp
++++ b/src/sync_replica_outbox_lease.cpp
+@@ -54,20 +54,6 @@ void append_framed(Sha256DigestBuilder& digest, std::string_view bytes) {
+ 
+ }  // namespace
+ 
+-std::uint64_t advance_sync_replica_outbox_time_high_water_or_throw(
+-    std::uint64_t current_high_water_epoch,
+-    std::uint64_t observed_epoch,
+-    const std::string& label) {
+-    if (observed_epoch == 0U) {
+-        throw std::invalid_argument(label + " observed epoch must be positive");
+-    }
+-    if (observed_epoch < current_high_water_epoch) {
+-        throw std::invalid_argument(
+-            label + " observed epoch rolls back durable time");
+-    }
+-    return observed_epoch;
+-}
+-
+ void validate_sync_replica_outbox_lease_state_or_throw(
+     const SyncReplicaOutboxLeaseState& state,
+     const std::string& label) {
+@@ -85,7 +71,10 @@ void validate_sync_replica_outbox_lease_state_or_throw(
+             !is_lowercase_sha256_hex(state.claim_id) ||
+             !sync_id_is_valid(state.worker_id) ||
+             state.lease_expires_at_epoch <= state.claimed_at_epoch ||
+-            state.retry_not_before_epoch != 0U) {
++            state.retry_not_before_epoch != 0U ||
++            state.retry_released_at_epoch != 0U ||
++            state.retry_release_provenance !=
++                SyncReplicaOutboxRetryReleaseProvenance::None) {
+             throw std::runtime_error(label + " has invalid active lease authority");
+         }
+         if (state.lease_expires_at_epoch - state.claimed_at_epoch >
+@@ -94,13 +83,45 @@ void validate_sync_replica_outbox_lease_state_or_throw(
+                 label + " exceeds the cumulative claim lifetime budget");
+         }
+     } else if (state.dispatch_attempts == 0U) {
+-        if (state.retry_not_before_epoch != 0U) {
++        if (state.retry_not_before_epoch != 0U ||
++            state.retry_released_at_epoch != 0U ||
++            state.retry_release_provenance !=
++                SyncReplicaOutboxRetryReleaseProvenance::None) {
+             throw std::runtime_error(
+                 label + " backs off an intent that has never been dispatched");
+         }
+-    } else if (state.retry_not_before_epoch == 0U) {
+-        throw std::runtime_error(
+-            label + " has dispatched history without active or retry authority");
++    } else {
++        if (state.retry_not_before_epoch == 0U) {
++            throw std::runtime_error(
++                label + " has dispatched history without active or retry authority");
++        }
++        if (state.retry_release_provenance ==
++            SyncReplicaOutboxRetryReleaseProvenance::None) {
++            throw std::runtime_error(
++                label + " has retry authority without release provenance");
++        }
++        if (state.retry_release_provenance ==
++            SyncReplicaOutboxRetryReleaseProvenance::LegacyUnproven) {
++            if (state.retry_released_at_epoch != 0U) {
++                throw std::runtime_error(
++                    label + " fabricates an exact legacy retry release epoch");
++            }
++        } else if (state.retry_release_provenance ==
++                   SyncReplicaOutboxRetryReleaseProvenance::Exact) {
++            if (state.retry_released_at_epoch == 0U ||
++                state.retry_not_before_epoch < state.retry_released_at_epoch) {
++                throw std::runtime_error(
++                    label + " has invalid exact retry release provenance");
++            }
++            if (state.retry_not_before_epoch - state.retry_released_at_epoch >
++                kSyncReplicaOutboxMaxRetryDelaySeconds) {
++                throw std::runtime_error(
++                    label + " exact retry delay exceeds the fixed retry budget");
++            }
++        } else {
++            throw std::runtime_error(
++                label + " has unsupported retry release provenance");
++        }
+     }
+ }
+ 
+@@ -183,9 +204,12 @@ SyncReplicaOutboxLeaseState claim_sync_replica_outbox_lease_or_throw(
+     next.lease_expires_at_epoch = lease_deadline_or_throw(
+         now_epoch, lease_seconds, label);
+     next.retry_not_before_epoch = 0U;
++    next.retry_released_at_epoch = 0U;
++    next.retry_release_provenance =
++        SyncReplicaOutboxRetryReleaseProvenance::None;
+ 
+     Sha256DigestBuilder digest;
+-    digest.update("anonsync-sync-replica-outbox-claim-v1");
++    digest.update("anonsync-sync-replica-outbox-claim-v2");
+     append_framed(digest, folder_id);
+     append_framed(digest, destination_device_id);
+     append_framed(digest, operation_id);
+@@ -194,6 +218,9 @@ SyncReplicaOutboxLeaseState claim_sync_replica_outbox_lease_or_throw(
+     digest.update(u64_be(current.dispatch_attempts));
+     append_framed(digest, current.claim_id);
+     digest.update(u64_be(current.retry_not_before_epoch));
++    digest.update(u64_be(current.retry_released_at_epoch));
++    digest.update(u64_be(static_cast<std::uint64_t>(
++        current.retry_release_provenance)));
+     append_framed(digest, next.worker_id);
+     digest.update(u64_be(next.dispatch_attempts));
+     digest.update(u64_be(next.claimed_at_epoch));
+@@ -242,7 +269,7 @@ SyncReplicaOutboxLeaseState release_sync_replica_outbox_lease_or_throw(
+     const SyncReplicaOutboxLeaseState& current,
+     std::string_view expected_claim_id,
+     std::uint64_t now_epoch,
+-    std::uint64_t retry_not_before_epoch,
++    std::uint64_t retry_delay_seconds,
+     const std::string& label) {
+     const SyncReplicaOutboxClaimStatus status =
+         sync_replica_outbox_claim_status_at_or_throw(
+@@ -253,19 +280,22 @@ SyncReplicaOutboxLeaseState release_sync_replica_outbox_lease_or_throw(
+     if (status == SyncReplicaOutboxClaimStatus::Expired) {
+         throw std::runtime_error(label + " expected claim is expired");
+     }
+-    if (retry_not_before_epoch < now_epoch) {
+-        throw std::invalid_argument(
+-            label + " retry_not_before_epoch predates now_epoch");
+-    }
+-    if (retry_not_before_epoch - now_epoch >
+-        kSyncReplicaOutboxMaxRetryDelaySeconds) {
++    if (retry_delay_seconds > kSyncReplicaOutboxMaxRetryDelaySeconds) {
+         throw std::invalid_argument(
+             label + " retry delay exceeds the fixed retry budget");
+     }
++    if (retry_delay_seconds >
++        std::numeric_limits<std::uint64_t>::max() - now_epoch) {
++        throw std::overflow_error(
++            label + " retry deadline overflows uint64_t");
++    }
+ 
+     SyncReplicaOutboxLeaseState next;
+     next.dispatch_attempts = current.dispatch_attempts;
+-    next.retry_not_before_epoch = retry_not_before_epoch;
++    next.retry_not_before_epoch = now_epoch + retry_delay_seconds;
++    next.retry_released_at_epoch = now_epoch;
++    next.retry_release_provenance =
++        SyncReplicaOutboxRetryReleaseProvenance::Exact;
+     validate_sync_replica_outbox_lease_state_or_throw(next, label);
+     return next;
+ }
+diff --git a/src/sync_replica_outbox_lease.hpp b/src/sync_replica_outbox_lease.hpp
+index cea868c..7725e8a 100644
+--- a/src/sync_replica_outbox_lease.hpp
++++ b/src/sync_replica_outbox_lease.hpp
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
++#include "sync_replica_outbox_time_fence.hpp"
++
+ #include <cstdint>
+ #include <string>
+ #include <string_view>
+@@ -13,6 +15,15 @@ inline constexpr std::uint64_t kSyncReplicaOutboxMaxClaimLifetimeSeconds =
+ inline constexpr std::uint64_t kSyncReplicaOutboxMaxRetryDelaySeconds =
+     24U * 60U * 60U;
+ 
++// Values are stored as durable protocol bytes in SQLite. Keep the numeric
++// representation explicit so a compiler or refactor cannot silently rewrite
++// existing rows.
++enum class SyncReplicaOutboxRetryReleaseProvenance : std::uint8_t {
++    None = 0U,
++    Exact = 1U,
++    LegacyUnproven = 2U,
++};
++
+ // Durable dispatch state for one immutable (destination, operation) intent.
+ // The intent remains unsettled until the exact current claim is settled. An
+ // expired claim may be replaced, but its old receipt can never settle the new
+@@ -27,6 +38,12 @@ struct SyncReplicaOutboxLeaseState final {
+     std::uint64_t claimed_at_epoch = 0;
+     std::uint64_t lease_expires_at_epoch = 0;
+     std::uint64_t retry_not_before_epoch = 0;
++    std::uint64_t retry_released_at_epoch = 0;
++    // Exact retains the accepted owner-time observation that minted the retry
++    // schedule. LegacyUnproven is migration evidence: an older schema retained
++    // the deadline but discarded that observation. Migration must not guess it.
++    SyncReplicaOutboxRetryReleaseProvenance retry_release_provenance =
++        SyncReplicaOutboxRetryReleaseProvenance::None;
+ 
+     bool operator==(const SyncReplicaOutboxLeaseState&) const = default;
+ };
+@@ -37,16 +54,6 @@ enum class SyncReplicaOutboxClaimStatus {
+     Expired,
+ };
+ 
+-// Advances one durable observation fence. Equal observations are idempotent;
+-// a smaller observation is a clock rollback and cannot regain authority that
+-// a later observation may already have revoked. This is an anti-rollback
+-// primitive, not a claim that caller-supplied epoch time is trustworthy.
+-[[nodiscard]] std::uint64_t
+-advance_sync_replica_outbox_time_high_water_or_throw(
+-    std::uint64_t current_high_water_epoch,
+-    std::uint64_t observed_epoch,
+-    const std::string& label);
+-
+ void validate_sync_replica_outbox_lease_state_or_throw(
+     const SyncReplicaOutboxLeaseState& state,
+     const std::string& label);
+@@ -101,7 +108,7 @@ release_sync_replica_outbox_lease_or_throw(
+     const SyncReplicaOutboxLeaseState& current,
+     std::string_view expected_claim_id,
+     std::uint64_t now_epoch,
+-    std::uint64_t retry_not_before_epoch,
++    std::uint64_t retry_delay_seconds,
+     const std::string& label);
+ 
+ }  // namespace anonsync
+diff --git a/src/sync_replica_outbox_time_fence.cpp b/src/sync_replica_outbox_time_fence.cpp
+new file mode 100644
+index 0000000..8fe4431
+--- /dev/null
++++ b/src/sync_replica_outbox_time_fence.cpp
+@@ -0,0 +1,21 @@
++#include "sync_replica_outbox_time_fence.hpp"
++
++#include <stdexcept>
++
++namespace anonsync {
++
++std::uint64_t advance_sync_replica_outbox_time_high_water_or_throw(
++    std::uint64_t current_high_water_epoch,
++    std::uint64_t observed_epoch,
++    const std::string& label) {
++    if (observed_epoch == 0U) {
++        throw std::invalid_argument(label + " observed epoch must be positive");
++    }
++    if (observed_epoch < current_high_water_epoch) {
++        throw std::invalid_argument(
++            label + " observed epoch rolls back durable time");
++    }
++    return observed_epoch;
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_replica_outbox_time_fence.hpp b/src/sync_replica_outbox_time_fence.hpp
+new file mode 100644
+index 0000000..cf1fd21
+--- /dev/null
++++ b/src/sync_replica_outbox_time_fence.hpp
+@@ -0,0 +1,18 @@
++#pragma once
++
++#include <cstdint>
++#include <string>
++
++namespace anonsync {
++
++// Advances one durable observation fence. Equal observations are idempotent;
++// a smaller observation is a rollback and cannot regain authority that a later
++// observation may already have revoked. This is an anti-rollback primitive,
++// not a claim that caller-supplied epoch time is physically trustworthy.
++[[nodiscard]] std::uint64_t
++advance_sync_replica_outbox_time_high_water_or_throw(
++    std::uint64_t current_high_water_epoch,
++    std::uint64_t observed_epoch,
++    const std::string& label);
++
++}  // namespace anonsync
+diff --git a/src/sync_replica_sqlite_owner.cpp b/src/sync_replica_sqlite_owner.cpp
+index 7755ecf..2ffbe3e 100644
+--- a/src/sync_replica_sqlite_owner.cpp
++++ b/src/sync_replica_sqlite_owner.cpp
+@@ -28,7 +28,8 @@ namespace {
+ 
+ constexpr std::uint64_t kLegacySchemaVersion = 1U;
+ constexpr std::uint64_t kPreviousSchemaVersion = 2U;
+-constexpr std::uint64_t kSchemaVersion = 3U;
++constexpr std::uint64_t kClockSchemaVersion = 3U;
++constexpr std::uint64_t kSchemaVersion = 4U;
+ constexpr std::uint64_t kMaxSchemaSqlBytes = 1024U * 1024U;
+ 
+ struct SchemaDefinition final {
+@@ -214,8 +215,10 @@ constexpr std::array<SchemaDefinition, 9> kPreviousSchema{{
+      "CREATE INDEX sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_before_epoch_be,lease_expires_at_epoch_be,destination_device_id,operation_id)"},
+ }};
+ 
+-// Current schema adds a separate, digest-bound durable observation fence.
+-constexpr std::array<SchemaDefinition, 10> kSchema{{
++// Rev0872 schema retained as an exact migration source. It added the
++// digest-bound liveness fence but retained only a retry deadline, so migration
++// must preserve that epistemic gap rather than inventing a release timestamp.
++constexpr std::array<SchemaDefinition, 10> kClockSchema{{
+     {"table", "sync_replica_meta", "sync_replica_meta",
+      "CREATE TABLE sync_replica_meta("
+      "id INTEGER PRIMARY KEY CHECK(id=1),"
+@@ -308,6 +311,105 @@ constexpr std::array<SchemaDefinition, 10> kSchema{{
+      "CREATE INDEX sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_before_epoch_be,lease_expires_at_epoch_be,destination_device_id,operation_id)"},
+ }};
+ 
++
++// Current schema retains the liveness fence and the exact observation that
++// minted each new retry schedule. Legacy-unproven rows remain explicit until
++// the next claim clears them and a later release can mint exact provenance.
++constexpr std::array<SchemaDefinition, 10> kSchema{{
++    {"table", "sync_replica_meta", "sync_replica_meta",
++     "CREATE TABLE sync_replica_meta("
++     "id INTEGER PRIMARY KEY CHECK(id=1),"
++     "schema_version INTEGER NOT NULL CHECK(schema_version=4),"
++     "folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),"
++     "local_device_id TEXT NOT NULL CHECK(length(local_device_id) BETWEEN 1 AND 128),"
++     "local_epoch_be BLOB NOT NULL CHECK(length(local_epoch_be)=8),"
++     "last_local_counter_be BLOB NOT NULL CHECK(length(last_local_counter_be)=8),"
++     "state_generation_be BLOB NOT NULL CHECK(length(state_generation_be)=8),"
++     "policy_generation_be BLOB NOT NULL CHECK(length(policy_generation_be)=8),"
++     "max_operations_be BLOB NOT NULL CHECK(length(max_operations_be)=8),"
++     "max_context_entries_be BLOB NOT NULL CHECK(length(max_context_entries_be)=8),"
++     "max_predecessor_ids_be BLOB NOT NULL CHECK(length(max_predecessor_ids_be)=8),"
++     "max_canonical_operation_bytes_be BLOB NOT NULL CHECK(length(max_canonical_operation_bytes_be)=8),"
++     "max_retained_canonical_bytes_be BLOB NOT NULL CHECK(length(max_retained_canonical_bytes_be)=8),"
++     "max_retained_context_entries_be BLOB NOT NULL CHECK(length(max_retained_context_entries_be)=8),"
++     "max_retained_predecessor_ids_be BLOB NOT NULL CHECK(length(max_retained_predecessor_ids_be)=8),"
++     "max_outbox_intents_be BLOB NOT NULL CHECK(length(max_outbox_intents_be)=8),"
++     "max_outbox_destination_bytes_be BLOB NOT NULL CHECK(length(max_outbox_destination_bytes_be)=8),"
++     "evidence_count_be BLOB NOT NULL CHECK(length(evidence_count_be)=8),"
++     "active_count_be BLOB NOT NULL CHECK(length(active_count_be)=8),"
++     "retained_canonical_bytes_be BLOB NOT NULL CHECK(length(retained_canonical_bytes_be)=8),"
++     "retained_context_entries_be BLOB NOT NULL CHECK(length(retained_context_entries_be)=8),"
++     "retained_predecessor_ids_be BLOB NOT NULL CHECK(length(retained_predecessor_ids_be)=8),"
++     "outbox_intent_count_be BLOB NOT NULL CHECK(length(outbox_intent_count_be)=8),"
++     "outbox_destination_bytes_be BLOB NOT NULL CHECK(length(outbox_destination_bytes_be)=8),"
++     "local_actor_compromised INTEGER NOT NULL CHECK(local_actor_compromised IN (0,1)),"
++     "local_operation_digest TEXT NOT NULL CHECK(length(local_operation_digest)=64),"
++     "operation_set_digest TEXT NOT NULL CHECK(length(operation_set_digest)=64),"
++     "evidence_set_digest TEXT NOT NULL CHECK(length(evidence_set_digest)=64),"
++     "visible_state_digest TEXT NOT NULL CHECK(length(visible_state_digest)=64),"
++     "outbox_digest TEXT NOT NULL CHECK(length(outbox_digest)=64),"
++     "cutpoint_digest TEXT NOT NULL CHECK(length(cutpoint_digest)=64)) STRICT"},
++    {"table", "sync_replica_operations", "sync_replica_operations",
++     "CREATE TABLE sync_replica_operations("
++     "operation_id TEXT PRIMARY KEY CHECK(length(operation_id)=64),"
++     "canonical_bytes BLOB NOT NULL,"
++     "canonical_size_be BLOB NOT NULL CHECK(length(canonical_size_be)=8),"
++     "context_count_be BLOB NOT NULL CHECK(length(context_count_be)=8),"
++     "predecessor_count_be BLOB NOT NULL CHECK(length(predecessor_count_be)=8),"
++     "evidence_state TEXT NOT NULL CHECK(evidence_state IN ('active','pending_missing_dependency','quarantined_dot_fork','quarantined_dependency','quarantined_causal_envelope','quarantined_dependency_cycle'))) STRICT"},
++    {"table", "sync_replica_parent_edges", "sync_replica_parent_edges",
++     "CREATE TABLE sync_replica_parent_edges("
++     "child_operation_id TEXT NOT NULL,"
++     "parent_ordinal INTEGER NOT NULL CHECK(parent_ordinal>=0),"
++     "parent_operation_id TEXT NOT NULL CHECK(length(parent_operation_id)=64),"
++     "PRIMARY KEY(child_operation_id,parent_ordinal),"
++     "UNIQUE(child_operation_id,parent_operation_id),"
++     "FOREIGN KEY(child_operation_id) REFERENCES sync_replica_operations(operation_id) ON DELETE CASCADE) STRICT"},
++    {"table", "sync_replica_local_operations", "sync_replica_local_operations",
++     "CREATE TABLE sync_replica_local_operations("
++     "counter_be BLOB PRIMARY KEY CHECK(length(counter_be)=8),"
++     "operation_id TEXT NOT NULL UNIQUE,"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_heads", "sync_replica_heads",
++     "CREATE TABLE sync_replica_heads("
++     "operation_id TEXT PRIMARY KEY,"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_visible", "sync_replica_visible",
++     "CREATE TABLE sync_replica_visible("
++     "canonical_path TEXT NOT NULL CHECK(length(canonical_path) BETWEEN 1 AND 4096),"
++     "visible_ordinal INTEGER NOT NULL CHECK(visible_ordinal>=0),"
++     "operation_id TEXT NOT NULL,"
++     "is_primary INTEGER NOT NULL CHECK(is_primary IN (0,1)),"
++     "preserve_file INTEGER NOT NULL CHECK(preserve_file IN (0,1)),"
++     "PRIMARY KEY(canonical_path,visible_ordinal),"
++     "UNIQUE(canonical_path,operation_id),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_outbox", "sync_replica_outbox",
++     "CREATE TABLE sync_replica_outbox("
++     "destination_device_id TEXT NOT NULL CHECK(length(destination_device_id) BETWEEN 1 AND 128),"
++     "operation_id TEXT NOT NULL,"
++     "enqueued_generation_be BLOB NOT NULL CHECK(length(enqueued_generation_be)=8),"
++     "dispatch_attempts_be BLOB NOT NULL CHECK(length(dispatch_attempts_be)=8),"
++     "claim_id TEXT NOT NULL CHECK(length(claim_id) IN (0,64)),"
++     "worker_id TEXT NOT NULL CHECK(length(worker_id) BETWEEN 0 AND 128),"
++     "claimed_at_epoch_be BLOB NOT NULL CHECK(length(claimed_at_epoch_be)=8),"
++     "lease_expires_at_epoch_be BLOB NOT NULL CHECK(length(lease_expires_at_epoch_be)=8),"
++     "retry_not_before_epoch_be BLOB NOT NULL CHECK(length(retry_not_before_epoch_be)=8),"
++     "retry_released_at_epoch_be BLOB NOT NULL CHECK(length(retry_released_at_epoch_be)=8),"
++     "retry_release_provenance INTEGER NOT NULL CHECK(retry_release_provenance BETWEEN 0 AND 2),"
++     "PRIMARY KEY(destination_device_id,operation_id),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_outbox_clock", "sync_replica_outbox_clock",
++     "CREATE TABLE sync_replica_outbox_clock("
++     "id INTEGER PRIMARY KEY CHECK(id=1),"
++     "high_water_epoch_be BLOB NOT NULL CHECK(length(high_water_epoch_be)=8),"
++     "clock_digest TEXT NOT NULL CHECK(length(clock_digest)=64)) STRICT"},
++    {"index", "sync_replica_outbox_operation", "sync_replica_outbox",
++     "CREATE INDEX sync_replica_outbox_operation ON sync_replica_outbox(operation_id,destination_device_id)"},
++    {"index", "sync_replica_outbox_schedule", "sync_replica_outbox",
++     "CREATE INDEX sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_before_epoch_be,lease_expires_at_epoch_be,destination_device_id,operation_id)"},
++}};
++
+ struct DurableMeta final {
+     std::uint64_t schema_version = kSchemaVersion;
+     std::string folder_id;
+@@ -405,6 +507,22 @@ void bind_u64_be_or_throw(
+         sqlite_column_blob_or_throw(statement, column, 8U, label), label);
+ }
+ 
++[[nodiscard]] SyncReplicaOutboxRetryReleaseProvenance
++retry_release_provenance_from_u64_or_throw(
++    std::uint64_t value,
++    const std::string& label) {
++    switch (value) {
++        case 0U:
++            return SyncReplicaOutboxRetryReleaseProvenance::None;
++        case 1U:
++            return SyncReplicaOutboxRetryReleaseProvenance::Exact;
++        case 2U:
++            return SyncReplicaOutboxRetryReleaseProvenance::LegacyUnproven;
++    }
++    throw std::runtime_error(
++        label + " retry release provenance is unsupported");
++}
++
+ void require_row_or_throw(sqlite3_stmt* statement, const std::string& label) {
+     const int result = sqlite3_step(statement);
+     if (result != SQLITE_ROW) {
+@@ -488,7 +606,7 @@ void append_framed(
+     return digest.finish_hex();
+ }
+ 
+-[[nodiscard]] std::string outbox_digest_or_throw(
++[[nodiscard]] std::string prior_outbox_digest_or_throw(
+     const std::string& folder_id,
+     const std::vector<SyncReplicaSqliteOutboxIntent>& outbox) {
+     Sha256DigestBuilder digest;
+@@ -512,6 +630,33 @@ void append_framed(
+     return digest.finish_hex();
+ }
+ 
++[[nodiscard]] std::string outbox_digest_or_throw(
++    const std::string& folder_id,
++    const std::vector<SyncReplicaSqliteOutboxIntent>& outbox) {
++    Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-outbox-v3");
++    append_framed(digest, folder_id);
++    digest.update(u64_be(size_to_u64_or_throw(
++        outbox.size(), "sync replica SQLite outbox count")));
++    for (const SyncReplicaSqliteOutboxIntent& intent : outbox) {
++        validate_sync_replica_outbox_lease_state_or_throw(
++            intent.lease, "sync replica SQLite outbox digest lease");
++        append_framed(digest, intent.destination_device_id);
++        append_framed(digest, intent.operation_id);
++        digest.update(u64_be(intent.enqueued_generation));
++        digest.update(u64_be(intent.lease.dispatch_attempts));
++        append_framed(digest, intent.lease.claim_id);
++        append_framed(digest, intent.lease.worker_id);
++        digest.update(u64_be(intent.lease.claimed_at_epoch));
++        digest.update(u64_be(intent.lease.lease_expires_at_epoch));
++        digest.update(u64_be(intent.lease.retry_not_before_epoch));
++        digest.update(u64_be(intent.lease.retry_released_at_epoch));
++        digest.update(u64_be(static_cast<std::uint64_t>(
++            intent.lease.retry_release_provenance)));
++    }
++    return digest.finish_hex();
++}
++
+ [[nodiscard]] std::string local_operation_digest_or_throw(
+     const std::string& folder_id,
+     const SyncReplicaActor& local_actor,
+@@ -595,14 +740,22 @@ void append_cutpoint_authority(
+         "sync replica SQLite v2");
+ }
+ 
+-[[nodiscard]] std::string cutpoint_digest_or_throw(
++[[nodiscard]] std::string clock_schema_cutpoint_digest_or_throw(
+     const DurableMeta& meta) {
+     return versioned_cutpoint_digest_or_throw(
+-        meta, kSchemaVersion,
++        meta, kClockSchemaVersion,
+         "anonsync-sync-replica-sqlite-cutpoint-v3",
+         "sync replica SQLite v3");
+ }
+ 
++[[nodiscard]] std::string cutpoint_digest_or_throw(
++    const DurableMeta& meta) {
++    return versioned_cutpoint_digest_or_throw(
++        meta, kSchemaVersion,
++        "anonsync-sync-replica-sqlite-cutpoint-v4",
++        "sync replica SQLite v4");
++}
++
+ [[nodiscard]] std::string outbox_clock_digest_or_throw(
+     const std::string& folder_id,
+     const SyncReplicaActor& local_actor,
+@@ -848,6 +1001,7 @@ void require_no_foreign_key_violations_or_throw(
+     if (observed_schema_version != expected_schema_version ||
+         (observed_schema_version != kLegacySchemaVersion &&
+          observed_schema_version != kPreviousSchemaVersion &&
++         observed_schema_version != kClockSchemaVersion &&
+          observed_schema_version != kSchemaVersion)) {
+         throw std::runtime_error(label + " schema version is unsupported");
+     }
+@@ -933,6 +1087,8 @@ void require_no_foreign_key_violations_or_throw(
+         expected_cutpoint = legacy_cutpoint_digest_or_throw(meta);
+     } else if (meta.schema_version == kPreviousSchemaVersion) {
+         expected_cutpoint = previous_cutpoint_digest_or_throw(meta);
++    } else if (meta.schema_version == kClockSchemaVersion) {
++        expected_cutpoint = clock_schema_cutpoint_digest_or_throw(meta);
+     } else {
+         expected_cutpoint = cutpoint_digest_or_throw(meta);
+     }
+@@ -1541,19 +1697,26 @@ read_outbox_or_throw(
+     SyncSqliteDbHandleSlot& db,
+     const DurableMeta& meta,
+     const std::map<std::string, SyncReplicaEvidenceState>& operation_ids,
++    bool has_retry_release_provenance,
+     const std::string& label) {
+     const std::uint64_t row_count = attest_outbox_shape_or_throw(
+         db, meta, label);
+     std::vector<SyncReplicaSqliteOutboxIntent> outbox;
+     outbox.reserve(u64_to_size_or_throw(row_count, label + " outbox count"));
++    const std::string query = has_retry_release_provenance
++        ? "SELECT destination_device_id,operation_id,enqueued_generation_be,"
++          "dispatch_attempts_be,claim_id,worker_id,claimed_at_epoch_be,"
++          "lease_expires_at_epoch_be,retry_not_before_epoch_be,"
++          "retry_released_at_epoch_be,retry_release_provenance "
++          "FROM main.sync_replica_outbox "
++          "ORDER BY destination_device_id,operation_id;"
++        : "SELECT destination_device_id,operation_id,enqueued_generation_be,"
++          "dispatch_attempts_be,claim_id,worker_id,claimed_at_epoch_be,"
++          "lease_expires_at_epoch_be,retry_not_before_epoch_be "
++          "FROM main.sync_replica_outbox "
++          "ORDER BY destination_device_id,operation_id;";
+     SyncSqliteStmt statement = sqlite_prepare_or_throw(
+-        db,
+-        "SELECT destination_device_id,operation_id,enqueued_generation_be,"
+-        "dispatch_attempts_be,claim_id,worker_id,claimed_at_epoch_be,"
+-        "lease_expires_at_epoch_be,retry_not_before_epoch_be "
+-        "FROM main.sync_replica_outbox "
+-        "ORDER BY destination_device_id,operation_id;",
+-        label + " outbox query prepare");
++        db, query, label + " outbox query prepare");
+     for (;;) {
+         const int result = sqlite3_step(statement.stmt);
+         if (result == SQLITE_DONE) break;
+@@ -1583,15 +1746,35 @@ read_outbox_or_throw(
+             statement.stmt, 7, label + " outbox lease expiry");
+         intent.lease.retry_not_before_epoch = column_u64_be_or_throw(
+             statement.stmt, 8, label + " outbox retry not before");
++        if (has_retry_release_provenance) {
++            intent.lease.retry_released_at_epoch = column_u64_be_or_throw(
++                statement.stmt, 9, label + " outbox retry released at");
++            intent.lease.retry_release_provenance =
++                retry_release_provenance_from_u64_or_throw(
++                    sqlite_column_u64_or_throw(
++                        statement.stmt, 10,
++                        label + " outbox retry release provenance"),
++                    label + " outbox");
++        } else if (intent.lease.dispatch_attempts != 0U &&
++                   intent.lease.claim_id.empty()) {
++            // Schema v2/v3 retained the deadline but discarded the accepted
++            // observation that minted it. Keep the gap explicit; never infer
++            // an exact release time from a maximum-delay policy bound.
++            intent.lease.retry_release_provenance =
++                SyncReplicaOutboxRetryReleaseProvenance::LegacyUnproven;
++        }
+         validate_outbox_intent_or_throw(
+             intent, meta, operation_ids, label);
+         outbox.push_back(std::move(intent));
+     }
+     const std::uint64_t destination_bytes =
+         outbox_destination_bytes_or_throw(outbox);
++    const std::string observed_digest = has_retry_release_provenance
++        ? outbox_digest_or_throw(meta.folder_id, outbox)
++        : prior_outbox_digest_or_throw(meta.folder_id, outbox);
+     if (destination_bytes != meta.outbox_destination_bytes ||
+         destination_bytes > meta.limits.max_outbox_destination_bytes ||
+-        outbox_digest_or_throw(meta.folder_id, outbox) != meta.outbox_digest) {
++        observed_digest != meta.outbox_digest) {
+         throw std::runtime_error(label + " outbox attestation mismatch");
+     }
+     return outbox;
+@@ -1606,16 +1789,22 @@ read_outbox_or_throw(
+         if (!intent.lease.claim_id.empty()) {
+             floor = std::max(floor, intent.lease.claimed_at_epoch);
+         } else if (intent.lease.dispatch_attempts != 0U) {
+-            // A released v2 attempt proves that release time was positive and
+-            // no earlier than retry_not_before minus the fixed retry budget.
+-            // The exact observation was not retained, so migrate only the
+-            // strongest lower bound that the old durable state proves.
+-            const std::uint64_t release_floor =
+-                intent.lease.retry_not_before_epoch >
+-                        kSyncReplicaOutboxMaxRetryDelaySeconds
+-                    ? intent.lease.retry_not_before_epoch -
+-                          kSyncReplicaOutboxMaxRetryDelaySeconds
+-                    : 1U;
++            std::uint64_t release_floor = 0U;
++            if (intent.lease.retry_release_provenance ==
++                SyncReplicaOutboxRetryReleaseProvenance::Exact) {
++                release_floor = intent.lease.retry_released_at_epoch;
++            } else {
++                // A released v2/v3 attempt proves that release time was
++                // positive and no earlier than deadline minus the fixed retry
++                // budget. The exact observation was discarded, so retain only
++                // the strongest lower bound the old row actually proves.
++                release_floor =
++                    intent.lease.retry_not_before_epoch >
++                            kSyncReplicaOutboxMaxRetryDelaySeconds
++                        ? intent.lease.retry_not_before_epoch -
++                              kSyncReplicaOutboxMaxRetryDelaySeconds
++                        : 1U;
++            }
+             floor = std::max(floor, release_floor);
+         }
+     }
+@@ -1629,6 +1818,7 @@ read_outbox_or_throw(
+     std::span<const SchemaDefinition> schema,
+     std::uint64_t schema_version,
+     bool legacy_outbox,
++    bool has_retry_release_provenance,
+     bool has_outbox_clock,
+     const std::string& label) {
+     verify_schema_or_throw(db, schema, label);
+@@ -1685,7 +1875,8 @@ read_outbox_or_throw(
+     verify_visible_or_throw(db, model, label);
+     std::vector<SyncReplicaSqliteOutboxIntent> outbox = legacy_outbox
+         ? read_legacy_outbox_or_throw(db, meta, stored_states, label)
+-        : read_outbox_or_throw(db, meta, stored_states, label);
++        : read_outbox_or_throw(
++              db, meta, stored_states, has_retry_release_provenance, label);
+     const std::uint64_t migration_floor =
+         outbox_clock_migration_floor_or_throw(outbox, label + " outbox clock");
+     DurableOutboxClock outbox_clock = has_outbox_clock
+@@ -1707,7 +1898,7 @@ read_outbox_or_throw(
+     const std::string& label) {
+     return load_state_for_schema_or_throw(
+         db, expected_folder_id, expected_local_actor, kSchema,
+-        kSchemaVersion, false, true, label);
++        kSchemaVersion, false, true, true, label);
+ }
+ 
+ [[nodiscard]] LoadedState load_legacy_state_or_throw(
+@@ -1717,7 +1908,7 @@ read_outbox_or_throw(
+     const std::string& label) {
+     return load_state_for_schema_or_throw(
+         db, expected_folder_id, expected_local_actor, kLegacySchema,
+-        kLegacySchemaVersion, true, false, label);
++        kLegacySchemaVersion, true, false, false, label);
+ }
+ 
+ [[nodiscard]] LoadedState load_previous_state_or_throw(
+@@ -1727,7 +1918,17 @@ read_outbox_or_throw(
+     const std::string& label) {
+     return load_state_for_schema_or_throw(
+         db, expected_folder_id, expected_local_actor, kPreviousSchema,
+-        kPreviousSchemaVersion, false, false, label);
++        kPreviousSchemaVersion, false, false, false, label);
++}
++
++[[nodiscard]] LoadedState load_clock_state_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& expected_folder_id,
++    const SyncReplicaActor& expected_local_actor,
++    const std::string& label) {
++    return load_state_for_schema_or_throw(
++        db, expected_folder_id, expected_local_actor, kClockSchema,
++        kClockSchemaVersion, false, false, true, label);
+ }
+ 
+ [[nodiscard]] DurableMeta meta_from_state_or_throw(
+@@ -1994,6 +2195,13 @@ void bind_outbox_lease_or_throw(
+     bind_u64_be_or_throw(
+         statement, index++, lease.retry_not_before_epoch,
+         label + " bind retry not before");
++    bind_u64_be_or_throw(
++        statement, index++, lease.retry_released_at_epoch,
++        label + " bind retry released at");
++    sqlite_bind_u64_or_throw(
++        statement, index++,
++        static_cast<std::uint64_t>(lease.retry_release_provenance),
++        label + " bind retry release provenance");
+ }
+ 
+ void insert_outbox_intents_or_throw(
+@@ -2006,8 +2214,9 @@ void insert_outbox_intents_or_throw(
+         "INSERT INTO main.sync_replica_outbox("
+         "destination_device_id,operation_id,enqueued_generation_be,"
+         "dispatch_attempts_be,claim_id,worker_id,claimed_at_epoch_be,"
+-        "lease_expires_at_epoch_be,retry_not_before_epoch_be)"
+-        "VALUES(?,?,?,?,?,?,?,?,?);",
++        "lease_expires_at_epoch_be,retry_not_before_epoch_be,"
++        "retry_released_at_epoch_be,retry_release_provenance)"
++        "VALUES(?,?,?,?,?,?,?,?,?,?,?);",
+         label + " outbox insert prepare");
+     for (const SyncReplicaSqliteOutboxIntent& intent : intents) {
+         sqlite_bind_text_or_throw(
+@@ -2038,25 +2247,28 @@ void update_outbox_lease_exact_or_throw(
+         db,
+         "UPDATE main.sync_replica_outbox SET "
+         "dispatch_attempts_be=?,claim_id=?,worker_id=?,claimed_at_epoch_be=?,"
+-        "lease_expires_at_epoch_be=?,retry_not_before_epoch_be=? "
++        "lease_expires_at_epoch_be=?,retry_not_before_epoch_be=?,"
++        "retry_released_at_epoch_be=?,retry_release_provenance=? "
+         "WHERE destination_device_id=? AND operation_id=? "
+         "AND enqueued_generation_be=? AND dispatch_attempts_be=? "
+         "AND claim_id=? AND worker_id=? AND claimed_at_epoch_be=? "
+-        "AND lease_expires_at_epoch_be=? AND retry_not_before_epoch_be=?;",
++        "AND lease_expires_at_epoch_be=? AND retry_not_before_epoch_be=? "
++        "AND retry_released_at_epoch_be=? "
++        "AND retry_release_provenance=?;",
+         label + " outbox lease update prepare");
+     bind_outbox_lease_or_throw(
+         statement.stmt, 1, intent.lease, label + " next lease");
+     sqlite_bind_text_or_throw(
+-        statement.stmt, 7, intent.destination_device_id,
++        statement.stmt, 9, intent.destination_device_id,
+         label + " bind destination");
+     sqlite_bind_text_or_throw(
+-        statement.stmt, 8, intent.operation_id,
++        statement.stmt, 10, intent.operation_id,
+         label + " bind operation");
+     bind_u64_be_or_throw(
+-        statement.stmt, 9, intent.enqueued_generation,
++        statement.stmt, 11, intent.enqueued_generation,
+         label + " bind generation");
+     bind_outbox_lease_or_throw(
+-        statement.stmt, 10, previous, label + " previous lease");
++        statement.stmt, 12, previous, label + " previous lease");
+     sqlite_step_done_or_throw(statement.stmt, label + " outbox lease update");
+     auto borrow = db.borrow();
+     if (sqlite3_changes(borrow.get()) != 1) {
+@@ -2075,7 +2287,9 @@ void delete_outbox_intent_exact_or_throw(
+         "WHERE destination_device_id=? AND operation_id=? "
+         "AND enqueued_generation_be=? AND dispatch_attempts_be=? "
+         "AND claim_id=? AND worker_id=? AND claimed_at_epoch_be=? "
+-        "AND lease_expires_at_epoch_be=? AND retry_not_before_epoch_be=?;",
++        "AND lease_expires_at_epoch_be=? AND retry_not_before_epoch_be=? "
++        "AND retry_released_at_epoch_be=? "
++        "AND retry_release_provenance=?;",
+         label + " outbox delete prepare");
+     sqlite_bind_text_or_throw(
+         statement.stmt, 1, intent.destination_device_id,
+@@ -2318,26 +2532,30 @@ void migrate_prior_schema_or_throw(
+     const SyncReplicaActor& local_actor,
+     const std::string& label) {
+     if (prior.meta.schema_version != kLegacySchemaVersion &&
+-        prior.meta.schema_version != kPreviousSchemaVersion) {
++        prior.meta.schema_version != kPreviousSchemaVersion &&
++        prior.meta.schema_version != kClockSchemaVersion) {
+         throw std::logic_error(
+-            label + " migration source is not schema v1 or v2");
++            label + " migration source is not schema v1, v2, or v3");
+     }
+     const std::uint64_t generation = increment_or_throw(
+         prior.meta.state_generation, label + " migration state generation");
+ 
+     // Keep canonical evidence and projections in place. Replace only the
+     // meta/outbox protocol surfaces after exact prior-version restoration.
+-    if (prior.meta.schema_version == kPreviousSchemaVersion) {
++    if (prior.meta.schema_version == kPreviousSchemaVersion ||
++        prior.meta.schema_version == kClockSchemaVersion) {
+         sqlite_exec_or_throw(
+             db, "DROP INDEX main.sync_replica_outbox_schedule;",
+             label + " retire previous outbox schedule index");
+     }
+-    sqlite_exec_or_throw(
+-        db,
++    std::string retire_sql =
+         "DROP INDEX main.sync_replica_outbox_operation;"
+-        "DROP TABLE main.sync_replica_outbox;"
+-        "DROP TABLE main.sync_replica_meta;",
+-        label + " retire prior outbox schema");
++        "DROP TABLE main.sync_replica_outbox;";
++    if (prior.meta.schema_version == kClockSchemaVersion) {
++        retire_sql += "DROP TABLE main.sync_replica_outbox_clock;";
++    }
++    retire_sql += "DROP TABLE main.sync_replica_meta;";
++    sqlite_exec_or_throw(db, retire_sql, label + " retire prior outbox schema");
+     for (const SchemaDefinition& definition : kSchema) {
+         if (definition.name == "sync_replica_meta" ||
+             definition.name == "sync_replica_outbox" ||
+@@ -2422,17 +2640,23 @@ SyncReplicaSqliteOwner::SyncReplicaSqliteOwner(
+             db_, folder_id_, local_actor_, label_ + " legacy database");
+         migrate_prior_schema_or_throw(
+             transaction, db_, std::move(legacy), folder_id_, local_actor_,
+-            label_ + " schema v1 to v3");
++            label_ + " schema v1 to v4");
+     } else if (schema_matches(observed, kPreviousSchema)) {
+         LoadedState previous = load_previous_state_or_throw(
+             db_, folder_id_, local_actor_, label_ + " previous database");
+         migrate_prior_schema_or_throw(
+             transaction, db_, std::move(previous), folder_id_, local_actor_,
+-            label_ + " schema v2 to v3");
++            label_ + " schema v2 to v4");
++    } else if (schema_matches(observed, kClockSchema)) {
++        LoadedState clock = load_clock_state_or_throw(
++            db_, folder_id_, local_actor_, label_ + " schema v3 database");
++        migrate_prior_schema_or_throw(
++            transaction, db_, std::move(clock), folder_id_, local_actor_,
++            label_ + " schema v3 to v4");
+     } else {
+         throw std::runtime_error(
+-            label_ + " database does not match schema v3, exact rev0871 v2, "
+-                     "or exact rev0869 v1");
++            label_ + " database does not match schema v4, exact rev0872 v3, "
++                     "exact rev0871 v2, or exact rev0869 v1");
+     }
+ 
+     // Constructor publication is withheld until every exact operation and
+@@ -2847,7 +3071,7 @@ SyncReplicaSqliteOwner::release_outbox_for_retry_or_throw(
+     const std::string& operation_id,
+     const std::string& claim_id,
+     std::uint64_t now_epoch,
+-    std::uint64_t retry_not_before_epoch) {
++    std::uint64_t retry_delay_seconds) {
+     if (!sync_id_is_valid(destination_device_id) ||
+         !is_lowercase_sha256_hex(operation_id) ||
+         !is_lowercase_sha256_hex(claim_id)) {
+@@ -2858,15 +3082,15 @@ SyncReplicaSqliteOwner::release_outbox_for_retry_or_throw(
+         throw std::invalid_argument(
+             label_ + " outbox release now_epoch must be positive");
+     }
+-    if (retry_not_before_epoch < now_epoch) {
+-        throw std::invalid_argument(
+-            label_ + " outbox release retry_not_before_epoch predates now_epoch");
+-    }
+-    if (retry_not_before_epoch - now_epoch >
+-        kSyncReplicaOutboxMaxRetryDelaySeconds) {
++    if (retry_delay_seconds > kSyncReplicaOutboxMaxRetryDelaySeconds) {
+         throw std::invalid_argument(
+             label_ + " outbox release retry delay exceeds the fixed retry budget");
+     }
++    if (retry_delay_seconds >
++        std::numeric_limits<std::uint64_t>::max() - now_epoch) {
++        throw std::overflow_error(
++            label_ + " outbox release retry deadline overflows uint64_t");
++    }
+ 
+     SyncSqliteTransaction transaction(
+         db_, label_ + " outbox release", SyncSqliteTransactionMode::Immediate);
+@@ -2900,7 +3124,7 @@ SyncReplicaSqliteOwner::release_outbox_for_retry_or_throw(
+ 
+     const SyncReplicaOutboxLeaseState previous = found->lease;
+     found->lease = release_sync_replica_outbox_lease_or_throw(
+-        previous, claim_id, now_epoch, retry_not_before_epoch,
++        previous, claim_id, now_epoch, retry_delay_seconds,
+         label_ + " outbox release");
+     publish_outbox_lease_update_or_throw(
+         transaction, db_, folder_id_, local_actor_, loaded, *found, previous,
+diff --git a/src/sync_replica_sqlite_owner.hpp b/src/sync_replica_sqlite_owner.hpp
+index ccd08eb..dc92d95 100644
+--- a/src/sync_replica_sqlite_owner.hpp
++++ b/src/sync_replica_sqlite_owner.hpp
+@@ -153,15 +153,17 @@ public:
+         std::uint64_t lease_seconds);
+ 
+     // Releases the exact current unexpired attempt and installs a bounded
+-    // caller-supplied absolute retry backoff. Missing, stale, and expired
+-    // receipts are durable no-ops.
++    // relative retry delay. The owner derives and durably binds the absolute
++    // deadline to the same accepted time observation that authorized release;
++    // callers cannot smuggle an unrelated absolute timestamp. Missing, stale,
++    // and expired receipts are durable no-ops.
+     [[nodiscard]] SyncReplicaSqliteOutboxReceiptResult
+     release_outbox_for_retry_or_throw(
+         const std::string& destination_device_id,
+         const std::string& operation_id,
+         const std::string& claim_id,
+         std::uint64_t now_epoch,
+-        std::uint64_t retry_not_before_epoch);
++        std::uint64_t retry_delay_seconds);
+ 
+     // Policy change is explicit durable state. It succeeds only when all
+     // retained evidence and current outbox intents fit the replacement limits.
+diff --git a/tests/sync_replica_outbox_lease_test.cpp b/tests/sync_replica_outbox_lease_test.cpp
+index 5d8ed35..0807a1b 100644
+--- a/tests/sync_replica_outbox_lease_test.cpp
++++ b/tests/sync_replica_outbox_lease_test.cpp
+@@ -76,6 +76,9 @@ void test_claim_expiry_reclaim_and_release() {
+                 first.claimed_at_epoch == 100U &&
+                 first.lease_expires_at_epoch == 110U &&
+                 first.retry_not_before_epoch == 0U &&
++                first.retry_released_at_epoch == 0U &&
++                first.retry_release_provenance ==
++                    anonsync::SyncReplicaOutboxRetryReleaseProvenance::None &&
+                 anonsync::is_lowercase_sha256_hex(first.claim_id),
+             "first claim did not mint exact lease authority");
+     require(!anonsync::sync_replica_outbox_lease_is_claimable_at_or_throw(
+@@ -94,21 +97,24 @@ void test_claim_expiry_reclaim_and_release() {
+     require_error(
+         [&] {
+             (void)anonsync::release_sync_replica_outbox_lease_or_throw(
+-                second, first.claim_id, 115U, 120U, "stale release");
++                second, first.claim_id, 115U, 5U, "stale release");
+         },
+         "stale",
+         "old claim released a replacement attempt");
+ 
+     const SyncReplicaOutboxLeaseState released =
+         anonsync::release_sync_replica_outbox_lease_or_throw(
+-            second, second.claim_id, 115U, 130U, "current release");
++            second, second.claim_id, 115U, 15U, "current release");
+     require(released.dispatch_attempts == 2U &&
+                 released.claim_id.empty() &&
+                 released.worker_id.empty() &&
+                 released.claimed_at_epoch == 0U &&
+                 released.lease_expires_at_epoch == 0U &&
+-                released.retry_not_before_epoch == 130U,
+-            "release did not preserve attempt history and install exact backoff");
++                released.retry_not_before_epoch == 130U &&
++                released.retry_released_at_epoch == 115U &&
++                released.retry_release_provenance ==
++                    anonsync::SyncReplicaOutboxRetryReleaseProvenance::Exact,
++            "release did not retain exact retry-minting provenance");
+     require(!anonsync::sync_replica_outbox_lease_is_claimable_at_or_throw(
+                 released, 129U, "backed off release") &&
+                 anonsync::sync_replica_outbox_lease_is_claimable_at_or_throw(
+@@ -172,7 +178,7 @@ void test_renewal_and_expiry_revoke_receipt_authority() {
+     require_error(
+         [&] {
+             (void)anonsync::release_sync_replica_outbox_lease_or_throw(
+-                claimed, claimed.claim_id, 110U, 120U,
++                claimed, claimed.claim_id, 110U, 10U,
+                 "expired retry release");
+         },
+         "expired",
+@@ -186,19 +192,20 @@ void test_renewal_and_expiry_revoke_receipt_authority() {
+         },
+         "cumulative",
+         "heartbeat exceeded the cumulative claim lifetime budget");
+-    require_error(
+-        [&] {
+-            (void)anonsync::release_sync_replica_outbox_lease_or_throw(
+-                claimed, claimed.claim_id, 105U, 104U,
+-                "backward retry clock");
+-        },
+-        "predates",
+-        "retry release accepted a schedule before its observation clock");
++    const SyncReplicaOutboxLeaseState immediate =
++        anonsync::release_sync_replica_outbox_lease_or_throw(
++            claimed, claimed.claim_id, 105U, 0U,
++            "immediate relative retry");
++    require(immediate.retry_not_before_epoch == 105U &&
++                immediate.retry_released_at_epoch == 105U &&
++                immediate.retry_release_provenance ==
++                    anonsync::SyncReplicaOutboxRetryReleaseProvenance::Exact,
++            "zero relative retry did not retain its exact minting observation");
+     require_error(
+         [&] {
+             (void)anonsync::release_sync_replica_outbox_lease_or_throw(
+                 claimed, claimed.claim_id, 105U,
+-                105U + anonsync::kSyncReplicaOutboxMaxRetryDelaySeconds + 1U,
++                anonsync::kSyncReplicaOutboxMaxRetryDelaySeconds + 1U,
+                 "unbounded retry delay");
+         },
+         "fixed retry budget",
+@@ -213,20 +220,6 @@ void test_renewal_and_expiry_revoke_receipt_authority() {
+ }
+ 
+ void test_invalid_and_overflow_states_fail_closed() {
+-    require(
+-        anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
+-            100U, 100U, "equal time observation") == 100U &&
+-            anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
+-                100U, 101U, "forward time observation") == 101U,
+-        "durable time observation was not monotonic and idempotent");
+-    require_error(
+-        [&] {
+-            (void)anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
+-                101U, 100U, "rollback time observation");
+-        },
+-        "rolls back",
+-        "durable time fence accepted rollback");
+-
+     SyncReplicaOutboxLeaseState partial;
+     partial.claim_id = anonsync::sha256_hex("claim");
+     require_error(
+@@ -274,6 +267,9 @@ void test_invalid_and_overflow_states_fail_closed() {
+ 
+     SyncReplicaOutboxLeaseState never_dispatched;
+     never_dispatched.retry_not_before_epoch = 1U;
++    never_dispatched.retry_released_at_epoch = 1U;
++    never_dispatched.retry_release_provenance =
++        anonsync::SyncReplicaOutboxRetryReleaseProvenance::Exact;
+     require_error(
+         [&] {
+             anonsync::validate_sync_replica_outbox_lease_state_or_throw(
+@@ -292,6 +288,59 @@ void test_invalid_and_overflow_states_fail_closed() {
+         "without active or retry authority",
+         "dispatched history was accepted without a claim or retry fence");
+ 
++    SyncReplicaOutboxLeaseState missing_provenance;
++    missing_provenance.dispatch_attempts = 1U;
++    missing_provenance.retry_not_before_epoch = 120U;
++    require_error(
++        [&] {
++            anonsync::validate_sync_replica_outbox_lease_state_or_throw(
++                missing_provenance, "missing retry provenance");
++        },
++        "without release provenance",
++        "retry schedule without provenance was accepted");
++
++    SyncReplicaOutboxLeaseState fabricated_legacy;
++    fabricated_legacy.dispatch_attempts = 1U;
++    fabricated_legacy.retry_not_before_epoch = 120U;
++    fabricated_legacy.retry_released_at_epoch = 100U;
++    fabricated_legacy.retry_release_provenance =
++        anonsync::SyncReplicaOutboxRetryReleaseProvenance::LegacyUnproven;
++    require_error(
++        [&] {
++            anonsync::validate_sync_replica_outbox_lease_state_or_throw(
++                fabricated_legacy, "fabricated legacy provenance");
++        },
++        "fabricates",
++        "legacy migration marker accepted a guessed release epoch");
++
++    SyncReplicaOutboxLeaseState overlong_exact;
++    overlong_exact.dispatch_attempts = 1U;
++    overlong_exact.retry_released_at_epoch = 100U;
++    overlong_exact.retry_not_before_epoch =
++        100U + anonsync::kSyncReplicaOutboxMaxRetryDelaySeconds + 1U;
++    overlong_exact.retry_release_provenance =
++        anonsync::SyncReplicaOutboxRetryReleaseProvenance::Exact;
++    require_error(
++        [&] {
++            anonsync::validate_sync_replica_outbox_lease_state_or_throw(
++                overlong_exact, "overlong exact retry");
++        },
++        "fixed retry budget",
++        "persisted exact retry exceeded the fixed delay budget");
++
++    SyncReplicaOutboxLeaseState legacy_unproven;
++    legacy_unproven.dispatch_attempts = 1U;
++    legacy_unproven.retry_not_before_epoch = 120U;
++    legacy_unproven.retry_release_provenance =
++        anonsync::SyncReplicaOutboxRetryReleaseProvenance::LegacyUnproven;
++    anonsync::validate_sync_replica_outbox_lease_state_or_throw(
++        legacy_unproven, "honest legacy retry provenance");
++    require(!anonsync::sync_replica_outbox_lease_is_claimable_at_or_throw(
++                legacy_unproven, 119U, "legacy retry blocked") &&
++                anonsync::sync_replica_outbox_lease_is_claimable_at_or_throw(
++                    legacy_unproven, 120U, "legacy retry ready"),
++            "legacy provenance did not preserve its exact retained deadline");
++
+     SyncReplicaOutboxLeaseState exhausted =
+         claim({}, 100U, "worker-a", 'e');
+     exhausted.dispatch_attempts = std::numeric_limits<std::uint64_t>::max();
+@@ -331,6 +380,18 @@ void test_invalid_and_overflow_states_fail_closed() {
+         },
+         "overflows",
+         "lease deadline overflow was accepted");
++    require_error(
++        [&] {
++            const SyncReplicaOutboxLeaseState near_max =
++                claim({}, std::numeric_limits<std::uint64_t>::max() - 20U,
++                      "worker-overflow", 'o');
++            (void)anonsync::release_sync_replica_outbox_lease_or_throw(
++                near_max, near_max.claim_id,
++                std::numeric_limits<std::uint64_t>::max() - 15U, 20U,
++                "retry deadline overflow");
++        },
++        "overflows",
++        "relative retry deadline overflow was accepted");
+     require_error(
+         [&] {
+             (void)anonsync::sync_replica_outbox_lease_is_claimable_at_or_throw(
+diff --git a/tests/sync_replica_outbox_time_fence_test.cpp b/tests/sync_replica_outbox_time_fence_test.cpp
+new file mode 100644
+index 0000000..2d77479
+--- /dev/null
++++ b/tests/sync_replica_outbox_time_fence_test.cpp
+@@ -0,0 +1,76 @@
++#include "sync_replica_outbox_time_fence.hpp"
++
++#include <cstdint>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <utility>
++
++namespace {
++
++std::size_t checks = 0;
++
++void require(bool condition, const std::string& message) {
++    ++checks;
++    if (!condition) throw std::runtime_error(message);
++}
++
++template <typename Callable>
++void require_error(
++    Callable&& callable,
++    std::string_view expected,
++    const std::string& message) {
++    ++checks;
++    try {
++        std::forward<Callable>(callable)();
++    } catch (const std::exception& error) {
++        if (std::string_view(error.what()).find(expected) !=
++            std::string_view::npos) {
++            return;
++        }
++        throw std::runtime_error(
++            message + ": unexpected error: " + error.what());
++    }
++    throw std::runtime_error(message + ": no error");
++}
++
++}  // namespace
++
++int main() {
++    try {
++        require(
++            anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
++                0U, 1U, "initial observation") == 1U,
++            "initial positive observation did not establish the fence");
++        require(
++            anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
++                100U, 100U, "equal observation") == 100U,
++            "equal observation was not idempotent");
++        require(
++            anonsync::advance_sync_replica_outbox_time_high_water_or_throw(
++                100U, 101U, "forward observation") == 101U,
++            "forward observation did not advance");
++        require_error(
++            [] {
++                (void)anonsync::
++                    advance_sync_replica_outbox_time_high_water_or_throw(
++                        100U, 0U, "zero observation");
++            },
++            "positive", "zero observation was accepted");
++        require_error(
++            [] {
++                (void)anonsync::
++                    advance_sync_replica_outbox_time_high_water_or_throw(
++                        101U, 100U, "rollback observation");
++            },
++            "rolls back", "rollback observation was accepted");
++        std::cout << "sync replica outbox time-fence tests passed: "
++                  << checks << " checks\n";
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "sync replica outbox time-fence tests failed after "
++                  << checks << " checks: " << error.what() << '\n';
++        return 1;
++    }
++}
+diff --git a/tests/sync_replica_sqlite_owner_test.cpp b/tests/sync_replica_sqlite_owner_test.cpp
+index 1b0a4d8..9f52aae 100644
+--- a/tests/sync_replica_sqlite_owner_test.cpp
++++ b/tests/sync_replica_sqlite_owner_test.cpp
+@@ -158,6 +158,24 @@ std::uint64_t scalar_u64_query(
+     return value;
+ }
+ 
++std::string scalar_text_query(
++    SyncSqliteDb& db,
++    const std::string& sql,
++    const std::string& label) {
++    anonsync::SyncSqliteStmt statement = anonsync::sqlite_prepare_or_throw(
++        db.db, sql, label + " prepare");
++    const int row = sqlite3_step(statement.stmt);
++    if (row != SQLITE_ROW) {
++        fail(label + " did not return a row");
++    }
++    std::string value = anonsync::sqlite_column_text_or_throw(
++        statement.stmt, 0, 1024U * 1024U, label);
++    if (sqlite3_step(statement.stmt) != SQLITE_DONE) {
++        fail(label + " returned extra rows");
++    }
++    return value;
++}
++
+ SyncReplicaActor actor(std::string device_id, std::uint64_t epoch) {
+     return {std::move(device_id), epoch};
+ }
+@@ -272,9 +290,9 @@ std::string previous_v2_outbox_digest(
+     return digest.finish_hex();
+ }
+ 
+-std::string legacy_v1_cutpoint_digest(const LegacyV1Meta& meta) {
+-    anonsync::Sha256DigestBuilder digest;
+-    digest.update("anonsync-sync-replica-sqlite-cutpoint-v1");
++void append_test_cutpoint_authority(
++    anonsync::Sha256DigestBuilder& digest,
++    const LegacyV1Meta& meta) {
+     test_append_framed(digest, meta.folder_id);
+     test_append_framed(digest, meta.local_actor.device_id);
+     digest.update(test_u64_be(meta.local_actor.epoch));
+@@ -308,46 +326,46 @@ std::string legacy_v1_cutpoint_digest(const LegacyV1Meta& meta) {
+     test_append_framed(digest, meta.evidence_set_digest);
+     test_append_framed(digest, meta.visible_state_digest);
+     test_append_framed(digest, meta.outbox_digest);
++}
++
++std::string legacy_v1_cutpoint_digest(const LegacyV1Meta& meta) {
++    anonsync::Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-cutpoint-v1");
++    append_test_cutpoint_authority(digest, meta);
++    return digest.finish_hex();
++}
++
++std::string versioned_test_cutpoint_digest(
++    const LegacyV1Meta& meta,
++    std::uint64_t schema_version,
++    std::string_view domain) {
++    anonsync::Sha256DigestBuilder digest;
++    digest.update(domain);
++    digest.update(test_u64_be(schema_version));
++    append_test_cutpoint_authority(digest, meta);
+     return digest.finish_hex();
+ }
+ 
+ std::string previous_v2_cutpoint_digest(const LegacyV1Meta& meta) {
++    return versioned_test_cutpoint_digest(
++        meta, 2U, "anonsync-sync-replica-sqlite-cutpoint-v2");
++}
++
++std::string clock_v3_cutpoint_digest(const LegacyV1Meta& meta) {
++    return versioned_test_cutpoint_digest(
++        meta, 3U, "anonsync-sync-replica-sqlite-cutpoint-v3");
++}
++
++std::string test_outbox_clock_digest(
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    std::uint64_t high_water_epoch) {
+     anonsync::Sha256DigestBuilder digest;
+-    digest.update("anonsync-sync-replica-sqlite-cutpoint-v2");
+-    digest.update(test_u64_be(2U));
+-    test_append_framed(digest, meta.folder_id);
+-    test_append_framed(digest, meta.local_actor.device_id);
+-    digest.update(test_u64_be(meta.local_actor.epoch));
+-    digest.update(test_u64_be(meta.last_local_counter));
+-    digest.update(test_u64_be(meta.state_generation));
+-    digest.update(test_u64_be(meta.policy_generation));
+-    digest.update(test_u64_be(meta.limits.model.max_operations));
+-    digest.update(test_u64_be(meta.limits.model.max_context_entries));
+-    digest.update(test_u64_be(meta.limits.model.max_predecessor_ids));
+-    digest.update(test_u64_be(
+-        meta.limits.model.max_canonical_operation_bytes));
+-    digest.update(test_u64_be(
+-        meta.limits.model.max_retained_canonical_bytes));
+-    digest.update(test_u64_be(
+-        meta.limits.model.max_retained_context_entries));
+-    digest.update(test_u64_be(
+-        meta.limits.model.max_retained_predecessor_ids));
+-    digest.update(test_u64_be(meta.limits.max_outbox_intents));
+-    digest.update(test_u64_be(meta.limits.max_outbox_destination_bytes));
+-    digest.update(test_u64_be(meta.evidence_count));
+-    digest.update(test_u64_be(meta.active_count));
+-    digest.update(test_u64_be(meta.retained_canonical_bytes));
+-    digest.update(test_u64_be(meta.retained_context_entries));
+-    digest.update(test_u64_be(meta.retained_predecessor_ids));
+-    digest.update(test_u64_be(meta.outbox_intent_count));
+-    digest.update(test_u64_be(meta.outbox_destination_bytes));
+-    digest.update(meta.local_actor_compromised ? std::string_view("1")
+-                                               : std::string_view("0"));
+-    test_append_framed(digest, meta.local_operation_digest);
+-    test_append_framed(digest, meta.operation_set_digest);
+-    test_append_framed(digest, meta.evidence_set_digest);
+-    test_append_framed(digest, meta.visible_state_digest);
+-    test_append_framed(digest, meta.outbox_digest);
++    digest.update("anonsync-sync-replica-outbox-clock-v1");
++    test_append_framed(digest, folder_id);
++    test_append_framed(digest, local_actor.device_id);
++    digest.update(test_u64_be(local_actor.epoch));
++    digest.update(test_u64_be(high_water_epoch));
+     return digest.finish_hex();
+ }
+ 
+@@ -596,6 +614,7 @@ CREATE INDEX main.sync_replica_outbox_operation ON sync_replica_outbox(operation
+ struct PreviousV2Fixture final {
+     SyncReplicaOperation operation;
+     anonsync::SyncReplicaSqliteOutboxIntent intent;
++    LegacyV1Meta meta;
+ };
+ 
+ PreviousV2Fixture create_previous_v2_fixture(
+@@ -738,7 +757,129 @@ CREATE INDEX main.sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_
+     anonsync::sqlite_step_done_or_throw(
+         outbox_insert.stmt, "previous v2 outbox insert");
+     exec(db, "DROP TABLE temp.sync_replica_previous_meta;");
+-    return {operation, intent};
++    return {operation, intent, meta};
++}
++
++struct ClockV3Fixture final {
++    SyncReplicaOperation operation;
++    anonsync::SyncReplicaSqliteOutboxIntent intent;
++    LegacyV1Meta meta;
++    std::uint64_t outbox_time_high_water_epoch = 0U;
++};
++
++ClockV3Fixture create_clock_v3_released_fixture(
++    SyncSqliteDb& db,
++    const std::string& folder,
++    const SyncReplicaActor& local,
++    const SyncReplicaSqliteOwnerLimits& fixture_limits,
++    const std::string& destination) {
++    PreviousV2Fixture prior = create_previous_v2_fixture(
++        db, folder, local, fixture_limits, destination);
++
++    anonsync::SyncReplicaSqliteOutboxIntent released = prior.intent;
++    released.lease.claim_id.clear();
++    released.lease.worker_id.clear();
++    released.lease.claimed_at_epoch = 0U;
++    released.lease.lease_expires_at_epoch = 0U;
++    released.lease.retry_not_before_epoch = 130U;
++    released.lease.retry_released_at_epoch = 0U;
++    released.lease.retry_release_provenance =
++        anonsync::SyncReplicaOutboxRetryReleaseProvenance::LegacyUnproven;
++
++    prior.meta.state_generation = 4U;
++    prior.meta.outbox_digest = previous_v2_outbox_digest(folder, {released});
++    prior.meta.cutpoint_digest = clock_v3_cutpoint_digest(prior.meta);
++    constexpr std::uint64_t kHighWaterEpoch = 105U;
++    const std::string clock_digest = test_outbox_clock_digest(
++        folder, local, kHighWaterEpoch);
++
++    const std::string v2_meta_sql = scalar_text_query(
++        db,
++        "SELECT sql FROM main.sqlite_schema "
++        "WHERE type='table' AND name='sync_replica_meta';",
++        "clock-v3 source meta SQL");
++    std::string v3_meta_sql = v2_meta_sql;
++    const std::string old_check = "schema_version=2";
++    const std::string new_check = "schema_version=3";
++    const std::size_t check_at = v3_meta_sql.find(old_check);
++    if (check_at == std::string::npos ||
++        v3_meta_sql.find(old_check, check_at + old_check.size()) !=
++            std::string::npos) {
++        fail("clock-v3 fixture could not identify one schema-version check");
++    }
++    v3_meta_sql.replace(check_at, old_check.size(), new_check);
++
++    anonsync::SyncSqliteStmt outbox_update =
++        anonsync::sqlite_prepare_or_throw(
++            db.db,
++            "UPDATE main.sync_replica_outbox SET "
++            "dispatch_attempts_be=?,claim_id='',worker_id='',"
++            "claimed_at_epoch_be=zeroblob(8),"
++            "lease_expires_at_epoch_be=zeroblob(8),"
++            "retry_not_before_epoch_be=? "
++            "WHERE destination_device_id=? AND operation_id=?;",
++            "clock-v3 released outbox prepare");
++    bind_test_u64_be(
++        outbox_update.stmt, 1, released.lease.dispatch_attempts,
++        "clock-v3 bind dispatch attempts");
++    bind_test_u64_be(
++        outbox_update.stmt, 2, released.lease.retry_not_before_epoch,
++        "clock-v3 bind retry deadline");
++    anonsync::sqlite_bind_text_or_throw(
++        outbox_update.stmt, 3, released.destination_device_id,
++        "clock-v3 bind destination");
++    anonsync::sqlite_bind_text_or_throw(
++        outbox_update.stmt, 4, released.operation_id,
++        "clock-v3 bind operation");
++    anonsync::sqlite_step_done_or_throw(
++        outbox_update.stmt, "clock-v3 released outbox update");
++
++    anonsync::SyncSqliteStmt meta_update = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "UPDATE main.sync_replica_meta SET state_generation_be=?,"
++        "outbox_digest=?,cutpoint_digest=? WHERE id=1;",
++        "clock-v3 meta prepare");
++    bind_test_u64_be(
++        meta_update.stmt, 1, prior.meta.state_generation,
++        "clock-v3 bind state generation");
++    anonsync::sqlite_bind_text_or_throw(
++        meta_update.stmt, 2, prior.meta.outbox_digest,
++        "clock-v3 bind outbox digest");
++    anonsync::sqlite_bind_text_or_throw(
++        meta_update.stmt, 3, prior.meta.cutpoint_digest,
++        "clock-v3 bind cutpoint digest");
++    anonsync::sqlite_step_done_or_throw(
++        meta_update.stmt, "clock-v3 meta update");
++
++    exec(db,
++         "CREATE TEMP TABLE sync_replica_clock_v3_meta AS "
++         "SELECT * FROM main.sync_replica_meta WHERE id=1;"
++         "UPDATE temp.sync_replica_clock_v3_meta SET schema_version=3;"
++         "DROP TABLE main.sync_replica_meta;");
++    exec(db, v3_meta_sql + ";");
++    exec(db,
++         "INSERT INTO main.sync_replica_meta "
++         "SELECT * FROM temp.sync_replica_clock_v3_meta;"
++         "DROP TABLE temp.sync_replica_clock_v3_meta;"
++         "CREATE TABLE main.sync_replica_outbox_clock("
++         "id INTEGER PRIMARY KEY CHECK(id=1),"
++         "high_water_epoch_be BLOB NOT NULL CHECK(length(high_water_epoch_be)=8),"
++         "clock_digest TEXT NOT NULL CHECK(length(clock_digest)=64)) STRICT;");
++    anonsync::SyncSqliteStmt clock_insert = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "INSERT INTO main.sync_replica_outbox_clock("
++        "id,high_water_epoch_be,clock_digest) VALUES(1,?,?);",
++        "clock-v3 clock prepare");
++    bind_test_u64_be(
++        clock_insert.stmt, 1, kHighWaterEpoch,
++        "clock-v3 bind high water");
++    anonsync::sqlite_bind_text_or_throw(
++        clock_insert.stmt, 2, clock_digest,
++        "clock-v3 bind clock digest");
++    anonsync::sqlite_step_done_or_throw(
++        clock_insert.stmt, "clock-v3 clock insert");
++
++    return {prior.operation, released, prior.meta, kHighWaterEpoch};
+ }
+ 
+ 
+@@ -788,7 +929,7 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+         require(scalar_u64_query(
+                     db,
+                     "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+-                    "migrated schema version") == 3U &&
++                    "migrated schema version") == 4U &&
+                     scalar_u64_query(
+                         db,
+                         "SELECT count(*) FROM main.sqlite_schema "
+@@ -798,7 +939,7 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+                     migrated.outbox_time_high_water_epoch == 0U &&
+                     anonsync::is_lowercase_sha256_hex(
+                         migrated.outbox_clock_digest),
+-                "v1 migration did not publish the exact schema-v3 surface");
++                "v1 migration did not publish the exact schema-v4 surface");
+ 
+         const auto claim = owner.claim_next_outbox_or_throw(
+             "worker-v1-migration", 100U, 20U, destination);
+@@ -809,13 +950,13 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+                     claim->intent.lease.lease_expires_at_epoch == 120U &&
+                     anonsync::is_lowercase_sha256_hex(
+                         claim->intent.lease.claim_id),
+-                "migrated v1 intent was not immediately claimable under v3 authority");
++                "migrated v1 intent was not immediately claimable under v4 authority");
+         claimed = owner.snapshot_or_throw();
+         require(claimed.state_generation == 4U &&
+                     claimed.outbox.size() == 1U &&
+                     claimed.outbox_time_high_water_epoch == 100U &&
+                     claimed.outbox.front() == claim->intent,
+-                "claim after migration did not publish one exact v3 lease cutpoint");
++                "claim after migration did not publish one exact v4 lease cutpoint");
+     }
+ 
+     {
+@@ -834,7 +975,7 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+     }
+ }
+ 
+-void test_malformed_v1_is_not_laundered_into_v3() {
++void test_malformed_v1_is_not_laundered_into_v4() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v1-malformed");
+     const std::string folder = "folder-sqlite-v1-malformed";
+     const SyncReplicaActor local = actor("device-sqlite-v1-malformed", 907U);
+@@ -861,7 +1002,7 @@ void test_malformed_v1_is_not_laundered_into_v3() {
+                     "SELECT count(*) FROM main.sqlite_schema "
+                     "WHERE type='index' AND name='sync_replica_outbox_schedule';",
+                     "failed migration schedule index count") == 0U,
+-            "failed v1 attestation partially published schema v3");
++            "failed v1 attestation partially published schema v4");
+ }
+ 
+ 
+@@ -946,7 +1087,7 @@ void test_exact_v2_migration_preserves_live_receipt_and_seeds_clock() {
+         require(scalar_u64_query(
+                     db,
+                     "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+-                    "v2 migrated schema version") == 3U &&
++                    "v2 migrated schema version") == 4U &&
+                     scalar_count(db, "sync_replica_outbox_clock") == 1U &&
+                     migrated.outbox_time_high_water_epoch ==
+                         fixture.intent.lease.claimed_at_epoch &&
+@@ -960,7 +1101,7 @@ void test_exact_v2_migration_preserves_live_receipt_and_seeds_clock() {
+         SyncReplicaSqliteOwner owner(
+             db.db, folder, local, limits(1U), "v2 migration restart owner");
+         require(owner.snapshot_or_throw() == migrated,
+-                "restart lost exact v2 receipt authority after v3 migration");
++                "restart lost exact v2 receipt authority after v4 migration");
+         require(owner.settle_outbox_or_throw(
+                     destination, fixture.operation.operation_id,
+                     fixture.intent.lease.claim_id, 110U) ==
+@@ -970,11 +1111,11 @@ void test_exact_v2_migration_preserves_live_receipt_and_seeds_clock() {
+         require(settled.state_generation == migrated.state_generation + 1U &&
+                     settled.outbox.empty() &&
+                     settled.outbox_time_high_water_epoch == 110U,
+-                "v2 receipt settlement did not publish one exact v3 cutpoint");
++                "v2 receipt settlement did not publish one exact v4 cutpoint");
+     }
+ }
+ 
+-void test_unreachable_v2_lease_is_not_laundered_into_v3() {
++void test_unreachable_v2_lease_is_not_laundered_into_v4() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v2-unreachable");
+     const std::string folder = "folder-sqlite-v2-unreachable";
+     const SyncReplicaActor local = actor("device-sqlite-v2-unreachable", 919U);
+@@ -995,7 +1136,7 @@ void test_unreachable_v2_lease_is_not_laundered_into_v3() {
+                 "unreachable v2 migration owner");
+         },
+         "without active or retry authority",
+-        "unreachable v2 lease state was laundered into schema v3");
++        "unreachable v2 lease state was laundered into schema v4");
+     require(scalar_u64_query(
+                 db,
+                 "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+@@ -1005,7 +1146,123 @@ void test_unreachable_v2_lease_is_not_laundered_into_v3() {
+                     "SELECT count(*) FROM main.sqlite_schema "
+                     "WHERE type='table' AND name='sync_replica_outbox_clock';",
+                     "failed v2 migration clock table count") == 0U,
+-            "failed v2 attestation partially published schema v3");
++            "failed v2 attestation partially published schema v4");
++}
++
++void test_exact_v3_migration_preserves_clock_and_marks_retry_gap() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-v3-migration");
++    const std::string folder = "folder-sqlite-v3-migration";
++    const SyncReplicaActor local = actor("device-sqlite-v3-migration", 929U);
++    const std::string destination = "device-sqlite-v3-peer";
++    const SyncReplicaSqliteOwnerLimits fixture_limits = limits(16U, 8U, 256U);
++    ClockV3Fixture fixture;
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        fixture = create_clock_v3_released_fixture(
++            db, folder, local, fixture_limits, destination);
++        require(scalar_u64_query(
++                    db,
++                    "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
++                    "clock-v3 schema version") == 3U &&
++                    scalar_count(db, "sync_replica_outbox_clock") == 1U &&
++                    scalar_u64_query(
++                        db,
++                        "SELECT count(*) FROM pragma_table_info("
++                        "'sync_replica_outbox') WHERE name IN ("
++                        "'retry_released_at_epoch_be',"
++                        "'retry_release_provenance');",
++                        "clock-v3 provenance column count") == 0U,
++                "clock-v3 fixture was not the exact rev0872 protocol surface");
++    }
++
++    SyncReplicaSqliteSnapshot migrated;
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(999U, 999U, 9999U),
++            "exact v3 migration owner");
++        migrated = owner.snapshot_or_throw();
++        require(migrated.state_generation ==
++                        fixture.meta.state_generation + 1U &&
++                    migrated.policy_generation == fixture.meta.policy_generation &&
++                    migrated.limits == fixture_limits &&
++                    migrated.durable.operations ==
++                        std::vector<SyncReplicaOperation>{fixture.operation} &&
++                    migrated.outbox ==
++                        std::vector<anonsync::SyncReplicaSqliteOutboxIntent>{
++                            fixture.intent},
++                "v3 migration changed evidence, policy, or retry authority");
++        require(migrated.outbox_time_high_water_epoch ==
++                        fixture.outbox_time_high_water_epoch &&
++                    migrated.outbox.front().lease.retry_released_at_epoch == 0U &&
++                    migrated.outbox.front().lease.retry_release_provenance ==
++                        anonsync::SyncReplicaOutboxRetryReleaseProvenance::
++                            LegacyUnproven,
++                "v3 migration fabricated or discarded retry-release knowledge");
++        require(scalar_u64_query(
++                    db,
++                    "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
++                    "v3 migrated schema version") == 4U &&
++                    scalar_u64_query(
++                        db,
++                        "SELECT retry_release_provenance "
++                        "FROM main.sync_replica_outbox;",
++                        "v3 migrated retry provenance") == 2U &&
++                    scalar_u64_query(
++                        db,
++                        "SELECT count(*) FROM pragma_table_info("
++                        "'sync_replica_outbox') WHERE name IN ("
++                        "'retry_released_at_epoch_be',"
++                        "'retry_release_provenance');",
++                        "v3 migrated provenance column count") == 2U,
++                "v3 migration did not publish the exact schema-v4 surface");
++    }
++
++    SyncReplicaSqliteSnapshot exact_release;
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(1U), "v3 migration restart owner");
++        require(owner.snapshot_or_throw() == migrated,
++                "restart changed the explicit legacy-unproven retry row");
++        require(!owner.claim_next_outbox_or_throw(
++                     "worker-v3-before-deadline", 129U, 10U, destination)
++                     .has_value(),
++                "legacy-unproven retry deadline was bypassed");
++        const auto claim = owner.claim_next_outbox_or_throw(
++            "worker-v3-at-deadline", 130U, 10U, destination);
++        require(claim.has_value() &&
++                    claim->intent.lease.dispatch_attempts == 2U &&
++                    claim->intent.lease.retry_not_before_epoch == 0U &&
++                    claim->intent.lease.retry_released_at_epoch == 0U &&
++                    claim->intent.lease.retry_release_provenance ==
++                        anonsync::SyncReplicaOutboxRetryReleaseProvenance::None,
++                "new claim did not clear inherited legacy retry provenance");
++        require(owner.release_outbox_for_retry_or_throw(
++                    destination, fixture.operation.operation_id,
++                    claim->intent.lease.claim_id, 135U, 7U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::Applied,
++                "post-migration release did not mint exact retry provenance");
++        exact_release = owner.snapshot_or_throw();
++        require(exact_release.outbox.size() == 1U &&
++                    exact_release.outbox.front().lease.retry_not_before_epoch ==
++                        142U &&
++                    exact_release.outbox.front().lease.retry_released_at_epoch ==
++                        135U &&
++                    exact_release.outbox.front().lease.retry_release_provenance ==
++                        anonsync::SyncReplicaOutboxRetryReleaseProvenance::Exact,
++                "post-migration release did not bind deadline to its observation");
++    }
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(1U),
++            "v3 migration exact provenance restart owner");
++        require(owner.snapshot_or_throw() == exact_release,
++                "restart lost exact post-migration retry provenance");
++    }
+ }
+ 
+ 
+@@ -1192,8 +1449,7 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+                 (void)owner.release_outbox_for_retry_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+                     106U,
+-                    106U +
+-                        anonsync::kSyncReplicaOutboxMaxRetryDelaySeconds + 1U);
++                    anonsync::kSyncReplicaOutboxMaxRetryDelaySeconds + 1U);
+             },
+             "fixed retry budget",
+             "owner accepted an unbounded retry delay");
+@@ -1242,7 +1498,7 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+                 "expiry did not durably publish revocation without changing history");
+         require(owner.release_outbox_for_retry_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+-                    115U, 130U) ==
++                    115U, 15U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim &&
+                     owner.snapshot_or_throw() == expired_snapshot,
+                 "expired receipt retained retry-release authority");
+@@ -1282,14 +1538,14 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+                 "stale receipt settled a replacement attempt");
+         require(owner.release_outbox_for_retry_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+-                    120U, 130U) ==
++                    120U, 10U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::StaleClaim &&
+                     owner.snapshot_or_throw() == replacement_snapshot,
+                 "stale receipt released a replacement attempt");
+ 
+         require(owner.release_outbox_for_retry_or_throw(
+                     destination, operation.operation_id,
+-                    replacement->intent.lease.claim_id, 120U, 130U) ==
++                    replacement->intent.lease.claim_id, 120U, 10U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::Applied,
+                 "current receipt did not release its attempt");
+         const SyncReplicaSqliteSnapshot released = owner.snapshot_or_throw();
+@@ -1298,8 +1554,19 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+                     released.outbox.size() == 1U &&
+                     released.outbox.front().lease.dispatch_attempts == 2U &&
+                     released.outbox.front().lease.claim_id.empty() &&
+-                    released.outbox.front().lease.retry_not_before_epoch == 130U,
++                    released.outbox.front().lease.retry_not_before_epoch == 130U &&
++                    released.outbox.front().lease.retry_released_at_epoch == 120U &&
++                    released.outbox.front().lease.retry_release_provenance ==
++                        anonsync::SyncReplicaOutboxRetryReleaseProvenance::Exact,
+                 "release did not preserve attempt history and durable backoff");
++        {
++            SyncSqliteDb restart_db = open_database(file.path);
++            SyncReplicaSqliteOwner restart_owner(
++                restart_db.db, folder, local, limits(1U),
++                "exact retry provenance restart owner");
++            require(restart_owner.snapshot_or_throw() == released,
++                    "restart lost the observation that minted retry backoff");
++        }
+         require(!owner.claim_next_outbox_or_throw(
+                      "worker-receipt-c", 129U, 10U, destination)
+                      .has_value(),
+@@ -1316,7 +1583,10 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+             "worker-receipt-c", 130U, 10U, destination);
+         require(third.has_value() &&
+                     third->intent.lease.dispatch_attempts == 3U &&
+-                    third->intent.lease.retry_not_before_epoch == 0U,
++                    third->intent.lease.retry_not_before_epoch == 0U &&
++                    third->intent.lease.retry_released_at_epoch == 0U &&
++                    third->intent.lease.retry_release_provenance ==
++                        anonsync::SyncReplicaOutboxRetryReleaseProvenance::None,
+                 "retry-not-before boundary did not mint attempt three");
+         require(owner.settle_outbox_or_throw(
+                     destination, operation.operation_id,
+@@ -1706,11 +1976,111 @@ void test_schema_contract_and_outbox_tamper_detection() {
+                     db.db, folder, local, limits(16U),
+                     "schema reopen owner");
+             },
+-            "does not match schema v3",
++            "does not match schema v4",
+             "partial durable schema was silently repaired or accepted");
+     }
+ }
+ 
++void test_retry_release_provenance_tamper_and_precommit_guard() {
++    const std::string folder = "folder-sqlite-retry-provenance";
++    const SyncReplicaActor local = actor(
++        "device-sqlite-retry-provenance", 1411U);
++    const std::string destination = "device-sqlite-retry-provenance-peer";
++
++    TempDatabasePath release_time_file(
++        "anonsync-replica-sqlite-retry-release-time-tamper");
++    {
++        SyncSqliteDb db = open_database(release_time_file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U),
++            "retry release-time tamper owner");
++        const SyncReplicaOperation operation = owner.create_local_file_or_throw(
++            "retry/tamper-time.bin", 4U, anonsync::sha256_hex("time"),
++            std::vector<std::string>{destination});
++        const auto claim = owner.claim_next_outbox_or_throw(
++            "worker-retry-time", 100U, 20U, destination);
++        require(claim.has_value(),
++                "retry release-time tamper fixture did not mint a claim");
++        require(owner.release_outbox_for_retry_or_throw(
++                    destination, operation.operation_id,
++                    claim->intent.lease.claim_id, 105U, 10U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::Applied,
++                "retry release-time tamper fixture did not release exactly");
++        exec(db,
++             "UPDATE main.sync_replica_outbox SET "
++             "retry_released_at_epoch_be=zeroblob(8);");
++        require_error(
++            [&] { (void)owner.snapshot_or_throw(); },
++            "invalid exact retry release provenance",
++            "zeroed release observation survived exact-state validation");
++    }
++
++    TempDatabasePath provenance_file(
++        "anonsync-replica-sqlite-retry-provenance-tamper");
++    {
++        SyncSqliteDb db = open_database(provenance_file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U),
++            "retry provenance tamper owner");
++        const SyncReplicaOperation operation = owner.create_local_file_or_throw(
++            "retry/tamper-provenance.bin", 10U,
++            anonsync::sha256_hex("provenance"),
++            std::vector<std::string>{destination});
++        const auto claim = owner.claim_next_outbox_or_throw(
++            "worker-retry-provenance", 200U, 20U, destination);
++        require(claim.has_value(),
++                "retry provenance tamper fixture did not mint a claim");
++        require(owner.release_outbox_for_retry_or_throw(
++                    destination, operation.operation_id,
++                    claim->intent.lease.claim_id, 205U, 10U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::Applied,
++                "retry provenance tamper fixture did not release exactly");
++        exec(db,
++             "UPDATE main.sync_replica_outbox SET "
++             "retry_release_provenance=2;");
++        require_error(
++            [&] { (void)owner.snapshot_or_throw(); },
++            "fabricates an exact legacy retry release epoch",
++            "provenance downgrade laundered an exact observation into legacy state");
++    }
++
++    TempDatabasePath trigger_file(
++        "anonsync-replica-sqlite-retry-provenance-trigger");
++    {
++        SyncSqliteDb db = open_database(trigger_file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U),
++            "retry provenance trigger owner");
++        const SyncReplicaOperation operation = owner.create_local_file_or_throw(
++            "retry/trigger.bin", 7U, anonsync::sha256_hex("trigger"),
++            std::vector<std::string>{destination});
++        const auto claim = owner.claim_next_outbox_or_throw(
++            "worker-retry-trigger", 300U, 20U, destination);
++        require(claim.has_value(),
++                "retry provenance trigger fixture did not mint a claim");
++        const SyncReplicaSqliteSnapshot baseline = owner.snapshot_or_throw();
++        exec(db,
++             "CREATE TEMP TRIGGER mutate_retry_provenance "
++             "AFTER UPDATE OF retry_release_provenance "
++             "ON main.sync_replica_outbox "
++             "WHEN NEW.retry_release_provenance=1 "
++             "BEGIN UPDATE main.sync_replica_outbox "
++             "SET retry_release_provenance=2 "
++             "WHERE destination_device_id=NEW.destination_device_id "
++             "AND operation_id=NEW.operation_id; END;");
++        require_error(
++            [&] {
++                (void)owner.release_outbox_for_retry_or_throw(
++                    destination, operation.operation_id,
++                    claim->intent.lease.claim_id, 305U, 10U);
++            },
++            "fabricates an exact legacy retry release epoch",
++            "post-update provenance mutation escaped staged re-attestation");
++        require(owner.snapshot_or_throw() == baseline,
++                "failed provenance re-attestation committed a row or clock prefix");
++    }
++}
++
+ void test_exact_schema_attachment_and_precommit_reattestation() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-trigger-guard");
+     const std::string folder = "folder-sqlite-trigger-guard";
+@@ -2492,9 +2862,10 @@ int main(int argc, char** argv) {
+                 "unexpected sync replica SQLite owner test arguments");
+         }
+         test_exact_v1_migration_preserves_evidence_and_outbox();
+-        test_malformed_v1_is_not_laundered_into_v3();
++        test_malformed_v1_is_not_laundered_into_v4();
+         test_exact_v2_migration_preserves_live_receipt_and_seeds_clock();
+-        test_unreachable_v2_lease_is_not_laundered_into_v3();
++        test_unreachable_v2_lease_is_not_laundered_into_v4();
++        test_exact_v3_migration_preserves_clock_and_marks_retry_gap();
+         test_atomic_local_publication_and_single_copy_outbox();
+         test_receipt_bound_reclaim_backoff_and_restart();
+         test_claim_precommit_reattestation_and_lease_tamper();
+@@ -2503,6 +2874,7 @@ int main(int argc, char** argv) {
+         test_projection_and_redundant_attestation();
+         test_transaction_failure_rolls_back_entire_cutpoint();
+         test_schema_contract_and_outbox_tamper_detection();
++        test_retry_release_provenance_tamper_and_precommit_guard();
+         test_exact_schema_attachment_and_precommit_reattestation();
+         test_outbox_clock_precommit_reattestation_and_tamper();
+         test_local_authority_mapping_digest();
+diff --git a/tools/audit_sync_replica_outbox_lease.py b/tools/audit_sync_replica_outbox_lease.py
+index 905f67b..e804eb3 100755
+--- a/tools/audit_sync_replica_outbox_lease.py
++++ b/tools/audit_sync_replica_outbox_lease.py
+@@ -12,6 +12,9 @@ from pathlib import Path
+ 
+ REQUIRED = (
+     Path("CMakeLists.txt"),
++    Path("src/sync_replica_outbox_time_fence.hpp"),
++    Path("src/sync_replica_outbox_time_fence.cpp"),
++    Path("tests/sync_replica_outbox_time_fence_test.cpp"),
+     Path("src/sync_replica_outbox_lease.hpp"),
+     Path("src/sync_replica_outbox_lease.cpp"),
+     Path("tests/sync_replica_outbox_lease_test.cpp"),
+@@ -57,7 +60,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-outbox-lease-audit-v3",
++        "format": "anonsync-sync-replica-outbox-lease-audit-v4",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -97,6 +100,9 @@ def main() -> int:
+         for path in REQUIRED
+     }
+     cmake = text["CMakeLists.txt"]
++    time_header = text["src/sync_replica_outbox_time_fence.hpp"]
++    time_source = text["src/sync_replica_outbox_time_fence.cpp"]
++    time_runtime = text["tests/sync_replica_outbox_time_fence_test.cpp"]
+     header = text["src/sync_replica_outbox_lease.hpp"]
+     source = text["src/sync_replica_outbox_lease.cpp"]
+     runtime = text["tests/sync_replica_outbox_lease_test.cpp"]
+@@ -113,6 +119,12 @@ def main() -> int:
+                 "claimed_at_epoch",
+                 "lease_expires_at_epoch",
+                 "retry_not_before_epoch",
++                "retry_released_at_epoch",
++                "retry_release_provenance",
++                "SyncReplicaOutboxRetryReleaseProvenance",
++                "None = 0U",
++                "Exact = 1U",
++                "LegacyUnproven = 2U",
+             )
+         ),
+         "lease_state_names_every_durable_authority_field",
+@@ -135,20 +147,30 @@ def main() -> int:
+     )
+ 
+     high_water = function_body(
+-        source, "advance_sync_replica_outbox_time_high_water_or_throw("
++        time_source, "advance_sync_replica_outbox_time_high_water_or_throw("
+     )
+     require(
+-        "anti-rollback" in header
+-        and "primitive, not a claim that caller-supplied epoch time is trustworthy" in header
++        "anti-rollback primitive" in time_header
++        and "not a claim that caller-supplied epoch time is physically trustworthy" in time_header
+         and ordered(
+             high_water,
+             "observed_epoch == 0U",
+             "observed_epoch < current_high_water_epoch",
+             "rolls back durable time",
+             "return observed_epoch",
++        )
++        and all(
++            token in time_runtime
++            for token in (
++                "initial positive observation did not establish the fence",
++                "equal observation was not idempotent",
++                "forward observation did not advance",
++                "zero observation was accepted",
++                "rollback observation was accepted",
++            )
+         ),
+-        "durable_time_fence_is_positive_monotonic_and_explicitly_not_a_clock",
+-        "expiry observations cannot be undone while caller time remains a separate trust boundary",
++        "durable_time_fence_is_positive_monotonic_separate_and_runtime_pinned",
++        "expiry observations cannot be undone while caller time remains a separate, explicitly untrusted boundary",
+     )
+ 
+     validate = function_body(
+@@ -183,6 +205,20 @@ def main() -> int:
+         "never_dispatched_intent_cannot_carry_retry_history",
+         "backoff has a prior-attempt provenance requirement",
+     )
++    require(
++        all(
++            token in validate
++            for token in (
++                "has retry authority without release provenance",
++                "fabricates an exact legacy retry release epoch",
++                "has invalid exact retry release provenance",
++                "exact retry delay exceeds the fixed retry budget",
++                "has unsupported retry release provenance",
++            )
++        ),
++        "retry_schedule_distinguishes_exact_observation_from_legacy_gap",
++        "current rows prove their minting observation while migrated rows disclose that older schemas discarded it",
++    )
+     require(
+         "state.dispatch_attempts == 0U" in validate
+         and "state.retry_not_before_epoch == 0U" in validate
+@@ -248,7 +284,7 @@ def main() -> int:
+             "next.worker_id = std::move(worker_id)",
+             "next.claimed_at_epoch = now_epoch",
+             "lease_deadline_or_throw",
+-            "anonsync-sync-replica-outbox-claim-v1",
++            "anonsync-sync-replica-outbox-claim-v2",
+             "next.claim_id = digest.finish_hex()",
+             "validate_sync_replica_outbox_lease_state_or_throw(next",
+         ),
+@@ -267,6 +303,8 @@ def main() -> int:
+                 "current.dispatch_attempts",
+                 "current.claim_id",
+                 "current.retry_not_before_epoch",
++                "current.retry_released_at_epoch",
++                "current.retry_release_provenance",
+                 "next.worker_id",
+                 "next.dispatch_attempts",
+                 "next.claimed_at_epoch",
+@@ -330,10 +368,12 @@ def main() -> int:
+             "expected claim is stale",
+             "SyncReplicaOutboxClaimStatus::Expired",
+             "expected claim is expired",
+-            "retry_not_before_epoch < now_epoch",
+-            "kSyncReplicaOutboxMaxRetryDelaySeconds",
++            "retry_delay_seconds > kSyncReplicaOutboxMaxRetryDelaySeconds",
++            "numeric_limits<std::uint64_t>::max() - now_epoch",
+             "next.dispatch_attempts = current.dispatch_attempts",
+-            "next.retry_not_before_epoch = retry_not_before_epoch",
++            "next.retry_not_before_epoch = now_epoch + retry_delay_seconds",
++            "next.retry_released_at_epoch = now_epoch",
++            "SyncReplicaOutboxRetryReleaseProvenance::Exact",
+             "validate_sync_replica_outbox_lease_state_or_throw(next",
+         ),
+         "release_is_live_receipt_fenced_bounded_and_preserves_attempt_history",
+@@ -360,20 +400,27 @@ def main() -> int:
+                 "short claim entropy was accepted",
+                 "lease deadline overflow was accepted",
+                 "zero claim clock was accepted",
+-                "durable time fence accepted rollback",
+                 "dispatched history was accepted without a claim or retry fence",
++                "retry schedule without provenance was accepted",
++                "legacy migration marker accepted a guessed release epoch",
++                "persisted exact retry exceeded the fixed delay budget",
++                "legacy provenance did not preserve its exact retained deadline",
+             )
+         ),
+         "runtime_covers_expiry_renewal_release_backoff_determinism_and_overflow",
+         "adversarial boundary tests pin the complete live-receipt state machine",
+     )
+     require(
+-        "anonsync_sync_replica_outbox_lease" in cmake
++        "anonsync_sync_replica_outbox_time_fence" in cmake
++        and "anonsync_sync_replica_outbox_time_fence_test" in cmake
++        and "src/sync_replica_outbox_time_fence.cpp" in cmake
++        and "tests/sync_replica_outbox_time_fence_test.cpp" in cmake
++        and "anonsync_sync_replica_outbox_lease" in cmake
+         and "anonsync_sync_replica_outbox_lease_test" in cmake
+         and "src/sync_replica_outbox_lease.cpp" in cmake
+         and "tests/sync_replica_outbox_lease_test.cpp" in cmake,
+-        "lease_policy_and_runtime_are_registered_in_cmake",
+-        "the pure authority layer is compiled, linked, and executed",
++        "time_fence_lease_policy_and_runtimes_are_registered_in_cmake",
++        "both pure authority layers are compiled, independently tested, and included in sanitizer lanes",
+     )
+     owner_claim = function_body(
+         owner, "SyncReplicaSqliteOwner::claim_next_outbox_or_throw("
+@@ -405,20 +452,22 @@ def main() -> int:
+         "claim, renewal, and retry release converge on one re-attested lease publication helper",
+     )
+     require(
+-        "revision_number >= 872" in verifier
++        "revision_number >= 873" in verifier
+         and all(
+             token in verifier
+             for token in (
++                "src/sync_replica_outbox_time_fence.hpp",
++                "src/sync_replica_outbox_time_fence.cpp",
++                "tests/sync_replica_outbox_time_fence_test.cpp",
+                 "src/sync_replica_outbox_lease.hpp",
+                 "src/sync_replica_outbox_lease.cpp",
+                 "tests/sync_replica_outbox_lease_test.cpp",
+                 "tools/audit_sync_replica_outbox_lease.py",
+-                "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md",
+-                "DURABLE_TIME_FENCE_AUDIT_rev0872.md",
++                "RETRY_RELEASE_PROVENANCE_AUDIT_rev0873.md",
+             )
+         ),
+-        "release_verifier_requires_the_durable_time_authority_slice_from_rev0872",
+-        "a sealed revision cannot omit the policy, clock fence, runtime, structural audit, or design record",
++        "release_verifier_requires_the_retry_provenance_and_separate_time_fence_slice_from_rev0873",
++        "a sealed revision cannot omit the provenance-bearing policy, clock fence, runtimes, structural audit, or design record",
+     )
+ 
+     return emit(root, args.json, checks)
+diff --git a/tools/audit_sync_replica_sqlite_owner.py b/tools/audit_sync_replica_sqlite_owner.py
+index cadc564..59eb48d 100755
+--- a/tools/audit_sync_replica_sqlite_owner.py
++++ b/tools/audit_sync_replica_sqlite_owner.py
+@@ -59,7 +59,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-sqlite-owner-audit-v4",
++        "format": "anonsync-sync-replica-sqlite-owner-audit-v5",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -151,6 +151,9 @@ def main() -> int:
+                 "claimed_at_epoch",
+                 "lease_expires_at_epoch",
+                 "retry_not_before_epoch",
++                "retry_released_at_epoch",
++                "retry_release_provenance",
++                "LegacyUnproven",
+             )
+         )
+         and "Expiry also revokes settlement" in lease_header
+@@ -189,14 +192,16 @@ def main() -> int:
+         schema.count(") STRICT") >= 20
+         and "kLegacySchema" in schema
+         and "kPreviousSchema" in schema
++        and "kClockSchema" in schema
+         and "kSchema" in schema
+         and "schema_version=1" in schema
+         and "schema_version=2" in schema
+         and "schema_version=3" in schema
++        and "schema_version=4" in schema
+         and "sync_replica_outbox_clock" in schema
+         and "sync_replica_outbox_schedule" in schema,
+-        "owner_declares_exact_v1_v2_and_v3_strict_schemas",
+-        "both migration sources and the clock-bearing destination are exact sqlite_schema contracts",
++        "owner_declares_exact_v1_v2_v3_and_v4_strict_schemas",
++        "all three migration sources and the provenance-bearing destination are exact sqlite_schema contracts",
+     )
+     require(
+         all(
+@@ -208,10 +213,12 @@ def main() -> int:
+                 "claimed_at_epoch_be",
+                 "lease_expires_at_epoch_be",
+                 "retry_not_before_epoch_be",
++                "retry_released_at_epoch_be",
++                "retry_release_provenance INTEGER NOT NULL",
+             )
+         ),
+-        "schema_v2_and_v3_persist_complete_claim_and_backoff_state",
+-        "restart cannot forget which attempt owns settlement authority",
++        "schema_v4_persists_complete_claim_backoff_and_release_provenance_state",
++        "restart cannot forget which attempt owns settlement authority or which exact observation minted a new retry schedule",
+     )
+     read_schema = function_body(owner, "read_schema_objects_or_throw(")
+     require(
+@@ -287,9 +294,14 @@ def main() -> int:
+         "local_counter_to_operation_authority_is_digest_bound_and_restored",
+         "same-dot fork substitution cannot preserve the durable cutpoint unnoticed",
+     )
++    prior_outbox_digest = function_body(
++        owner, "[[nodiscard]] std::string prior_outbox_digest_or_throw("
++    )
+     outbox_digest = function_body(owner, "[[nodiscard]] std::string outbox_digest_or_throw(")
+     require(
+-        "anonsync-sync-replica-sqlite-outbox-v2" in outbox_digest
++        "anonsync-sync-replica-sqlite-outbox-v2" in prior_outbox_digest
++        and "retry_released_at_epoch" not in prior_outbox_digest
++        and "anonsync-sync-replica-sqlite-outbox-v3" in outbox_digest
+         and all(
+             token in outbox_digest
+             for token in (
+@@ -299,10 +311,12 @@ def main() -> int:
+                 "intent.lease.claimed_at_epoch",
+                 "intent.lease.lease_expires_at_epoch",
+                 "intent.lease.retry_not_before_epoch",
++                "intent.lease.retry_released_at_epoch",
++                "intent.lease.retry_release_provenance",
+             )
+         ),
+-        "outbox_digest_binds_every_receipt_and_schedule_field",
+-        "claim replacement or backoff edits cannot preserve the structural seal",
++        "versioned_outbox_digests_preserve_v2_and_bind_every_v4_authority_field",
++        "migration can attest old bytes exactly while current claim replacement or provenance edits cannot preserve the v3 structural seal",
+     )
+     clock_digest = function_body(owner, "outbox_clock_digest_or_throw(")
+     read_clock = function_body(owner, "read_outbox_clock_or_throw(")
+@@ -339,9 +353,11 @@ def main() -> int:
+             )
+         )
+         and "meta.schema_version" in versioned_cutpoint
+-        and "anonsync-sync-replica-sqlite-cutpoint-v3" in cutpoint,
+-        "cutpoint_seal_frames_schema_identity_policy_counters_and_digests",
+-        "one shared authority encoder prevents v2/v3 field drift while each domain binds its schema version",
++        and "anonsync-sync-replica-sqlite-cutpoint-v3" in owner
++        and "clock_schema_cutpoint_digest_or_throw" in owner
++        and "anonsync-sync-replica-sqlite-cutpoint-v4" in cutpoint,
++        "cutpoint_seals_frame_shared_authority_with_distinct_v3_and_v4_domains",
++        "one shared encoder prevents field drift while each schema binds its own version and digest domain",
+     )
+     require(
+         ordered(
+@@ -390,11 +406,15 @@ def main() -> int:
+             "schema_matches(observed, kPreviousSchema)",
+             "load_previous_state_or_throw",
+             "migrate_prior_schema_or_throw",
++            "schema_matches(observed, kClockSchema)",
++            "load_clock_state_or_throw",
++            "migrate_prior_schema_or_throw",
+         )
+         and ordered(
+             migration,
+             "kLegacySchemaVersion",
+             "kPreviousSchemaVersion",
++            "kClockSchemaVersion",
+             "DROP INDEX main.sync_replica_outbox_operation",
+             "sync_replica_outbox_clock",
+             "verify_schema_or_throw",
+@@ -403,17 +423,19 @@ def main() -> int:
+             "insert_outbox_clock_or_throw",
+             "attest_and_commit_staged_cutpoint_or_throw",
+         ),
+-        "prior_migration_requires_full_v1_or_v2_attestation_and_atomic_v3_publication",
+-        "malformed rev0869 or rev0871 state cannot be laundered by rebuilding metadata",
++        "prior_migration_requires_full_v1_v2_or_v3_attestation_and_atomic_v4_publication",
++        "malformed rev0869, rev0871, or rev0872 state cannot be laundered by rebuilding metadata",
+     )
+     migration_floor = function_body(owner, "outbox_clock_migration_floor_or_throw(")
+     require(
+         "intent.lease.claimed_at_epoch" in migration_floor
++        and "SyncReplicaOutboxRetryReleaseProvenance::Exact" in migration_floor
++        and "intent.lease.retry_released_at_epoch" in migration_floor
+         and "kSyncReplicaOutboxMaxRetryDelaySeconds" in migration_floor
+         and "strongest lower bound" in migration_floor
+         and "outbox clock predates retained lease authority" in load,
+-        "migration_seeds_only_time_proven_by_prior_durable_lease_state",
+-        "v2 lacks exact observation history, so v3 records a conservative reconstructible floor rather than inventing time",
++        "migration_seeds_only_time_proven_by_exact_or_conservative_prior_state",
++        "exact rows retain their observation while v2/v3 gaps contribute only a reconstructible lower bound rather than invented history",
+     )
+ 
+     for name, signature in (
+@@ -517,6 +539,8 @@ def main() -> int:
+                 "claimed_at_epoch_be=?",
+                 "lease_expires_at_epoch_be=?",
+                 "retry_not_before_epoch_be=?",
++                "retry_released_at_epoch_be=?",
++                "retry_release_provenance=?",
+                 "sqlite3_changes",
+             )
+         )
+@@ -596,8 +620,8 @@ def main() -> int:
+         ordered(
+             release,
+             "now_epoch == 0U",
+-            "retry_not_before_epoch < now_epoch",
+-            "kSyncReplicaOutboxMaxRetryDelaySeconds",
++            "retry_delay_seconds > kSyncReplicaOutboxMaxRetryDelaySeconds",
++            "numeric_limits<std::uint64_t>::max() - now_epoch",
+             "SyncSqliteTransactionMode::Immediate",
+             "find_outbox_intent",
+             "sync_replica_outbox_claim_status_at_or_throw",
+@@ -641,10 +665,15 @@ def main() -> int:
+             token in runtime
+             for token in (
+                 "test_exact_v1_migration_preserves_evidence_and_outbox",
+-                "test_malformed_v1_is_not_laundered_into_v3",
++                "test_malformed_v1_is_not_laundered_into_v4",
+                 "test_exact_v2_migration_preserves_live_receipt_and_seeds_clock",
+-                "test_unreachable_v2_lease_is_not_laundered_into_v3",
++                "test_unreachable_v2_lease_is_not_laundered_into_v4",
++                "test_exact_v3_migration_preserves_clock_and_marks_retry_gap",
+                 "test_receipt_bound_reclaim_backoff_and_restart",
++                "test_retry_release_provenance_tamper_and_precommit_guard",
++                "zeroed release observation survived exact-state validation",
++                "provenance downgrade laundered an exact observation into legacy state",
++                "post-update provenance mutation escaped staged re-attestation",
+                 "clock rollback revived a receipt after durable expiry",
+                 "test_outbox_clock_precommit_reattestation_and_tamper",
+                 "TEMP clock shadow displaced main clock authority",
+@@ -665,7 +694,9 @@ def main() -> int:
+     )
+ 
+     require(
+-        "anonsync_sync_replica_outbox_lease" in cmake
++        "anonsync_sync_replica_outbox_time_fence" in cmake
++        and "anonsync_sync_replica_outbox_time_fence_test" in cmake
++        and "anonsync_sync_replica_outbox_lease" in cmake
+         and "anonsync_sync_replica_outbox_lease_test" in cmake
+         and "anonsync_sync_replica_sqlite_owner_test" in cmake
+         and "audit_sync_replica_sqlite_owner.py" in cmake
+@@ -674,15 +705,15 @@ def main() -> int:
+         "CMake registers both authority layers and the process-crash test budget",
+     )
+     require(
+-        "revision_number >= 872" in verifier
++        "revision_number >= 873" in verifier
+         and "src/sync_replica_sqlite_owner.hpp" in verifier
+         and "src/sync_replica_sqlite_owner.cpp" in verifier
+         and "tests/sync_replica_sqlite_owner_test.cpp" in verifier
+         and "tools/audit_sync_replica_sqlite_owner.py" in verifier
+-        and "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md" in verifier
+-        and "DURABLE_TIME_FENCE_AUDIT_rev0872.md" in verifier,
+-        "release_verifier_keeps_the_rev0872_clock_owner_slice_mandatory",
+-        "a sealed archive cannot omit the cutpoint owner, clock audit, heartbeat audit, or structural audit",
++        and "src/sync_replica_outbox_time_fence.hpp" in verifier
++        and "RETRY_RELEASE_PROVENANCE_AUDIT_rev0873.md" in verifier,
++        "release_verifier_keeps_the_rev0873_provenance_owner_slice_mandatory",
++        "a sealed archive cannot omit the cutpoint owner, provenance audit, separated time fence, or structural audit",
+     )
+     require(
+         "INSERT OR" not in owner and "ON CONFLICT" not in owner,
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index aa2dfc6..73e0150 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -453,6 +453,13 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         revision_scoped_required.update({
+             "DURABLE_TIME_FENCE_AUDIT_rev0872.md",
+         })
++    if revision_number is not None and revision_number >= 873:
++        revision_scoped_required.update({
++            "src/sync_replica_outbox_time_fence.hpp",
++            "src/sync_replica_outbox_time_fence.cpp",
++            "tests/sync_replica_outbox_time_fence_test.cpp",
++            "RETRY_RELEASE_PROVENANCE_AUDIT_rev0873.md",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

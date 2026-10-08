@@ -1,0 +1,1508 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f3d54aba2ecda211dd9d41fffb0dfb64f4914fa4..258a8bcdc1e510ac7ce18e2ca8b459a47b7daf1c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1507,6 +1507,16 @@ target_link_libraries(anonsync_sync_replica_aggregate_budget_test PRIVATE
+ target_compile_options(anonsync_sync_replica_aggregate_budget_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++add_executable(anonsync_sync_replica_capacity_backpressure_test
++  tests/sync_replica_capacity_backpressure_test.cpp)
++target_include_directories(anonsync_sync_replica_capacity_backpressure_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_capacity_backpressure_test PRIVATE
++  anonsync_sync_replica_network_simulator
++  anonsync_sha256_digest)
++target_compile_options(anonsync_sync_replica_capacity_backpressure_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ add_executable(anonsync_sync_bounded_regular_file_test
+   tests/sync_bounded_regular_file_test.cpp)
+ target_link_libraries(anonsync_sync_bounded_regular_file_test PRIVATE
+@@ -2361,6 +2371,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_sync_replica_hash_graph_projection_test
+     anonsync_sync_replica_allocation_atomicity_test
+     anonsync_sync_replica_aggregate_budget_test
++    anonsync_sync_replica_capacity_backpressure_test
+     anonsync_fuzz_json_codec
+     anonsync_fuzz_jwt_codec
+     anonsync_fuzz_route_event_ledger
+@@ -2434,6 +2445,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_sync_replica_hash_graph_projection_test
+       anonsync_sync_replica_allocation_atomicity_test
+       anonsync_sync_replica_aggregate_budget_test
++      anonsync_sync_replica_capacity_backpressure_test
+       anonsync_fuzz_json_codec
+       anonsync_fuzz_jwt_codec
+       anonsync_fuzz_route_event_ledger
+@@ -2565,6 +2577,8 @@ add_test(NAME anonsync_sync_replica_allocation_atomicity_test
+   COMMAND anonsync_sync_replica_allocation_atomicity_test)
+ add_test(NAME anonsync_sync_replica_aggregate_budget_test
+   COMMAND anonsync_sync_replica_aggregate_budget_test)
++add_test(NAME anonsync_sync_replica_capacity_backpressure_test
++  COMMAND anonsync_sync_replica_capacity_backpressure_test)
+ set_tests_properties(
+   anonsync_sync_peer_transport_digest_bound_frame_test
+   anonsync_sync_conflict_resolution_test
+@@ -2579,6 +2593,7 @@ set_tests_properties(
+   anonsync_sync_replica_hash_graph_projection_test
+   anonsync_sync_replica_allocation_atomicity_test
+   anonsync_sync_replica_aggregate_budget_test
++  anonsync_sync_replica_capacity_backpressure_test
+   PROPERTIES TIMEOUT 20)
+ # The graph oracle deliberately includes reverse-history, wide-fan-in, and
+ # differential corpora. ASan+UBSan can take materially longer than an ordinary
+@@ -2729,6 +2744,13 @@ if(Python3_Interpreter_FOUND)
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   set_tests_properties(anonsync_sync_replica_aggregate_budget_source_audit
+     PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_sync_replica_capacity_backpressure_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_replica_capacity_backpressure.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(
++    anonsync_sync_replica_capacity_backpressure_source_audit
++    PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_sync_daemon_heartbeat_document_source_audit
+     COMMAND ${Python3_EXECUTABLE} -B -S
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_daemon_heartbeat_document.py
+diff --git a/src/sync_replica_model.cpp b/src/sync_replica_model.cpp
+index 528808fcdf545461d6360cee82ddc5544d79ceb2..3c1da0c685fb8fdcb05cb14ef5e80628834a85db 100644
+--- a/src/sync_replica_model.cpp
++++ b/src/sync_replica_model.cpp
+@@ -114,6 +114,27 @@ static_assert(std::is_nothrow_swappable_v<std::set<std::string>>);
+     };
+ }
+ 
++[[nodiscard]] SyncReplicaResourceBudget resource_budget_or_throw(
++    std::uint64_t retained,
++    std::uint64_t incoming,
++    std::uint64_t limit,
++    std::string_view label) {
++    if (retained > limit) {
++        throw std::logic_error(
++            "sync replica retained " + std::string(label) +
++            " counter already exceeds its configured budget");
++    }
++    return {retained, incoming, limit};
++}
++
++[[nodiscard]] bool remote_preflight_is_capacity_blocked(
++    const SyncReplicaRemoteAdmissionPreflight& preflight) noexcept {
++    return preflight.operations.would_exceed() ||
++           preflight.canonical_bytes.would_exceed() ||
++           preflight.context_entries.would_exceed() ||
++           preflight.predecessor_ids.would_exceed();
++}
++
+ [[nodiscard]] std::string_view kind_text(
+     SyncReplicaValueKind kind) noexcept {
+     return kind == SyncReplicaValueKind::Tombstone ? "tombstone" : "file";
+@@ -453,8 +474,9 @@ SyncReplicaOperation SyncReplicaModel::create_local_operation_or_throw(
+     return operation;
+ }
+ 
+-SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(
+-    const SyncReplicaOperation& operation) {
++SyncReplicaRemoteAdmissionPreflight
++SyncReplicaModel::preflight_remote_admission_or_throw(
++    const SyncReplicaOperation& operation) const {
+     // Exact replay is already authorized by the immutable retained owner. Avoid
+     // re-encoding and rehashing a potentially large envelope on every retry. A
+     // same-ID but nonidentical value still takes the full validation path below
+@@ -462,7 +484,30 @@ SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(
+     const auto duplicate = evidence_by_id_.find(operation.operation_id);
+     if (duplicate != evidence_by_id_.end() &&
+         duplicate->second == operation) {
+-        return SyncReplicaAdmission::Duplicate;
++        return {
++            SyncReplicaRemoteReadiness::Duplicate,
++            resource_budget_or_throw(
++                size_to_u64_or_throw(
++                    evidence_by_id_.size(), "retained evidence count"),
++                0U,
++                limits_.max_operations,
++                "operation-count"),
++            resource_budget_or_throw(
++                retained_canonical_bytes_,
++                0U,
++                limits_.max_retained_canonical_bytes,
++                "canonical-byte"),
++            resource_budget_or_throw(
++                retained_context_entries_,
++                0U,
++                limits_.max_retained_context_entries,
++                "context-entry"),
++            resource_budget_or_throw(
++                retained_predecessor_ids_,
++                0U,
++                limits_.max_retained_predecessor_ids,
++                "predecessor-ID"),
++        };
+     }
+ 
+     const std::uint64_t canonical_bytes =
+@@ -476,17 +521,84 @@ SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(
+         throw std::runtime_error(
+             "sync replica operation digest collision changed canonical bytes");
+     }
+-    if (evidence_by_id_.size() >= limits_.max_operations) {
+-        throw std::length_error(
+-            "sync replica retained evidence reached configured operation limit");
++    const RetainedEvidenceCharge retained_charge = retained_charge_or_throw(
++        operation, canonical_bytes);
++    SyncReplicaRemoteAdmissionPreflight preflight{
++        SyncReplicaRemoteReadiness::Admissible,
++        resource_budget_or_throw(
++            size_to_u64_or_throw(
++                evidence_by_id_.size(), "retained evidence count"),
++            1U,
++            limits_.max_operations,
++            "operation-count"),
++        resource_budget_or_throw(
++            retained_canonical_bytes_,
++            retained_charge.canonical_bytes,
++            limits_.max_retained_canonical_bytes,
++            "canonical-byte"),
++        resource_budget_or_throw(
++            retained_context_entries_,
++            retained_charge.context_entries,
++            limits_.max_retained_context_entries,
++            "context-entry"),
++        resource_budget_or_throw(
++            retained_predecessor_ids_,
++            retained_charge.predecessor_ids,
++            limits_.max_retained_predecessor_ids,
++            "predecessor-ID"),
++    };
++    if (remote_preflight_is_capacity_blocked(preflight)) {
++        preflight.readiness = SyncReplicaRemoteReadiness::CapacityBlocked;
+     }
+-    const RetainedEvidenceTotals retained_totals =
+-        prospective_retained_totals_or_throw(
+-            {retained_canonical_bytes_,
+-             retained_context_entries_,
+-             retained_predecessor_ids_},
+-            retained_charge_or_throw(operation, canonical_bytes),
+-            limits_);
++    return preflight;
++}
++
++SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(
++    const SyncReplicaOperation& operation) {
++    const SyncReplicaRemoteAdmissionPreflight preflight =
++        preflight_remote_admission_or_throw(operation);
++    if (preflight.readiness == SyncReplicaRemoteReadiness::Duplicate) {
++        return SyncReplicaAdmission::Duplicate;
++    }
++    if (preflight.readiness ==
++        SyncReplicaRemoteReadiness::CapacityBlocked) {
++        return SyncReplicaAdmission::CapacityBlocked;
++    }
++    return accept_remote_admissible_after_preflight_or_throw(
++        operation, preflight);
++}
++
++SyncReplicaAdmission
++SyncReplicaModel::accept_remote_admissible_after_preflight_or_throw(
++    const SyncReplicaOperation& operation,
++    const SyncReplicaRemoteAdmissionPreflight& preflight) {
++    const std::uint64_t evidence_count = size_to_u64_or_throw(
++        evidence_by_id_.size(), "retained evidence count");
++    if (preflight.readiness != SyncReplicaRemoteReadiness::Admissible ||
++        remote_preflight_is_capacity_blocked(preflight) ||
++        preflight.operations != SyncReplicaResourceBudget{
++            evidence_count, 1U, limits_.max_operations} ||
++        preflight.canonical_bytes.retained != retained_canonical_bytes_ ||
++        preflight.canonical_bytes.limit !=
++            limits_.max_retained_canonical_bytes ||
++        preflight.context_entries.retained != retained_context_entries_ ||
++        preflight.context_entries.limit !=
++            limits_.max_retained_context_entries ||
++        preflight.predecessor_ids.retained != retained_predecessor_ids_ ||
++        preflight.predecessor_ids.limit !=
++            limits_.max_retained_predecessor_ids ||
++        evidence_by_id_.contains(operation.operation_id)) {
++        throw std::logic_error(
++            "sync replica remote admission preflight is stale or inconsistent with its model owner");
++    }
++    const RetainedEvidenceTotals retained_totals{
++        preflight.canonical_bytes.retained +
++            preflight.canonical_bytes.incoming,
++        preflight.context_entries.retained +
++            preflight.context_entries.incoming,
++        preflight.predecessor_ids.retained +
++            preflight.predecessor_ids.incoming,
++    };
+ 
+     const auto inserted = evidence_by_id_.emplace(
+         operation.operation_id, operation);
+diff --git a/src/sync_replica_model.hpp b/src/sync_replica_model.hpp
+index a67938c8cf259da7fa335cefbc822ff665777aad..60808d2f8b722fba3b755f7dcc411fa344343912 100644
+--- a/src/sync_replica_model.hpp
++++ b/src/sync_replica_model.hpp
+@@ -91,6 +91,43 @@ enum class SyncReplicaAdmission {
+     InsertedPending,
+     InsertedQuarantined,
+     Duplicate,
++    // The envelope is well-formed and belongs to this folder, but admitting
++    // one more retained owner would cross a local configured capacity. This is
++    // retryable policy state, not evidence invalidity and not quarantine.
++    CapacityBlocked,
++};
++
++enum class SyncReplicaRemoteReadiness {
++    Admissible,
++    Duplicate,
++    CapacityBlocked,
++};
++
++// Exact resource state for one prospective remote envelope. The values are
++// semantic charges, not allocator estimates. would_exceed() is subtraction-
++// based so a maliciously large incoming charge cannot wrap through uint64_t.
++struct SyncReplicaResourceBudget final {
++    std::uint64_t retained = 0;
++    std::uint64_t incoming = 0;
++    std::uint64_t limit = 0;
++
++    [[nodiscard]] bool would_exceed() const noexcept {
++        return retained > limit || incoming > limit - retained;
++    }
++
++    bool operator==(const SyncReplicaResourceBudget&) const = default;
++};
++
++struct SyncReplicaRemoteAdmissionPreflight final {
++    SyncReplicaRemoteReadiness readiness =
++        SyncReplicaRemoteReadiness::Admissible;
++    SyncReplicaResourceBudget operations;
++    SyncReplicaResourceBudget canonical_bytes;
++    SyncReplicaResourceBudget context_entries;
++    SyncReplicaResourceBudget predecessor_ids;
++
++    bool operator==(const SyncReplicaRemoteAdmissionPreflight&) const =
++        default;
+ };
+ 
+ enum class SyncReplicaEvidenceState {
+@@ -202,9 +239,19 @@ public:
+     [[nodiscard]] SyncReplicaOperation create_local_tombstone_or_throw(
+         std::string canonical_path);
+ 
++    // Validates identity and semantics and returns exact local capacity state
++    // without mutating the model. Exact retained duplicates bypass rehashing and
++    // report zero incoming charge. CapacityBlocked means valid evidence may be
++    // retried under a different local retention policy; it is never quarantine.
++    [[nodiscard]] SyncReplicaRemoteAdmissionPreflight
++    preflight_remote_admission_or_throw(
++        const SyncReplicaOperation& operation) const;
++
+     // A well-formed exact envelope is retained before deterministic projection.
+     // Missing dependencies remain pending. Same-dot forks and invalid causal
+     // envelopes are quarantined as evidence rather than selected by arrival.
++    // Locally insufficient retention capacity returns CapacityBlocked without
++    // mutating evidence, projection, authority, or aggregate counters.
+     [[nodiscard]] SyncReplicaAdmission accept_remote_or_throw(
+         const SyncReplicaOperation& operation);
+ 
+@@ -288,12 +335,23 @@ public:
+     [[nodiscard]] SyncReplicaDurableState durable_state() const;
+ 
+ private:
++    friend class SyncReplicaNetworkSimulator;
++
+     [[nodiscard]] SyncReplicaOperation create_local_operation_or_throw(
+         std::string canonical_path,
+         SyncReplicaValueKind kind,
+         std::uint64_t size_bytes,
+         std::string content_sha256);
+ 
++    // Consumes an admissible preflight produced against this exact immutable
++    // state (or a byte-for-byte model copy). The network simulator is a friend
++    // solely so it can preflight before cloning and avoid validating/hashing the
++    // same envelope twice after the copy.
++    [[nodiscard]] SyncReplicaAdmission
++    accept_remote_admissible_after_preflight_or_throw(
++        const SyncReplicaOperation& operation,
++        const SyncReplicaRemoteAdmissionPreflight& preflight);
++
+     [[nodiscard]] bool compute_local_actor_compromised(
+         const std::map<std::string, SyncReplicaOperation>& evidence,
+         const std::map<std::string, SyncReplicaEvidenceState>& states,
+diff --git a/src/sync_replica_network_simulator.cpp b/src/sync_replica_network_simulator.cpp
+index e8ec8c173b5a3ef016fa98e006826a5535df082e..c0d850da93e3c12b2fa8008d9322aeda38045e06 100644
+--- a/src/sync_replica_network_simulator.cpp
++++ b/src/sync_replica_network_simulator.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include <algorithm>
+ #include <limits>
++#include <set>
+ #include <stdexcept>
+ #include <type_traits>
+ #include <utility>
+@@ -181,8 +182,8 @@ void SyncReplicaNetworkSimulator::heal_direction_or_throw(
+         throw std::invalid_argument(
+             "sync replica simulator cannot heal a self-direction");
+     }
+-    partitioned_directions_.erase(
+-        {source_device_id, destination_device_id});
++    erase_partition_direction_noexcept(
++        source_device_id, destination_device_id);
+ }
+ 
+ void SyncReplicaNetworkSimulator::heal_bidirectional_or_throw(
+@@ -194,10 +195,10 @@ void SyncReplicaNetworkSimulator::heal_bidirectional_or_throw(
+         throw std::invalid_argument(
+             "sync replica simulator cannot heal a self-direction");
+     }
+-    partitioned_directions_.erase(
+-        {first_device_id, second_device_id});
+-    partitioned_directions_.erase(
+-        {second_device_id, first_device_id});
++    erase_partition_direction_noexcept(
++        first_device_id, second_device_id);
++    erase_partition_direction_noexcept(
++        second_device_id, first_device_id);
+ }
+ 
+ void SyncReplicaNetworkSimulator::heal_all() noexcept {
+@@ -209,8 +210,25 @@ bool SyncReplicaNetworkSimulator::direction_is_partitioned(
+     const std::string& destination_device_id) const {
+     (void)node_or_throw(source_device_id);
+     (void)node_or_throw(destination_device_id);
++    return direction_is_partitioned_noexcept(
++        source_device_id, destination_device_id);
++}
++
++bool SyncReplicaNetworkSimulator::direction_is_partitioned_noexcept(
++    std::string_view source_device_id,
++    std::string_view destination_device_id) const noexcept {
+     return partitioned_directions_.contains(
+-        {source_device_id, destination_device_id});
++        DirectionView{source_device_id, destination_device_id});
++}
++
++void SyncReplicaNetworkSimulator::erase_partition_direction_noexcept(
++    std::string_view source_device_id,
++    std::string_view destination_device_id) noexcept {
++    const auto direction = partitioned_directions_.find(
++        DirectionView{source_device_id, destination_device_id});
++    if (direction != partitioned_directions_.end()) {
++        partitioned_directions_.erase(direction);
++    }
+ }
+ 
+ std::size_t SyncReplicaNetworkSimulator::enqueue_anti_entropy_or_throw(
+@@ -403,14 +421,40 @@ SyncReplicaNetworkSimulator::deliver_message_or_throw(
+     const SyncReplicaNetworkMessage& message = found->second;
+     Node& destination = node_or_throw(message.destination_device_id);
+     if (!destination.live.has_value() ||
+-        partitioned_directions_.contains(
+-            {message.source_device_id, message.destination_device_id})) {
++        direction_is_partitioned_noexcept(
++            message.source_device_id, message.destination_device_id)) {
+         return std::nullopt;
+     }
+ 
++    // Capacity and exact replay are properties of the immutable live owner.
++    // Resolve both before cloning the retained graph. A duplicate needs only
++    // queue retirement; a capacity block must preserve the queued envelope for
++    // retry and must not manufacture a durable-state rewrite.
++    const SyncReplicaRemoteAdmissionPreflight preflight =
++        destination.live->preflight_remote_admission_or_throw(
++            message.operation);
++    if (preflight.readiness == SyncReplicaRemoteReadiness::Duplicate) {
++        erase_message_noexcept(found);
++        return SyncReplicaAdmission::Duplicate;
++    }
++    if (preflight.readiness ==
++        SyncReplicaRemoteReadiness::CapacityBlocked) {
++        return SyncReplicaAdmission::CapacityBlocked;
++    }
++    if (preflight.readiness != SyncReplicaRemoteReadiness::Admissible) {
++        throw std::logic_error(
++            "sync replica simulator received unknown remote readiness");
++    }
++
+     SyncReplicaModel candidate = destination.live.value();
+     const SyncReplicaAdmission admission =
+-        candidate.accept_remote_or_throw(message.operation);
++        candidate.accept_remote_admissible_after_preflight_or_throw(
++            message.operation, preflight);
++    if (admission == SyncReplicaAdmission::Duplicate ||
++        admission == SyncReplicaAdmission::CapacityBlocked) {
++        throw std::logic_error(
++            "sync replica simulator admission changed after immutable preflight without concurrency");
++    }
+     SyncReplicaDurableState durable = candidate.durable_state();
+     commit_candidate_noexcept(
+         destination, std::move(candidate), std::move(durable));
+@@ -422,16 +466,20 @@ std::size_t SyncReplicaNetworkSimulator::drain_deliverable_or_throw(
+     SyncReplicaDeliveryOrder order,
+     std::size_t max_deliveries) {
+     std::size_t delivered = 0;
++    std::set<std::uint64_t> capacity_blocked_message_ids;
+     while (delivered < max_deliveries) {
+         std::optional<std::uint64_t> selected;
+         if (order == SyncReplicaDeliveryOrder::OldestFirst) {
+             for (const auto& [message_id, message] : messages_) {
++                if (capacity_blocked_message_ids.contains(message_id)) {
++                    continue;
++                }
+                 const Node& destination =
+                     node_or_throw(message.destination_device_id);
+                 if (destination.live.has_value() &&
+-                    !partitioned_directions_.contains(
+-                        {message.source_device_id,
+-                         message.destination_device_id})) {
++                    !direction_is_partitioned_noexcept(
++                        message.source_device_id,
++                        message.destination_device_id)) {
+                     selected = message_id;
+                     break;
+                 }
+@@ -439,13 +487,16 @@ std::size_t SyncReplicaNetworkSimulator::drain_deliverable_or_throw(
+         } else if (order == SyncReplicaDeliveryOrder::NewestFirst) {
+             for (auto iterator = messages_.rbegin();
+                  iterator != messages_.rend(); ++iterator) {
++                if (capacity_blocked_message_ids.contains(iterator->first)) {
++                    continue;
++                }
+                 const SyncReplicaNetworkMessage& message = iterator->second;
+                 const Node& destination =
+                     node_or_throw(message.destination_device_id);
+                 if (destination.live.has_value() &&
+-                    !partitioned_directions_.contains(
+-                        {message.source_device_id,
+-                         message.destination_device_id})) {
++                    !direction_is_partitioned_noexcept(
++                        message.source_device_id,
++                        message.destination_device_id)) {
+                     selected = iterator->first;
+                     break;
+                 }
+@@ -461,6 +512,10 @@ std::size_t SyncReplicaNetworkSimulator::drain_deliverable_or_throw(
+             throw std::logic_error(
+                 "sync replica simulator selected a message that became blocked without concurrency");
+         }
++        if (result.value() == SyncReplicaAdmission::CapacityBlocked) {
++            capacity_blocked_message_ids.insert(selected.value());
++            continue;
++        }
+         ++delivered;
+     }
+     return delivered;
+diff --git a/src/sync_replica_network_simulator.hpp b/src/sync_replica_network_simulator.hpp
+index eff0d733cbcecdfcb0e359295a9fd1d05ab42072..515285f26c43b3da8418217b2ccad2419174ad59 100644
+--- a/src/sync_replica_network_simulator.hpp
++++ b/src/sync_replica_network_simulator.hpp
+@@ -8,6 +8,8 @@
+ #include <optional>
+ #include <set>
+ #include <string>
++#include <string_view>
++#include <utility>
+ #include <vector>
+ 
+ namespace anonsync {
+@@ -119,9 +121,10 @@ public:
+ 
+     [[nodiscard]] bool drop_message(std::uint64_t message_id) noexcept;
+ 
+-    // A blocked message remains queued. A successfully accepted duplicate or
+-    // insertion is removed and the destination's durable snapshot is updated
+-    // before this method returns.
++    // A transport block returns nullopt. A valid capacity block returns an
++    // explicit CapacityBlocked admission and leaves the message queued. Exact
++    // duplicates are retired without cloning the destination graph or rewriting
++    // its durable snapshot; insertions atomically update live and durable state.
+     [[nodiscard]] std::optional<SyncReplicaAdmission>
+     deliver_message_or_throw(std::uint64_t message_id);
+ 
+@@ -149,6 +152,64 @@ private:
+         SyncReplicaDurableState durable;
+     };
+ 
++    struct DirectionKey final {
++        std::string source_device_id;
++        std::string destination_device_id;
++
++        DirectionKey(std::string source, std::string destination)
++            : source_device_id(std::move(source)),
++              destination_device_id(std::move(destination)) {}
++    };
++
++    struct DirectionView final {
++        std::string_view source_device_id;
++        std::string_view destination_device_id;
++    };
++
++    struct DirectionLess final {
++        using is_transparent = void;
++
++        [[nodiscard]] static bool compare(
++            std::string_view left_source,
++            std::string_view left_destination,
++            std::string_view right_source,
++            std::string_view right_destination) noexcept {
++            if (left_source < right_source) return true;
++            if (right_source < left_source) return false;
++            return left_destination < right_destination;
++        }
++
++        [[nodiscard]] bool operator()(
++            const DirectionKey& left,
++            const DirectionKey& right) const noexcept {
++            return compare(
++                left.source_device_id,
++                left.destination_device_id,
++                right.source_device_id,
++                right.destination_device_id);
++        }
++
++        [[nodiscard]] bool operator()(
++            const DirectionKey& left,
++            const DirectionView& right) const noexcept {
++            return compare(
++                left.source_device_id,
++                left.destination_device_id,
++                right.source_device_id,
++                right.destination_device_id);
++        }
++
++        [[nodiscard]] bool operator()(
++            const DirectionView& left,
++            const DirectionKey& right) const noexcept {
++            return compare(
++                left.source_device_id,
++                left.destination_device_id,
++                right.source_device_id,
++                right.destination_device_id);
++        }
++    };
++
+     [[nodiscard]] Node& node_or_throw(const std::string& device_id);
+     [[nodiscard]] const Node& node_or_throw(
+         const std::string& device_id) const;
+@@ -196,13 +257,21 @@ private:
+         SyncReplicaModel&& candidate,
+         SyncReplicaDurableState&& durable) noexcept;
+ 
++    [[nodiscard]] bool direction_is_partitioned_noexcept(
++        std::string_view source_device_id,
++        std::string_view destination_device_id) const noexcept;
++
++    void erase_partition_direction_noexcept(
++        std::string_view source_device_id,
++        std::string_view destination_device_id) noexcept;
++
+     std::string folder_id_;
+     SyncReplicaModelLimits limits_;
+     SyncReplicaNetworkSimulatorLimits network_limits_;
+     std::map<std::string, Node> nodes_;
+     std::map<std::uint64_t, SyncReplicaNetworkMessage> messages_;
+     std::size_t pending_message_semantic_bytes_ = 0;
+-    std::set<std::pair<std::string, std::string>> partitioned_directions_;
++    std::set<DirectionKey, DirectionLess> partitioned_directions_;
+     std::uint64_t next_message_id_ = 1;
+ };
+ 
+diff --git a/tests/sync_replica_aggregate_budget_test.cpp b/tests/sync_replica_aggregate_budget_test.cpp
+index 01c0399df034a607bb6a77a2707548c6da315899..53bf29dc0e33f81cb30e8b19273a49c02cd95f04 100644
+--- a/tests/sync_replica_aggregate_budget_test.cpp
++++ b/tests/sync_replica_aggregate_budget_test.cpp
+@@ -240,9 +240,22 @@ int main() {
+             checks);
+         const SyncReplicaDurableState byte_baseline =
+             byte_model.durable_state();
+-        require_throws<std::length_error>(
+-            [&] { (void)byte_model.accept_remote_or_throw(overflow); },
+-            "aggregate canonical-byte ceiling admitted one extra envelope",
++        const SyncReplicaRemoteAdmissionPreflight byte_preflight =
++            byte_model.preflight_remote_admission_or_throw(overflow);
++        require(
++            byte_preflight.readiness ==
++                    SyncReplicaRemoteReadiness::CapacityBlocked &&
++                byte_preflight.canonical_bytes.retained ==
++                    byte_limits.max_retained_canonical_bytes &&
++                byte_preflight.canonical_bytes.incoming ==
++                    canonical_size(overflow) &&
++                byte_preflight.canonical_bytes.would_exceed(),
++            "aggregate canonical-byte preflight did not expose the exact local capacity block",
++            checks);
++        require(
++            byte_model.accept_remote_or_throw(overflow) ==
++                SyncReplicaAdmission::CapacityBlocked,
++            "aggregate canonical-byte ceiling did not return retryable backpressure",
+             checks);
+         require(
+             byte_model.durable_state() == byte_baseline &&
+@@ -292,9 +305,10 @@ int main() {
+             checks);
+         const SyncReplicaDurableState context_baseline =
+             context_model.durable_state();
+-        require_throws<std::length_error>(
+-            [&] { (void)context_model.accept_remote_or_throw(pending_set[2]); },
+-            "aggregate context-entry ceiling admitted one extra context",
++        require(
++            context_model.accept_remote_or_throw(pending_set[2]) ==
++                SyncReplicaAdmission::CapacityBlocked,
++            "aggregate context-entry ceiling did not return retryable backpressure",
+             checks);
+         require(
+             context_model.durable_state() == context_baseline &&
+@@ -325,11 +339,10 @@ int main() {
+             checks);
+         const SyncReplicaDurableState predecessor_baseline =
+             predecessor_model.durable_state();
+-        require_throws<std::length_error>(
+-            [&] {
+-                (void)predecessor_model.accept_remote_or_throw(pending_set[2]);
+-            },
+-            "aggregate predecessor-ID ceiling admitted one extra dependency",
++        require(
++            predecessor_model.accept_remote_or_throw(pending_set[2]) ==
++                SyncReplicaAdmission::CapacityBlocked,
++            "aggregate predecessor-ID ceiling did not return retryable backpressure",
+             checks);
+         require(
+             predecessor_model.durable_state() == predecessor_baseline &&
+diff --git a/tests/sync_replica_capacity_backpressure_test.cpp b/tests/sync_replica_capacity_backpressure_test.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..a3903f0fd1b02d2cfba815de3b823ff40db639de
+--- /dev/null
++++ b/tests/sync_replica_capacity_backpressure_test.cpp
+@@ -0,0 +1,419 @@
++#include "sha256_digest.hpp"
++#include "sync_replica_model.hpp"
++#include "sync_replica_network_simulator.hpp"
++
++#include <cstddef>
++#include <cstdint>
++#include <cstdlib>
++#include <iostream>
++#include <new>
++#include <optional>
++#include <stdexcept>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace {
++
++struct AllocationProbe final {
++    std::size_t attempts = 0U;
++    std::size_t fail_at = 0U;
++    bool armed = false;
++};
++
++AllocationProbe g_allocation_probe;
++
++[[nodiscard]] bool allocation_should_fail() noexcept {
++    if (!g_allocation_probe.armed) return false;
++    ++g_allocation_probe.attempts;
++    return g_allocation_probe.fail_at != 0U &&
++           g_allocation_probe.attempts == g_allocation_probe.fail_at;
++}
++
++[[nodiscard]] void* allocate_or_throw(std::size_t size) {
++    if (allocation_should_fail()) throw std::bad_alloc();
++    void* const memory = std::malloc(size == 0U ? 1U : size);
++    if (memory == nullptr) throw std::bad_alloc();
++    return memory;
++}
++
++class AllocationArm final {
++public:
++    explicit AllocationArm(std::size_t fail_at) noexcept {
++        g_allocation_probe.attempts = 0U;
++        g_allocation_probe.fail_at = fail_at;
++        g_allocation_probe.armed = true;
++    }
++
++    AllocationArm(const AllocationArm&) = delete;
++    AllocationArm& operator=(const AllocationArm&) = delete;
++
++    ~AllocationArm() { g_allocation_probe.armed = false; }
++
++    void disarm() noexcept { g_allocation_probe.armed = false; }
++
++    [[nodiscard]] std::size_t attempts() const noexcept {
++        return g_allocation_probe.attempts;
++    }
++};
++
++}  // namespace
++
++void* operator new(std::size_t size) {
++    return allocate_or_throw(size);
++}
++
++void* operator new[](std::size_t size) {
++    return allocate_or_throw(size);
++}
++
++void operator delete(void* memory) noexcept {
++    std::free(memory);
++}
++
++void operator delete[](void* memory) noexcept {
++    std::free(memory);
++}
++
++void operator delete(void* memory, std::size_t) noexcept {
++    std::free(memory);
++}
++
++void operator delete[](void* memory, std::size_t) noexcept {
++    std::free(memory);
++}
++
++namespace {
++
++void require(bool condition, const std::string& message, std::size_t& checks) {
++    ++checks;
++    if (!condition) throw std::runtime_error(message);
++}
++
++template <typename ExpectedException, typename Callable>
++void require_throws(
++    Callable&& callable,
++    const std::string& message,
++    std::size_t& checks) {
++    bool threw_expected = false;
++    try {
++        std::forward<Callable>(callable)();
++    } catch (const ExpectedException&) {
++        threw_expected = true;
++    } catch (...) {
++    }
++    require(threw_expected, message, checks);
++}
++
++anonsync::SyncReplicaActor actor(
++    const std::string& device_id,
++    std::uint64_t epoch) {
++    return {device_id, epoch};
++}
++
++anonsync::SyncReplicaOperation root_operation(
++    const std::string& folder,
++    const anonsync::SyncReplicaActor& operation_actor,
++    const std::string& path,
++    const std::string& payload) {
++    anonsync::SyncReplicaOperation operation;
++    operation.folder_id = folder;
++    operation.canonical_path = path;
++    operation.kind = anonsync::SyncReplicaValueKind::File;
++    operation.size_bytes = static_cast<std::uint64_t>(payload.size());
++    operation.content_sha256 = anonsync::sha256_hex(payload);
++    operation.dot = {operation_actor, 1U};
++    operation.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(operation);
++    return operation;
++}
++
++anonsync::SyncReplicaModelLimits model_limits(
++    std::uint64_t max_operations) {
++    anonsync::SyncReplicaModelLimits limits;
++    limits.max_operations = max_operations;
++    limits.max_context_entries = 64U;
++    limits.max_predecessor_ids = 64U;
++    limits.max_canonical_operation_bytes = 256U * 1024U;
++    limits.max_retained_canonical_bytes = 16U * 1024U * 1024U;
++    limits.max_retained_context_entries = 4096U;
++    limits.max_retained_predecessor_ids = 4096U;
++    return limits;
++}
++
++std::vector<std::uint64_t> matching_message_ids(
++    const anonsync::SyncReplicaNetworkSimulator& simulator,
++    const std::string& source,
++    const std::string& destination,
++    const std::string& operation_id) {
++    std::vector<std::uint64_t> matches;
++    for (const std::uint64_t message_id : simulator.pending_message_ids()) {
++        const std::optional<anonsync::SyncReplicaNetworkMessage> message =
++            simulator.message_by_id(message_id);
++        if (message.has_value() &&
++            message->source_device_id == source &&
++            message->destination_device_id == destination &&
++            message->operation.operation_id == operation_id) {
++            matches.push_back(message_id);
++        }
++    }
++    return matches;
++}
++
++}  // namespace
++
++int main() {
++    using namespace anonsync;
++
++    try {
++        std::size_t checks = 0U;
++        const std::string folder = "folder-capacity-backpressure";
++        const SyncReplicaActor local = actor("device-capacity-local", 801U);
++        const SyncReplicaOperation retained = root_operation(
++            folder,
++            actor("device-capacity-retained", 802U),
++            "capacity/retained.bin",
++            "retained");
++        const SyncReplicaOperation blocked = root_operation(
++            folder,
++            actor("device-capacity-blocked", 803U),
++            "capacity/blocked.bin",
++            "blocked");
++
++        const SyncReplicaModelLimits one_operation = model_limits(1U);
++        SyncReplicaModel model(folder, local, one_operation);
++        require(
++            model.accept_remote_or_throw(retained) ==
++                SyncReplicaAdmission::InsertedActive,
++            "capacity fixture did not retain its first valid envelope",
++            checks);
++
++        const SyncReplicaRemoteAdmissionPreflight duplicate_preflight =
++            model.preflight_remote_admission_or_throw(retained);
++        require(
++            duplicate_preflight.readiness ==
++                    SyncReplicaRemoteReadiness::Duplicate &&
++                duplicate_preflight.operations.retained == 1U &&
++                duplicate_preflight.operations.incoming == 0U &&
++                !duplicate_preflight.operations.would_exceed() &&
++                duplicate_preflight.canonical_bytes.incoming == 0U &&
++                duplicate_preflight.context_entries.incoming == 0U &&
++                duplicate_preflight.predecessor_ids.incoming == 0U,
++            "exact replay did not report zero-charge duplicate readiness at capacity",
++            checks);
++
++        const SyncReplicaRemoteAdmissionPreflight blocked_preflight =
++            model.preflight_remote_admission_or_throw(blocked);
++        require(
++            blocked_preflight.readiness ==
++                    SyncReplicaRemoteReadiness::CapacityBlocked &&
++                blocked_preflight.operations == SyncReplicaResourceBudget{
++                    1U, 1U, 1U} &&
++                blocked_preflight.operations.would_exceed() &&
++                blocked_preflight.canonical_bytes.incoming ==
++                    sync_replica_operation_canonical_size_or_throw(
++                        blocked, one_operation) &&
++                !blocked_preflight.canonical_bytes.would_exceed() &&
++                !blocked_preflight.context_entries.would_exceed() &&
++                !blocked_preflight.predecessor_ids.would_exceed(),
++            "preflight did not expose the exact operation-count capacity reason",
++            checks);
++
++        const SyncReplicaDurableState capacity_baseline = model.durable_state();
++        const std::string evidence_digest = model.evidence_set_digest();
++        const std::string visible_digest = model.visible_state_digest();
++        require(
++            model.accept_remote_or_throw(blocked) ==
++                SyncReplicaAdmission::CapacityBlocked,
++            "valid evidence at local capacity was not returned as retryable backpressure",
++            checks);
++        require(
++            model.durable_state() == capacity_baseline &&
++                model.evidence_set_digest() == evidence_digest &&
++                model.visible_state_digest() == visible_digest &&
++                model.evidence_count() == 1U &&
++                !model.evidence_state(blocked.operation_id).has_value(),
++            "capacity-blocked evidence mutated or became quarantined retained state",
++            checks);
++
++        SyncReplicaOperation malformed = blocked;
++        malformed.canonical_path = "../escape";
++        require_throws<std::invalid_argument>(
++            [&] {
++                (void)model.preflight_remote_admission_or_throw(malformed);
++            },
++            "full capacity masked malformed evidence as backpressure",
++            checks);
++        const SyncReplicaOperation other_folder = root_operation(
++            "folder-capacity-other",
++            actor("device-capacity-other", 804U),
++            "capacity/other.bin",
++            "other");
++        require_throws<std::invalid_argument>(
++            [&] {
++                (void)model.preflight_remote_admission_or_throw(other_folder);
++            },
++            "full capacity masked a valid envelope from another folder",
++            checks);
++
++        SyncReplicaModel retriable = SyncReplicaModel::restore_or_throw(
++            capacity_baseline, model_limits(2U));
++        require(
++            retriable.accept_remote_or_throw(blocked) ==
++                    SyncReplicaAdmission::InsertedActive &&
++                retriable.evidence_state(blocked.operation_id) ==
++                    SyncReplicaEvidenceState::Active,
++            "the same valid envelope did not succeed after local capacity expansion",
++            checks);
++
++        const std::string source_id = "device-capacity-source";
++        const std::string destination_id = "device-capacity-destination";
++        SyncReplicaNetworkSimulator simulator(folder, model_limits(2U));
++        simulator.add_replica_or_throw(actor(source_id, 810U));
++        simulator.add_replica_or_throw(actor(destination_id, 811U));
++        simulator.partition_direction_or_throw(destination_id, source_id);
++
++        const SyncReplicaOperation shared =
++            simulator.create_local_file_or_throw(
++                source_id,
++                "network/shared.bin",
++                6U,
++                sha256_hex("shared"));
++        const std::vector<std::uint64_t> initial_shared_messages =
++            matching_message_ids(
++                simulator, source_id, destination_id, shared.operation_id);
++        require(
++            initial_shared_messages.size() == 1U &&
++                simulator.deliver_message_or_throw(
++                    initial_shared_messages.front()) ==
++                    SyncReplicaAdmission::InsertedActive,
++            "network fixture did not establish one shared retained envelope",
++            checks);
++
++        (void)simulator.create_local_file_or_throw(
++            destination_id,
++            "network/destination.bin",
++            11U,
++            sha256_hex("destination"));
++        const SyncReplicaOperation unique =
++            simulator.create_local_file_or_throw(
++                source_id,
++                "network/unique.bin",
++                6U,
++                sha256_hex("unique"));
++        require(
++            simulator.replica_or_throw(destination_id).evidence_count() == 2U,
++            "network destination did not reach its configured evidence capacity",
++            checks);
++        require(
++            simulator.enqueue_anti_entropy_or_throw(
++                source_id, destination_id) == 2U,
++            "network anti-entropy did not enqueue shared and unique evidence",
++            checks);
++
++        std::vector<std::uint64_t> shared_duplicates = matching_message_ids(
++            simulator, source_id, destination_id, shared.operation_id);
++        std::vector<std::uint64_t> blocked_unique_messages =
++            matching_message_ids(
++                simulator, source_id, destination_id, unique.operation_id);
++        require(
++            shared_duplicates.size() == 1U &&
++                blocked_unique_messages.size() == 2U,
++            "network queue did not contain one duplicate and two capacity-blocked retries",
++            checks);
++        const std::uint64_t second_duplicate =
++            simulator.duplicate_message_or_throw(shared_duplicates.front());
++        shared_duplicates.push_back(second_duplicate);
++
++        const SyncReplicaDurableState network_baseline =
++            simulator.durable_state_or_throw(destination_id);
++        std::optional<SyncReplicaAdmission> zero_allocation_duplicate_result;
++        std::size_t duplicate_allocation_attempts = 0U;
++        {
++            AllocationArm arm(1U);
++            zero_allocation_duplicate_result =
++                simulator.deliver_message_or_throw(
++                    shared_duplicates.front());
++            duplicate_allocation_attempts = arm.attempts();
++            arm.disarm();
++        }
++        require(
++            zero_allocation_duplicate_result ==
++                    SyncReplicaAdmission::Duplicate &&
++                duplicate_allocation_attempts == 0U &&
++                simulator.durable_state_or_throw(destination_id) ==
++                    network_baseline,
++            "exact duplicate delivery allocated, cloned the graph, or rewrote durable state",
++            checks);
++
++        const std::size_t queue_count_before_block =
++            simulator.pending_message_count();
++        const std::size_t queue_bytes_before_block =
++            simulator.pending_message_semantic_bytes();
++        require(
++            simulator.deliver_message_or_throw(
++                blocked_unique_messages.front()) ==
++                    SyncReplicaAdmission::CapacityBlocked &&
++                simulator.pending_message_count() ==
++                    queue_count_before_block &&
++                simulator.pending_message_semantic_bytes() ==
++                    queue_bytes_before_block &&
++                simulator.message_by_id(
++                    blocked_unique_messages.front()).has_value() &&
++                simulator.durable_state_or_throw(destination_id) ==
++                    network_baseline,
++            "network capacity block consumed the queued retry or changed destination durability",
++            checks);
++
++        shared_duplicates = matching_message_ids(
++            simulator, source_id, destination_id, shared.operation_id);
++        require(
++            shared_duplicates.size() == 1U,
++            "zero-allocation duplicate retirement did not leave exactly one drainable duplicate",
++            checks);
++        const std::optional<SyncReplicaNetworkMessage> drainable_duplicate =
++            simulator.message_by_id(shared_duplicates.front());
++        require(
++            drainable_duplicate.has_value(),
++            "drainable duplicate disappeared before the fairness check",
++            checks);
++        const std::size_t bytes_before_drain =
++            simulator.pending_message_semantic_bytes();
++        require(
++            simulator.drain_deliverable_or_throw(
++                SyncReplicaDeliveryOrder::OldestFirst, 100U) == 1U,
++            "drain did not skip capacity-blocked messages and retire the later duplicate",
++            checks);
++        require(
++            matching_message_ids(
++                simulator, source_id, destination_id, shared.operation_id)
++                    .empty() &&
++                matching_message_ids(
++                    simulator, source_id, destination_id, unique.operation_id)
++                    .size() == 2U &&
++                simulator.pending_message_semantic_bytes() ==
++                    bytes_before_drain -
++                        drainable_duplicate->semantic_byte_weight &&
++                simulator.durable_state_or_throw(destination_id) ==
++                    network_baseline,
++            "capacity-aware drain lost a retry, retained a duplicate, or rewrote destination state",
++            checks);
++        require(
++            simulator.drain_deliverable_or_throw(
++                SyncReplicaDeliveryOrder::NewestFirst, 100U) == 0U,
++            "newest-first drain counted or spun over capacity-blocked retries",
++            checks);
++
++        std::cout
++            << "sync replica capacity backpressure tests passed ("
++            << checks
++            << " checks, validity separation, zero-clone duplicate, and drain fairness)\n";
++        return 0;
++    } catch (const std::exception& error) {
++        g_allocation_probe.armed = false;
++        std::cerr
++            << "sync replica capacity backpressure tests failed: "
++            << error.what() << '\n';
++        return 1;
++    }
++}
+diff --git a/tools/audit_sync_replica_aggregate_budget.py b/tools/audit_sync_replica_aggregate_budget.py
+index 8fbba530b9e1e9529be6a7bfcecb15cf6f531861..87b017a2620e159173cc1942e7fe77df537306ae 100755
+--- a/tools/audit_sync_replica_aggregate_budget.py
++++ b/tools/audit_sync_replica_aggregate_budget.py
+@@ -60,7 +60,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-aggregate-budget-audit-v1",
++        "format": "anonsync-sync-replica-aggregate-budget-audit-v2",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -221,25 +221,54 @@ def main() -> int:
+         "allocation/projection failure cannot leak a charged envelope",
+     )
+ 
++    remote_preflight = function_body(
++        model,
++        "SyncReplicaModel::preflight_remote_admission_or_throw(",
++    )
++    require(
++        ordered(
++            remote_preflight,
++            "const auto duplicate",
++            "SyncReplicaRemoteReadiness::Duplicate",
++            "validate_sync_replica_operation_and_measure_or_throw",
++            "retained_charge_or_throw",
++            "resource_budget_or_throw",
++            "SyncReplicaRemoteReadiness::CapacityBlocked",
++        ),
++        "exact_duplicate_bypasses_rehash_and_new_evidence_is_measured",
++        "byte-identical replay reports zero charge while new evidence is fully validated before capacity classification",
++    )
+     remote_admission = function_body(
+         model, "SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(")
+     require(
+         ordered(
+             remote_admission,
+-            "const auto duplicate",
++            "preflight_remote_admission_or_throw",
+             "return SyncReplicaAdmission::Duplicate",
+-            "validate_sync_replica_operation_and_measure_or_throw",
+-            "prospective_retained_totals_or_throw",
++            "return SyncReplicaAdmission::CapacityBlocked",
++            "accept_remote_admissible_after_preflight_or_throw",
++        ),
++        "remote_result_algebra_separates_capacity_from_validity",
++        "duplicate and retryable local capacity return before evidence insertion",
++    )
++    remote_commit = function_body(
++        model,
++        "SyncReplicaModel::accept_remote_admissible_after_preflight_or_throw(",
++    )
++    require(
++        ordered(
++            remote_commit,
++            "remote_preflight_is_capacity_blocked",
+             "evidence_by_id_.emplace",
+             "project_sync_replica_evidence_or_throw",
+             "retained_canonical_bytes_ =",
+         ),
+-        "exact_duplicate_bypasses_rehash_and_new_evidence_is_preflighted",
+-        "byte-identical replay allocates no retained budget or canonical re-encoding work",
++        "admissible_remote_commit_rechecks_owner_then_publishes",
++        "a stale owner plan cannot insert and exact counters publish after projection",
+     )
+     require(
+-        "catch (...)" in remote_admission
+-        and "evidence_by_id_.erase(inserted.first);" in remote_admission,
++        "catch (...)" in remote_commit
++        and "evidence_by_id_.erase(inserted.first);" in remote_commit,
+         "remote_admission_rolls_back_inserted_evidence",
+         "all throwing projection cutpoints preserve prior aggregate counters",
+     )
+@@ -250,6 +279,8 @@ def main() -> int:
+             "InsertedPending",
+             "InsertedQuarantined",
+             "Duplicate",
++            "CapacityBlocked",
++            "SyncReplicaRemoteReadiness::CapacityBlocked",
+             "restore_or_throw(\n            std::move(move_restore_state)",
+             "aggregate canonical-byte ceiling",
+             "aggregate context-entry ceiling",
+diff --git a/tools/audit_sync_replica_capacity_backpressure.py b/tools/audit_sync_replica_capacity_backpressure.py
+new file mode 100755
+index 0000000000000000000000000000000000000000..0ea68c0e3e73f814bffb835751f28e378d7cfa99
+--- /dev/null
++++ b/tools/audit_sync_replica_capacity_backpressure.py
+@@ -0,0 +1,307 @@
++#!/usr/bin/env python3
++"""Fail-closed structural audit for capacity-is-not-validity semantics."""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++REQUIRED = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_replica_model.hpp"),
++    Path("src/sync_replica_model.cpp"),
++    Path("src/sync_replica_network_simulator.hpp"),
++    Path("src/sync_replica_network_simulator.cpp"),
++    Path("tests/sync_replica_capacity_backpressure_test.cpp"),
++    Path("tools/audit_sync_replica_capacity_backpressure.py"),
++    Path("tools/verify_release_package.py"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def ordered(text: str, *tokens: str) -> bool:
++    cursor = -1
++    for token in tokens:
++        cursor = text.find(token, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
++def function_body(text: str, signature: str) -> str:
++    start = text.find(signature)
++    if start < 0:
++        return ""
++    brace = text.find("{", start)
++    if brace < 0:
++        return ""
++    depth = 0
++    for index in range(brace, len(text)):
++        if text[index] == "{":
++            depth += 1
++        elif text[index] == "}":
++            depth -= 1
++            if depth == 0:
++                return text[start:index + 1]
++    return ""
++
++
++def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
++    violations = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-sync-replica-capacity-backpressure-audit-v1",
++        "root": str(root),
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if output is None:
++        sys.stdout.write(rendered)
++    else:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++    return 0 if not violations else 1
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root",
++        type=Path,
++        default=Path(__file__).resolve().parents[1],
++    )
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    checks: list[Check] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    missing = [path.as_posix() for path in REQUIRED if not (root / path).is_file()]
++    require(not missing, "required_files_exist", f"missing={missing}")
++    if missing:
++        return emit(root, args.json, checks)
++
++    text = {
++        path.as_posix(): (root / path).read_text(encoding="utf-8")
++        for path in REQUIRED
++    }
++    cmake = text["CMakeLists.txt"]
++    model_header = text["src/sync_replica_model.hpp"]
++    model = text["src/sync_replica_model.cpp"]
++    network_header = text["src/sync_replica_network_simulator.hpp"]
++    network = text["src/sync_replica_network_simulator.cpp"]
++    runtime = text["tests/sync_replica_capacity_backpressure_test.cpp"]
++    verifier = text["tools/verify_release_package.py"]
++
++    require(
++        "CapacityBlocked" in model_header
++        and "enum class SyncReplicaRemoteReadiness" in model_header,
++        "capacity_is_explicit_in_result_algebra",
++        "valid local resource pressure is distinct from insertion, duplicate, and quarantine",
++    )
++    require(
++        all(token in model_header for token in (
++            "struct SyncReplicaResourceBudget final",
++            "std::uint64_t retained",
++            "std::uint64_t incoming",
++            "std::uint64_t limit",
++            "incoming > limit - retained",
++            "struct SyncReplicaRemoteAdmissionPreflight final",
++        )),
++        "preflight_exposes_exact_overflow_safe_resource_state",
++        "operation, canonical-byte, context, and predecessor charges use fixed-width values",
++    )
++    require(
++        "preflight_remote_admission_or_throw" in model_header
++        and "const SyncReplicaOperation& operation) const" in model_header,
++        "preflight_is_public_and_nonmutating",
++        "transport can classify retryable pressure before cloning destination state",
++    )
++
++    preflight = function_body(
++        model, "SyncReplicaModel::preflight_remote_admission_or_throw(")
++    require(
++        ordered(
++            preflight,
++            "const auto duplicate",
++            "SyncReplicaRemoteReadiness::Duplicate",
++            "validate_sync_replica_operation_and_measure_or_throw",
++            "operation.folder_id != folder_id_",
++            "retained_charge_or_throw",
++            "remote_preflight_is_capacity_blocked",
++            "SyncReplicaRemoteReadiness::CapacityBlocked",
++        ),
++        "validity_precedes_capacity_classification",
++        "malformed/cross-folder evidence cannot be mislabeled as local backpressure",
++    )
++    duplicate_prefix = preflight.split(
++        "validate_sync_replica_operation_and_measure_or_throw", 1
++    )[0]
++    require(
++        duplicate_prefix.count("0U") >= 4
++        and "SyncReplicaRemoteReadiness::Duplicate" in duplicate_prefix,
++        "exact_duplicate_reports_zero_incoming_charge_before_rehash",
++        "already-owned immutable evidence consumes no additional retained budget",
++    )
++
++    accept = function_body(
++        model, "SyncReplicaAdmission SyncReplicaModel::accept_remote_or_throw(")
++    require(
++        ordered(
++            accept,
++            "preflight_remote_admission_or_throw",
++            "return SyncReplicaAdmission::Duplicate",
++            "return SyncReplicaAdmission::CapacityBlocked",
++            "accept_remote_admissible_after_preflight_or_throw",
++        )
++        and "evidence_by_id_.emplace" not in accept,
++        "capacity_and_duplicate_return_before_mutating_commit",
++        "only an admissible preflight reaches the staged evidence owner",
++    )
++
++    commit = function_body(
++        model,
++        "SyncReplicaModel::accept_remote_admissible_after_preflight_or_throw(",
++    )
++    require(
++        all(token in commit for token in (
++            "preflight.operations != SyncReplicaResourceBudget",
++            "preflight.canonical_bytes.retained != retained_canonical_bytes_",
++            "preflight.context_entries.retained != retained_context_entries_",
++            "preflight.predecessor_ids.retained != retained_predecessor_ids_",
++            "evidence_by_id_.contains(operation.operation_id)",
++        )),
++        "preflight_consumption_rejects_stale_owner_state",
++        "a copied model may consume only a plan matching all live counters and limits",
++    )
++    require(
++        ordered(
++            commit,
++            "evidence_by_id_.emplace",
++            "project_sync_replica_evidence_or_throw",
++            "retained_canonical_bytes_ =",
++        )
++        and "catch (...)" in commit
++        and "evidence_by_id_.erase(inserted.first);" in commit,
++        "admissible_commit_is_atomic_and_rollback_safe",
++        "projection/allocation failure cannot publish partial evidence or counters",
++    )
++    require(
++        "friend class SyncReplicaNetworkSimulator" in model_header
++        and "accept_remote_admissible_after_preflight_or_throw" in model_header,
++        "friend_boundary_avoids_double_validation",
++        "the deterministic harness alone can consume a validated plan on an exact model copy",
++    )
++
++    deliver = function_body(
++        network, "SyncReplicaNetworkSimulator::deliver_message_or_throw(")
++    require(
++        ordered(
++            deliver,
++            "preflight_remote_admission_or_throw",
++            "SyncReplicaRemoteReadiness::Duplicate",
++            "erase_message_noexcept(found)",
++            "SyncReplicaRemoteReadiness::CapacityBlocked",
++            "SyncReplicaModel candidate",
++            "accept_remote_admissible_after_preflight_or_throw",
++            "candidate.durable_state()",
++        ),
++        "network_preflights_before_whole_graph_clone",
++        "duplicates retire and capacity retries remain queued before candidate/durable allocation",
++    )
++    pre_clone = deliver.split("SyncReplicaModel candidate", 1)[0]
++    require(
++        "candidate.durable_state" not in pre_clone
++        and "accept_remote_or_throw" not in deliver,
++        "admissible_delivery_validates_once",
++        "the post-copy path consumes the original validated plan instead of rehashing twice",
++    )
++    require(
++        "direction_is_partitioned_noexcept" in network_header
++        and "erase_partition_direction_noexcept" in network_header
++        and "struct DirectionView final" in network_header
++        and "using is_transparent = void" in network_header
++        and "DirectionView{source_device_id, destination_device_id}" in network
++        and "std::set<DirectionKey, DirectionLess>" in network_header,
++        "partition_queries_do_not_construct_owned_pair_keys",
++        "transparent logarithmic lookup avoids both temporary strings and a linear partition scan",
++    )
++
++    drain = function_body(
++        network, "SyncReplicaNetworkSimulator::drain_deliverable_or_throw(")
++    require(
++        all(token in drain for token in (
++            "std::set<std::uint64_t> capacity_blocked_message_ids",
++            "capacity_blocked_message_ids.contains",
++            "result.value() == SyncReplicaAdmission::CapacityBlocked",
++            "capacity_blocked_message_ids.insert",
++            "continue;",
++        )),
++        "drain_skips_each_capacity_block_once_per_pass",
++        "retryable pressure cannot spin to max_deliveries or hide a later duplicate/admissible message",
++    )
++
++    require(
++        all(token in runtime for token in (
++            "full capacity masked malformed evidence as backpressure",
++            "the same valid envelope did not succeed after local capacity expansion",
++            "AllocationArm arm(1U)",
++            "duplicate_allocation_attempts == 0U",
++            "SyncReplicaAdmission::CapacityBlocked",
++            "pending_message_semantic_bytes",
++            "SyncReplicaDeliveryOrder::OldestFirst",
++            "SyncReplicaDeliveryOrder::NewestFirst",
++        )),
++        "runtime_proof_covers_validity_retry_zero_allocation_and_fair_drain",
++        "the executable tests both result semantics and transport ownership behavior",
++    )
++    require(
++        runtime.count("network_baseline") >= 4
++        and "!model.evidence_state(blocked.operation_id).has_value()" in runtime,
++        "runtime_proof_attests_no_quarantine_or_durable_mutation",
++        "capacity blocking leaves both model and network durable owners unchanged",
++    )
++
++    target = "anonsync_sync_replica_capacity_backpressure_test"
++    require(
++        cmake.count(target) >= 5
++        and f"add_test(NAME {target}" in cmake,
++        "runtime_test_is_built_registered_and_sanitized",
++        "the focused proof participates in ordinary and ASan/UBSan lanes",
++    )
++    require(
++        "anonsync_sync_replica_capacity_backpressure_source_audit" in cmake
++        and "audit_sync_replica_capacity_backpressure.py" in cmake
++        and "${Python3_EXECUTABLE} -B -S" in cmake,
++        "source_audit_is_hermetically_registered",
++        "CTest runs this script without site imports or bytecode products",
++    )
++    require(
++        "revision_number >= 868" in verifier
++        and "tests/sync_replica_capacity_backpressure_test.cpp" in verifier
++        and "tools/audit_sync_replica_capacity_backpressure.py" in verifier,
++        "release_verifier_requires_rev0868_boundary",
++        "future archives cannot omit the implementation or structural proof",
++    )
++
++    return emit(root, args.json, checks)
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index c87c8f9bf467eedbc7eb46555808b383b10564ca..92545df41556819c591003d7a0fc0edd5e0b8c3b 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -425,6 +425,11 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tests/sync_replica_aggregate_budget_test.cpp",
+             "tools/audit_sync_replica_aggregate_budget.py",
+         })
++    if revision_number is not None and revision_number >= 868:
++        revision_scoped_required.update({
++            "tests/sync_replica_capacity_backpressure_test.cpp",
++            "tools/audit_sync_replica_capacity_backpressure.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

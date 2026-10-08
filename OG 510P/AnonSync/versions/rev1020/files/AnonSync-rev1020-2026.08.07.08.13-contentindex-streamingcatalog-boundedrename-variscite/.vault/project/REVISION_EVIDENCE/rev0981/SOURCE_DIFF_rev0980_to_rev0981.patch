@@ -1,0 +1,2021 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 98faba7b891fa3de69608fc28584a693b8f73cba..9a4a70c25ebd54e5e9f00080e22a6b2e2c37f031 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1319,7 +1319,9 @@ target_compile_options(anonsync_sync_replica_deployment_binding PRIVATE
+ # Process-facing SQLite stores are opened through one descriptor-rooted,
+ # existing-only authority. A sealed bootstrap image has a distinct candidate
+ # disposition and cannot become operational until its role owner attests it and
+-# explicitly promotes it to the reviewed WAL profile.
++# explicitly promotes it to the reviewed WAL profile. Offline exact-schema
++# inspection uses the same rooted authority with a read-only VFS and the shared
++# hardened query-only connection profile.
+ set(ANONSYNC_SYNC_REPLICA_OPERATIONAL_DATABASE_SOURCE
+   src/sync_replica_operational_database.cpp)
+ add_library(anonsync_sync_replica_operational_database STATIC
+@@ -1329,7 +1331,9 @@ target_include_directories(anonsync_sync_replica_operational_database PUBLIC
+ target_link_libraries(anonsync_sync_replica_operational_database
+   PUBLIC
+     anonsync_sqlite_path_security
+-    anonsync_sqlite_support)
++    anonsync_sqlite_support
++  PRIVATE
++    anonsync_sync_replica_tls_membership)
+ target_compile_options(anonsync_sync_replica_operational_database PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
+@@ -1469,7 +1473,6 @@ target_link_libraries(anonsync_sync_replica_folder_process
+     anonsync_sync_replica_deployment_manifest
+     anonsync_sync_replica_file_payload_store
+     anonsync_sync_replica_folder_scan_owner
+-  PRIVATE
+     anonsync_sync_replica_operational_database)
+ target_compile_options(anonsync_sync_replica_folder_process PRIVATE
+   -Wall -Wextra -Wpedantic)
+@@ -4634,6 +4637,14 @@ if(Python3_Interpreter_FOUND)
+         --sync $<TARGET_FILE:anonsync_sync>)
+     set_tests_properties(anonsync_sync_service_process_test
+       PROPERTIES TIMEOUT 90)
++    add_test(NAME anonsync_sync_database_recovery_process_test
++      COMMAND ${Python3_EXECUTABLE} -B -S
++        ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_anonsync_database_recovery.py
++        --replica $<TARGET_FILE:anonsync_replica>
++        --folder $<TARGET_FILE:anonsync_folder>
++        --sync $<TARGET_FILE:anonsync_sync>)
++    set_tests_properties(anonsync_sync_database_recovery_process_test
++      PROPERTIES TIMEOUT 60)
+     add_test(NAME anonsync_sync_service_configuration_status_process_test
+       COMMAND ${Python3_EXECUTABLE} -B -S
+         ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_anonsync_service_configuration_status.py
+@@ -4725,6 +4736,7 @@ if(Python3_Interpreter_FOUND)
+       anonsync_sync_process_test
+       anonsync_sync_share_create_process_test
+       anonsync_sync_service_process_test
++      anonsync_sync_database_recovery_process_test
+       anonsync_sync_service_configuration_status_process_test
+       anonsync_sync_provisioning_process_test
+       anonsync_sync_linking_process_test
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index ec7642bad1eaeafb3511867fb6d394bcce5314f5..cf8816edf31f6d6aad34ac725db5057616c3ea7e 100644
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -10,11 +10,13 @@
+ #include "sync_replica_file_tls_client.hpp"
+ #include "sync_replica_folder_process.hpp"
+ #include "sync_replica_folder_scan_owner.hpp"
++#include "sync_replica_operational_database.hpp"
+ #include "sync_replica_peer_service.hpp"
+ #include "sync_replica_peer_service_configuration.hpp"
+ #include "sync_replica_peer_service_provisioning.hpp"
+ #include "sync_replica_peer_service_singleton.hpp"
+ #include "sync_replica_peer_service_status.hpp"
++#include "sync_replica_sqlite_owner.hpp"
+ #include "sync_replica_stream_connector.hpp"
+ #include "sync_replica_sync_once.hpp"
+ #include "sync_replica_tls_transport.hpp"
+@@ -1206,6 +1208,272 @@ void append_reconciliation_json(
+     return "stopped";
+ }
+ 
++inline constexpr std::string_view kDatabaseRecoveryExpectationPrefix =
++    "v1:";
++
++struct DatabaseRecoveryExpectation final {
++    std::string database_incarnation_sha256;
++    std::uint64_t database_recovery_epoch = 0U;
++    std::string cutpoint_digest;
++};
++
++[[nodiscard]] std::string encode_database_recovery_expectation_or_throw(
++    std::string_view database_incarnation_sha256,
++    std::uint64_t database_recovery_epoch,
++    std::string_view cutpoint_digest) {
++    if (!anonsync::is_lowercase_sha256_hex(database_incarnation_sha256) ||
++        database_recovery_epoch == 0U ||
++        !anonsync::is_lowercase_sha256_hex(cutpoint_digest)) {
++        throw std::invalid_argument(
++            "database recovery expectation fields are invalid");
++    }
++    std::string encoded(kDatabaseRecoveryExpectationPrefix);
++    encoded.reserve(
++        kDatabaseRecoveryExpectationPrefix.size() + 64U + 1U + 20U + 1U +
++        64U);
++    encoded.append(database_incarnation_sha256);
++    encoded.push_back(':');
++    encoded += std::to_string(database_recovery_epoch);
++    encoded.push_back(':');
++    encoded.append(cutpoint_digest);
++    return encoded;
++}
++
++[[nodiscard]] DatabaseRecoveryExpectation
++decode_database_recovery_expectation_or_throw(std::string_view encoded) {
++    if (!encoded.starts_with(kDatabaseRecoveryExpectationPrefix)) {
++        throw std::invalid_argument(
++            "--expected must use v1:INCARNATION:EPOCH:CUTPOINT");
++    }
++    encoded.remove_prefix(kDatabaseRecoveryExpectationPrefix.size());
++    const std::size_t first = encoded.find(':');
++    if (first == std::string_view::npos) {
++        throw std::invalid_argument(
++            "--expected must use v1:INCARNATION:EPOCH:CUTPOINT");
++    }
++    const std::size_t second = encoded.find(':', first + 1U);
++    if (second == std::string_view::npos ||
++        encoded.find(':', second + 1U) != std::string_view::npos) {
++        throw std::invalid_argument(
++            "--expected must use v1:INCARNATION:EPOCH:CUTPOINT");
++    }
++
++    const std::string_view epoch_text = encoded.substr(
++        first + 1U, second - first - 1U);
++    DatabaseRecoveryExpectation result{
++        std::string(encoded.substr(0U, first)),
++        parse_uint64(epoch_text, "--expected recovery epoch"),
++        std::string(encoded.substr(second + 1U)),
++    };
++    if (!anonsync::is_lowercase_sha256_hex(
++            result.database_incarnation_sha256) ||
++        result.database_recovery_epoch == 0U ||
++        std::to_string(result.database_recovery_epoch) != epoch_text ||
++        !anonsync::is_lowercase_sha256_hex(result.cutpoint_digest)) {
++        throw std::invalid_argument(
++            "--expected must use canonical v1:INCARNATION:EPOCH:CUTPOINT");
++    }
++    return result;
++}
++
++// Database recovery is deliberately offline and share-scoped. One ceremony
++// owner claims the deployment singleton before any database family is opened.
++// Its forensic observation opens only a descriptor-rooted read-only connection
++// and cannot initialize or migrate an older image. Advance first performs that
++// same side-effect-free observation and rejects a stale token before opening a
++// writable connection; the subsequent BEGIN IMMEDIATE transition independently
++// re-proves the token so the preflight never becomes mutation authority.
++class OfflineReplicaDatabaseRecoveryCeremonyOwner final {
++public:
++    OfflineReplicaDatabaseRecoveryCeremonyOwner(
++        anonsync::SyncReplicaDeploymentManifest deployment,
++        std::string label)
++        : deployment_(std::move(deployment)),
++          singleton_(deployment_, label + " deployment singleton"),
++          label_(std::move(label)) {}
++
++    [[nodiscard]] const anonsync::SyncReplicaDeploymentManifest& deployment()
++        const noexcept {
++        return deployment_;
++    }
++
++    [[nodiscard]] anonsync::SyncReplicaSqliteSnapshot snapshot_or_throw() {
++        return forensic_snapshot_or_throw("forensic inspection");
++    }
++
++    [[nodiscard]] anonsync::SyncReplicaSqliteDatabaseRecoveryEpochResult
++    advance_or_throw(const DatabaseRecoveryExpectation& expectation) {
++        const anonsync::SyncReplicaSqliteSnapshot observed =
++            forensic_snapshot_or_throw("advance preflight");
++        if (observed.database_incarnation_sha256 !=
++                expectation.database_incarnation_sha256 ||
++            observed.database_recovery_epoch !=
++                expectation.database_recovery_epoch ||
++            observed.cutpoint_digest != expectation.cutpoint_digest) {
++            throw std::runtime_error(
++                label_ + " database recovery expectation is stale");
++        }
++
++        // The read-only handle has closed before writable authority is opened.
++        // A low-level process outside the deployment singleton could still race
++        // this interval, so the SQLite owner repeats the exact comparison under
++        // BEGIN IMMEDIATE before it publishes the epoch transition.
++        anonsync::SyncReplicaOperationalDatabase database =
++            anonsync::open_attested_sync_replica_primary_database_or_throw(
++                deployment_, label_ + " writable primary replica");
++        anonsync::SyncReplicaSqliteOwner replica_owner(
++            database.handle(), deployment_.folder_id,
++            deployment_.local_actor, anonsync::SyncReplicaSqliteOwnerLimits{},
++            label_ + " replica owner");
++        return replica_owner.advance_database_recovery_epoch_or_throw(
++            expectation.database_incarnation_sha256,
++            expectation.database_recovery_epoch,
++            expectation.cutpoint_digest);
++    }
++
++private:
++    [[nodiscard]] anonsync::SyncReplicaSqliteSnapshot
++    forensic_snapshot_or_throw(std::string_view stage) {
++        anonsync::SyncReplicaOperationalDatabase database =
++            anonsync::
++                open_attested_sync_replica_primary_database_read_only_or_throw(
++                    deployment_, label_ + " " + std::string(stage) +
++                                     " primary replica");
++        return anonsync::
++            inspect_sync_replica_sqlite_snapshot_read_only_or_throw(
++                database.handle(), deployment_.folder_id,
++                deployment_.local_actor,
++                label_ + " " + std::string(stage) + " snapshot");
++    }
++
++    // Declaration order is authority order: claim the deployment before any
++    // selected SQLite family can be opened.
++    anonsync::SyncReplicaDeploymentManifest deployment_;
++    anonsync::SyncReplicaPeerServiceSingletonOwner singleton_;
++    std::string label_;
++};
++
++void append_database_recovery_scope_json(
++    std::ostream& output,
++    const anonsync::SyncReplicaDeploymentManifest& deployment) {
++    output
++        << ",\"manifest_path\":"
++        << json_quote(deployment.manifest_path.generic_string())
++        << ",\"deployment_id\":" << json_quote(deployment.deployment_id)
++        << ",\"folder_id\":" << json_quote(deployment.folder_id)
++        << ",\"local_device_id\":"
++        << json_quote(deployment.local_actor.device_id)
++        << ",\"local_epoch\":" << deployment.local_actor.epoch
++        << ",\"replica_database\":"
++        << json_quote(deployment.replica_db.generic_string())
++        << ",\"offline_required\":true"
++        << ",\"deployment_singleton_acquired\":true"
++        << ",\"continuity_scope\":\"in_database_only\""
++        << ",\"external_anti_rollback_authority\":false"
++        << ",\"payload_store_observed\":false"
++        << ",\"folder_catalog_observed\":false"
++        << ",\"rooted_files_observed\":false"
++        << ",\"network_started\":false";
++}
++
++int command_database_recovery_inspect(const Options& options) {
++    options.require_only({"manifest"});
++    const fs::path manifest_path = require_absolute_path(
++        options.one("manifest"), "--manifest");
++    OfflineReplicaDatabaseRecoveryCeremonyOwner owner(
++        anonsync::read_sync_replica_deployment_manifest_or_throw(
++            manifest_path,
++            "anonsync_sync database-recovery-inspect manifest"),
++        "anonsync_sync database-recovery-inspect");
++    const anonsync::SyncReplicaSqliteSnapshot snapshot =
++        owner.snapshot_or_throw();
++    const std::string expectation =
++        encode_database_recovery_expectation_or_throw(
++            snapshot.database_incarnation_sha256,
++            snapshot.database_recovery_epoch,
++            snapshot.cutpoint_digest);
++
++    std::cout
++        << "{\"command\":\"database-recovery-inspect\""
++        << ",\"terminal_class\":\"completed\""
++        << ",\"response_schema\":"
++        << json_quote(
++               "anonsync.local-database-recovery-inspection.response.v1");
++    append_database_recovery_scope_json(std::cout, owner.deployment());
++    std::cout
++        << ",\"database_incarnation_sha256\":"
++        << json_quote(snapshot.database_incarnation_sha256)
++        << ",\"database_recovery_epoch\":"
++        << snapshot.database_recovery_epoch
++        << ",\"state_generation\":" << snapshot.state_generation
++        << ",\"cutpoint_digest\":"
++        << json_quote(snapshot.cutpoint_digest)
++        << ",\"recovery_expectation\":" << json_quote(expectation)
++        << ",\"current_schema_required\":true"
++        << ",\"operator_assertion_required_before_advance\":true"
++        << ",\"mutation_performed\":false}\n";
++    return 0;
++}
++
++int command_database_recovery_advance(const Options& options) {
++    options.require_only({"manifest", "expected"});
++    const fs::path manifest_path = require_absolute_path(
++        options.one("manifest"), "--manifest");
++    const DatabaseRecoveryExpectation expectation =
++        decode_database_recovery_expectation_or_throw(
++            options.one("expected"));
++    const std::string previous_expectation =
++        encode_database_recovery_expectation_or_throw(
++            expectation.database_incarnation_sha256,
++            expectation.database_recovery_epoch,
++            expectation.cutpoint_digest);
++
++    OfflineReplicaDatabaseRecoveryCeremonyOwner owner(
++        anonsync::read_sync_replica_deployment_manifest_or_throw(
++            manifest_path,
++            "anonsync_sync database-recovery-advance manifest"),
++        "anonsync_sync database-recovery-advance");
++    const anonsync::SyncReplicaSqliteDatabaseRecoveryEpochResult result =
++        owner.advance_or_throw(expectation);
++    const std::string next_expectation =
++        encode_database_recovery_expectation_or_throw(
++            result.database_incarnation_sha256,
++            result.database_recovery_epoch,
++            result.cutpoint_digest);
++
++    std::cout
++        << "{\"command\":\"database-recovery-advance\""
++        << ",\"terminal_class\":\"completed\""
++        << ",\"response_schema\":"
++        << json_quote(
++               "anonsync.local-database-recovery-advance.response.v1");
++    append_database_recovery_scope_json(std::cout, owner.deployment());
++    std::cout
++        << ",\"database_incarnation_sha256\":"
++        << json_quote(result.database_incarnation_sha256)
++        << ",\"previous_database_recovery_epoch\":"
++        << result.previous_database_recovery_epoch
++        << ",\"database_recovery_epoch\":"
++        << result.database_recovery_epoch
++        << ",\"state_generation\":" << result.state_generation
++        << ",\"previous_cutpoint_digest\":"
++        << json_quote(expectation.cutpoint_digest)
++        << ",\"cutpoint_digest\":"
++        << json_quote(result.cutpoint_digest)
++        << ",\"previous_recovery_expectation\":"
++        << json_quote(previous_expectation)
++        << ",\"recovery_expectation\":"
++        << json_quote(next_expectation)
++        << ",\"operator_asserted_database_recovery\":true"
++        << ",\"forensic_preflight_before_writable_open\":true"
++        << ",\"exact_transaction_reproof\":true"
++        << ",\"recovery_epoch_advanced\":true"
++        << ",\"whole_image_rollback_reuse_excluded\":false"
++        << ",\"retention_age_reset_required_when_continuity_uncertain\":true"
++        << ",\"mutation_performed\":true}\n";
++    return 0;
++}
++
+ int command_once(
+     const Options& options,
+     std::chrono::steady_clock::time_point command_started_at) {
+@@ -1223,6 +1491,14 @@ int command_once(
+         "maximum-total-file-bytes", "maximum-relative-path-bytes",
+         "maximum-directory-depth", "maximum-remote-paths",
+         "maximum-remote-inspection-paths"});
++    const fs::path manifest_path = require_absolute_path(
++        options.one("manifest"), "--manifest");
++    anonsync::SyncReplicaDeploymentManifest deployment =
++        anonsync::read_sync_replica_deployment_manifest_or_throw(
++            manifest_path, "anonsync_sync once manifest");
++    anonsync::SyncReplicaPeerServiceSingletonOwner singleton_owner(
++        deployment, "anonsync_sync once deployment singleton");
++
+     anonsync::SyncReplicaStreamRoute route =
+         stream_route_from_options_or_throw(options);
+     const anonsync::SyncReplicaStreamRouteKind route_kind =
+@@ -1231,12 +1507,6 @@ int command_once(
+         timeout_from_options(options, route_kind);
+     const std::uint64_t maximum_runtime_seconds =
+         maximum_runtime_from_options(options, timeout_seconds);
+-
+-    const fs::path manifest_path = require_absolute_path(
+-        options.one("manifest"), "--manifest");
+-    anonsync::SyncReplicaDeploymentManifest deployment =
+-        anonsync::read_sync_replica_deployment_manifest_or_throw(
+-            manifest_path, "anonsync_sync once manifest");
+     const auto folder_limits =
+         folder_limits_from_options_or_throw(options, deployment);
+     const fs::path certificate = require_existing_regular_file(
+@@ -3650,6 +3920,11 @@ void print_usage(std::ostream& output) {
+            "[--ingress direct|tor|i2p and ingress options] "
+            "[service and folder bounds]\n"
+         << "  anonsync_sync check-config --config ABSOLUTE_JSON\n"
++        << "  anonsync_sync database-recovery-inspect "
++           "--manifest ABSOLUTE_JSON\n"
++        << "  anonsync_sync database-recovery-advance "
++           "--manifest ABSOLUTE_JSON "
++           "--expected v1:INCARNATION:EPOCH:CUTPOINT\n"
+         << "  anonsync_sync run --config ABSOLUTE_JSON\n"
+         << "  anonsync_sync run [the same peer/TLS/route/folder options] "
+            "--listen-port N [--bind-address NUMERIC] "
+@@ -3707,7 +3982,20 @@ void print_usage(std::ostream& output) {
+            "generation-tracked maintenance obligation that hashes every current "
+            "payload byte and moves the exact resulting snapshot into ordinary "
+            "convergence; acceptance is not completion, so status reports the "
+-           "requested and completed generations. versions accepts one bounded "
++           "requested and completed generations. database-recovery-inspect and "
++           "database-recovery-advance are offline, share-scoped SQLite recovery "
++           "ceremonies. They acquire the same deployment singleton as run and "
++           "once before opening the current database. Inspect is current-schema "
++           "and read-only; it emits one canonical incarnation/epoch/cutpoint "
++           "expectation. Advance requires that exact expectation, advances "
++           "recovery epoch and state generation atomically, and rejects stale "
++           "reuse. The commands do not copy, replace, restore, or verify database "
++           "files, do not inspect payloads or rooted files, and do not make "
++           "SQLite lineage an external anti-rollback anchor. Whole-image rollback "
++           "can restore an earlier lineage, so retention age must be reset whenever "
++           "continuity is uncertain. Run advance only after any restore or "
++           "replacement has completed while the service is stopped. versions "
++           "accepts one bounded "
+            "inspection page of active causal file predecessors. Exact mode "
+            "retains the existing complete payload-namespace observation and "
+            "reports immediate restore availability; metadata mode reads no "
+@@ -3825,6 +4113,12 @@ int main(int argc, char** argv) {
+         if (command == "check-config") {
+             return command_check_config(options);
+         }
++        if (command == "database-recovery-inspect") {
++            return command_database_recovery_inspect(options);
++        }
++        if (command == "database-recovery-advance") {
++            return command_database_recovery_advance(options);
++        }
+         if (command == "run") {
+             return command_run(options);
+         }
+diff --git a/src/sync_replica_folder_process.cpp b/src/sync_replica_folder_process.cpp
+index 155c65ed161cd19d8e4b57831a341ac953bb142a..330971c4491cb60dcf764155f184a7d0db90fe3f 100644
+--- a/src/sync_replica_folder_process.cpp
++++ b/src/sync_replica_folder_process.cpp
+@@ -225,6 +225,51 @@ sync_replica_primary_database_binding_or_throw(
+     return binding;
+ }
+ 
++namespace {
++
++[[nodiscard]] SyncReplicaOperationalDatabase
++open_attested_sync_replica_primary_database_with_disposition_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    SyncReplicaOperationalDatabaseOpenDisposition disposition,
++    const std::string& label) {
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "attested primary replica database label must not be empty");
++    }
++    SyncReplicaOperationalDatabase database =
++        SyncReplicaOperationalDatabase::open_or_throw(
++            deployment.replica_db, disposition, label + " database");
++    attest_sync_replica_sqlite_deployment_binding_or_throw(
++        database.handle(),
++        sync_replica_primary_database_binding_or_throw(
++            deployment, label + " binding"),
++        label + " deployment binding");
++    return database;
++}
++
++}  // namespace
++
++SyncReplicaOperationalDatabase
++open_attested_sync_replica_primary_database_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const std::string& label) {
++    return open_attested_sync_replica_primary_database_with_disposition_or_throw(
++        deployment,
++        SyncReplicaOperationalDatabaseOpenDisposition::ExistingOperational,
++        label);
++}
++
++SyncReplicaOperationalDatabase
++open_attested_sync_replica_primary_database_read_only_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const std::string& label) {
++    return open_attested_sync_replica_primary_database_with_disposition_or_throw(
++        deployment,
++        SyncReplicaOperationalDatabaseOpenDisposition::
++            ExistingForensicReadOnly,
++        label);
++}
++
+ SyncReplicaFilePayloadStoreLimits
+ sync_replica_folder_payload_store_limits_or_throw(
+     const SyncReplicaDeploymentManifest& deployment,
+@@ -274,16 +319,8 @@ SyncReplicaFolderProcessOwner::SyncReplicaFolderProcessOwner(
+         state->deployment, state->label + " catalog path");
+ 
+     state->replica_database =
+-        SyncReplicaOperationalDatabase::open_or_throw(
+-            state->deployment.replica_db,
+-            SyncReplicaOperationalDatabaseOpenDisposition::
+-                ExistingOperational,
+-            state->label + " replica database");
+-    attest_sync_replica_sqlite_deployment_binding_or_throw(
+-        state->replica_database.handle(),
+-        sync_replica_primary_database_binding_or_throw(
+-            state->deployment, state->label + " replica binding"),
+-        state->label + " replica deployment binding");
++        open_attested_sync_replica_primary_database_or_throw(
++            state->deployment, state->label + " replica");
+ 
+     state->catalog_database =
+         SyncReplicaOperationalDatabase::open_or_throw(
+diff --git a/src/sync_replica_folder_process.hpp b/src/sync_replica_folder_process.hpp
+index a88468dff685903a038e713de31d73ead6f47e59..149246eaf26666f377ed78c79345417a2bbe5c3a 100644
+--- a/src/sync_replica_folder_process.hpp
++++ b/src/sync_replica_folder_process.hpp
+@@ -6,6 +6,7 @@
+ #include "sync_replica_deployment_manifest.hpp"
+ #include "sync_replica_file_payload_store.hpp"
+ #include "sync_replica_folder_scan_owner.hpp"
++#include "sync_replica_operational_database.hpp"
+ 
+ #include <filesystem>
+ #include <memory>
+@@ -35,6 +36,24 @@ sync_replica_primary_database_binding_or_throw(
+     const SyncReplicaDeploymentManifest& deployment,
+     const std::string& label);
+ 
++// Opens the manifest-selected primary replica database in existing-only
++// operational mode and attests its durable deployment binding. This is the
++// single writer seam shared by the retained folder owner and offline recovery
++// ceremony; neither caller may silently open an unbound or newly created
++// SQLite image.
++[[nodiscard]] SyncReplicaOperationalDatabase
++open_attested_sync_replica_primary_database_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const std::string& label);
++
++// Read-only counterpart for offline inspection. It retains the same exact
++// deployment-binding proof but cannot initialize, migrate, checkpoint, or
++// otherwise mutate the selected database family.
++[[nodiscard]] SyncReplicaOperationalDatabase
++open_attested_sync_replica_primary_database_read_only_or_throw(
++    const SyncReplicaDeploymentManifest& deployment,
++    const std::string& label);
++
+ [[nodiscard]] SyncReplicaFilePayloadStoreLimits
+ sync_replica_folder_payload_store_limits_or_throw(
+     const SyncReplicaDeploymentManifest& deployment,
+diff --git a/src/sync_replica_operational_database.cpp b/src/sync_replica_operational_database.cpp
+index 54bd80c22eb7fa3cde04f08119ca386b479c9bd2..36b1a40d686d6413d9f6d9f1fb1cd96b4f2291f0 100644
+--- a/src/sync_replica_operational_database.cpp
++++ b/src/sync_replica_operational_database.cpp
+@@ -2,6 +2,7 @@
+ 
+ #if !defined(_WIN32)
+ 
++#include "sync_replica_tls_policy_sqlite_profile.hpp"
+ #include "sync_sqlite_support.hpp"
+ 
+ #include <stdexcept>
+@@ -242,6 +243,8 @@ SyncReplicaOperationalDatabase::open_or_throw(
+             ExistingOperational:
+         case SyncReplicaOperationalDatabaseOpenDisposition::
+             PublishedBootstrapCandidate:
++        case SyncReplicaOperationalDatabaseOpenDisposition::
++            ExistingForensicReadOnly:
+             break;
+         default:
+             throw std::invalid_argument(
+@@ -258,14 +261,21 @@ SyncReplicaOperationalDatabase::open_or_throw(
+             label + " requires an existing guarded main database");
+     }
+     const std::filesystem::path logical_path = path_guard.database_path();
++    const bool forensic_read_only =
++        disposition == SyncReplicaOperationalDatabaseOpenDisposition::
++            ExistingForensicReadOnly;
+     auto rooted_vfs = register_sqlite_descriptor_rooted_vfs_or_throw(
+-        path_guard, SqliteDescriptorRootedVfsAccess::ReadWriteExisting,
++        path_guard,
++        forensic_read_only
++            ? SqliteDescriptorRootedVfsAccess::ReadOnlyExisting
++            : SqliteDescriptorRootedVfsAccess::ReadWriteExisting,
+         label + " descriptor-rooted VFS");
+     SyncReplicaOperationalDatabase database(
+         std::move(path_guard), std::move(rooted_vfs), disposition, label);
+ 
+-    int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX |
+-                SQLITE_OPEN_PRIVATECACHE;
++    int flags = (forensic_read_only ? SQLITE_OPEN_READONLY
++                                    : SQLITE_OPEN_READWRITE) |
++                SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_PRIVATECACHE;
+ #ifdef SQLITE_OPEN_NOFOLLOW
+     flags |= SQLITE_OPEN_NOFOLLOW;
+ #endif
+@@ -281,9 +291,12 @@ SyncReplicaOperationalDatabase::open_or_throw(
+         throw std::runtime_error(label + " open returned no SQLite handle");
+     }
+     const int read_only = sqlite3_db_readonly(candidate.get(), "main");
+-    if (read_only != 0) {
++    if ((!forensic_read_only && read_only != 0) ||
++        (forensic_read_only && read_only != 1)) {
+         throw std::runtime_error(
+-            label + " could not prove writable main-database authority");
++            label + (forensic_read_only
++                ? " could not prove read-only main-database authority"
++                : " could not prove writable main-database authority"));
+     }
+     {
+         auto output = database.db_.out();
+@@ -292,6 +305,23 @@ SyncReplicaOperationalDatabase::open_or_throw(
+     database.verify_open_database_or_throw(label + " post-open proof");
+     sqlite_set_busy_timeout_or_throw(
+         database.db_, 5000, label + " busy timeout");
++    if (disposition ==
++        SyncReplicaOperationalDatabaseOpenDisposition::
++            PublishedBootstrapCandidate) {
++        // Retain the connection-local lock before the first page read. This is
++        // the same bootstrap ordering used by the product CLI and prevents a
++        // later WAL promotion from opening a writer gap.
++        retain_exclusive_locking_mode_or_throw(
++            database.db_, label + " bootstrap candidate");
++    } else if (forensic_read_only) {
++        // WAL readers normally join or create a persistent -shm domain on the
++        // first page read. Select the private heap WAL index and hardened
++        // query-only profile before any schema or journal-mode probe instead.
++        retain_exclusive_locking_mode_or_throw(
++            database.db_, label + " forensic connection-local WAL index");
++        configure_sync_replica_tls_policy_sqlite_read_only_connection_or_throw(
++            database.db_, label + " forensic read-only profile");
++    }
+     if (!database_has_persistent_schema_or_throw(database.db_, label)) {
+         throw std::runtime_error(
+             label + " has no persistent schema and requires explicit bootstrap");
+@@ -306,18 +336,27 @@ SyncReplicaOperationalDatabase::open_or_throw(
+         }
+         configure_operational_profile_or_throw(database.db_, label);
+         database.operational_profile_active_ = true;
+-    } else {
++    } else if (disposition ==
++               SyncReplicaOperationalDatabaseOpenDisposition::
++                   PublishedBootstrapCandidate) {
+         if (mode != "delete" && mode != "wal") {
+             throw std::runtime_error(
+                 label + " bootstrap candidate journal mode is " + mode +
+                 ", expected delete or wal");
+         }
+-        retain_exclusive_locking_mode_or_throw(
+-            database.db_, label + " bootstrap candidate");
+         if (mode == "wal") {
+             configure_operational_profile_or_throw(database.db_, label);
+             database.operational_profile_active_ = true;
+         }
++    } else {
++        if (mode != "wal") {
++            throw std::runtime_error(
++                label + " forensic journal mode is " + mode +
++                ", expected wal");
++        }
++        // The private WAL index and hardened read-only profile were selected
++        // before the first page read. The rooted VFS independently denies
++        // mutation of the main database and every configured sidecar.
+     }
+     database.verify_open_database_or_throw(label + " post-profile proof");
+     return database;
+diff --git a/src/sync_replica_operational_database.hpp b/src/sync_replica_operational_database.hpp
+index 6d4782e29359054eb980bb70fa65d5e275b514b8..a68b726869fbfdf40bf3acd87030aa5b518bd4ce 100644
+--- a/src/sync_replica_operational_database.hpp
++++ b/src/sync_replica_operational_database.hpp
+@@ -19,6 +19,11 @@ namespace anonsync {
+ enum class SyncReplicaOperationalDatabaseOpenDisposition : std::uint8_t {
+     ExistingOperational = 1U,
+     PublishedBootstrapCandidate = 2U,
++    // Exact current-schema observation only. The descriptor-rooted VFS and
++    // SQLite connection are read-only, query_only remains enabled, and no
++    // schema initialization, migration, journal transition, or checkpoint is
++    // permitted.
++    ExistingForensicReadOnly = 3U,
+ };
+ 
+ // Move-only authority over one descriptor-rooted SQLite database family. The
+diff --git a/src/sync_replica_peer_service_singleton.cpp b/src/sync_replica_peer_service_singleton.cpp
+index c7544356ed02437e5c6e89831ba3b7643670f36f..2466e5ae732e6dcb2c1b633c5e20e4bd0f41064a 100644
+--- a/src/sync_replica_peer_service_singleton.cpp
++++ b/src/sync_replica_peer_service_singleton.cpp
+@@ -106,7 +106,7 @@ struct SyncReplicaPeerServiceSingletonOwner::State final {
+             if (error == EADDRINUSE) {
+                 throw std::runtime_error(
+                     label +
+-                    " deployment is already owned by another AnonSync service process");
++                    " deployment is already owned by another AnonSync process");
+             }
+             throw std::runtime_error(
+                 label + " acquisition failed: " + std::strerror(error));
+diff --git a/src/sync_replica_peer_service_singleton.hpp b/src/sync_replica_peer_service_singleton.hpp
+index 65f7fef81b51690a47c356b273aec34712f9a994..ae807a53ca57223dc4943e0278a2d443741151b7 100644
+--- a/src/sync_replica_peer_service_singleton.hpp
++++ b/src/sync_replica_peer_service_singleton.hpp
+@@ -11,9 +11,10 @@ namespace anonsync {
+ 
+ // Process-lifetime ownership for one local deployment. The Linux abstract
+ // Unix-socket name is derived only from deployment_id: the random identity
+-// durably embedded in every member of the store set. A second service cannot
+-// evade the singleton by choosing another TCP port, status socket,
+-// configuration file, manifest pathname/digest, peer, or mutable policy.
++// durably embedded in every member of the store set. A retained service,
++// one-shot sync, or offline database-maintenance process cannot evade the
++// singleton by choosing another TCP port, status socket, configuration file,
++// manifest pathname/digest, peer, command, or mutable policy.
+ class SyncReplicaPeerServiceSingletonOwner final {
+ public:
+     explicit SyncReplicaPeerServiceSingletonOwner(
+diff --git a/src/sync_replica_sqlite_owner.cpp b/src/sync_replica_sqlite_owner.cpp
+index 1a3923aadcb582ec9b089ff53191489af269d287..efe496549211e0dda97858394fcd49fa01540b5a 100644
+--- a/src/sync_replica_sqlite_owner.cpp
++++ b/src/sync_replica_sqlite_owner.cpp
+@@ -17,6 +17,7 @@
+ #include <string>
+ #include <string_view>
+ #include <tuple>
++#include <type_traits>
+ #include <utility>
+ #include <vector>
+ 
+@@ -27,6 +28,11 @@
+ namespace anonsync {
+ namespace {
+ 
++static_assert(
++    std::is_nothrow_move_constructible_v<
++        SyncReplicaSqliteDatabaseRecoveryEpochResult>,
++    "database recovery result must cross the committed cutpoint without allocation");
++
+ constexpr std::uint64_t kLegacySchemaVersion = 1U;
+ constexpr std::uint64_t kPreviousSchemaVersion = 2U;
+ constexpr std::uint64_t kClockSchemaVersion = 3U;
+@@ -3939,18 +3945,23 @@ SyncReplicaSqliteOwner::advance_database_recovery_epoch_or_throw(
+         loaded.historical_version_pins);
+     update_meta_or_throw(
+         db_, meta, label_ + " database recovery epoch advance");
+-    attest_and_commit_staged_cutpoint_or_throw(
+-        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
+-        loaded.outbox_clock, loaded.outbox,
+-        loaded.historical_version_pins,
+-        label_ + " database recovery epoch publication");
+-    return {
++
++    // Materialize every owning result field before COMMIT. After SQLite has
++    // published the new epoch, returning this result is a nothrow move rather
++    // than an avoidable allocation that could report failure after success.
++    SyncReplicaSqliteDatabaseRecoveryEpochResult result{
+         meta.database_incarnation_sha256,
+         expected_database_recovery_epoch,
+         meta.database_recovery_epoch,
+         meta.state_generation,
+         meta.cutpoint_digest,
+     };
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
++        loaded.outbox_clock, loaded.outbox,
++        loaded.historical_version_pins,
++        label_ + " database recovery epoch publication");
++    return result;
+ }
+ 
+ SyncReplicaSqliteEvidencePage
+diff --git a/tools/audit_anonsync_replica_database_open_policy.py b/tools/audit_anonsync_replica_database_open_policy.py
+index 960f227cb69f639b9b43a129f575393ad53fdc60..455e62e1efaed44b25d86564c16b0b32a4704528 100644
+--- a/tools/audit_anonsync_replica_database_open_policy.py
++++ b/tools/audit_anonsync_replica_database_open_policy.py
+@@ -18,6 +18,14 @@ from pathlib import Path
+ REQUIRED = (
+     Path("CMakeLists.txt"),
+     Path("src/anonsync_replica.cpp"),
++    Path("src/anonsync_sync.cpp"),
++    Path("src/sync_replica_operational_database.cpp"),
++    Path("src/sync_replica_operational_database.hpp"),
++    Path("src/sync_replica_folder_process.cpp"),
++    Path("src/sync_replica_folder_process.hpp"),
++    Path("src/sync_replica_peer_service_singleton.cpp"),
++    Path("src/sync_replica_peer_service_singleton.hpp"),
++    Path("src/sync_replica_sqlite_owner.cpp"),
+     Path("src/sqlite_path_security.cpp"),
+     Path("src/sqlite_path_security.hpp"),
+     Path("src/sync_posix_mount_namespace_authority.cpp"),
+@@ -32,6 +40,8 @@ REQUIRED = (
+     Path("tests/sync_posix_directory_resolution_test.cpp"),
+     Path("tools/test_anonsync_replica_cli.py"),
+     Path("tools/test_anonsync_replica_bootstrap_resume.py"),
++    Path("tools/test_anonsync_database_recovery.py"),
++    Path("tools/test_anonsync_service_configuration_status.py"),
+ )
+ 
+ 
+@@ -117,7 +127,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-replica-database-open-policy-audit-v19",
++        "format": "anonsync-replica-database-open-policy-audit-v22",
+         "scope": "lexical-hygiene-not-semantic-proof",
+         "scope_nonclaim": (
+             "source spelling and order do not prove path identity, SQLite "
+@@ -159,6 +169,28 @@ def main() -> int:
+ 
+     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+     source = (root / "src/anonsync_replica.cpp").read_text(encoding="utf-8")
++    sync_source = (root / "src/anonsync_sync.cpp").read_text(encoding="utf-8")
++    operational_database = (
++        root / "src/sync_replica_operational_database.cpp"
++    ).read_text(encoding="utf-8")
++    operational_database_header = (
++        root / "src/sync_replica_operational_database.hpp"
++    ).read_text(encoding="utf-8")
++    folder_process = (root / "src/sync_replica_folder_process.cpp").read_text(
++        encoding="utf-8"
++    )
++    folder_process_header = (
++        root / "src/sync_replica_folder_process.hpp"
++    ).read_text(encoding="utf-8")
++    singleton_source = (
++        root / "src/sync_replica_peer_service_singleton.cpp"
++    ).read_text(encoding="utf-8")
++    singleton_header = (
++        root / "src/sync_replica_peer_service_singleton.hpp"
++    ).read_text(encoding="utf-8")
++    sqlite_owner_source = (
++        root / "src/sync_replica_sqlite_owner.cpp"
++    ).read_text(encoding="utf-8")
+     path_security = (root / "src/sqlite_path_security.cpp").read_text(
+         encoding="utf-8"
+     )
+@@ -202,6 +234,12 @@ def main() -> int:
+     resume_process_test = (
+         root / "tools/test_anonsync_replica_bootstrap_resume.py"
+     ).read_text(encoding="utf-8")
++    database_recovery_process_test = (
++        root / "tools/test_anonsync_database_recovery.py"
++    ).read_text(encoding="utf-8")
++    service_configuration_process_test = (
++        root / "tools/test_anonsync_service_configuration_status.py"
++    ).read_text(encoding="utf-8")
+ 
+     candidate_owner = function_body(source, "class UnadoptedSqliteConnection final")
+     product_authority = function_body(
+@@ -238,6 +276,34 @@ def main() -> int:
+     rooted_vfs_open = function_body(
+         path_security, "static int open(sqlite3_vfs* wrapper,"
+     )
++    operational_open = function_body(
++        operational_database,
++        "SyncReplicaOperationalDatabase::open_or_throw(",
++    )
++    attested_read_only_open = function_body(
++        folder_process,
++        "open_attested_sync_replica_primary_database_read_only_or_throw(",
++    )
++    offline_ceremony_owner = function_body(
++        sync_source, "class OfflineReplicaDatabaseRecoveryCeremonyOwner final"
++    )
++    offline_ceremony_advance = function_body(
++        offline_ceremony_owner, "advance_or_throw("
++    )
++    offline_ceremony_forensic = function_body(
++        offline_ceremony_owner, "forensic_snapshot_or_throw(std::string_view stage)"
++    )
++    database_recovery_inspect = function_body(
++        sync_source, "int command_database_recovery_inspect("
++    )
++    database_recovery_advance = function_body(
++        sync_source, "int command_database_recovery_advance("
++    )
++    recovery_epoch_advance = function_body(
++        sqlite_owner_source,
++        "SyncReplicaSqliteOwner::advance_database_recovery_epoch_or_throw(",
++    )
++    sync_once = function_body(sync_source, "int command_once(")
+     rooted_vfs_verify = function_body(
+         path_security,
+         "void SqliteDescriptorRootedVfs::verify_open_database_or_throw(",
+@@ -1266,6 +1332,141 @@ def main() -> int:
+         "the product targeting boundary runs in the normal CTest lane",
+     )
+ 
++    require(
++        "ExistingForensicReadOnly = 3U" in operational_database_header
++        and "SqliteDescriptorRootedVfsAccess::ReadOnlyExisting"
++            in operational_open
++        and "SQLITE_OPEN_READONLY" in operational_open
++        and "SQLITE_OPEN_CREATE" not in operational_open,
++        "offline_recovery_forensic_open_is_existing_only_and_read_only",
++        "the shared operational wrapper grants no create or write authority to offline inspection",
++    )
++    require(
++        ordered(
++            operational_open,
++            "forensic_read_only",
++            "retain_exclusive_locking_mode_or_throw(",
++            "configure_sync_replica_tls_policy_sqlite_read_only_connection_or_throw(",
++            "database_has_persistent_schema_or_throw(",
++            "journal_mode_or_throw(",
++        ),
++        "offline_recovery_selects_private_wal_index_before_first_page_read",
++        "read-only WAL inspection cannot attempt persistent shared-memory creation before its query-only profile",
++    )
++    require(
++        "ExistingForensicReadOnly" in attested_read_only_open
++        and "attest_sync_replica_sqlite_deployment_binding_or_throw("
++            in folder_process
++        and "open_attested_sync_replica_primary_database_read_only_or_throw("
++            in folder_process_header,
++        "offline_recovery_reuses_one_attested_primary_database_seam",
++        "forensic and writer paths share exact deployment binding without duplicating manifest-to-database targeting",
++    )
++    require(
++        ordered(
++            offline_ceremony_owner,
++            "deployment_",
++            "singleton_",
++            "label_",
++        )
++        and "open_attested_sync_replica_primary_database_read_only_or_throw("
++            in offline_ceremony_forensic
++        and "inspect_sync_replica_sqlite_snapshot_read_only_or_throw("
++            in offline_ceremony_forensic
++        and "SyncReplicaSqliteOwner" not in offline_ceremony_forensic
++        and "SyncReplicaOperationalDatabase database_" not in offline_ceremony_owner
++        and "SyncReplicaSqliteOwner replica_owner_" not in offline_ceremony_owner,
++        "offline_recovery_ceremony_locks_deployment_before_local_database_authority",
++        "one ceremony owner claims the deployment before each short-lived forensic or writer handle and retains no SQLite owner between stages",
++    )
++    require(
++        ordered(
++            offline_ceremony_advance,
++            'forensic_snapshot_or_throw("advance preflight")',
++            "database recovery expectation is stale",
++            "open_attested_sync_replica_primary_database_or_throw(",
++            "SyncReplicaSqliteOwner replica_owner(",
++            "advance_database_recovery_epoch_or_throw(",
++        )
++        and "SyncReplicaOperationalDatabase database ="
++            in offline_ceremony_advance
++        and "BEGIN IMMEDIATE" in offline_ceremony_advance,
++        "offline_recovery_rejects_stale_expectation_before_writable_open_then_reproofs",
++        "malformed or stale authority cannot trigger WAL recovery, sidecar creation, checkpointing, migration, or any other writable SQLite effect; the accepted token is independently rechecked in the transaction",
++    )
++    require(
++        "#include <type_traits>" in sqlite_owner_source
++        and "std::is_nothrow_move_constructible_v" in sqlite_owner_source
++        and ordered(
++            recovery_epoch_advance,
++            "SyncReplicaSqliteDatabaseRecoveryEpochResult result{",
++            "attest_and_commit_staged_cutpoint_or_throw(",
++            "return result;",
++        )
++        and "return {" not in recovery_epoch_advance,
++        "offline_recovery_result_is_owned_before_commit_and_nothrow_afterward",
++        "the owner cannot publish the epoch and then fail solely while allocating its ordinary return value",
++    )
++    require(
++        "payload_store_observed\\\":false" in sync_source
++        and "folder_catalog_observed\\\":false" in sync_source
++        and "rooted_files_observed\\\":false" in sync_source
++        and "network_started\\\":false" in sync_source
++        and "forensic_preflight_before_writable_open\\\":true"
++            in database_recovery_advance
++        and "exact_transaction_reproof\\\":true"
++            in database_recovery_advance
++        and "whole_image_rollback_reuse_excluded\\\":false"
++            in database_recovery_advance
++        and "retention_age_reset_required_when_continuity_uncertain\\\":true"
++            in database_recovery_advance,
++        "offline_recovery_reports_narrow_authority_and_anti_rollback_nonclaim",
++        "operator JSON distinguishes an in-database epoch from payload, filesystem, network, or external monotonic authority",
++    )
++    require(
++        ordered(
++            sync_once,
++            "read_sync_replica_deployment_manifest_or_throw(",
++            "SyncReplicaPeerServiceSingletonOwner singleton_owner(",
++            "stream_route_from_options_or_throw(",
++            "require_existing_regular_file(",
++            "SyncReplicaSyncOnceOwner owner(",
++        )
++        and "another AnonSync process" in singleton_source
++        and "one-shot sync" in singleton_header,
++        "one_shot_sync_shares_the_deployment_singleton_before_other_authority",
++        "once cannot run beside the retained service or reach route, TLS, and folder owners before collision",
++    )
++    require(
++        "sqlite_family_fingerprint(replica_db) == family_before_inspect"
++            in database_recovery_process_test
++        and "family_before_noncanonical" in database_recovery_process_test
++        and "family_before_stale" in database_recovery_process_test
++        and "family_before_reuse" in database_recovery_process_test
++        and database_recovery_process_test.count(
++            "database recovery expectation is stale"
++        ) >= 2
++        and "payload_root, files_root, catalog"
++            in database_recovery_process_test
++        and "recovery changed causal, outbox, policy, payload, effect, or membership state"
++            in database_recovery_process_test,
++        "offline_recovery_process_oracle_proves_nonmutation_narrow_scope_and_exact_transition",
++        "the real CLI regression hides unrelated stores, fingerprints SQLite inspection, rejects stale tokens, and compares all non-lineage status",
++    )
++    require(
++        "database-recovery-inspect" in service_configuration_process_test
++        and "one-shot sync beside the retained service"
++            in service_configuration_process_test
++        and "must-not-open-i2p-private-destination"
++            in service_configuration_process_test
++        and "one-shot ownership before I2P private route"
++            in service_configuration_process_test
++        and "anonsync_sync_database_recovery_process_test" in cmake
++        and cmake.count("anonsync_sync_database_recovery_process_test") >= 3,
++        "offline_recovery_and_once_singleton_oracles_run_in_the_product_lane",
++        "normal CTest coverage proves offline maintenance and one-shot work cannot overlap a retained deployment owner",
++    )
++
+     return emit(root, args.json, checks)
+ 
+ 
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 6c62bbee996caa82e86e3a28e647575e9de26210..650abf7c32497d66dcbb3fabb14efaaf6b5d1f3a 100644
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -62,6 +62,10 @@ REQUIRED = (
+     Path("src/sync_replica_folder_scan_owner.cpp"),
+     Path("src/sync_replica_folder_process.hpp"),
+     Path("src/sync_replica_folder_process.cpp"),
++    Path("src/sync_replica_operational_database.hpp"),
++    Path("src/sync_replica_operational_database.cpp"),
++    Path("src/sync_replica_peer_service_singleton.hpp"),
++    Path("src/sync_replica_peer_service_singleton.cpp"),
+     Path("src/sync_replica_peer_service.hpp"),
+     Path("src/sync_replica_peer_service.cpp"),
+     Path("src/sync_replica_peer_service_status.hpp"),
+@@ -106,6 +110,8 @@ REQUIRED = (
+     Path("tools/test_anonsync_service_process.py"),
+     Path("tools/test_anonsync_service_i2p_ingress.py"),
+     Path("tools/test_anonsync_service_configuration_status.py"),
++    Path("tools/test_anonsync_database_recovery.py"),
++    Path("tools/audit_anonsync_replica_database_open_policy.py"),
+     Path("tools/test_anonsync_service_folder_wake.py"),
+     Path("tools/test_anonsync_provisioning.py"),
+     Path("tools/verify_release_package.py"),
+@@ -167,6 +173,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0979.md"),
+     Path("REPLICA_DATABASE_LINEAGE_AND_RETENTION_WITNESS_AUDIT_rev0980.md"),
+     Path("REVISION_NOTES_rev0980.md"),
++    Path("OFFLINE_DATABASE_RECOVERY_AND_DEPLOYMENT_SINGLETON_AUDIT_rev0981.md"),
++    Path("REVISION_NOTES_rev0981.md"),
+ )
+ 
+ 
+@@ -267,6 +275,29 @@ def main() -> int:
+     if missing:
+         return emit(root, args.json, checks)
+ 
++    active_projection_roots = (
++        Path("cmake"),
++        Path("fuzz"),
++        Path("include"),
++        Path("src"),
++        Path("tests"),
++        Path("third_party"),
++        Path("tools"),
++    )
++    executable_active_sources = sorted(
++        path.relative_to(root).as_posix()
++        for projection_root in active_projection_roots
++        for path in (root / projection_root).rglob("*")
++        if path.is_file()
++        and not path.is_symlink()
++        and (path.stat().st_mode & 0o111) != 0
++    )
++    require(
++        not executable_active_sources,
++        "active_source_projection_contains_no_accidental_executable_modes",
++        f"executable_active_sources={executable_active_sources}",
++    )
++
+     required_bytes = {
+         path.as_posix(): (root / path).read_bytes()
+         for path in REQUIRED
+@@ -357,6 +388,18 @@ def main() -> int:
+     folder_scan = text["src/sync_replica_folder_scan_owner.cpp"]
+     folder_process_h = text["src/sync_replica_folder_process.hpp"]
+     folder_process = text["src/sync_replica_folder_process.cpp"]
++    operational_database_h = text[
++        "src/sync_replica_operational_database.hpp"
++    ]
++    operational_database = text[
++        "src/sync_replica_operational_database.cpp"
++    ]
++    peer_singleton_h = text[
++        "src/sync_replica_peer_service_singleton.hpp"
++    ]
++    peer_singleton = text[
++        "src/sync_replica_peer_service_singleton.cpp"
++    ]
+     peer_service_h = text["src/sync_replica_peer_service.hpp"]
+     peer_service = text["src/sync_replica_peer_service.cpp"]
+     peer_status_h = text["src/sync_replica_peer_service_status.hpp"]
+@@ -431,6 +474,12 @@ def main() -> int:
+     service_configuration_runtime = text[
+         "tools/test_anonsync_service_configuration_status.py"
+     ]
++    database_recovery_runtime = text[
++        "tools/test_anonsync_database_recovery.py"
++    ]
++    database_open_policy_audit = text[
++        "tools/audit_anonsync_replica_database_open_policy.py"
++    ]
+     service_folder_wake_runtime = text[
+         "tools/test_anonsync_service_folder_wake.py"
+     ]
+@@ -551,6 +600,10 @@ def main() -> int:
+         "REPLICA_DATABASE_LINEAGE_AND_RETENTION_WITNESS_AUDIT_rev0980.md"
+     ]
+     rev0980_notes = text["REVISION_NOTES_rev0980.md"]
++    offline_database_recovery_design = text[
++        "OFFLINE_DATABASE_RECOVERY_AND_DEPLOYMENT_SINGLETON_AUDIT_rev0981.md"
++    ]
++    rev0981_notes = text["REVISION_NOTES_rev0981.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -793,6 +846,17 @@ def main() -> int:
+         if rev0980_verifier_start >= 0 and rev0980_verifier_end >= 0
+         else ""
+     )
++    rev0981_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 981:"
++    )
++    rev0981_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0981_verifier_start
++    )
++    rev0981_verifier_block = (
++        verifier[rev0981_verifier_start:rev0981_verifier_end]
++        if rev0981_verifier_start >= 0 and rev0981_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -825,6 +889,35 @@ def main() -> int:
+     historical_version_socket_request = function_body(
+         local_status, "request_historical_version_response("
+     )
++    operational_database_open = function_body(
++        operational_database,
++        "SyncReplicaOperationalDatabase::open_or_throw(",
++    )
++    primary_database_open = function_body(
++        folder_process,
++        "open_attested_sync_replica_primary_database_with_disposition_or_throw(",
++    )
++    database_recovery_inspect = function_body(
++        sync_cli, "int command_database_recovery_inspect("
++    )
++    database_recovery_advance = function_body(
++        sync_cli, "int command_database_recovery_advance("
++    )
++    database_recovery_epoch_advance = function_body(
++        sqlite_owner,
++        "SyncReplicaSqliteOwner::advance_database_recovery_epoch_or_throw(",
++    )
++    offline_recovery_ceremony = function_body(
++        sync_cli, "class OfflineReplicaDatabaseRecoveryCeremonyOwner final"
++    )
++    offline_recovery_advance = function_body(
++        offline_recovery_ceremony, "advance_or_throw("
++    )
++    offline_recovery_forensic = function_body(
++        offline_recovery_ceremony,
++        "forensic_snapshot_or_throw(std::string_view stage)",
++    )
++    sync_once_command = function_body(sync_cli, "int command_once(")
+ 
+     store_sources = cmake_call(
+         cmake, "set(ANONSYNC_SYNC_REPLICA_FILE_PAYLOAD_STORE_SOURCE"
+@@ -11220,6 +11313,227 @@ def main() -> int:
+         "release verification requires every schema, owner, renderer, regression, design, audit, and package-policy surface changed by the database-lineage correction",
+     )
+ 
++    require(
++        "ExistingForensicReadOnly = 3U" in operational_database_h
++        and "SqliteDescriptorRootedVfsAccess::ReadOnlyExisting"
++        in operational_database_open
++        and "SQLITE_OPEN_READONLY" in operational_database_open
++        and "SQLITE_OPEN_CREATE" not in operational_database_open
++        and "sqlite3_db_readonly" in operational_database_open,
++        "rev0981_forensic_disposition_is_exact_existing_only_read_only_authority",
++        "offline inspection has a first-class descriptor-rooted read-only open and cannot inherit writer or creation authority",
++    )
++
++    require(
++        ordered(
++            operational_database_open,
++            "sqlite3_db_readonly",
++            "sqlite_set_busy_timeout_or_throw",
++            "retain_exclusive_locking_mode_or_throw",
++            "configure_sync_replica_tls_policy_sqlite_read_only_connection_or_throw",
++            "database_has_persistent_schema_or_throw",
++            "journal_mode_or_throw",
++        )
++        and "private heap WAL index" in operational_database,
++        "rev0981_read_only_wal_profile_precedes_first_persistent_page_read",
++        "the connection selects private WAL indexing and hardened query-only behavior before schema or journal inspection can join shared-memory authority",
++    )
++
++    require(
++        "open_attested_sync_replica_primary_database_or_throw"
++        in folder_process_h
++        and "open_attested_sync_replica_primary_database_read_only_or_throw"
++        in folder_process_h
++        and primary_database_open.count(
++            "sync_replica_primary_database_binding_or_throw"
++        ) == 1
++        and "attest_sync_replica_sqlite_deployment_binding_or_throw"
++        in primary_database_open
++        and "open_attested_sync_replica_primary_database_or_throw("
++        in folder_process,
++        "rev0981_folder_owner_and_offline_commands_share_one_attested_primary_database_seam",
++        "writer and forensic opens target the same manifest-selected role and deployment binding rather than duplicating pathname authority",
++    )
++
++    require(
++        ordered(
++            offline_recovery_ceremony,
++            "SyncReplicaDeploymentManifest deployment_",
++            "SyncReplicaPeerServiceSingletonOwner singleton_",
++            "std::string label_",
++        )
++        and "open_attested_sync_replica_primary_database_read_only_or_throw"
++            in offline_recovery_forensic
++        and "inspect_sync_replica_sqlite_snapshot_read_only_or_throw"
++            in offline_recovery_forensic
++        and "SyncReplicaSqliteOwner" not in offline_recovery_forensic
++        and "SyncReplicaOperationalDatabase database_"
++            not in offline_recovery_ceremony
++        and "SyncReplicaSqliteOwner replica_owner_"
++            not in offline_recovery_ceremony,
++        "rev0981_offline_ceremony_locks_deployment_before_short_lived_database_authority",
++        "one owner acquires the deployment singleton before any local forensic or writer handle and retains no SQLite authority between stages",
++    )
++
++    require(
++        ordered(
++            offline_recovery_advance,
++            'forensic_snapshot_or_throw("advance preflight")',
++            "database recovery expectation is stale",
++            "open_attested_sync_replica_primary_database_or_throw",
++            "SyncReplicaSqliteOwner replica_owner(",
++            "advance_database_recovery_epoch_or_throw",
++        )
++        and "BEGIN IMMEDIATE" in offline_recovery_advance,
++        "rev0981_stale_expectations_fail_before_writable_open_then_transactionally_reproof",
++        "invalid recovery authority cannot invoke WAL recovery, sidecar creation, checkpointing, migration, or another writer effect before rejection, while accepted authority is independently rechecked under the existing transaction",
++    )
++
++    require(
++        "#include <type_traits>" in sqlite_owner
++        and "std::is_nothrow_move_constructible_v" in sqlite_owner
++        and ordered(
++            database_recovery_epoch_advance,
++            "SyncReplicaSqliteDatabaseRecoveryEpochResult result{",
++            "attest_and_commit_staged_cutpoint_or_throw(",
++            "return result;",
++        )
++        and "return {" not in database_recovery_epoch_advance,
++        "rev0981_recovery_result_allocation_precedes_the_commit_cutpoint",
++        "ordinary owner return construction cannot turn a committed recovery transition into an allocation exception",
++    )
++
++    require(
++        r'payload_store_observed\":false' in sync_cli
++        and r'folder_catalog_observed\":false' in sync_cli
++        and r'rooted_files_observed\":false' in sync_cli
++        and r'network_started\":false' in sync_cli
++        and r'external_anti_rollback_authority\":false' in sync_cli
++        and r'operator_asserted_database_recovery\":true'
++        in database_recovery_advance
++        and r'forensic_preflight_before_writable_open\":true'
++        in database_recovery_advance
++        and r'exact_transaction_reproof\":true'
++        in database_recovery_advance
++        and r'whole_image_rollback_reuse_excluded\":false'
++        in database_recovery_advance
++        and r'retention_age_reset_required_when_continuity_uncertain\":true'
++        in database_recovery_advance,
++        "rev0981_operator_responses_state_narrow_authority_and_anti_rollback_nonclaims",
++        "the CLI reports exactly what it observed and explicitly denies backup validation, unrelated-store authority, and exact-image anti-rollback",
++    )
++
++    require(
++        ordered(
++            sync_once_command,
++            "read_sync_replica_deployment_manifest_or_throw",
++            "SyncReplicaPeerServiceSingletonOwner singleton_owner",
++            "stream_route_from_options_or_throw",
++            "folder_limits_from_options_or_throw",
++            "load_tls_context_or_throw",
++        )
++        and "deployment is already owned by another AnonSync process"
++        in peer_singleton,
++        "rev0981_once_shares_the_deployment_singleton_before_route_tls_or_peer_authority",
++        "one-shot synchronization can no longer overlap the retained service merely because lower-level SQLite leases serialize some individual writes",
++    )
++
++    require(
++        "sqlite_family_fingerprint" in database_recovery_runtime
++        and "read-only inspection changed SQLite family bytes"
++        in database_recovery_runtime
++        and "family_before_noncanonical" in database_recovery_runtime
++        and "family_before_stale" in database_recovery_runtime
++        and "family_before_reuse" in database_recovery_runtime
++        and database_recovery_runtime.count("database recovery expectation is stale")
++        >= 2
++        and '"payload_store_observed": False' in database_recovery_runtime
++        and '"folder_catalog_observed": False' in database_recovery_runtime
++        and "recovery changed causal, outbox, policy, payload, effect, or membership state"
++        in database_recovery_runtime
++        and "expect_deployment_ownership_failure"
++        in service_configuration_runtime
++        and "database-recovery-inspect" in service_configuration_runtime
++        and '"once", "--manifest"' in service_configuration_runtime
++        and "must-not-open-i2p-private-destination"
++            in service_configuration_runtime
++        and "one-shot ownership before I2P private route"
++            in service_configuration_runtime
++        and "anonsync_sync_database_recovery_process_test" in cmake
++        and cmake.count(
++            "anonsync_sync_database_recovery_process_test"
++        ) >= 3,
++        "rev0981_process_oracles_prove_byte_stability_stale_rejection_narrow_scope_and_live_collision",
++        "the normal product lane exercises inspection nonmutation, exact transition semantics, hidden unrelated stores, and both offline and one-shot singleton collisions",
++    )
++
++    require(
++        '"format": "anonsync-replica-database-open-policy-audit-v22"'
++        in database_open_policy_audit
++        and "offline_recovery_selects_private_wal_index_before_first_page_read"
++        in database_open_policy_audit
++        and "offline_recovery_rejects_stale_expectation_before_writable_open_then_reproofs"
++        in database_open_policy_audit
++        and "offline_recovery_and_once_singleton_oracles_run_in_the_product_lane"
++        in database_open_policy_audit
++        and all(
++            token in normalized_prose(offline_database_recovery_design)
++            for token in (
++                "Operator-visible recovery ceremony",
++                "Stale rejection before writable open",
++                "Read-only WAL ordering correction",
++                "Shared targeting refactor",
++                "One deployment, one shipping process owner",
++                "What this does not prove",
++                "external anti-rollback authority",
++                "Next safe edge",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0981_notes)
++            for token in (
++                "Operator recovery surface",
++                "Stale-expectation audit/refactor",
++                "Lifecycle correction",
++                "Read-only database refactor",
++                "Boundary",
++            )
++        )
++        and "## Rev0981: offline database recovery and one deployment owner"
++        in readme,
++        "rev0981_audit_and_records_bind_the_shipping_boundary_and_nonclaims",
++        "source audit, design record, notes, and README agree that this is an offline in-database continuity assertion, not backup validation or external rollback protection",
++    )
++
++    require(
++        rev0981_verifier_block.count(
++            "if revision_number is not None and revision_number >= 981:"
++        ) == 1
++        and all(
++            token in rev0981_verifier_block
++            for token in (
++                "OFFLINE_DATABASE_RECOVERY_AND_DEPLOYMENT_SINGLETON_AUDIT_rev0981.md",
++                "REVISION_NOTES_rev0981.md",
++                "CMakeLists.txt",
++                "src/anonsync_sync.cpp",
++                "src/sync_replica_operational_database.hpp",
++                "src/sync_replica_operational_database.cpp",
++                "src/sync_replica_folder_process.hpp",
++                "src/sync_replica_folder_process.cpp",
++                "src/sync_replica_peer_service_singleton.hpp",
++                "src/sync_replica_peer_service_singleton.cpp",
++                "src/sync_replica_sqlite_owner.cpp",
++                "tools/test_anonsync_database_recovery.py",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/audit_anonsync_replica_database_open_policy.py",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0981_package_policy_binds_commands_database_seams_singleton_oracles_and_records",
++        "release verification requires every implementation, process oracle, source audit, design record, and package-policy surface changed by rev0981",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -11396,6 +11710,17 @@ def main() -> int:
+         "database lineage and retention-witness changes cannot pass the structural audit until final validation and the visible bootstrap bind the sealed rev0980 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0981" not in rev0981_notes
++        and "VALIDATION_PENDING_REV0981" not in offline_database_recovery_design
++        and "VALIDATION_PENDING_REV0981" not in readme
++        and "ARCHIVE_PENDING_REV0981" not in bootstrap
++        and "CODENAME_PENDING_REV0981" not in bootstrap
++        and "VALIDATION_PENDING_REV0981" not in bootstrap,
++        "rev0981_final_validation_and_visible_release_cutpoint_are_sealed",
++        "offline database recovery and deployment-singleton changes cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0981 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_database_recovery.py b/tools/test_anonsync_database_recovery.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..f7cd9229a29e0608efad1f9edc142a19fc71fe6d
+--- /dev/null
++++ b/tools/test_anonsync_database_recovery.py
+@@ -0,0 +1,462 @@
++#!/usr/bin/env python3
++"""Prove the offline database-recovery ceremony and its narrow authority.
++
++The operator-visible commands must share the retained deployment singleton,
++inspect the exact current schema without mutating SQLite, reject stale or
++noncanonical expectations, and advance only the in-database recovery epoch.
++They must not require or observe the payload store, folder catalog, rooted
++files, or network authority.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++from pathlib import Path
++import stat
++import subprocess
++import tempfile
++from typing import Any, NoReturn, Sequence
++
++
++CHECKS = 0
++
++
++def fail(message: str) -> NoReturn:
++    raise RuntimeError(message)
++
++
++def require(condition: bool, message: str) -> None:
++    global CHECKS
++    CHECKS += 1
++    if not condition:
++        fail(message)
++
++
++def unique_json_object_pairs(
++    pairs: list[tuple[str, Any]],
++) -> dict[str, Any]:
++    value: dict[str, Any] = {}
++    for key, member in pairs:
++        if key in value:
++            raise ValueError(f"duplicate JSON object key {key!r}")
++        value[key] = member
++    return value
++
++
++def parse_json_output(
++    completed: subprocess.CompletedProcess[str],
++    command: Sequence[str],
++    label: str,
++) -> dict[str, Any]:
++    try:
++        value = json.loads(
++            completed.stdout, object_pairs_hook=unique_json_object_pairs
++        )
++    except (json.JSONDecodeError, ValueError) as error:
++        fail(
++            f"{label} did not emit one strict JSON object: {error}\n"
++            f"command: {' '.join(command)}\nstdout:\n{completed.stdout}"
++            f"stderr:\n{completed.stderr}"
++        )
++    if not isinstance(value, dict):
++        fail(f"{label} JSON is not an object")
++    return value
++
++
++def run_ok(
++    command: Sequence[str], *, label: str, timeout: float = 60.0
++) -> dict[str, Any]:
++    completed = subprocess.run(
++        list(command), check=False, stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE, text=True, timeout=timeout,
++    )
++    value = parse_json_output(completed, command, label)
++    if completed.returncode != 0:
++        fail(
++            f"{label} failed with {completed.returncode}\n"
++            f"command: {' '.join(command)}\nstdout:\n{completed.stdout}"
++            f"stderr:\n{completed.stderr}"
++        )
++    if completed.stderr:
++        fail(f"{label} wrote diagnostics on success: {completed.stderr}")
++    return value
++
++
++def run_failure(
++    command: Sequence[str], *, label: str, returncode: int,
++    error_code: str, message_fragment: str, timeout: float = 60.0,
++) -> dict[str, Any]:
++    completed = subprocess.run(
++        list(command), check=False, stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE, text=True, timeout=timeout,
++    )
++    value = parse_json_output(completed, command, label)
++    require(
++        completed.returncode == returncode,
++        f"{label} returned {completed.returncode}, expected {returncode}: {value}",
++    )
++    require(
++        value.get("terminal_class") == "stopped" and
++        value.get("error_code") == error_code,
++        f"{label} returned the wrong failure class: {value}",
++    )
++    message = value.get("message")
++    require(
++        isinstance(message, str) and message_fragment in message,
++        f"{label} omitted {message_fragment!r}: {value}",
++    )
++    require(
++        message_fragment in completed.stderr,
++        f"{label} stderr omitted {message_fragment!r}: {completed.stderr!r}",
++    )
++    return value
++
++
++def require_exact_keys(value: dict[str, Any], keys: set[str], label: str) -> None:
++    require(
++        set(value) == keys,
++        f"{label} keys differed: observed={sorted(value)} expected={sorted(keys)}",
++    )
++
++
++def require_fields(
++    value: dict[str, Any], expected: dict[str, Any], label: str
++) -> None:
++    for key, wanted in expected.items():
++        require(
++            value.get(key) == wanted,
++            f"{label} field {key!r} was {value.get(key)!r}, expected {wanted!r}",
++        )
++
++
++def is_sha256(value: Any) -> bool:
++    return (
++        isinstance(value, str) and len(value) == 64 and
++        all(byte in "0123456789abcdef" for byte in value)
++    )
++
++
++def file_digest(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as stream:
++        while True:
++            block = stream.read(1024 * 1024)
++            if not block:
++                break
++            digest.update(block)
++    return digest.hexdigest()
++
++
++def sqlite_family_fingerprint(database: Path) -> dict[str, tuple[int, int, str]]:
++    result: dict[str, tuple[int, int, str]] = {}
++    for suffix in ("", "-journal", "-wal", "-shm"):
++        member = Path(str(database) + suffix)
++        if not member.exists():
++            continue
++        observed = member.lstat()
++        require(stat.S_ISREG(observed.st_mode), f"SQLite family member is not regular: {member}")
++        result[suffix] = (
++            stat.S_IMODE(observed.st_mode), observed.st_size, file_digest(member)
++        )
++    return result
++
++
++def recovery_state(value: dict[str, Any]) -> tuple[str, int, int, str, str]:
++    return (
++        str(value.get("database_incarnation_sha256")),
++        int(value.get("database_recovery_epoch", 0)),
++        int(value.get("state_generation", 0)),
++        str(value.get("cutpoint_digest")),
++        str(value.get("recovery_expectation")),
++    )
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--replica", required=True, type=Path)
++    parser.add_argument("--folder", required=True, type=Path)
++    parser.add_argument("--sync", required=True, type=Path)
++    args = parser.parse_args()
++    replica = args.replica.resolve(strict=True)
++    folder = args.folder.resolve(strict=True)
++    sync = args.sync.resolve(strict=True)
++
++    inspection_keys = {
++        "command", "terminal_class", "response_schema", "manifest_path",
++        "deployment_id", "folder_id", "local_device_id", "local_epoch",
++        "replica_database", "offline_required",
++        "deployment_singleton_acquired", "continuity_scope",
++        "external_anti_rollback_authority", "payload_store_observed",
++        "folder_catalog_observed", "rooted_files_observed", "network_started",
++        "database_incarnation_sha256", "database_recovery_epoch",
++        "state_generation", "cutpoint_digest", "recovery_expectation",
++        "current_schema_required", "operator_assertion_required_before_advance",
++        "mutation_performed",
++    }
++    advance_keys = {
++        "command", "terminal_class", "response_schema", "manifest_path",
++        "deployment_id", "folder_id", "local_device_id", "local_epoch",
++        "replica_database", "offline_required",
++        "deployment_singleton_acquired", "continuity_scope",
++        "external_anti_rollback_authority", "payload_store_observed",
++        "folder_catalog_observed", "rooted_files_observed", "network_started",
++        "database_incarnation_sha256", "previous_database_recovery_epoch",
++        "database_recovery_epoch", "state_generation",
++        "previous_cutpoint_digest", "cutpoint_digest",
++        "previous_recovery_expectation", "recovery_expectation",
++        "operator_asserted_database_recovery",
++        "forensic_preflight_before_writable_open",
++        "exact_transaction_reproof", "recovery_epoch_advanced",
++        "whole_image_rollback_reuse_excluded",
++        "retention_age_reset_required_when_continuity_uncertain",
++        "mutation_performed",
++    }
++
++    with tempfile.TemporaryDirectory(prefix="anonsync-database-recovery-") as raw:
++        root = Path(raw)
++        os.chmod(root, 0o700)
++        database_root = root / "db"
++        payload_root = root / "payload"
++        files_root = root / "files"
++        for directory in (database_root, payload_root, files_root):
++            directory.mkdir(mode=0o700)
++        manifest = database_root / "deployment.json"
++        replica_db = database_root / "replica.sqlite"
++        catalog = Path(str(replica_db) + ".folder-catalog.sqlite3")
++
++        initialized = run_ok([
++            str(replica), "init", "--manifest", str(manifest),
++            "--replica-db", str(replica_db),
++            "--payload-root", str(payload_root),
++            "--effect-db", str(database_root / "effect.sqlite"),
++            "--files-root", str(files_root),
++            "--membership-db", str(database_root / "membership.sqlite"),
++            "--anchor-db", str(database_root / "anchor.sqlite"),
++            "--folder", "database-recovery-process",
++            "--local-device", "database-recovery-node", "--local-epoch", "1",
++        ], label="combined deployment init")
++        run_ok([
++            str(folder), "init", "--manifest", str(manifest),
++        ], label="folder catalog init")
++        before_status = run_ok([
++            str(replica), "status", "--manifest", str(manifest),
++        ], label="status before recovery")
++
++        common = {
++            "manifest_path": str(manifest),
++            "deployment_id": initialized["deployment_id"],
++            "folder_id": "database-recovery-process",
++            "local_device_id": "database-recovery-node",
++            "local_epoch": 1,
++            "replica_database": str(replica_db),
++            "offline_required": True,
++            "deployment_singleton_acquired": True,
++            "continuity_scope": "in_database_only",
++            "external_anti_rollback_authority": False,
++            "payload_store_observed": False,
++            "folder_catalog_observed": False,
++            "rooted_files_observed": False,
++            "network_started": False,
++        }
++
++        hidden: list[tuple[Path, Path]] = []
++        try:
++            for live in (payload_root, files_root, catalog):
++                concealed = Path(str(live) + ".outside-recovery-authority")
++                live.rename(concealed)
++                hidden.append((live, concealed))
++
++            family_before_inspect = sqlite_family_fingerprint(replica_db)
++            inspected = run_ok([
++                str(sync), "database-recovery-inspect",
++                "--manifest", str(manifest),
++            ], label="offline database recovery inspection")
++            require_exact_keys(inspected, inspection_keys, "inspection response")
++            require_fields(inspected, {
++                "command": "database-recovery-inspect",
++                "terminal_class": "completed",
++                "response_schema":
++                    "anonsync.local-database-recovery-inspection.response.v1",
++                **common,
++                "current_schema_required": True,
++                "operator_assertion_required_before_advance": True,
++                "mutation_performed": False,
++            }, "inspection response")
++            require(is_sha256(inspected.get("database_incarnation_sha256")),
++                    "inspection omitted canonical database incarnation")
++            require(is_sha256(inspected.get("cutpoint_digest")),
++                    "inspection omitted canonical cutpoint")
++            require(
++                isinstance(inspected.get("database_recovery_epoch"), int) and
++                inspected["database_recovery_epoch"] > 0,
++                "inspection omitted a positive database recovery epoch",
++            )
++            require(
++                isinstance(inspected.get("state_generation"), int) and
++                inspected["state_generation"] >= 0,
++                "inspection omitted state generation",
++            )
++            expected_token = (
++                f"v1:{inspected['database_incarnation_sha256']}:"
++                f"{inspected['database_recovery_epoch']}:"
++                f"{inspected['cutpoint_digest']}"
++            )
++            require(inspected.get("recovery_expectation") == expected_token,
++                    "inspection emitted a noncanonical recovery expectation")
++            require(
++                sqlite_family_fingerprint(replica_db) == family_before_inspect,
++                "read-only inspection changed SQLite family bytes, modes, or members",
++            )
++
++            malformed = (
++                f"v1:{inspected['database_incarnation_sha256']}:0"
++                f"{inspected['database_recovery_epoch']}:"
++                f"{inspected['cutpoint_digest']}"
++            )
++            family_before_noncanonical = sqlite_family_fingerprint(replica_db)
++            run_failure([
++                str(sync), "database-recovery-advance", "--manifest", str(manifest),
++                "--expected", malformed,
++            ], label="noncanonical recovery expectation", returncode=2,
++               error_code="invalid_arguments", message_fragment="canonical v1:")
++            require(
++                sqlite_family_fingerprint(replica_db) ==
++                    family_before_noncanonical,
++                "noncanonical recovery expectation changed SQLite family bytes, "
++                "modes, or members",
++            )
++
++            stale_tokens = (
++                "v1:" + "0" * 64 +
++                f":{inspected['database_recovery_epoch']}:" +
++                str(inspected["cutpoint_digest"]),
++                f"v1:{inspected['database_incarnation_sha256']}:"
++                f"{inspected['database_recovery_epoch'] + 1}:"
++                f"{inspected['cutpoint_digest']}",
++                f"v1:{inspected['database_incarnation_sha256']}:"
++                f"{inspected['database_recovery_epoch']}:" + "0" * 64,
++            )
++            baseline_state = recovery_state(inspected)
++            for index, token in enumerate(stale_tokens, start=1):
++                family_before_stale = sqlite_family_fingerprint(replica_db)
++                run_failure([
++                    str(sync), "database-recovery-advance",
++                    "--manifest", str(manifest), "--expected", token,
++                ], label=f"stale recovery expectation {index}", returncode=1,
++                   error_code="operation_failed",
++                   message_fragment="database recovery expectation is stale")
++                require(
++                    sqlite_family_fingerprint(replica_db) ==
++                        family_before_stale,
++                    f"stale recovery expectation {index} changed SQLite family "
++                    "bytes, modes, or members",
++                )
++                unchanged = run_ok([
++                    str(sync), "database-recovery-inspect",
++                    "--manifest", str(manifest),
++                ], label=f"inspection after stale expectation {index}")
++                require(
++                    recovery_state(unchanged) == baseline_state,
++                    f"stale recovery expectation {index} changed durable lineage",
++                )
++
++            advanced = run_ok([
++                str(sync), "database-recovery-advance", "--manifest", str(manifest),
++                "--expected", expected_token,
++            ], label="exact database recovery advance")
++            require_exact_keys(advanced, advance_keys, "advance response")
++            require_fields(advanced, {
++                "command": "database-recovery-advance",
++                "terminal_class": "completed",
++                "response_schema":
++                    "anonsync.local-database-recovery-advance.response.v1",
++                **common,
++                "database_incarnation_sha256":
++                    inspected["database_incarnation_sha256"],
++                "previous_database_recovery_epoch":
++                    inspected["database_recovery_epoch"],
++                "database_recovery_epoch":
++                    inspected["database_recovery_epoch"] + 1,
++                "state_generation": inspected["state_generation"] + 1,
++                "previous_cutpoint_digest": inspected["cutpoint_digest"],
++                "previous_recovery_expectation": expected_token,
++                "operator_asserted_database_recovery": True,
++                "forensic_preflight_before_writable_open": True,
++                "exact_transaction_reproof": True,
++                "recovery_epoch_advanced": True,
++                "whole_image_rollback_reuse_excluded": False,
++                "retention_age_reset_required_when_continuity_uncertain": True,
++                "mutation_performed": True,
++            }, "advance response")
++            require(is_sha256(advanced.get("cutpoint_digest")),
++                    "advance omitted canonical successor cutpoint")
++            require(advanced["cutpoint_digest"] != inspected["cutpoint_digest"],
++                    "advance did not invalidate the previous cutpoint")
++            successor_token = (
++                f"v1:{advanced['database_incarnation_sha256']}:"
++                f"{advanced['database_recovery_epoch']}:"
++                f"{advanced['cutpoint_digest']}"
++            )
++            require(advanced.get("recovery_expectation") == successor_token,
++                    "advance emitted a noncanonical successor expectation")
++
++            family_before_reuse = sqlite_family_fingerprint(replica_db)
++            run_failure([
++                str(sync), "database-recovery-advance", "--manifest", str(manifest),
++                "--expected", expected_token,
++            ], label="reused recovery expectation", returncode=1,
++               error_code="operation_failed",
++               message_fragment="database recovery expectation is stale")
++            require(
++                sqlite_family_fingerprint(replica_db) == family_before_reuse,
++                "reused recovery expectation changed SQLite family bytes, "
++                "modes, or members",
++            )
++            final_inspection = run_ok([
++                str(sync), "database-recovery-inspect",
++                "--manifest", str(manifest),
++            ], label="final database recovery inspection")
++            require(
++                recovery_state(final_inspection) == (
++                    advanced["database_incarnation_sha256"],
++                    advanced["database_recovery_epoch"],
++                    advanced["state_generation"],
++                    advanced["cutpoint_digest"],
++                    successor_token,
++                ),
++                "final inspection disagreed with the committed recovery transition",
++            )
++        finally:
++            for live, concealed in reversed(hidden):
++                if concealed.exists() and not live.exists():
++                    concealed.rename(live)
++
++        after_status = run_ok([
++            str(replica), "status", "--manifest", str(manifest),
++        ], label="status after recovery")
++        require(
++            after_status.get("replica_state_generation") ==
++                before_status.get("replica_state_generation") + 1,
++            "recovery did not advance exactly one replica state generation",
++        )
++        require(
++            after_status.get("replica_cutpoint_digest") !=
++                before_status.get("replica_cutpoint_digest"),
++            "recovery did not invalidate the public replica cutpoint",
++        )
++        ignored = {"replica_state_generation", "replica_cutpoint_digest"}
++        require(
++            {key: value for key, value in after_status.items() if key not in ignored} ==
++            {key: value for key, value in before_status.items() if key not in ignored},
++            "recovery changed causal, outbox, policy, payload, effect, or membership state",
++        )
++
++    print(f"anonsync database recovery process: {CHECKS} checks passed")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index 75f97030fc586ec8ec015d7234bb9d33258a0282..94a28170c105f3c4cf06a5b4c8d9e9622954fde5 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -43,6 +43,7 @@ from test_anonsync_sync_process import (
+     reserve_port,
+     run_json,
+     tree_snapshot,
++    unique_json_object_pairs,
+ )
+ 
+ 
+@@ -2204,14 +2205,12 @@ def expect_config_failure(
+         )
+ 
+ 
+-def expect_singleton_failure(sync: Path, config: Path, label: str) -> None:
++def expect_deployment_ownership_failure(
++    command: list[str], label: str,
++) -> None:
+     completed = subprocess.run(
+-        [str(sync), "run", "--config", str(config)],
+-        stdout=subprocess.PIPE,
+-        stderr=subprocess.PIPE,
+-        text=True,
+-        timeout=5.0,
+-        check=False,
++        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
++        timeout=5.0, check=False,
+     )
+     if completed.returncode != 1:
+         fail(
+@@ -2219,16 +2218,26 @@ def expect_singleton_failure(sync: Path, config: Path, label: str) -> None:
+             f"failure 1\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+         )
+     try:
+-        value = json.loads(completed.stdout)
+-    except json.JSONDecodeError as error:
+-        fail(f"{label} did not emit JSON failure: {error}: {completed.stdout}")
+-    if value.get("error_code") != "operation_failed" or (
+-        "already owned" not in str(value.get("message", ""))
+-    ):
++        value = json.loads(
++            completed.stdout, object_pairs_hook=unique_json_object_pairs
++        )
++    except (json.JSONDecodeError, ValueError) as error:
++        fail(f"{label} did not emit strict JSON failure: {error}: {completed.stdout}")
++    if value.get("terminal_class") != "stopped" or (
++        value.get("error_code") != "operation_failed"
++    ) or "already owned" not in str(value.get("message", "")):
+         fail(
+             f"{label} did not report exact deployment ownership: "
+             f"{json.dumps(value, sort_keys=True)}"
+         )
++    if "already owned" not in completed.stderr:
++        fail(f"{label} stderr omitted exact deployment ownership")
++
++
++def expect_singleton_failure(sync: Path, config: Path, label: str) -> None:
++    expect_deployment_ownership_failure(
++        [str(sync), "run", "--config", str(config)], label
++    )
+ 
+ 
+ def main() -> int:
+@@ -2827,6 +2836,42 @@ def main() -> int:
+             )
+             if duplicate_status.exists():
+                 fail("rejected duplicate service created a status socket")
++            expect_deployment_ownership_failure(
++                [
++                    str(sync), "database-recovery-inspect",
++                    "--manifest", str(source_manifest),
++                ],
++                "offline recovery inspection beside the retained service",
++            )
++            # once acquires the deployment singleton before parsing route, TLS,
++            # or peer options. This deliberately incomplete invocation proves
++            # one-shot synchronization cannot race the retained service.
++            expect_deployment_ownership_failure(
++                [str(sync), "once", "--manifest", str(source_manifest)],
++                "one-shot sync beside the retained service",
++            )
++
++            # Native-I2P route admission may open the private destination file.
++            # A missing file would therefore expose any regression that parsed
++            # route authority before claiming the deployment singleton.
++            unopened_i2p_private_destination = (
++                root / "must-not-open-i2p-private-destination"
++            )
++            if unopened_i2p_private_destination.exists():
++                fail("I2P singleton-order fixture unexpectedly exists")
++            expect_deployment_ownership_failure(
++                [
++                    str(sync), "once", "--manifest", str(source_manifest),
++                    "--transport", "i2p",
++                    "--i2p-sam-address", "127.0.0.1",
++                    "--i2p-sam-port", "7656",
++                    "--i2p-destination", "unparsed-destination",
++                    "--i2p-private-destination-file",
++                    str(unopened_i2p_private_destination),
++                    "--timeout-seconds", "180",
++                ],
++                "one-shot ownership before I2P private route",
++            )
+ 
+             wait_for_tree_convergence(
+                 source_files, receiver_files,
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 2bbe401eddcbb4b752cc04583cf4a35d5695963b..53c78c1d1746b4e3ee1c4d3e65d2878dbb00bda6 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1671,6 +1671,26 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_replica_sqlite_owner.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 981:
++        revision_scoped_required.update({
++            "OFFLINE_DATABASE_RECOVERY_AND_DEPLOYMENT_SINGLETON_AUDIT_rev0981.md",
++            "REVISION_NOTES_rev0981.md",
++            "README.md",
++            "CMakeLists.txt",
++            "src/anonsync_sync.cpp",
++            "src/sync_replica_operational_database.hpp",
++            "src/sync_replica_operational_database.cpp",
++            "src/sync_replica_folder_process.hpp",
++            "src/sync_replica_folder_process.cpp",
++            "src/sync_replica_peer_service_singleton.hpp",
++            "src/sync_replica_peer_service_singleton.cpp",
++            "src/sync_replica_sqlite_owner.cpp",
++            "tools/test_anonsync_database_recovery.py",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/audit_anonsync_replica_database_open_policy.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

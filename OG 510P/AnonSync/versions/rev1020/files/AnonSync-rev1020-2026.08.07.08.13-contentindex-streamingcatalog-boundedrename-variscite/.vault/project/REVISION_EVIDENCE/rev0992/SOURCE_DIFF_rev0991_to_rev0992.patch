@@ -1,0 +1,2569 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 325140aac926893bc4abc6bd8bc107d665e65c6b..c42d57d66b6b8cc5646abe78a28a8167ce9454f6 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4860,6 +4860,12 @@ if(Python3_Interpreter_FOUND)
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
+   set_tests_properties(anonsync_sync_replica_fixed_block_delta_source_audit
+     PROPERTIES TIMEOUT 20)
++  add_test(NAME anonsync_sync_replica_manifest_reference_source_audit
++    COMMAND ${Python3_EXECUTABLE} -B -S
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_replica_manifest_reference.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
++  set_tests_properties(anonsync_sync_replica_manifest_reference_source_audit
++    PROPERTIES TIMEOUT 20)
+   add_test(NAME anonsync_sync_replica_selective_sync_source_audit
+     COMMAND ${Python3_EXECUTABLE} -B -S
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_replica_selective_sync.py
+diff --git a/MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md b/MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..06c49c74bec33ecdc9dabe41dbd725345415f650
+--- /dev/null
++++ b/MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md
+@@ -0,0 +1,157 @@
++# Manifest reference and delta index cache audit — rev0992
++
++## Product defect
++
++Rev0986 made large-file transfer bounded and capable of exact fixed-block
++predecessor reuse, but its wire and receiver work still multiplied badly across
++long transfers. Every ranged response copied the complete target manifest even
++when the same live receiver had already validated and retained it. At the 4 TiB
++payload frontier the canonical manifest contains 4,096 SHA-256 strings. A 4 MiB
++range walk has 1,048,576 responses, so repeating only the 8-byte length and
++64-byte text for every digest after the first response admits at least
++309,237,350,400 avoidable wire bytes: just under 288 GiB, before optional-field
++and manifest framing overhead.
++
++The receiver also rebuilt and sorted a 4,096-entry predecessor digest index at
++every later delta-eligible block boundary. That work was formally bounded but
++needlessly repeated. Both multipliers conflict with the required multi-terabyte
++Linux workflow and with the user's explicit concern about memory and delta
++performance.
++
++## Reconciliation protocol generation 5
++
++Rev0992 advances reconciliation framing and structural digests from generation
++4 to generation 5. A ranged payload now always carries a canonical
++`fixed_block_manifest_digest`. The digest binds:
++
++- a domain-separated manifest generation;
++- the complete payload SHA-256;
++- the complete payload extent;
++- the canonical fixed block size;
++- the exact block count; and
++- every block SHA-256 in canonical order.
++
++An initial or cache-cold continuation request carries no manifest-cache claim,
++so the response must include both the digest and complete manifest. After the
++receiver has retained that exact manifest in the same service process, its next
++continuation request may advertise the digest. The source must then return the
++same digest and omit the complete manifest. Sending a full manifest in response
++to a cache claim, omitting one without a cache claim, or changing the digest
++fails cross-message validation.
++
++This is not durable authority. A new service process has no target-manifest
++cache and therefore cannot advertise one. It automatically receives the
++complete manifest again before any local predecessor reuse can depend on it.
++The continuation still binds the exact operation ID, content SHA-256, complete
++extent, next byte offset, source evidence-set digest, selective-sync policy,
++actors, folder, and authenticated channel.
++
++## Source-side authority and bounded work
++
++One authenticated serve session may retain one complete verified payload-store
++snapshot and one target manifest. Even when a receiver advertises a cached
++manifest digest, the source first computes or reuses its own complete manifest
++for the current immutable payload and compares the exact digest. Only then does
++it emit a reference-only range. This prevents a receiver-provided digest from
++becoming source content authority.
++
++The source records separate counters for:
++
++- complete payload snapshot scans and reuses;
++- fixed-block manifest scans and process-local reuses;
++- bytes hashed while producing manifests;
++- complete manifest publications; and
++- digest-only manifest references.
++
++The change removes repeated serialization and copying. It does not remove the
++one complete source hash pass required to construct a manifest in a new serve
++session.
++
++## Receiver-side target cache
++
++The receiver retains one `CachedTargetFixedBlockManifest` containing the exact
++operation ID, content SHA-256, total extent, manifest digest, and complete
++manifest. `make_request_or_throw` advertises the digest only when the supplied
++payload continuation matches all of those target fields. An externally forged
++request object cannot lend cache authority to `apply_response_or_throw`: a
++reference-only response is rejected unless the actual receiving service owns
++the exact cache.
++
++The pure protocol can verify the reference digest and request binding but cannot
++see process memory. The service therefore performs the remaining semantic
++check. For a complete fixed block it compares the received chunk digest with
++the retained target block digest before staging any bytes. A focused regression
++changes a full referenced block and its chunk digest together, proves the pure
++frame remains structurally coherent, and requires service rejection while the
++durable prefix remains unchanged.
++
++## Receiver-side predecessor index refactor
++
++The predecessor acceleration cache is now one cohesive
++`CachedPredecessorFixedBlockManifest` rather than parallel optional fields. It
++binds the target operation, predecessor operation, exact predecessor manifest,
++and one vector of block indices sorted by `(digest, original index)`.
++
++The sorted index is built only when a new predecessor manifest is hashed. Later
++eligible target block boundaries reuse the same vector for `lower_bound`; they
++do not allocate, fill, and sort another 4,096-entry vector. The cache is cleared
++as one unit when the target changes, the source cutpoint changes, or the target
++payload completes. Payload bytes are still reopened through targeted
++payload-store authority and re-proved before each local copy.
++
++## Runtime proof
++
++Focused C++ tests prove:
++
++- generation-5 request and response round trips;
++- full-manifest bootstrap and digest-only continuation;
++- invalid, missing, noncanonical, or mismatched manifest authority fails closed;
++- a 4 TiB logical shape uses the canonical 4,096-block manifest;
++- reference-only framing removes more than 256 GiB of repeated manifest bytes
++  over 1,048,576 uninterrupted 4 MiB ranges;
++- a live three-block delta transfer publishes one target manifest, references it
++  once, hashes one predecessor manifest, builds one sorted predecessor index,
++  and reuses both on the next range;
++- a receiver service restart omits the cache claim and obtains a complete
++  manifest again;
++- subsequent same-process continuation returns to reference-only framing; and
++- a forged referenced full block cannot alter the staged prefix.
++
++TLS accounting proves the same full/reference transitions survive the real
++bounded record exchange.
++
++## Memory boundary
++
++The retained receiver state is bounded by one target manifest, one predecessor
++manifest, and one 4,096-entry `size_t` index. A cache-cold decoded response may
++temporarily contain another target-manifest copy while it is installed. The
++source serve session retains one target manifest. None of these structures grow
++with tree path count or total retained history.
++
++This is still not a measured peak-RSS result for a real multi-terabyte tree.
++The string representation is also not the densest possible manifest encoding.
++A binary digest vector or a hierarchical manifest may reduce bootstrap bytes and
++allocations further.
++
++## Deliberate limitations
++
++Rev0992 remains fixed-block delta. Insertions near the beginning of a large file
++can shift block boundaries and defeat reuse. It does not provide content-defined
++chunking, a multi-level manifest, cross-file block discovery, durable manifest
++caches, compression, automatic sparse-file semantics, Android storage adapters,
++rename/move identity, or a target-scale soak result.
++
++The next delta product edge should be an insertion-resilient design that keeps
++memory bounded and supports progressive discovery, rather than requiring a
++second whole-file-sized metadata structure. In parallel, the generated
++multi-terabyte-shape harness should measure peak RSS, indexing time, catch-up,
++SQLite growth, payload amplification, restart, and controlled ENOSPC.
++
++## Validation
++
++Exact rev0992 source passed the GCC 14.2 Debug 340-edge rebuild to a no-work bundled-SQLite re-attestation, all 271/271 registered tests, and an independent 43/43 product replay. Focused GCC proofs passed 4,891 reconciliation-protocol, 109 reconciliation-service, and 2,044 TLS-transport checks. Source audits passed 42/42 fixed-block-delta, 52/52 selective-sync, 31/31 manifest-reference, and 448/448 structural-authority checks. A fresh Clang 17 Debug AddressSanitizer/UndefinedBehaviorSanitizer product graph completed 252/252 edges; all 43/43 product tests passed with leak detection and halt-on-error. Focused sanitizer proofs passed 98 network-model checks plus 41 generated operations, 26 selective-policy, 4,891 protocol, 361 SQLite-owner, 238 prepared-publication, 536 folder-owner, 109 service, and 2,044 TLS checks; the folder-owner proof peaked at 1,689,104 KiB RSS. Aggregate retained-log inspection found no compiler, linker, AddressSanitizer, UndefinedBehaviorSanitizer, runtime-error, or LeakSanitizer diagnostic. The exact rev0991 parent SHA-256 matched ac2c873d6828d1421a7c0e637ba7efa49dce62f59e7f7dbcf8e9c40d1398016c and passed 41/41 wrapper-aware package checks. The final active implementation projection contains 597 files / 27,777,046 bytes with SHA-256 25a5beffcc7792c5a6a96e42e85803597a67f56d7eb6b67f0a617ad3397a565d.
++
++## Archive
++
++AnonSync-rev0992-2026.08.04.13.20-manifestreference-indexcache-restartbootstrap-sodalite.zip
++sodalite
+diff --git a/README.md b/README.md
+index a423316fc419e0d4a262c0db5c6b4a650e4256f5..a18ab0bbd1dbc75492cd9f81157321ff24acff08 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# AnonSync rev0991
++# AnonSync rev0992
+ 
+ AnonSync exists to **replace Resilio Sync with an open C++ implementation**.
+ Period. The product target is practical peer-to-peer folder synchronization:
+@@ -19,6 +19,44 @@ hidden README preserves implementation history; it does not define another
+ product direction.
+ 
+ 
++## Rev0992: constant-size manifest continuations and retained delta index
++
++Rev0992 removes two repeated fixed-block delta multipliers from the required
++multi-terabyte Linux workflow. Reconciliation protocol generation 5 binds every
++ranged payload to one canonical target-manifest digest. A cache-cold receiver
++gets the complete bounded manifest; a same-process continuation advertises that
++exact digest and receives only a constant-size reference. A restarted receiver
++has no cache authority and automatically bootstraps the complete manifest again.
++At the 4 TiB payload frontier, an uninterrupted 4 MiB range walk avoids
++309,237,350,400 bytes—just under 288 GiB—of repeated digest-vector framing after
++the first response, before counting optional-field and container overhead.
++
++The receiver now keeps one exact target-manifest cache and one cohesive causal-
++predecessor cache containing the predecessor manifest plus a digest-sorted index.
++The index is built once per selected predecessor and reused by later block
++boundaries instead of allocating and sorting 4,096 indices on every range. The
++source still computes or reuses its own complete manifest and compares the exact
++digest before honoring a receiver reference. The receiver requires its actual
++process-local cache and validates every complete referenced block against the
++retained target manifest before staging bytes. A negative regression changes
++both wire bytes and their chunk digest and proves rejection leaves the durable
++prefix unchanged.
++
++The caches are bounded acceleration, not durable admission authority. This is
++still fixed-block delta: insertion near the beginning of a large file may shift
++boundaries and collapse reuse. Rev0992 does not claim content-defined chunking,
++a measured multi-terabyte peak-RSS result, cross-file block discovery, Android,
++rename/move identity, or ENOSPC qualification. See
++`MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md` and
++`REVISION_NOTES_rev0992.md`.
++
++### Rev0992 validation
++
++Exact rev0992 source passed the GCC 14.2 Debug 340-edge rebuild to a no-work bundled-SQLite re-attestation, all 271/271 registered tests, and an independent 43/43 product replay. Focused GCC proofs passed 4,891 reconciliation-protocol, 109 reconciliation-service, and 2,044 TLS-transport checks. Source audits passed 42/42 fixed-block-delta, 52/52 selective-sync, 31/31 manifest-reference, and 448/448 structural-authority checks. A fresh Clang 17 Debug AddressSanitizer/UndefinedBehaviorSanitizer product graph completed 252/252 edges; all 43/43 product tests passed with leak detection and halt-on-error. Focused sanitizer proofs passed 98 network-model checks plus 41 generated operations, 26 selective-policy, 4,891 protocol, 361 SQLite-owner, 238 prepared-publication, 536 folder-owner, 109 service, and 2,044 TLS checks; the folder-owner proof peaked at 1,689,104 KiB RSS. Aggregate retained-log inspection found no compiler, linker, AddressSanitizer, UndefinedBehaviorSanitizer, runtime-error, or LeakSanitizer diagnostic. The exact rev0991 parent SHA-256 matched ac2c873d6828d1421a7c0e637ba7efa49dce62f59e7f7dbcf8e9c40d1398016c and passed 41/41 wrapper-aware package checks. The final active implementation projection contains 597 files / 27,777,046 bytes with SHA-256 25a5beffcc7792c5a6a96e42e85803597a67f56d7eb6b67f0a617ad3397a565d.
++
++Archive: `AnonSync-rev0992-2026.08.04.13.20-manifestreference-indexcache-restartbootstrap-sodalite.zip`
++
++
+ ## Rev0991: targeted local publication and incremental replica witnesses
+ 
+ Rev0991 removes the complete-replica rebuild from the ordinary prepared local-file
+diff --git a/REVISION_NOTES_rev0992.md b/REVISION_NOTES_rev0992.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..e1c1f8f2dda02bf353f6249ee981e2bc0b9b34c2
+--- /dev/null
++++ b/REVISION_NOTES_rev0992.md
+@@ -0,0 +1,51 @@
++# Revision notes — rev0992
++
++## Product move
++
++Rev0992 removes a severe repeated wire and CPU multiplier from the fixed-block
++delta path required by the Linux multi-terabyte workflow.
++
++Reconciliation protocol generation 5 introduces a canonical target-manifest
++digest. The first range, or the first range after receiver restart, carries the
++complete bounded manifest. A same-process continuation advertises the exact
++digest and receives only a constant-size reference. At the 4 TiB payload
++frontier, an uninterrupted 4 MiB range walk therefore avoids just under 288 GiB
++of repeated digest-vector framing after the first response.
++
++The receiver also retains the predecessor digest-order index alongside the
++predecessor manifest. It hashes and sorts once per selected predecessor rather
++than rebuilding a 4,096-entry index at each later delta-eligible block boundary.
++The target and predecessor caches are exact, bounded, process-local acceleration
++only; a restarted service automatically bootstraps a complete target manifest.
++
++## Adjacent audit/refactor
++
++Parallel optional cache fields were replaced by cohesive target and predecessor
++cache records. This makes identity and reset behavior auditable as one unit.
++The service also validates a complete referenced block against its retained
++manifest before staging bytes. A negative regression changes both the wire bytes
++and their chunk digest, then proves rejection leaves the durable prefix
++unchanged.
++
++## Product boundary
++
++This does not solve insertion-shift behavior. Fixed blocks remain a first delta
++generation, not content-defined chunking. The source still hashes a complete
++large payload once in a new serve session, and a restarted receiver receives one
++complete manifest again. No real multi-terabyte byte soak, Android port,
++rename/move identity, placeholder UI, or ENOSPC qualification is claimed.
++
++The next product edge remains insertion-resilient delta plus generated
++multi-terabyte-shape measurement under explicit peak-RSS and disk-amplification
++accounting.
++
++See `MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md`.
++
++## Validation
++
++Exact rev0992 source passed the GCC 14.2 Debug 340-edge rebuild to a no-work bundled-SQLite re-attestation, all 271/271 registered tests, and an independent 43/43 product replay. Focused GCC proofs passed 4,891 reconciliation-protocol, 109 reconciliation-service, and 2,044 TLS-transport checks. Source audits passed 42/42 fixed-block-delta, 52/52 selective-sync, 31/31 manifest-reference, and 448/448 structural-authority checks. A fresh Clang 17 Debug AddressSanitizer/UndefinedBehaviorSanitizer product graph completed 252/252 edges; all 43/43 product tests passed with leak detection and halt-on-error. Focused sanitizer proofs passed 98 network-model checks plus 41 generated operations, 26 selective-policy, 4,891 protocol, 361 SQLite-owner, 238 prepared-publication, 536 folder-owner, 109 service, and 2,044 TLS checks; the folder-owner proof peaked at 1,689,104 KiB RSS. Aggregate retained-log inspection found no compiler, linker, AddressSanitizer, UndefinedBehaviorSanitizer, runtime-error, or LeakSanitizer diagnostic. The exact rev0991 parent SHA-256 matched ac2c873d6828d1421a7c0e637ba7efa49dce62f59e7f7dbcf8e9c40d1398016c and passed 41/41 wrapper-aware package checks. The final active implementation projection contains 597 files / 27,777,046 bytes with SHA-256 25a5beffcc7792c5a6a96e42e85803597a67f56d7eb6b67f0a617ad3397a565d.
++
++## Archive
++
++AnonSync-rev0992-2026.08.04.13.20-manifestreference-indexcache-restartbootstrap-sodalite.zip
++sodalite
+diff --git a/src/anonsync_replica.cpp b/src/anonsync_replica.cpp
+index 761c619d5a19c5b688ac3fcb95c30d596c2e9685..4317c17d3b9f4d87b1dd4441fe4bede9370de830 100644
+--- a/src/anonsync_replica.cpp
++++ b/src/anonsync_replica.cpp
+@@ -1959,6 +1959,10 @@ void append_reconciliation_serve_json_fields(
+         << result.fixed_block_manifest_reuses
+         << ",\"reconciliation_fixed_block_manifest_hashed_bytes\":"
+         << result.fixed_block_manifest_hashed_bytes
++        << ",\"reconciliation_fixed_block_manifest_publications\":"
++        << result.fixed_block_manifest_publications
++        << ",\"reconciliation_fixed_block_manifest_references\":"
++        << result.fixed_block_manifest_references
+         << ",\"reconciliation_request_frame_bytes_received\":"
+         << result.request_frame_bytes_received
+         << ",\"reconciliation_response_frame_bytes_written\":"
+@@ -2009,6 +2013,14 @@ void append_reconciliation_pull_json_fields(
+         << result.delta_predecessor_manifest_reuses
+         << ",\"delta_predecessor_manifest_hashed_bytes\":"
+         << result.delta_predecessor_manifest_hashed_bytes
++        << ",\"target_fixed_block_manifest_publications\":"
++        << result.target_fixed_block_manifest_publications
++        << ",\"target_fixed_block_manifest_reuses\":"
++        << result.target_fixed_block_manifest_reuses
++        << ",\"delta_predecessor_index_builds\":"
++        << result.delta_predecessor_index_builds
++        << ",\"delta_predecessor_index_reuses\":"
++        << result.delta_predecessor_index_reuses
+         << ",\"request_frame_bytes_written\":"
+         << result.request_frame_bytes_written
+         << ",\"response_frame_bytes_received\":"
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index da86a5919398e8248dc7a79ccf7ac7e2db528608..544657b0c9be532ac1f54c2a8ef781ef0efbd2ec 100644
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -1214,6 +1214,14 @@ void append_reconciliation_json(
+             << pull.delta_predecessor_manifest_reuses
+             << ",\"delta_predecessor_manifest_hashed_bytes\":"
+             << pull.delta_predecessor_manifest_hashed_bytes
++            << ",\"target_fixed_block_manifest_publications\":"
++            << pull.target_fixed_block_manifest_publications
++            << ",\"target_fixed_block_manifest_reuses\":"
++            << pull.target_fixed_block_manifest_reuses
++            << ",\"delta_predecessor_index_builds\":"
++            << pull.delta_predecessor_index_builds
++            << ",\"delta_predecessor_index_reuses\":"
++            << pull.delta_predecessor_index_reuses
+             << ",\"request_frame_bytes_written\":"
+             << pull.request_frame_bytes_written
+             << ",\"response_frame_bytes_received\":"
+diff --git a/src/sync_replica_reconciliation_protocol.cpp b/src/sync_replica_reconciliation_protocol.cpp
+index 045fd4df5dc654e7256d3dcb3f69ea1a866fbadd..799ee1b1e5729bdb5f1f52e130159ad7e6faa997 100644
+--- a/src/sync_replica_reconciliation_protocol.cpp
++++ b/src/sync_replica_reconciliation_protocol.cpp
+@@ -22,13 +22,15 @@ constexpr std::string_view kRequestMagic =
+ constexpr std::string_view kResponseMagic =
+     "ANONSYNC-REPLICA-RECONCILIATION-RESPONSE";
+ constexpr std::string_view kRequestStructuralDigestDomain =
+-    "anonsync-sync-replica-reconciliation-request-frame-v4";
++    "anonsync-sync-replica-reconciliation-request-frame-v5";
+ constexpr std::string_view kResponseStructuralDigestDomain =
+-    "anonsync-sync-replica-reconciliation-response-frame-v4";
++    "anonsync-sync-replica-reconciliation-response-frame-v5";
+ constexpr std::string_view kRequestDigestDomain =
+-    "anonsync-sync-replica-reconciliation-request-v4";
++    "anonsync-sync-replica-reconciliation-request-v5";
+ constexpr std::string_view kResponseDigestDomain =
+-    "anonsync-sync-replica-reconciliation-response-v4";
++    "anonsync-sync-replica-reconciliation-response-v5";
++constexpr std::string_view kFixedBlockManifestDigestDomain =
++    "anonsync-sync-replica-reconciliation-fixed-block-manifest-v1";
+ constexpr std::uint64_t kDigestTextBytes = 64U;
+ constexpr std::uint64_t kFixedFrameTrailerBytes = kDigestTextBytes;
+ 
+@@ -184,6 +186,10 @@ void append_digest_framed(
+         "payload content");
+     add(8U, "payload total size");
+     add(8U, "payload next offset");
++    add(4U + framed_capacity_or_throw(
++                 kSyncManifestSha256TextBytes,
++                 "request cached fixed-block manifest digest frame"),
++        "cached fixed-block manifest digest");
+     add(8U, "selective-sync generation");
+     add(4U, "selective-sync default mode");
+     add(8U, "selective-sync rule count");
+@@ -251,7 +257,8 @@ void append_digest_framed(
+     add(checked_multiply_u64_or_throw(
+             limits.max_payloads_per_page,
+             (8U + kSyncManifestSha256TextBytes) + 8U + 8U +
+-                (8U + kSyncManifestSha256TextBytes) + 8U + 4U,
++                (8U + kSyncManifestSha256TextBytes) + 8U +
++                4U + (8U + kSyncManifestSha256TextBytes) + 4U,
+             "response payload framing overhead"),
+         "payload framing overhead");
+     // Validation permits at most one ranged payload, and whole payloads carry
+@@ -317,6 +324,39 @@ void validate_payload_continuation_or_throw(
+     }
+ }
+ 
++void validate_fixed_block_manifest_or_throw(
++    std::uint64_t total_size_bytes,
++    const SyncReplicaReconciliationFixedBlockManifest& manifest,
++    const std::string& label) {
++    if (total_size_bytes == 0U) {
++        throw std::invalid_argument(label + " payload is empty");
++    }
++    const std::uint64_t canonical_block_size =
++        sync_replica_reconciliation_fixed_block_size_or_throw(
++            total_size_bytes);
++    if (manifest.block_size_bytes != canonical_block_size) {
++        throw std::invalid_argument(
++            label + " uses a noncanonical block size");
++    }
++    const std::uint64_t block_count =
++        sync_replica_reconciliation_fixed_block_count_or_throw(
++            total_size_bytes, manifest.block_size_bytes);
++    if (manifest.block_sha256.size() !=
++        u64_to_size_or_throw(block_count, label + " block count")) {
++        throw std::invalid_argument(
++            label + " count does not cover the payload extent");
++    }
++    if (std::any_of(
++            manifest.block_sha256.begin(),
++            manifest.block_sha256.end(),
++            [](const std::string& digest) {
++                return !is_lowercase_sha256_hex(digest);
++            })) {
++        throw std::invalid_argument(
++            label + " contains an invalid digest");
++    }
++}
++
+ [[nodiscard]] bool response_disposition_is_known(
+     SyncReplicaReconciliationResponseDisposition disposition) noexcept {
+     switch (disposition) {
+@@ -570,6 +610,8 @@ private:
+         append_u64(body, request.payload_continuation->total_size_bytes);
+         append_u64(body, request.payload_continuation->next_offset_bytes);
+     }
++    append_optional_digest_field(
++        body, request.cached_fixed_block_manifest_digest);
+     append_u64(body, request.selective_sync_policy.generation);
+     append_u32(
+         body,
+@@ -629,6 +671,8 @@ private:
+         append_u64(body, payload.offset_bytes);
+         append_framed(body, payload.chunk_sha256);
+         append_framed(body, payload.bytes);
++        append_optional_digest_field(
++            body, payload.fixed_block_manifest_digest);
+         append_u32(body, payload.fixed_block_manifest.has_value() ? 1U : 0U);
+         if (payload.fixed_block_manifest.has_value()) {
+             append_u64(
+@@ -734,6 +778,8 @@ parse_selective_sync_mode_or_throw(
+         continuation.next_offset_bytes = reader.read_u64();
+         request.payload_continuation = std::move(continuation);
+     }
++    request.cached_fixed_block_manifest_digest =
++        reader.read_optional_digest("cached_fixed_block_manifest_digest");
+     request.selective_sync_policy.generation = reader.read_u64();
+     request.selective_sync_policy.default_mode =
+         parse_selective_sync_mode_or_throw(
+@@ -831,6 +877,8 @@ parse_selective_sync_mode_or_throw(
+             kSyncManifestSha256TextBytes, "payload_chunk_sha256");
+         payload.bytes = reader.read_string(
+             limits.max_single_payload_bytes, "payload_bytes");
++        payload.fixed_block_manifest_digest =
++            reader.read_optional_digest("payload_fixed_block_manifest_digest");
+         const std::uint32_t has_fixed_block_manifest = reader.read_u32();
+         if (has_fixed_block_manifest > 1U) {
+             throw std::runtime_error(
+@@ -944,6 +992,33 @@ std::uint64_t sync_replica_reconciliation_fixed_block_size_or_throw(
+     return block_size;
+ }
+ 
++std::string
++sync_replica_reconciliation_fixed_block_manifest_digest_or_throw(
++    std::string_view content_sha256,
++    std::uint64_t total_size_bytes,
++    const SyncReplicaReconciliationFixedBlockManifest& manifest) {
++    if (!is_lowercase_sha256_hex(content_sha256)) {
++        throw std::invalid_argument(
++            "sync replica reconciliation fixed-block manifest content digest is invalid");
++    }
++    validate_fixed_block_manifest_or_throw(
++        total_size_bytes, manifest,
++        "sync replica reconciliation fixed-block manifest");
++
++    Sha256DigestBuilder digest;
++    digest.update(kFixedBlockManifestDigestDomain);
++    append_digest_framed(digest, content_sha256);
++    digest.update(u64_be(total_size_bytes));
++    digest.update(u64_be(manifest.block_size_bytes));
++    digest.update(u64_be(size_to_u64_or_throw(
++        manifest.block_sha256.size(),
++        "sync replica reconciliation fixed-block manifest count")));
++    for (const std::string& block_digest : manifest.block_sha256) {
++        append_digest_framed(digest, block_digest);
++    }
++    return digest.finish_hex();
++}
++
+ SyncReplicaReconciliationPayload::SyncReplicaReconciliationPayload(
+     std::string content_digest,
+     std::string whole_payload)
+@@ -967,8 +1042,25 @@ SyncReplicaReconciliationPayload::SyncReplicaReconciliationPayload(
+       offset_bytes(offset),
+       chunk_sha256(std::move(chunk_digest)),
+       bytes(std::move(range_bytes)),
++      fixed_block_manifest_digest(
++          sync_replica_reconciliation_fixed_block_manifest_digest_or_throw(
++              content_sha256, total_size_bytes, manifest)),
+       fixed_block_manifest(std::move(manifest)) {}
+ 
++SyncReplicaReconciliationPayload::SyncReplicaReconciliationPayload(
++    std::string content_digest,
++    std::uint64_t total_size,
++    std::uint64_t offset,
++    std::string chunk_digest,
++    std::string range_bytes,
++    std::string manifest_digest)
++    : content_sha256(std::move(content_digest)),
++      total_size_bytes(total_size),
++      offset_bytes(offset),
++      chunk_sha256(std::move(chunk_digest)),
++      bytes(std::move(range_bytes)),
++      fixed_block_manifest_digest(std::move(manifest_digest)) {}
++
+ bool sync_replica_reconciliation_request_frame_has_magic(
+     std::string_view frame) noexcept {
+     return frame.starts_with(kRequestMagic);
+@@ -1039,6 +1131,17 @@ void validate_sync_replica_reconciliation_request_or_throw(
+                 "sync replica reconciliation request payload operation does not follow its cursor");
+         }
+     }
++    if (request.cached_fixed_block_manifest_digest.has_value()) {
++        if (!request.payload_continuation.has_value()) {
++            throw std::invalid_argument(
++                "sync replica reconciliation request cached fixed-block manifest has no payload continuation");
++        }
++        if (!is_lowercase_sha256_hex(
++                *request.cached_fixed_block_manifest_digest)) {
++            throw std::invalid_argument(
++                "sync replica reconciliation request cached fixed-block manifest digest is invalid");
++        }
++    }
+     validate_sync_replica_selective_sync_policy_or_throw(
+         request.selective_sync_policy,
+         "sync replica reconciliation request selective-sync policy");
+@@ -1207,50 +1310,42 @@ void validate_sync_replica_reconciliation_response_or_throw(
+                 "sync replica reconciliation response whole payload digest does not match its bytes");
+         }
+         if (whole) {
+-            if (payload.fixed_block_manifest.has_value()) {
++            if (payload.fixed_block_manifest_digest.has_value() ||
++                payload.fixed_block_manifest.has_value()) {
+                 throw std::invalid_argument(
+-                    "sync replica reconciliation whole payload carries an unnecessary fixed-block manifest");
++                    "sync replica reconciliation whole payload carries unnecessary fixed-block manifest authority");
+             }
+         } else {
+-            if (!payload.fixed_block_manifest.has_value()) {
++            if (!payload.fixed_block_manifest_digest.has_value() ||
++                !is_lowercase_sha256_hex(
++                    *payload.fixed_block_manifest_digest)) {
+                 throw std::invalid_argument(
+-                    "sync replica reconciliation ranged payload lacks its fixed-block manifest");
++                    "sync replica reconciliation ranged payload lacks a valid fixed-block manifest digest");
+             }
+-            const SyncReplicaReconciliationFixedBlockManifest& manifest =
+-                *payload.fixed_block_manifest;
+             const std::uint64_t canonical_block_size =
+                 sync_replica_reconciliation_fixed_block_size_or_throw(
+                     payload.total_size_bytes);
+-            if (manifest.block_size_bytes != canonical_block_size) {
+-                throw std::invalid_argument(
+-                    "sync replica reconciliation fixed-block manifest uses a noncanonical block size");
+-            }
+-            const std::uint64_t block_count =
+-                sync_replica_reconciliation_fixed_block_count_or_throw(
+-                    payload.total_size_bytes, manifest.block_size_bytes);
+-            if (manifest.block_sha256.size() !=
+-                u64_to_size_or_throw(
+-                    block_count,
+-                    "sync replica reconciliation fixed-block count")) {
+-                throw std::invalid_argument(
+-                    "sync replica reconciliation fixed-block manifest count does not cover the payload extent");
+-            }
+-            if (std::any_of(
+-                    manifest.block_sha256.begin(),
+-                    manifest.block_sha256.end(),
+-                    [](const std::string& digest) {
+-                        return !is_lowercase_sha256_hex(digest);
+-                    })) {
+-                throw std::invalid_argument(
+-                    "sync replica reconciliation fixed-block manifest contains an invalid digest");
++            if (payload.fixed_block_manifest.has_value()) {
++                validate_fixed_block_manifest_or_throw(
++                    payload.total_size_bytes,
++                    *payload.fixed_block_manifest,
++                    "sync replica reconciliation fixed-block manifest");
++                if (*payload.fixed_block_manifest_digest !=
++                    sync_replica_reconciliation_fixed_block_manifest_digest_or_throw(
++                        payload.content_sha256,
++                        payload.total_size_bytes,
++                        *payload.fixed_block_manifest)) {
++                    throw std::invalid_argument(
++                        "sync replica reconciliation fixed-block manifest digest does not match its complete manifest");
++                }
+             }
+             const std::uint64_t block_index =
+-                payload.offset_bytes / manifest.block_size_bytes;
++                payload.offset_bytes / canonical_block_size;
+             const std::uint64_t block_offset =
+-                block_index * manifest.block_size_bytes;
++                block_index * canonical_block_size;
+             const std::uint64_t block_length =
+                 std::min<std::uint64_t>(
+-                    manifest.block_size_bytes,
++                    canonical_block_size,
+                     payload.total_size_bytes - block_offset);
+             const std::uint64_t within_block =
+                 payload.offset_bytes - block_offset;
+@@ -1258,9 +1353,10 @@ void validate_sync_replica_reconciliation_response_or_throw(
+                 throw std::invalid_argument(
+                     "sync replica reconciliation ranged payload crosses its fixed-block boundary");
+             }
+-            if (within_block == 0U && bytes == block_length &&
++            if (payload.fixed_block_manifest.has_value() &&
++                within_block == 0U && bytes == block_length &&
+                 payload.chunk_sha256 !=
+-                    manifest.block_sha256[
++                    payload.fixed_block_manifest->block_sha256[
+                         u64_to_size_or_throw(
+                             block_index,
+                             "sync replica reconciliation fixed-block index")]) {
+@@ -1534,6 +1630,24 @@ void validate_sync_replica_reconciliation_response_for_request_or_throw(
+         throw std::runtime_error(
+             "sync replica reconciliation response metadata-only operation set does not match the exact requester policy");
+     }
++    for (const SyncReplicaReconciliationPayload& payload : response.payloads) {
++        const std::uint64_t bytes = static_cast<std::uint64_t>(
++            payload.bytes.size());
++        const bool whole = payload.offset_bytes == 0U &&
++                           bytes == payload.total_size_bytes;
++        if (whole) continue;
++        if (request.cached_fixed_block_manifest_digest.has_value()) {
++            if (payload.fixed_block_manifest_digest !=
++                    request.cached_fixed_block_manifest_digest ||
++                payload.fixed_block_manifest.has_value()) {
++                throw std::runtime_error(
++                    "sync replica reconciliation response did not honor the exact cached fixed-block manifest reference");
++            }
++        } else if (!payload.fixed_block_manifest.has_value()) {
++            throw std::runtime_error(
++                "sync replica reconciliation response omitted the complete fixed-block manifest without receiver cache authority");
++        }
++    }
+     if (request.payload_continuation.has_value()) {
+         const auto& continuation = *request.payload_continuation;
+         if (response.disposition ==
+diff --git a/src/sync_replica_reconciliation_protocol.hpp b/src/sync_replica_reconciliation_protocol.hpp
+index dbd3de4428fbb2712463739ce1bab58f983c7e37..6bec492a863cdc14187f95442c6dfc925b8222fe 100644
+--- a/src/sync_replica_reconciliation_protocol.hpp
++++ b/src/sync_replica_reconciliation_protocol.hpp
+@@ -13,7 +13,7 @@
+ 
+ namespace anonsync {
+ 
+-inline constexpr std::uint32_t kSyncReplicaReconciliationProtocolVersion = 4U;
++inline constexpr std::uint32_t kSyncReplicaReconciliationProtocolVersion = 5U;
+ // Fixed-block manifests are the first shipping delta-transfer authority. The
+ // minimum matches the ordinary bounded wire range; block size doubles only when
+ // needed to keep one active manifest below a constant 4,096-digest frontier.
+@@ -127,6 +127,14 @@ struct SyncReplicaReconciliationRequest final {
+     std::optional<std::string> expected_source_evidence_set_digest;
+     std::optional<SyncReplicaReconciliationPayloadContinuation>
+         payload_continuation;
++    // A receiver may retain the complete target fixed-block manifest in
++    // process across one bounded range continuation. Advertising its exact
++    // digest lets the source send only a constant-size reference instead of
++    // copying the complete 4,096-digest manifest into every response. This is
++    // deliberately request-local and non-durable: a restarted receiver omits
++    // the field and receives the complete manifest again before it can use
++    // local predecessor bytes.
++    std::optional<std::string> cached_fixed_block_manifest_digest;
+     // The requester, not the source, decides which visible file values require
+     // payload bytes. The complete bounded canonical policy is bound into every
+     // request digest so a cursor or range continuation cannot silently cross a
+@@ -150,6 +158,12 @@ struct SyncReplicaReconciliationFixedBlockManifest final {
+         const SyncReplicaReconciliationFixedBlockManifest&) const = default;
+ };
+ 
++[[nodiscard]] std::string
++sync_replica_reconciliation_fixed_block_manifest_digest_or_throw(
++    std::string_view content_sha256,
++    std::uint64_t total_size_bytes,
++    const SyncReplicaReconciliationFixedBlockManifest& manifest);
++
+ [[nodiscard]] std::uint64_t
+ sync_replica_reconciliation_fixed_block_size_or_throw(
+     std::uint64_t total_size_bytes);
+@@ -165,6 +179,10 @@ struct SyncReplicaReconciliationPayload final {
+     std::uint64_t offset_bytes = 0U;
+     std::string chunk_sha256;
+     std::string bytes;
++    // Every ranged payload carries the exact complete-manifest witness. The
++    // complete manifest itself is present only when the receiver did not prove
++    // an exact process-local cache in its request.
++    std::optional<std::string> fixed_block_manifest_digest;
+     std::optional<SyncReplicaReconciliationFixedBlockManifest>
+         fixed_block_manifest;
+ 
+@@ -179,6 +197,13 @@ struct SyncReplicaReconciliationPayload final {
+         std::string chunk_digest,
+         std::string range_bytes,
+         SyncReplicaReconciliationFixedBlockManifest manifest);
++    SyncReplicaReconciliationPayload(
++        std::string content_digest,
++        std::uint64_t total_size,
++        std::uint64_t offset,
++        std::string chunk_digest,
++        std::string range_bytes,
++        std::string manifest_digest);
+ 
+     bool operator==(const SyncReplicaReconciliationPayload&) const = default;
+ };
+diff --git a/src/sync_replica_reconciliation_service.cpp b/src/sync_replica_reconciliation_service.cpp
+index a3d69d399d770b39ac0db3ae10cb278b0de58362..a86b3860037938c59eae11b148d1570af1e24931 100644
+--- a/src/sync_replica_reconciliation_service.cpp
++++ b/src/sync_replica_reconciliation_service.cpp
+@@ -330,6 +330,17 @@ SyncReplicaReconciliationService::make_request_or_throw(
+     request.expected_source_evidence_set_digest =
+         std::move(expected_source_evidence_set_digest);
+     request.payload_continuation = std::move(payload_continuation);
++    if (request.payload_continuation.has_value() &&
++        delta_target_manifest_.has_value() &&
++        delta_target_manifest_->operation_id ==
++            request.payload_continuation->operation_id &&
++        delta_target_manifest_->content_sha256 ==
++            request.payload_continuation->content_sha256 &&
++        delta_target_manifest_->total_size_bytes ==
++            request.payload_continuation->total_size_bytes) {
++        request.cached_fixed_block_manifest_digest =
++            delta_target_manifest_->manifest_digest;
++    }
+     request.selective_sync_policy = selective_sync_policy_;
+     std::string frame =
+         encode_sync_replica_reconciliation_request_or_throw(
+@@ -397,6 +408,7 @@ SyncReplicaReconciliationService::serve_request_or_throw(
+         session.payload_snapshot_.reset();
+         session.payload_snapshot_source_evidence_set_digest_.reset();
+         session.fixed_block_manifest_.reset();
++        session.fixed_block_manifest_digest_.reset();
+         session.fixed_block_manifest_content_sha256_.reset();
+         session.fixed_block_manifest_total_size_bytes_ = 0U;
+         response.disposition =
+@@ -428,6 +440,7 @@ SyncReplicaReconciliationService::serve_request_or_throw(
+                 session.payload_snapshot_source_evidence_set_digest_ =
+                     page.source_evidence_set_digest;
+                 session.fixed_block_manifest_.reset();
++                session.fixed_block_manifest_digest_.reset();
+                 session.fixed_block_manifest_content_sha256_.reset();
+                 session.fixed_block_manifest_total_size_bytes_ = 0U;
+                 increment_or_throw(
+@@ -530,6 +543,7 @@ SyncReplicaReconciliationService::serve_request_or_throw(
+                         sync_replica_reconciliation_fixed_block_size_or_throw(
+                             operation.size_bytes);
+                     if (session.fixed_block_manifest_.has_value() &&
++                        session.fixed_block_manifest_digest_.has_value() &&
+                         session.fixed_block_manifest_content_sha256_ ==
+                             std::optional<std::string>(
+                                 operation.content_sha256) &&
+@@ -558,6 +572,11 @@ SyncReplicaReconciliationService::serve_request_or_throw(
+                         manifest.block_sha256 =
+                             std::move(projected.block_sha256);
+                         session.fixed_block_manifest_ = std::move(manifest);
++                        session.fixed_block_manifest_digest_ =
++                            sync_replica_reconciliation_fixed_block_manifest_digest_or_throw(
++                                operation.content_sha256,
++                                operation.size_bytes,
++                                *session.fixed_block_manifest_);
+                         session.fixed_block_manifest_content_sha256_ =
+                             operation.content_sha256;
+                         session.fixed_block_manifest_total_size_bytes_ =
+@@ -597,15 +616,42 @@ SyncReplicaReconciliationService::serve_request_or_throw(
+                     const std::uint64_t next_offset =
+                         range.offset_bytes +
+                         static_cast<std::uint64_t>(range.bytes.size());
+-                    payloads_by_digest.emplace(
+-                        operation.content_sha256,
+-                        SyncReplicaReconciliationPayload{
+-                            std::move(range.content_sha256),
+-                            range.total_size_bytes,
+-                            range.offset_bytes,
+-                            std::move(range.chunk_sha256),
+-                            std::move(range.bytes),
+-                            *session.fixed_block_manifest_});
++                    if (!session.fixed_block_manifest_digest_.has_value()) {
++                        throw std::logic_error(
++                            label_ + " fixed-block manifest lost its canonical digest");
++                    }
++                    if (request.cached_fixed_block_manifest_digest.has_value()) {
++                        if (*request.cached_fixed_block_manifest_digest !=
++                            *session.fixed_block_manifest_digest_) {
++                            throw std::runtime_error(
++                                label_ + " requested fixed-block manifest cache does not match current source bytes");
++                        }
++                        payloads_by_digest.emplace(
++                            operation.content_sha256,
++                            SyncReplicaReconciliationPayload{
++                                std::move(range.content_sha256),
++                                range.total_size_bytes,
++                                range.offset_bytes,
++                                std::move(range.chunk_sha256),
++                                std::move(range.bytes),
++                                *session.fixed_block_manifest_digest_});
++                        increment_or_throw(
++                            session.fixed_block_manifest_references_,
++                            label_ + " fixed-block manifest reference");
++                    } else {
++                        payloads_by_digest.emplace(
++                            operation.content_sha256,
++                            SyncReplicaReconciliationPayload{
++                                std::move(range.content_sha256),
++                                range.total_size_bytes,
++                                range.offset_bytes,
++                                std::move(range.chunk_sha256),
++                                std::move(range.bytes),
++                                *session.fixed_block_manifest_});
++                        increment_or_throw(
++                            session.fixed_block_manifest_publications_,
++                            label_ + " fixed-block manifest publication");
++                    }
+                     response.operations.push_back(operation);
+                     if (next_offset < operation.size_bytes) {
+                         response.payload_continuation =
+@@ -694,9 +740,8 @@ SyncReplicaReconciliationService::apply_response_or_throw(
+ 
+     if (response.disposition ==
+         SyncReplicaReconciliationResponseDisposition::SourceChanged) {
++        delta_target_manifest_.reset();
+         delta_predecessor_manifest_.reset();
+-        delta_target_operation_id_.reset();
+-        delta_predecessor_operation_id_.reset();
+         result.disposition =
+             SyncReplicaReconciliationApplyDisposition::SourceChanged;
+         return result;
+@@ -711,18 +756,89 @@ SyncReplicaReconciliationService::apply_response_or_throw(
+ 
+     std::optional<SyncReplicaFilePayloadStoreTargetedAccess>
+         delta_targeted_access;
+-    auto reuse_predecessor_blocks_or_throw = [&](
+-        const SyncReplicaOperation& operation,
+-        const SyncReplicaReconciliationPayload& wire,
+-        ReceivedFilePayloadResult& received) {
++
++    auto reset_delta_caches = [&]() noexcept {
++        delta_target_manifest_.reset();
++        delta_predecessor_manifest_.reset();
++    };
++
++    auto target_manifest_for_wire_or_throw = [&]
++        (const SyncReplicaOperation& operation,
++         const SyncReplicaReconciliationPayload& wire)
++        -> const SyncReplicaReconciliationFixedBlockManifest* {
++        const bool whole =
++            wire.offset_bytes == 0U &&
++            static_cast<std::uint64_t>(wire.bytes.size()) ==
++                wire.total_size_bytes;
++        if (whole) return nullptr;
++        if (!wire.fixed_block_manifest_digest.has_value()) {
++            throw std::logic_error(
++                label_ + " validated ranged payload lost its manifest digest");
++        }
++
++        if (wire.fixed_block_manifest.has_value()) {
++            if (delta_target_manifest_.has_value() &&
++                delta_target_manifest_->operation_id != operation.operation_id) {
++                delta_predecessor_manifest_.reset();
++            }
++            delta_target_manifest_ = CachedTargetFixedBlockManifest{
++                operation.operation_id,
++                operation.content_sha256,
++                operation.size_bytes,
++                *wire.fixed_block_manifest_digest,
++                *wire.fixed_block_manifest};
++            increment_or_throw(
++                result.target_fixed_block_manifest_publications,
++                label_ + " target fixed-block manifest publication");
++        } else {
++            if (!delta_target_manifest_.has_value() ||
++                delta_target_manifest_->operation_id != operation.operation_id ||
++                delta_target_manifest_->content_sha256 !=
++                    operation.content_sha256 ||
++                delta_target_manifest_->total_size_bytes !=
++                    operation.size_bytes ||
++                delta_target_manifest_->manifest_digest !=
++                    *wire.fixed_block_manifest_digest) {
++                throw std::runtime_error(
++                    label_ + " ranged payload references a fixed-block manifest absent from this receiver process");
++            }
++            increment_or_throw(
++                result.target_fixed_block_manifest_reuses,
++                label_ + " target fixed-block manifest reuse");
++        }
++        const SyncReplicaReconciliationFixedBlockManifest& retained =
++            delta_target_manifest_->manifest;
++        const std::uint64_t block_index =
++            wire.offset_bytes / retained.block_size_bytes;
++        if (block_index >= retained.block_sha256.size()) {
++            throw std::logic_error(
++                label_ + " retained target manifest lost the referenced block");
++        }
++        const std::uint64_t block_offset =
++            block_index * retained.block_size_bytes;
++        const std::uint64_t block_length =
++            fixed_block_length_or_throw(
++                wire.total_size_bytes, retained.block_size_bytes,
++                block_index, label_ + " retained delta target");
++        if (wire.offset_bytes == block_offset &&
++            static_cast<std::uint64_t>(wire.bytes.size()) == block_length &&
++            wire.chunk_sha256 != retained.block_sha256[
++                static_cast<std::size_t>(block_index)]) {
++            throw std::runtime_error(
++                label_ + " ranged payload bytes do not match the retained fixed-block manifest reference");
++        }
++        return &delta_target_manifest_->manifest;
++    };
++
++    auto reuse_predecessor_blocks_or_throw = [&]
++        (const SyncReplicaOperation& operation,
++         const SyncReplicaReconciliationFixedBlockManifest& target_manifest,
++         ReceivedFilePayloadResult& received) {
+         if (received.disposition !=
+                 ReceivedFilePayloadDisposition::Progress ||
+-            !wire.fixed_block_manifest.has_value() ||
+             operation.predecessor_operation_ids.empty()) {
+             return;
+         }
+-        const SyncReplicaReconciliationFixedBlockManifest& target_manifest =
+-            *wire.fixed_block_manifest;
+         std::uint64_t target_offset = received.next_offset_bytes;
+         if (target_offset >= operation.size_bytes ||
+             target_offset % target_manifest.block_size_bytes != 0U) {
+@@ -732,11 +848,11 @@ SyncReplicaReconciliationService::apply_response_or_throw(
+         const SyncReplicaOperation* candidate = nullptr;
+         const SyncReplicaFilePayloadStoreFixedBlockManifest*
+             candidate_manifest = nullptr;
+-        if (delta_target_operation_id_ !=
+-            std::optional<std::string>(operation.operation_id)) {
++        const std::vector<std::size_t>* candidate_indices = nullptr;
++        if (delta_predecessor_manifest_.has_value() &&
++            delta_predecessor_manifest_->target_operation_id !=
++                operation.operation_id) {
+             delta_predecessor_manifest_.reset();
+-            delta_target_operation_id_.reset();
+-            delta_predecessor_operation_id_.reset();
+         }
+         if (!delta_targeted_access.has_value()) {
+             delta_targeted_access.emplace(
+@@ -755,19 +871,22 @@ SyncReplicaReconciliationService::apply_response_or_throw(
+                 continue;
+             }
+             if (delta_predecessor_manifest_.has_value() &&
+-                delta_target_operation_id_ ==
+-                    std::optional<std::string>(operation.operation_id) &&
+-                delta_predecessor_operation_id_ ==
+-                    std::optional<std::string>(observed->operation_id) &&
+-                delta_predecessor_manifest_->block_size_bytes ==
++                delta_predecessor_manifest_->target_operation_id ==
++                    operation.operation_id &&
++                delta_predecessor_manifest_->predecessor_operation_id ==
++                    observed->operation_id &&
++                delta_predecessor_manifest_->manifest.block_size_bytes ==
+                     target_manifest.block_size_bytes &&
+-                delta_predecessor_manifest_->content_sha256 ==
++                delta_predecessor_manifest_->manifest.content_sha256 ==
+                     observed->content_sha256 &&
+-                delta_predecessor_manifest_->total_size_bytes ==
++                delta_predecessor_manifest_->manifest.total_size_bytes ==
+                     observed->size_bytes) {
+                 increment_or_throw(
+                     result.delta_predecessor_manifest_reuses,
+                     label_ + " delta predecessor manifest reuse");
++                increment_or_throw(
++                    result.delta_predecessor_index_reuses,
++                    label_ + " delta predecessor index reuse");
+             } else {
+                 std::optional<SyncReplicaFilePayloadStoreOpenedPayload> opened =
+                     delta_targeted_access
+@@ -775,14 +894,35 @@ SyncReplicaReconciliationService::apply_response_or_throw(
+                             *observed,
+                             label_ + " delta predecessor selection");
+                 if (!opened.has_value()) continue;
+-                delta_predecessor_manifest_ =
++                CachedPredecessorFixedBlockManifest projected;
++                projected.target_operation_id = operation.operation_id;
++                projected.predecessor_operation_id = observed->operation_id;
++                projected.manifest =
+                     opened->fixed_block_manifest_or_throw(
+                         target_manifest.block_size_bytes,
+                         kSyncReplicaReconciliationMaximumFixedBlocks,
+                         label_ +
+                             " delta predecessor fixed-block projection");
+-                delta_target_operation_id_ = operation.operation_id;
+-                delta_predecessor_operation_id_ = observed->operation_id;
++                projected.digest_order.resize(
++                    projected.manifest.block_sha256.size());
++                std::iota(
++                    projected.digest_order.begin(),
++                    projected.digest_order.end(),
++                    static_cast<std::size_t>(0U));
++                std::sort(
++                    projected.digest_order.begin(),
++                    projected.digest_order.end(),
++                    [&](std::size_t left, std::size_t right) {
++                        const std::string& left_digest =
++                            projected.manifest.block_sha256[left];
++                        const std::string& right_digest =
++                            projected.manifest.block_sha256[right];
++                        if (left_digest != right_digest) {
++                            return left_digest < right_digest;
++                        }
++                        return left < right;
++                    });
++                delta_predecessor_manifest_ = std::move(projected);
+                 increment_or_throw(
+                     result.delta_predecessor_manifest_scans,
+                     label_ + " delta predecessor manifest scan");
+@@ -790,30 +930,19 @@ SyncReplicaReconciliationService::apply_response_or_throw(
+                     result.delta_predecessor_manifest_hashed_bytes,
+                     observed->size_bytes,
+                     label_ + " delta predecessor manifest hashed bytes");
++                increment_or_throw(
++                    result.delta_predecessor_index_builds,
++                    label_ + " delta predecessor index build");
+             }
+-            candidate_manifest = &*delta_predecessor_manifest_;
++            candidate_manifest = &delta_predecessor_manifest_->manifest;
++            candidate_indices = &delta_predecessor_manifest_->digest_order;
+             candidate = observed;
+             break;
+         }
+-        if (candidate == nullptr || candidate_manifest == nullptr) return;
+-
+-        std::vector<std::size_t> candidate_indices(
+-            candidate_manifest->block_sha256.size());
+-        std::iota(
+-            candidate_indices.begin(), candidate_indices.end(),
+-            static_cast<std::size_t>(0U));
+-        std::sort(
+-            candidate_indices.begin(), candidate_indices.end(),
+-            [&](std::size_t left, std::size_t right) {
+-                const std::string& left_digest =
+-                    candidate_manifest->block_sha256[left];
+-                const std::string& right_digest =
+-                    candidate_manifest->block_sha256[right];
+-                if (left_digest != right_digest) {
+-                    return left_digest < right_digest;
+-                }
+-                return left < right;
+-            });
++        if (candidate == nullptr || candidate_manifest == nullptr ||
++            candidate_indices == nullptr) {
++            return;
++        }
+ 
+         auto matching_candidate_block = [&]()
+             -> std::optional<std::uint64_t> {
+@@ -833,13 +962,13 @@ SyncReplicaReconciliationService::apply_response_or_throw(
+                     target_manifest.block_size_bytes,
+                     target_block_index, label_ + " delta target");
+             auto found = std::lower_bound(
+-                candidate_indices.begin(), candidate_indices.end(),
++                candidate_indices->begin(), candidate_indices->end(),
+                 std::string_view(target_digest),
+                 [&](std::size_t candidate_index, std::string_view digest) {
+                     return candidate_manifest
+                                ->block_sha256[candidate_index] < digest;
+                 });
+-            while (found != candidate_indices.end() &&
++            while (found != candidate_indices->end() &&
+                    candidate_manifest->block_sha256[*found] ==
+                        target_digest) {
+                 const std::uint64_t candidate_index =
+@@ -987,17 +1116,21 @@ SyncReplicaReconciliationService::apply_response_or_throw(
+                     label_ + " validated response lost a required payload range");
+             }
+             const SyncReplicaReconciliationPayload& wire = *payload->second;
++            const SyncReplicaReconciliationFixedBlockManifest*
++                target_manifest =
++                    target_manifest_for_wire_or_throw(operation, wire);
+             received_file_payload = receive_file_payload_or_throw(
+                 payload_store_, operation, wire, result, label_);
+-            reuse_predecessor_blocks_or_throw(
+-                operation, wire, *received_file_payload);
++            if (target_manifest != nullptr) {
++                reuse_predecessor_blocks_or_throw(
++                    operation, *target_manifest, *received_file_payload);
++            }
+             if (received_file_payload->disposition ==
+                     ReceivedFilePayloadDisposition::Complete &&
+-                delta_target_operation_id_ ==
+-                    std::optional<std::string>(operation.operation_id)) {
+-                delta_predecessor_manifest_.reset();
+-                delta_target_operation_id_.reset();
+-                delta_predecessor_operation_id_.reset();
++                delta_target_manifest_.has_value() &&
++                delta_target_manifest_->operation_id ==
++                    operation.operation_id) {
++                reset_delta_caches();
+             }
+             if (received_file_payload->disposition ==
+                 ReceivedFilePayloadDisposition::Progress) {
+diff --git a/src/sync_replica_reconciliation_service.hpp b/src/sync_replica_reconciliation_service.hpp
+index f7ecb83397ba525880432a7a36d9faf3b852e377..00000bf9926216a4876f87176e2982799d588ec6 100644
+--- a/src/sync_replica_reconciliation_service.hpp
++++ b/src/sync_replica_reconciliation_service.hpp
+@@ -7,10 +7,12 @@
+ #include "sync_replica_reconciliation_protocol.hpp"
+ #include "sync_replica_sqlite_owner.hpp"
+ 
++#include <cstddef>
+ #include <cstdint>
+ #include <optional>
+ #include <string>
+ #include <string_view>
++#include <vector>
+ 
+ namespace anonsync {
+ 
+@@ -69,6 +71,14 @@ public:
+         return fixed_block_manifest_hashed_bytes_;
+     }
+ 
++    [[nodiscard]] std::uint64_t fixed_block_manifest_publications() const noexcept {
++        return fixed_block_manifest_publications_;
++    }
++
++    [[nodiscard]] std::uint64_t fixed_block_manifest_references() const noexcept {
++        return fixed_block_manifest_references_;
++    }
++
+ private:
+     SyncReplicaReconciliationServeSession(
+         std::string folder_id,
+@@ -84,6 +94,7 @@ private:
+     std::optional<std::string> payload_snapshot_source_evidence_set_digest_;
+     std::optional<SyncReplicaReconciliationFixedBlockManifest>
+         fixed_block_manifest_;
++    std::optional<std::string> fixed_block_manifest_digest_;
+     std::optional<std::string> fixed_block_manifest_content_sha256_;
+     std::uint64_t fixed_block_manifest_total_size_bytes_ = 0U;
+     std::uint64_t payload_snapshot_scans_ = 0U;
+@@ -91,6 +102,8 @@ private:
+     std::uint64_t fixed_block_manifest_scans_ = 0U;
+     std::uint64_t fixed_block_manifest_reuses_ = 0U;
+     std::uint64_t fixed_block_manifest_hashed_bytes_ = 0U;
++    std::uint64_t fixed_block_manifest_publications_ = 0U;
++    std::uint64_t fixed_block_manifest_references_ = 0U;
+ 
+     friend class SyncReplicaReconciliationService;
+ };
+@@ -121,6 +134,10 @@ struct SyncReplicaReconciliationApplyResult final {
+     std::uint64_t delta_predecessor_manifest_scans = 0U;
+     std::uint64_t delta_predecessor_manifest_reuses = 0U;
+     std::uint64_t delta_predecessor_manifest_hashed_bytes = 0U;
++    std::uint64_t target_fixed_block_manifest_publications = 0U;
++    std::uint64_t target_fixed_block_manifest_reuses = 0U;
++    std::uint64_t delta_predecessor_index_builds = 0U;
++    std::uint64_t delta_predecessor_index_reuses = 0U;
+     std::uint64_t source_state_generation = 0U;
+     std::uint64_t source_evidence_count = 0U;
+     std::string source_evidence_set_digest;
+@@ -202,6 +219,24 @@ public:
+         std::string_view response_frame);
+ 
+ private:
++    struct CachedTargetFixedBlockManifest final {
++        std::string operation_id;
++        std::string content_sha256;
++        std::uint64_t total_size_bytes = 0U;
++        std::string manifest_digest;
++        SyncReplicaReconciliationFixedBlockManifest manifest;
++    };
++
++    struct CachedPredecessorFixedBlockManifest final {
++        std::string target_operation_id;
++        std::string predecessor_operation_id;
++        SyncReplicaFilePayloadStoreFixedBlockManifest manifest;
++        // Stable digest order for lower_bound. Building this vector once per
++        // predecessor avoids allocating and sorting 4,096 indices for every
++        // bounded wire range of one large target payload.
++        std::vector<std::size_t> digest_order;
++    };
++
+     [[nodiscard]] SyncReplicaSqliteSnapshot snapshot_or_throw(
+         const std::string& operation_label);
+ 
+@@ -226,10 +261,10 @@ private:
+     // reused range is reopened and re-proved; this cache only avoids hashing a
+     // multi-terabyte predecessor once per wire range. It is not durable or
+     // admission authority and remains bounded by 4,096 digests.
+-    std::optional<SyncReplicaFilePayloadStoreFixedBlockManifest>
++    std::optional<CachedTargetFixedBlockManifest>
++        delta_target_manifest_;
++    std::optional<CachedPredecessorFixedBlockManifest>
+         delta_predecessor_manifest_;
+-    std::optional<std::string> delta_target_operation_id_;
+-    std::optional<std::string> delta_predecessor_operation_id_;
+ };
+ 
+ }  // namespace anonsync
+diff --git a/src/sync_replica_reconciliation_tls_exchange.cpp b/src/sync_replica_reconciliation_tls_exchange.cpp
+index f3a7c8a2b2e77d68f2f2d9c137e81af11d0b841e..418cecc4313f8bbd7c7e72377a6ae3583326c975 100644
+--- a/src/sync_replica_reconciliation_tls_exchange.cpp
++++ b/src/sync_replica_reconciliation_tls_exchange.cpp
+@@ -119,6 +119,22 @@ void observe_apply_result(
+         result.delta_predecessor_manifest_hashed_bytes,
+         applied.delta_predecessor_manifest_hashed_bytes,
+         "reconciliation TLS delta-predecessor-manifest-hashed-bytes");
++    add_or_throw(
++        result.target_fixed_block_manifest_publications,
++        applied.target_fixed_block_manifest_publications,
++        "reconciliation TLS target-fixed-block-manifest-publications");
++    add_or_throw(
++        result.target_fixed_block_manifest_reuses,
++        applied.target_fixed_block_manifest_reuses,
++        "reconciliation TLS target-fixed-block-manifest-reuses");
++    add_or_throw(
++        result.delta_predecessor_index_builds,
++        applied.delta_predecessor_index_builds,
++        "reconciliation TLS delta-predecessor-index-builds");
++    add_or_throw(
++        result.delta_predecessor_index_reuses,
++        applied.delta_predecessor_index_reuses,
++        "reconciliation TLS delta-predecessor-index-reuses");
+     result.source_state_generation = applied.source_state_generation;
+     result.source_evidence_count = applied.source_evidence_count;
+     result.source_evidence_set_digest = applied.source_evidence_set_digest;
+@@ -241,6 +257,10 @@ SyncReplicaReconciliationTlsServeResult serve_impl_or_throw(
+                 serve_session.fixed_block_manifest_reuses();
+             result.fixed_block_manifest_hashed_bytes =
+                 serve_session.fixed_block_manifest_hashed_bytes();
++            result.fixed_block_manifest_publications =
++                serve_session.fixed_block_manifest_publications();
++            result.fixed_block_manifest_references =
++                serve_session.fixed_block_manifest_references();
+             observe_served_response(inbound.response, result);
+ 
+             const SyncReplicaTlsRecordWriteUntilResult write =
+diff --git a/src/sync_replica_reconciliation_tls_exchange.hpp b/src/sync_replica_reconciliation_tls_exchange.hpp
+index b8c674f8ceabf1aea5d6ec0cc8265139aa760f95..f7a4d02c87a378e838614cc63ae3748ee9ee104c 100644
+--- a/src/sync_replica_reconciliation_tls_exchange.hpp
++++ b/src/sync_replica_reconciliation_tls_exchange.hpp
+@@ -67,6 +67,10 @@ struct SyncReplicaReconciliationTlsPullResult final {
+     std::uint64_t delta_predecessor_manifest_scans = 0U;
+     std::uint64_t delta_predecessor_manifest_reuses = 0U;
+     std::uint64_t delta_predecessor_manifest_hashed_bytes = 0U;
++    std::uint64_t target_fixed_block_manifest_publications = 0U;
++    std::uint64_t target_fixed_block_manifest_reuses = 0U;
++    std::uint64_t delta_predecessor_index_builds = 0U;
++    std::uint64_t delta_predecessor_index_reuses = 0U;
+     std::uint64_t request_frame_bytes_written = 0U;
+     std::uint64_t response_frame_bytes_received = 0U;
+     std::uint64_t source_state_generation = 0U;
+@@ -125,6 +129,8 @@ struct SyncReplicaReconciliationTlsServeResult final {
+     std::uint64_t fixed_block_manifest_scans = 0U;
+     std::uint64_t fixed_block_manifest_reuses = 0U;
+     std::uint64_t fixed_block_manifest_hashed_bytes = 0U;
++    std::uint64_t fixed_block_manifest_publications = 0U;
++    std::uint64_t fixed_block_manifest_references = 0U;
+     std::uint64_t request_frame_bytes_received = 0U;
+     std::uint64_t response_frame_bytes_written = 0U;
+     std::uint64_t source_state_generation = 0U;
+diff --git a/tests/sync_replica_reconciliation_protocol_test.cpp b/tests/sync_replica_reconciliation_protocol_test.cpp
+index 1b1bc9fdec69578a5ecec8ce9dada457cde2f352..c3b21b5a9805ff27b2f2c1dc7258992649f74cd5 100644
+--- a/tests/sync_replica_reconciliation_protocol_test.cpp
++++ b/tests/sync_replica_reconciliation_protocol_test.cpp
+@@ -346,6 +346,10 @@ void test_bounded_payload_continuation_round_trip() {
+     require(operations.size() == 1U,
+             "range fixture did not create one source operation");
+     const auto& operation = operations.front();
++    const auto manifest = fixed_block_manifest_for(payload);
++    const std::string manifest_digest =
++        anonsync::sync_replica_reconciliation_fixed_block_manifest_digest_or_throw(
++            operation.content_sha256, operation.size_bytes, manifest);
+ 
+     anonsync::SyncReplicaReconciliationRequest initial;
+     initial.folder_id = folder;
+@@ -375,10 +379,16 @@ void test_bounded_payload_continuation_round_trip() {
+         response.source_evidence_count = 1U;
+         response.source_evidence_set_digest = model.evidence_set_digest();
+         response.operations.push_back(operation);
+-        response.payloads.emplace_back(
+-            operation.content_sha256, operation.size_bytes, offset,
+-            anonsync::sha256_hex(bytes), std::move(bytes),
+-            fixed_block_manifest_for(payload));
++        if (request.cached_fixed_block_manifest_digest.has_value()) {
++            response.payloads.emplace_back(
++                operation.content_sha256, operation.size_bytes, offset,
++                anonsync::sha256_hex(bytes), std::move(bytes),
++                *request.cached_fixed_block_manifest_digest);
++        } else {
++            response.payloads.emplace_back(
++                operation.content_sha256, operation.size_bytes, offset,
++                anonsync::sha256_hex(bytes), std::move(bytes), manifest);
++        }
+         response.has_more = has_more;
+         if (next_offset.has_value()) {
+             response.payload_continuation =
+@@ -403,6 +413,8 @@ void test_bounded_payload_continuation_round_trip() {
+         "initial bounded range response did not survive canonical framing");
+     require(
+         first.payloads.front().fixed_block_manifest.has_value() &&
++            first.payloads.front().fixed_block_manifest_digest ==
++                std::optional<std::string>(manifest_digest) &&
+             first.payloads.front().fixed_block_manifest->block_size_bytes ==
+                 anonsync::kSyncReplicaReconciliationMinimumFixedBlockBytes &&
+             first.payloads.front().fixed_block_manifest->block_sha256 ==
+@@ -412,6 +424,7 @@ void test_bounded_payload_continuation_round_trip() {
+     anonsync::SyncReplicaReconciliationRequest continued = initial;
+     continued.expected_source_evidence_set_digest = model.evidence_set_digest();
+     continued.payload_continuation = first.payload_continuation;
++    continued.cached_fixed_block_manifest_digest = manifest_digest;
+     const std::string continued_frame =
+         anonsync::encode_sync_replica_reconciliation_request_or_throw(
+             continued, configured);
+@@ -423,10 +436,16 @@ void test_bounded_payload_continuation_round_trip() {
+     const auto second = response_for(continued, 4U, "efgh", 8U, true);
+     anonsync::validate_sync_replica_reconciliation_response_for_request_or_throw(
+         second, continued, configured);
++    require(
++        second.payloads.front().fixed_block_manifest_digest ==
++                std::optional<std::string>(manifest_digest) &&
++            !second.payloads.front().fixed_block_manifest.has_value(),
++        "continued bounded range copied the complete fixed-block manifest instead of its exact reference");
+ 
+     anonsync::SyncReplicaReconciliationRequest final_request = initial;
+     final_request.expected_source_evidence_set_digest = model.evidence_set_digest();
+     final_request.payload_continuation = second.payload_continuation;
++    final_request.cached_fixed_block_manifest_digest = manifest_digest;
+     const auto final_response =
+         response_for(final_request, 8U, "ij", std::nullopt, false);
+     anonsync::validate_sync_replica_reconciliation_response_for_request_or_throw(
+@@ -478,17 +497,17 @@ void test_bounded_payload_continuation_round_trip() {
+         "exact range",
+         "response continuation skipped a payload byte");
+ 
+-    auto missing_manifest = second;
++    auto missing_manifest = first;
+     missing_manifest.payloads.front().fixed_block_manifest.reset();
+     require_error(
+         [&] {
+-            anonsync::validate_sync_replica_reconciliation_response_or_throw(
+-                missing_manifest, configured);
++            anonsync::validate_sync_replica_reconciliation_response_for_request_or_throw(
++                missing_manifest, initial, configured);
+         },
+-        "lacks its fixed-block manifest",
+-        "ranged payload without a fixed-block manifest was accepted");
++        "omitted the complete fixed-block manifest",
++        "ranged payload omitted its complete manifest without receiver cache authority");
+ 
+-    auto noncanonical_manifest = second;
++    auto noncanonical_manifest = first;
+     noncanonical_manifest.payloads.front()
+         .fixed_block_manifest->block_size_bytes *= 2U;
+     require_error(
+@@ -499,7 +518,7 @@ void test_bounded_payload_continuation_round_trip() {
+         "noncanonical block size",
+         "ranged payload accepted a noncanonical fixed-block size");
+ 
+-    auto missing_block = second;
++    auto missing_block = first;
+     missing_block.payloads.front().fixed_block_manifest->block_sha256.clear();
+     require_error(
+         [&] {
+@@ -509,7 +528,7 @@ void test_bounded_payload_continuation_round_trip() {
+         "count does not cover",
+         "ranged payload accepted an incomplete fixed-block manifest");
+ 
+-    auto invalid_block_digest = second;
++    auto invalid_block_digest = first;
+     invalid_block_digest.payloads.front()
+         .fixed_block_manifest->block_sha256.front() = "not-a-digest";
+     require_error(
+@@ -540,10 +559,11 @@ void test_bounded_payload_continuation_round_trip() {
+             anonsync::validate_sync_replica_reconciliation_response_for_request_or_throw(
+                 replayed_first, continued, configured);
+         },
+-        "exact requested payload",
+-        "continued request accepted a replay of the first range");
++        "cached fixed-block manifest reference",
++        "continued request accepted a full-manifest replay instead of its exact reference");
+ 
+-    auto nonzero_initial = second;
++    auto nonzero_initial =
++        response_for(initial, 4U, "efgh", 8U, true);
+     nonzero_initial.request_digest =
+         anonsync::sync_replica_reconciliation_request_digest_or_throw(
+             initial, configured);
+@@ -555,6 +575,28 @@ void test_bounded_payload_continuation_round_trip() {
+         "nonzero offset",
+         "initial request accepted a nonzero payload range");
+ 
++    auto wrong_reference = second;
++    wrong_reference.payloads.front().fixed_block_manifest_digest =
++        anonsync::sha256_hex("another-manifest");
++    require_error(
++        [&] {
++            anonsync::validate_sync_replica_reconciliation_response_for_request_or_throw(
++                wrong_reference, continued, configured);
++        },
++        "cached fixed-block manifest reference",
++        "continued request accepted a different manifest reference");
++
++    auto cached_without_continuation = initial;
++    cached_without_continuation.cached_fixed_block_manifest_digest =
++        manifest_digest;
++    require_error(
++        [&] {
++            anonsync::validate_sync_replica_reconciliation_request_or_throw(
++                cached_without_continuation, configured);
++        },
++        "has no payload continuation",
++        "initial request advertised an unbound manifest cache");
++
+     auto incomplete_final = final_response;
+     incomplete_final.next_after_operation_id.reset();
+     require_error(
+@@ -566,6 +608,132 @@ void test_bounded_payload_continuation_round_trip() {
+         "final payload range did not have to advance its operation cursor");
+ }
+ 
++void test_maximum_extent_manifest_reference_has_constant_wire_shape() {
++    auto configured = limits();
++    configured.max_single_payload_bytes =
++        anonsync::kSyncReplicaReconciliationDefaultMaxSinglePayloadBytes;
++    configured.max_payload_bytes_per_page =
++        configured.max_single_payload_bytes;
++    configured.max_payload_extent_bytes =
++        anonsync::kSyncReplicaMaximumPayloadExtentBytes;
++    anonsync::validate_sync_replica_reconciliation_protocol_limits_or_throw(
++        configured);
++
++    const std::string folder = "folder-reconciliation-maximum-manifest";
++    const anonsync::SyncReplicaActor requester{
++        "device-reconciliation-maximum-requester", 9251U};
++    const anonsync::SyncReplicaActor responder{
++        "device-reconciliation-maximum-responder", 9252U};
++    const std::uint64_t total_size =
++        anonsync::kSyncReplicaMaximumPayloadExtentBytes;
++    const std::string content_digest =
++        anonsync::sha256_hex("logical-four-tib-payload");
++
++    anonsync::SyncReplicaModel model(folder, responder, configured.model);
++    const anonsync::SyncReplicaOperation operation =
++        model.create_local_file_or_throw(
++            "media/four-tib-shape.bin", total_size, content_digest);
++
++    anonsync::SyncReplicaReconciliationFixedBlockManifest manifest;
++    manifest.block_size_bytes =
++        anonsync::sync_replica_reconciliation_fixed_block_size_or_throw(
++            total_size);
++    manifest.block_sha256.reserve(static_cast<std::size_t>(
++        anonsync::kSyncReplicaReconciliationMaximumFixedBlocks));
++    for (std::uint64_t index = 0U;
++         index < anonsync::kSyncReplicaReconciliationMaximumFixedBlocks;
++         ++index) {
++        manifest.block_sha256.push_back(
++            anonsync::sha256_hex("logical-block-" + std::to_string(index)));
++    }
++    const std::string manifest_digest =
++        anonsync::sync_replica_reconciliation_fixed_block_manifest_digest_or_throw(
++            content_digest, total_size, manifest);
++    require(
++        manifest.block_size_bytes ==
++                anonsync::kSyncReplicaReconciliationMaximumFixedBlockBytes &&
++            manifest.block_sha256.size() ==
++                anonsync::kSyncReplicaReconciliationMaximumFixedBlocks,
++        "maximum payload extent did not produce the canonical 4,096-block manifest");
++
++    anonsync::SyncReplicaReconciliationRequest initial;
++    initial.folder_id = folder;
++    initial.requester_actor = requester;
++    initial.responder_actor = responder;
++    initial.channel_binding =
++        anonsync::make_sync_replica_delivery_channel_binding_or_throw(
++            "test-channel", "reconciliation-maximum-manifest");
++
++    anonsync::SyncReplicaReconciliationResponse full;
++    full.folder_id = folder;
++    full.requester_actor = requester;
++    full.responder_actor = responder;
++    full.channel_binding = initial.channel_binding;
++    full.request_digest =
++        anonsync::sync_replica_reconciliation_request_digest_or_throw(
++            initial, configured);
++    full.source_state_generation = 29U;
++    full.source_evidence_count = 1U;
++    full.source_evidence_set_digest = model.evidence_set_digest();
++    full.operations.push_back(operation);
++    full.payloads.emplace_back(
++        content_digest, total_size, 0U, anonsync::sha256_hex("x"), "x",
++        manifest);
++    full.has_more = true;
++    full.payload_continuation =
++        anonsync::SyncReplicaReconciliationPayloadContinuation{
++            operation.operation_id, content_digest, total_size, 1U};
++    anonsync::validate_sync_replica_reconciliation_response_for_request_or_throw(
++        full, initial, configured);
++    const std::string full_frame =
++        anonsync::encode_sync_replica_reconciliation_response_or_throw(
++            full, configured);
++
++    anonsync::SyncReplicaReconciliationRequest continued = initial;
++    continued.expected_source_evidence_set_digest =
++        model.evidence_set_digest();
++    continued.payload_continuation = full.payload_continuation;
++    continued.cached_fixed_block_manifest_digest = manifest_digest;
++
++    anonsync::SyncReplicaReconciliationResponse referenced = full;
++    referenced.request_digest =
++        anonsync::sync_replica_reconciliation_request_digest_or_throw(
++            continued, configured);
++    referenced.payloads.clear();
++    referenced.payloads.emplace_back(
++        content_digest, total_size, 1U, anonsync::sha256_hex("y"), "y",
++        manifest_digest);
++    referenced.payload_continuation->next_offset_bytes = 2U;
++    anonsync::validate_sync_replica_reconciliation_response_for_request_or_throw(
++        referenced, continued, configured);
++    const std::string referenced_frame =
++        anonsync::encode_sync_replica_reconciliation_response_or_throw(
++            referenced, configured);
++
++    constexpr std::uint64_t digest_wire_bytes = 8U + 64U;
++    const std::uint64_t minimum_manifest_bytes =
++        anonsync::kSyncReplicaReconciliationMaximumFixedBlocks *
++        digest_wire_bytes;
++    require(
++        full_frame.size() > referenced_frame.size() &&
++            static_cast<std::uint64_t>(
++                full_frame.size() - referenced_frame.size()) >=
++                minimum_manifest_bytes,
++        "maximum manifest reference did not remove the complete digest vector from the continued frame");
++
++    const std::uint64_t four_mib_ranges =
++        total_size /
++        anonsync::kSyncReplicaReconciliationDefaultMaxSinglePayloadBytes;
++    const std::uint64_t avoided_repeated_bytes =
++        static_cast<std::uint64_t>(
++            full_frame.size() - referenced_frame.size()) *
++        (four_mib_ranges - 1U);
++    require(
++        four_mib_ranges == 1'048'576U &&
++            avoided_repeated_bytes > 256ULL * 1024ULL * 1024ULL * 1024ULL,
++        "maximum-extent framing proof did not remove more than 256 GiB of repeated manifest bytes");
++}
++
+ void test_response_invariant_rejections() {
+     const auto configured = limits();
+     const Fixtures value = fixtures();
+@@ -835,6 +1003,7 @@ int main() {
+         test_round_trip_and_exact_request_binding();
+         test_cursor_source_binding_and_source_change();
+         test_bounded_payload_continuation_round_trip();
++        test_maximum_extent_manifest_reference_has_constant_wire_shape();
+         test_response_invariant_rejections();
+         test_metadata_only_operation_set_is_explicit_and_policy_bound();
+         test_limits_fail_closed();
+diff --git a/tests/sync_replica_reconciliation_service_test.cpp b/tests/sync_replica_reconciliation_service_test.cpp
+index 3c146a31949882cb5ed45e2515e8e5a42ca9bdb4..ae9d93fbd3ef8202f4f19082935d82b5b5a0ec90 100644
+--- a/tests/sync_replica_reconciliation_service_test.cpp
++++ b/tests/sync_replica_reconciliation_service_test.cpp
+@@ -803,6 +803,10 @@ void test_large_payload_range_resume_survives_service_restart() {
+                 first_response.response.payloads.size() == 1U &&
+                 first_response.response.payloads.front().offset_bytes == 0U &&
+                 first_response.response.payloads.front().bytes == "abcd" &&
++                first_response.response.payloads.front()
++                    .fixed_block_manifest.has_value() &&
++                first_response.response.payloads.front()
++                    .fixed_block_manifest_digest.has_value() &&
+                 first_response.response.payload_continuation.has_value() &&
+                 first_response.response.payload_continuation->next_offset_bytes ==
+                     4U &&
+@@ -818,6 +822,8 @@ void test_large_payload_range_resume_survives_service_restart() {
+                 first_apply.staged_payload_bytes == 4U &&
+                 first_apply.payload_continuation.has_value() &&
+                 first_apply.payload_continuation->next_offset_bytes == 4U &&
++                first_apply.target_fixed_block_manifest_publications == 1U &&
++                first_apply.target_fixed_block_manifest_reuses == 0U &&
+                 first_apply.inserted_active == 0U &&
+                 first_apply.duplicate_operations == 0U,
+             "receiver did not retain the first range without admitting incomplete evidence");
+@@ -831,9 +837,18 @@ void test_large_payload_range_resume_survives_service_restart() {
+         first_apply.payload_continuation);
+     const auto second_response = source.service_.serve_request_or_throw(
+         source_channel, second_request.request_frame, source_session);
+-    require(second_response.response.payloads.size() == 1U &&
++    require(second_request.request.cached_fixed_block_manifest_digest ==
++                    first_response.response.payloads.front()
++                        .fixed_block_manifest_digest &&
++                second_response.response.payloads.size() == 1U &&
+                 second_response.response.payloads.front().offset_bytes == 4U &&
+                 second_response.response.payloads.front().bytes == "efgh" &&
++                !second_response.response.payloads.front()
++                     .fixed_block_manifest.has_value() &&
++                second_response.response.payloads.front()
++                        .fixed_block_manifest_digest ==
++                    first_response.response.payloads.front()
++                        .fixed_block_manifest_digest &&
+                 second_response.response.payload_continuation.has_value() &&
+                 second_response.response.payload_continuation->next_offset_bytes ==
+                     8U,
+@@ -847,6 +862,8 @@ void test_large_payload_range_resume_survives_service_restart() {
+                 second_apply.staged_payload_bytes == 4U &&
+                 second_apply.payload_continuation.has_value() &&
+                 second_apply.payload_continuation->next_offset_bytes == 8U &&
++                second_apply.target_fixed_block_manifest_publications == 0U &&
++                second_apply.target_fixed_block_manifest_reuses == 1U &&
+                 second_apply.inserted_active == 0U &&
+                 second_apply.duplicate_operations == 0U,
+             "receiver did not extend the staged prefix to eight bytes");
+@@ -876,13 +893,18 @@ void test_large_payload_range_resume_survives_service_restart() {
+     const auto replay_apply = receiver->service_.apply_response_or_throw(
+         receiver_channel, replay_request.request,
+         replay_response.response_frame);
+-    require(replay_apply.disposition ==
++    require(!replay_request.request.cached_fixed_block_manifest_digest.has_value() &&
++                replay_response.response.payloads.front()
++                    .fixed_block_manifest.has_value() &&
++                replay_apply.disposition ==
+                 anonsync::SyncReplicaReconciliationApplyDisposition::
+                     PayloadProgress &&
+                 replay_apply.staged_payload_ranges == 1U &&
+                 replay_apply.staged_payload_bytes == 0U &&
+                 replay_apply.payload_continuation.has_value() &&
+                 replay_apply.payload_continuation->next_offset_bytes == 8U &&
++                replay_apply.target_fixed_block_manifest_publications == 1U &&
++                replay_apply.target_fixed_block_manifest_reuses == 0U &&
+                 replay_apply.inserted_active == 0U &&
+                 replay_apply.duplicate_operations == 0U,
+             "fresh service lifetime did not recover the durable eight-byte prefix");
+@@ -896,9 +918,14 @@ void test_large_payload_range_resume_survives_service_restart() {
+         replay_apply.payload_continuation);
+     const auto final_response = source.service_.serve_request_or_throw(
+         source_channel, final_request.request_frame, source_session);
+-    require(final_response.response.payloads.size() == 1U &&
++    require(final_request.request.cached_fixed_block_manifest_digest ==
++                    replay_response.response.payloads.front()
++                        .fixed_block_manifest_digest &&
++                final_response.response.payloads.size() == 1U &&
+                 final_response.response.payloads.front().offset_bytes == 8U &&
+                 final_response.response.payloads.front().bytes == "ij" &&
++                !final_response.response.payloads.front()
++                     .fixed_block_manifest.has_value() &&
+                 !final_response.response.payload_continuation.has_value() &&
+                 final_response.response.next_after_operation_id ==
+                     std::optional<std::string>(operation.operation_id),
+@@ -912,6 +939,8 @@ void test_large_payload_range_resume_survives_service_restart() {
+                 final_apply.inserted_active == 1U &&
+                 final_apply.duplicate_operations == 0U &&
+                 final_apply.staged_payload_bytes == 2U &&
++                final_apply.target_fixed_block_manifest_publications == 0U &&
++                final_apply.target_fixed_block_manifest_reuses == 1U &&
+                 !final_apply.payload_continuation.has_value() &&
+                 final_apply.next_after_operation_id ==
+                     std::optional<std::string>(operation.operation_id),
+@@ -944,8 +973,10 @@ void test_large_payload_range_resume_survives_service_restart() {
+             "completed large payload did not collapse a replayed first range");
+     require(
+         source_session.payload_snapshot_scans() == 1U &&
+-            source_session.payload_snapshot_reuses() == 4U,
+-        "one pinned source evidence walk did not reuse its verified payload snapshot");
++            source_session.payload_snapshot_reuses() == 4U &&
++            source_session.fixed_block_manifest_publications() == 3U &&
++            source_session.fixed_block_manifest_references() == 2U,
++        "one pinned source walk did not bootstrap manifests only for cache-cold receiver requests");
+     const Channel other_source_channel =
+         channel_to(receiver_actor, "range-restart-other-session");
+     require_error(
+@@ -1204,6 +1235,13 @@ void test_fixed_block_delta_reuses_exact_predecessor_with_bounded_cache() {
+     std::uint64_t predecessor_manifest_scans = 0U;
+     std::uint64_t predecessor_manifest_reuses = 0U;
+     std::uint64_t predecessor_manifest_hashed_bytes = 0U;
++    std::uint64_t target_manifest_publications = 0U;
++    std::uint64_t target_manifest_reuses = 0U;
++    std::uint64_t predecessor_index_builds = 0U;
++    std::uint64_t predecessor_index_reuses = 0U;
++    std::optional<anonsync::SyncReplicaReconciliationFixedBlockManifest>
++        target_manifest;
++    std::optional<std::string> target_manifest_digest;
+     std::uint64_t pages = 0U;
+     for (; pages < 4U; ++pages) {
+         const auto outbound = receiver.service_.make_request_or_throw(
+@@ -1215,16 +1253,58 @@ void test_fixed_block_delta_reuses_exact_predecessor_with_bounded_cache() {
+                 std::vector<anonsync::SyncReplicaOperation>{successor} &&
+                 inbound.response.payloads.size() == 1U &&
+                 inbound.response.payloads.front()
+-                    .fixed_block_manifest.has_value(),
+-            "delta source page did not bind one ranged successor and manifest");
+-        const auto& manifest =
+-            *inbound.response.payloads.front().fixed_block_manifest;
+-        require(
+-            manifest.block_size_bytes == block_bytes &&
+-                manifest.block_sha256.size() == 3U,
+-            "delta source manifest did not retain three bounded blocks");
++                    .fixed_block_manifest_digest.has_value(),
++            "delta source page did not bind one ranged successor and manifest witness");
++        if (pages == 0U) {
++            require(
++                !outbound.request.cached_fixed_block_manifest_digest.has_value() &&
++                    inbound.response.payloads.front()
++                        .fixed_block_manifest.has_value(),
++                "initial delta range did not bootstrap the complete target manifest");
++            target_manifest =
++                inbound.response.payloads.front().fixed_block_manifest;
++            target_manifest_digest =
++                inbound.response.payloads.front().fixed_block_manifest_digest;
++            require(
++                target_manifest->block_size_bytes == block_bytes &&
++                    target_manifest->block_sha256.size() == 3U,
++                "delta source manifest did not retain three bounded blocks");
++        } else {
++            require(
++                outbound.request.cached_fixed_block_manifest_digest ==
++                        target_manifest_digest &&
++                    inbound.response.payloads.front()
++                            .fixed_block_manifest_digest ==
++                        target_manifest_digest &&
++                    !inbound.response.payloads.front()
++                         .fixed_block_manifest.has_value(),
++                "continued delta range copied the target manifest instead of its exact process-local reference");
++        }
+         network_bytes += static_cast<std::uint64_t>(
+             inbound.response.payloads.front().bytes.size());
++        if (pages == 1U) {
++            auto forged_reference = inbound.response;
++            forged_reference.payloads.front().bytes.assign(
++                static_cast<std::size_t>(block_bytes), 'Q');
++            forged_reference.payloads.front().chunk_sha256 =
++                anonsync::sha256_hex(
++                    forged_reference.payloads.front().bytes);
++            const std::string forged_frame =
++                anonsync::encode_sync_replica_reconciliation_response_or_throw(
++                    forged_reference, wire);
++            require_error(
++                [&] {
++                    (void)receiver.service_.apply_response_or_throw(
++                        receiver_channel, outbound.request, forged_frame);
++                },
++                "retained fixed-block manifest reference",
++                "receiver accepted full-block bytes under a different cached manifest");
++            const auto unchanged_prefix =
++                receiver.payload_store_.snapshot_or_throw();
++            require(
++                unchanged_prefix.transient_bytes() == block_bytes,
++                "rejected manifest-reference bytes changed the durable prefix");
++        }
+         const auto applied = receiver.service_.apply_response_or_throw(
+             receiver_channel, outbound.request, inbound.response_frame);
+         staged_bytes += applied.staged_payload_bytes;
+@@ -1236,6 +1316,14 @@ void test_fixed_block_delta_reuses_exact_predecessor_with_bounded_cache() {
+             applied.delta_predecessor_manifest_reuses;
+         predecessor_manifest_hashed_bytes +=
+             applied.delta_predecessor_manifest_hashed_bytes;
++        target_manifest_publications +=
++            applied.target_fixed_block_manifest_publications;
++        target_manifest_reuses +=
++            applied.target_fixed_block_manifest_reuses;
++        predecessor_index_builds +=
++            applied.delta_predecessor_index_builds;
++        predecessor_index_reuses +=
++            applied.delta_predecessor_index_reuses;
+         if (applied.disposition ==
+             anonsync::SyncReplicaReconciliationApplyDisposition::PageApplied) {
+             require(
+@@ -1264,14 +1352,20 @@ void test_fixed_block_delta_reuses_exact_predecessor_with_bounded_cache() {
+     require(
+         predecessor_manifest_scans == 1U &&
+             predecessor_manifest_reuses == 1U &&
+-            predecessor_manifest_hashed_bytes == old_bytes.size(),
+-        "receiver did not hash its multi-range predecessor exactly once");
++            predecessor_manifest_hashed_bytes == old_bytes.size() &&
++            target_manifest_publications == 1U &&
++            target_manifest_reuses == 1U &&
++            predecessor_index_builds == 1U &&
++            predecessor_index_reuses == 1U,
++        "receiver did not retain one exact target manifest and one sorted predecessor index across ranges");
+     require(
+         source_session.fixed_block_manifest_scans() == 1U &&
+             source_session.fixed_block_manifest_reuses() == 1U &&
+             source_session.fixed_block_manifest_hashed_bytes() ==
+-                new_bytes.size(),
+-        "source did not hash its ranged successor exactly once");
++                new_bytes.size() &&
++            source_session.fixed_block_manifest_publications() == 1U &&
++            source_session.fixed_block_manifest_references() == 1U,
++        "source did not hash and publish its ranged successor manifest exactly once before reference reuse");
+     require_payload_available(
+         receiver.payload_store_, successor, new_bytes,
+         "fixed-block delta did not reconstruct exact successor bytes");
+@@ -1314,6 +1408,10 @@ void test_fixed_block_delta_reuses_exact_predecessor_with_bounded_cache() {
+             one_byte_applied.delta_predecessor_manifest_reuses == 0U &&
+             one_byte_applied.delta_predecessor_manifest_hashed_bytes ==
+                 new_bytes.size() &&
++            one_byte_applied.target_fixed_block_manifest_publications == 1U &&
++            one_byte_applied.target_fixed_block_manifest_reuses == 0U &&
++            one_byte_applied.delta_predecessor_index_builds == 1U &&
++            one_byte_applied.delta_predecessor_index_reuses == 0U &&
+             one_byte_applied.inserted_active == 1U &&
+             !one_byte_applied.payload_continuation.has_value(),
+         "one-byte edit did not replace two network blocks with exact predecessor reuse");
+@@ -1321,7 +1419,9 @@ void test_fixed_block_delta_reuses_exact_predecessor_with_bounded_cache() {
+         source_session.fixed_block_manifest_scans() == 2U &&
+             source_session.fixed_block_manifest_reuses() == 1U &&
+             source_session.fixed_block_manifest_hashed_bytes() ==
+-                new_bytes.size() + one_byte_edit.size(),
++                new_bytes.size() + one_byte_edit.size() &&
++            source_session.fixed_block_manifest_publications() == 2U &&
++            source_session.fixed_block_manifest_references() == 1U,
+         "source manifest cache did not rotate exactly once for the one-byte successor");
+     require_payload_available(
+         receiver.payload_store_, latest, one_byte_edit,
+diff --git a/tests/sync_replica_tls_transport_test.cpp b/tests/sync_replica_tls_transport_test.cpp
+index 0f289ba648d302d04c0694ea6fbfa308a6b30388..165ce846a359ba7188eeb099d12afc22301f9db1 100644
+--- a/tests/sync_replica_tls_transport_test.cpp
++++ b/tests/sync_replica_tls_transport_test.cpp
+@@ -4368,6 +4368,10 @@ void test_reconciliation_tls_range_resume(
+             first.pull.delta_predecessor_manifest_scans == 0U &&
+             first.pull.delta_predecessor_manifest_reuses == 0U &&
+             first.pull.delta_predecessor_manifest_hashed_bytes == 0U &&
++            first.pull.target_fixed_block_manifest_publications == 1U &&
++            first.pull.target_fixed_block_manifest_reuses == 1U &&
++            first.pull.delta_predecessor_index_builds == 0U &&
++            first.pull.delta_predecessor_index_reuses == 0U &&
+             first.pull.has_more &&
+             !first.pull.next_after_operation_id.has_value() &&
+             first.pull.payload_continuation.has_value() &&
+@@ -4388,6 +4392,8 @@ void test_reconciliation_tls_range_resume(
+             first.serve.fixed_block_manifest_scans == 1U &&
+             first.serve.fixed_block_manifest_reuses == 1U &&
+             first.serve.fixed_block_manifest_hashed_bytes == bytes.size() &&
++            first.serve.fixed_block_manifest_publications == 1U &&
++            first.serve.fixed_block_manifest_references == 1U &&
+             first.serve.payload_continuation.has_value() &&
+             first.serve.payload_continuation->next_offset_bytes == 8U,
+         "bounded TLS ranged source did not reuse one verified payload snapshot");
+@@ -4409,10 +4415,16 @@ void test_reconciliation_tls_range_resume(
+             replayed.pull.duplicate_operations == 0U &&
+             replayed.pull.staged_payload_ranges == 1U &&
+             replayed.pull.staged_payload_bytes == 0U &&
++            replayed.pull.target_fixed_block_manifest_publications == 1U &&
++            replayed.pull.target_fixed_block_manifest_reuses == 0U &&
+             replayed.pull.payload_continuation.has_value() &&
+             replayed.pull.payload_continuation->next_offset_bytes == 8U &&
+             !replayed.pull.next_after_operation_id.has_value(),
+         "cursorless TLS restart did not recover the durable ranged prefix");
++    require(
++        replayed.serve.fixed_block_manifest_publications == 1U &&
++            replayed.serve.fixed_block_manifest_references == 0U,
++        "cache-cold TLS replay did not republish the complete target manifest");
+     require(
+         requester.snapshot_or_throw().durable.operations.empty(),
+         "cursorless TLS restart admitted incomplete file evidence");
+@@ -4438,6 +4450,8 @@ void test_reconciliation_tls_range_resume(
+             completed.pull.inserted_payloads == 1U &&
+             completed.pull.staged_payload_ranges == 1U &&
+             completed.pull.staged_payload_bytes == 2U &&
++            completed.pull.target_fixed_block_manifest_publications == 0U &&
++            completed.pull.target_fixed_block_manifest_reuses == 1U &&
+             !completed.pull.has_more &&
+             !completed.pull.payload_continuation.has_value() &&
+             source_operation.has_value() &&
+@@ -4450,6 +4464,8 @@ void test_reconciliation_tls_range_resume(
+                 SyncReplicaReconciliationTlsServeDisposition::Complete &&
+             completed.serve.requests_received == 1U &&
+             completed.serve.responses_written == 1U &&
++            completed.serve.fixed_block_manifest_publications == 0U &&
++            completed.serve.fixed_block_manifest_references == 1U &&
+             !completed.serve.payload_continuation.has_value(),
+         "ranged TLS source did not complete with its final exact range");
+ 
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 5ddcca18aab1d92c315df13ed6a79207af8fb3d9..5b3405cce6dfc96414f1ab9e196e7f4788fabb7f 100644
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -230,6 +230,13 @@ REQUIRED = (
+     Path("tests/sync_replica_hash_graph_projection_test.cpp"),
+     Path("tests/sync_replica_prepared_publication_test.cpp"),
+     Path("tools/audit_sync_replica_targeted_local_publication.py"),
++    Path("MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md"),
++    Path("REVISION_NOTES_rev0992.md"),
++    Path("src/sync_replica_reconciliation_tls_exchange.hpp"),
++    Path("src/sync_replica_reconciliation_tls_exchange.cpp"),
++    Path("tests/sync_replica_reconciliation_protocol_test.cpp"),
++    Path("tools/audit_sync_replica_fixed_block_delta.py"),
++    Path("tools/audit_sync_replica_manifest_reference.py"),
+ )
+ 
+ 
+@@ -790,6 +797,31 @@ def main() -> int:
+     targeted_local_audit = text[
+         "tools/audit_sync_replica_targeted_local_publication.py"
+     ]
++    manifest_reference_design = text[
++        "MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md"
++    ]
++    rev0992_notes = text["REVISION_NOTES_rev0992.md"]
++    reconciliation_protocol_header = text[
++        "src/sync_replica_reconciliation_protocol.hpp"
++    ]
++    reconciliation_protocol_source = text[
++        "src/sync_replica_reconciliation_protocol.cpp"
++    ]
++    reconciliation_service_header = text[
++        "src/sync_replica_reconciliation_service.hpp"
++    ]
++    reconciliation_tls_header = text[
++        "src/sync_replica_reconciliation_tls_exchange.hpp"
++    ]
++    reconciliation_tls_source = text[
++        "src/sync_replica_reconciliation_tls_exchange.cpp"
++    ]
++    reconciliation_protocol_runtime = text[
++        "tests/sync_replica_reconciliation_protocol_test.cpp"
++    ]
++    manifest_reference_audit = text[
++        "tools/audit_sync_replica_manifest_reference.py"
++    ]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -8377,7 +8409,7 @@ def main() -> int:
+                 "not chronology",
+             )
+         )
+-        and "anonsync-sync-replica-reconciliation-request-frame-v4" in reconciliation_protocol_cpp
++        and "anonsync-sync-replica-reconciliation-request-frame-v5" in reconciliation_protocol_cpp
+         and "fixed_block_manifest" in reconciliation_protocol_cpp
+         and "metadata-only history pages" not in reconciliation_service_h
+         and "test_superseded_missing_payload_transfers_as_metadata_without_store_scan" not in reconciliation_runtime,
+@@ -12285,7 +12317,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        "kSyncReplicaReconciliationProtocolVersion = 4U"
++        "kSyncReplicaReconciliationProtocolVersion = 5U"
+             in reconciliation_h
+         and "metadata_only_file_operation_ids"
+             in reconciliation_protocol_cpp
+@@ -12600,6 +12632,90 @@ def main() -> int:
+         "a sealed archive cannot omit the schema owner, fixed-width witness, runtime regressions, or release records",
+     )
+ 
++    normalized_manifest_reference_design = " ".join(
++        manifest_reference_design.split()
++    )
++    normalized_rev0992_notes = " ".join(rev0992_notes.split())
++
++    require(
++        "kSyncReplicaReconciliationProtocolVersion = 5U"
++            in reconciliation_protocol_header
++        and "anonsync-sync-replica-reconciliation-request-v5"
++            in reconciliation_protocol_source
++        and "anonsync-sync-replica-reconciliation-response-v5"
++            in reconciliation_protocol_source
++        and "cached_fixed_block_manifest_digest"
++            in reconciliation_protocol_header,
++        "rev0992_protocol_generation_5_binds_manifest_reference_authority",
++        "digest-only continuation cannot be accepted under generation-4 framing",
++    )
++
++    require(
++        "CachedTargetFixedBlockManifest" in reconciliation_service_header
++        and "CachedPredecessorFixedBlockManifest"
++            in reconciliation_service_header
++        and "std::vector<std::size_t> digest_order"
++            in reconciliation_service_header
++        and "ranged payload references a fixed-block manifest absent from this receiver process"
++            in reconciliation_service
++        and "ranged payload bytes do not match the retained fixed-block manifest reference"
++            in reconciliation_service,
++        "rev0992_receiver_cache_is_exact_bounded_and_fail_closed",
++        "target and predecessor acceleration remain cohesive process-local records",
++    )
++
++    require(
++        "fixed_block_manifest_publications" in reconciliation_tls_header
++        and "fixed_block_manifest_references" in reconciliation_tls_header
++        and "target_fixed_block_manifest_publications"
++            in reconciliation_tls_header
++        and "target_fixed_block_manifest_reuses"
++            in reconciliation_tls_header
++        and "delta_predecessor_index_builds" in reconciliation_tls_header
++        and "delta_predecessor_index_reuses" in reconciliation_tls_header
++        and "fixed_block_manifest_publications" in reconciliation_tls_source
++        and "fixed_block_manifest_references" in reconciliation_tls_source,
++        "rev0992_shipping_transport_preserves_manifest_and_index_metrics",
++        "the optimization remains observable beyond focused service tests",
++    )
++
++    require(
++        "maximum manifest reference did not remove the complete digest vector"
++            in reconciliation_protocol_runtime
++        and "more than 256 GiB of repeated manifest bytes"
++            in reconciliation_protocol_runtime
++        and "309,237,350,400"
++            in normalized_manifest_reference_design
++        and "just under 288 GiB"
++            in normalized_manifest_reference_design
++        and "content-defined chunking" in normalized_rev0992_notes
++        and "not a measured peak-RSS result"
++            in normalized_manifest_reference_design,
++        "rev0992_quantifies_removed_multiplier_without_overclaiming_delta_completion",
++        "the release record binds the 4-TiB shape and keeps insertion resilience and RSS measurement open",
++    )
++
++    require(
++        all(token in verifier for token in (
++            "MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md",
++            "REVISION_NOTES_rev0992.md",
++            "src/sync_replica_reconciliation_protocol.hpp",
++            "src/sync_replica_reconciliation_service.hpp",
++            "src/sync_replica_reconciliation_tls_exchange.hpp",
++            "tests/sync_replica_reconciliation_protocol_test.cpp",
++            "tests/sync_replica_reconciliation_service_test.cpp",
++            "tests/sync_replica_tls_transport_test.cpp",
++            "tools/audit_sync_replica_manifest_reference.py",
++            "tools/audit_sync_file_payload_store.py",
++        ))
++        and "anonsync-manifest-reference-source-audit-v1"
++            in manifest_reference_audit
++        and "lexical-hygiene-not-semantic-proof"
++            in manifest_reference_audit,
++        "rev0992_package_policy_binds_manifest_reference_implementation_and_proof",
++        "a sealed archive cannot omit protocol, service, runtime tests, records, or focused audit",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -12894,6 +13010,20 @@ def main() -> int:
+         "targeted local publication cannot pass the structural audit until exact validation and the visible bootstrap bind the final archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0992" not in rev0992_notes
++        and "ARCHIVE_PENDING_REV0992" not in rev0992_notes
++        and "VALIDATION_PENDING_REV0992" not in manifest_reference_design
++        and "ARCHIVE_PENDING_REV0992" not in manifest_reference_design
++        and "VALIDATION_PENDING_REV0992" not in readme
++        and "ARCHIVE_PENDING_REV0992" not in readme
++        and "ARCHIVE_PENDING_REV0992" not in bootstrap
++        and "CODENAME_PENDING_REV0992" not in bootstrap
++        and "VALIDATION_PENDING_REV0992" not in bootstrap,
++        "rev0992_final_validation_and_visible_release_cutpoint_are_sealed",
++        "manifest-reference and delta-index changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/audit_sync_replica_fixed_block_delta.py b/tools/audit_sync_replica_fixed_block_delta.py
+index fb0821bbb9aa3b903387b4addc58e7895f4096f2..491586e5db5db02f1d9d5af8de1bdf47f70cf707 100644
+--- a/tools/audit_sync_replica_fixed_block_delta.py
++++ b/tools/audit_sync_replica_fixed_block_delta.py
+@@ -134,12 +134,12 @@ def main() -> int:
+         "the rev0986 source-shape audit is part of the ordinary CTest registry",
+     )
+     require(
+-        "kSyncReplicaReconciliationProtocolVersion = 4U" in protocol_h
+-        and "reconciliation-request-frame-v4" in protocol_c
+-        and "reconciliation-response-frame-v4" in protocol_c
++        "kSyncReplicaReconciliationProtocolVersion = 5U" in protocol_h
++        and "reconciliation-request-frame-v5" in protocol_c
++        and "reconciliation-response-frame-v5" in protocol_c
+         and "fixed_block_manifest" in protocol_c,
+         "protocol_generation_and_digest_domains_advance_together",
+-        "the fixed-block authority remains bound after the selective-sync generation-4 upgrade; older frame digests cannot be accepted as current",
++        "the fixed-block and selective-sync authority remains bound after the manifest-reference generation-5 upgrade; older frame digests cannot be accepted as current",
+     )
+     require(
+         "64ULL * 1024ULL * 1024ULL * 1024ULL" in extent
+@@ -185,14 +185,15 @@ def main() -> int:
+         "noncanonical peer-selected block geometry fails closed",
+     )
+     require(
+-        "whole payload carries an unnecessary fixed-block manifest" in protocol_c
+-        and "ranged payload lacks its fixed-block manifest" in protocol_c,
++        "whole payload carries unnecessary fixed-block manifest authority" in protocol_c
++        and "ranged payload lacks a valid fixed-block manifest digest" in protocol_c
++        and "omitted the complete fixed-block manifest without receiver cache authority" in protocol_c,
+         "whole_and_ranged_manifest_contract_is_explicit",
+-        "restart-independent manifests are mandatory only when a range needs them",
++        "ranged payloads always carry an exact witness; a complete manifest is mandatory whenever the receiver did not advertise its process-local cache",
+     )
+     require(
+-        "fixed-block manifest count does not cover the payload extent" in protocol_c
+-        and "fixed-block manifest contains an invalid digest" in protocol_c,
++        "count does not cover the payload extent" in protocol_c
++        and "contains an invalid digest" in protocol_c,
+         "manifest_count_and_each_digest_are_validated",
+         "truncated and malformed block projections cannot become reuse authority",
+     )
+@@ -231,9 +232,10 @@ def main() -> int:
+         "multi-page transfer does not rehash the same source once per range",
+     )
+     require(
+-        "delta_predecessor_manifest_" in service_h
+-        and "delta_target_operation_id_" in service_h
+-        and "delta_predecessor_operation_id_" in service_h
++        "CachedTargetFixedBlockManifest" in service_h
++        and "CachedPredecessorFixedBlockManifest" in service_h
++        and "delta_target_manifest_" in service_h
++        and "delta_predecessor_manifest_" in service_h
+         and "bounded by 4,096 digests" in service_h,
+         "receiver_retains_one_operation_bound_predecessor_cache",
+         "the cache is process-local acceleration rather than durable admission state",
+@@ -253,12 +255,13 @@ def main() -> int:
+         "the receiver neither traverses a public tree nor trusts an operation record alone",
+     )
+     require(
+-        "std::vector<std::size_t> candidate_indices" in service_c
++        "std::vector<std::size_t> digest_order" in service_h
++        and "projected.digest_order.resize" in service_c
+         and "std::iota" in service_c
+         and "std::sort" in service_c
+         and "std::lower_bound" in service_c,
+         "candidate_lookup_reuses_manifest_strings_and_retains_only_indices",
+-        "the adjacent refactor avoids a second copied digest collection",
++        "the adjacent refactor avoids a second copied digest collection and retains the sorted index across bounded ranges",
+     )
+     require(
+         "reopened->copy_range_or_throw" in service_c
+@@ -318,7 +321,7 @@ def main() -> int:
+     require(
+         "test_fixed_block_delta_reuses_exact_predecessor_with_bounded_cache" in service_test
+         and "std::string old_bytes" in service_test
+-        and "manifest.block_sha256.size() == 3U" in service_test,
++        and "target_manifest->block_sha256.size() == 3U" in service_test,
+         "service_regression_uses_a_three_block_12_mib_file",
+         "the semantic oracle exercises real bounded ranges rather than tiny mock blocks",
+     )
+@@ -338,12 +341,13 @@ def main() -> int:
+         "the regression distinguishes actual delta transfer from range resume",
+     )
+     require(
+-        "lacks its fixed-block manifest" in protocol_test
++        "omitted its complete manifest without receiver cache authority" in protocol_test
+         and "noncanonical fixed-block size" in protocol_test
+         and "incomplete fixed-block manifest" in protocol_test
+-        and "invalid fixed-block digest" in protocol_test,
++        and "invalid fixed-block digest" in protocol_test
++        and "accepted a different manifest reference" in protocol_test,
+         "protocol_negative_controls_cover_manifest_shape",
+-        "malformed v3 block authority is rejected by the public decoder/validator",
++        "malformed generation-5 block and manifest-reference authority is rejected by the public decoder/validator",
+     )
+     require(
+         "fixed_block_manifest_or_throw" in payload_test
+diff --git a/tools/audit_sync_replica_manifest_reference.py b/tools/audit_sync_replica_manifest_reference.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..8b8fc6794b527ac46602dd68812a82e68beb94c3
+--- /dev/null
++++ b/tools/audit_sync_replica_manifest_reference.py
+@@ -0,0 +1,354 @@
++#!/usr/bin/env python3
++"""Lexical audit for rev0992 manifest references and delta-index caching.
++
++This inventories reviewed source and documentation shape. It is lexical hygiene,
++not semantic proof. Compiler, sanitizer, runtime, stress, reconstruction, and
++package evidence remain load-bearing.
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++REQUIRED = (
++    Path("CMakeLists.txt"),
++    Path("README.md"),
++    Path("MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md"),
++    Path("REVISION_NOTES_rev0992.md"),
++    Path("src/sync_replica_reconciliation_protocol.hpp"),
++    Path("src/sync_replica_reconciliation_protocol.cpp"),
++    Path("src/sync_replica_reconciliation_service.hpp"),
++    Path("src/sync_replica_reconciliation_service.cpp"),
++    Path("src/sync_replica_reconciliation_tls_exchange.hpp"),
++    Path("src/sync_replica_reconciliation_tls_exchange.cpp"),
++    Path("src/anonsync_replica.cpp"),
++    Path("src/anonsync_sync.cpp"),
++    Path("tests/sync_replica_reconciliation_protocol_test.cpp"),
++    Path("tests/sync_replica_reconciliation_service_test.cpp"),
++    Path("tests/sync_replica_tls_transport_test.cpp"),
++    Path("tools/audit_sync_replica_fixed_block_delta.py"),
++    Path("tools/audit_sync_replica_manifest_reference.py"),
++    Path("tools/audit_sync_file_payload_store.py"),
++    Path("tools/verify_release_package.py"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
++    violations = [check.check_id for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-manifest-reference-source-audit-v1",
++        "scope": "lexical-hygiene-not-semantic-proof",
++        "scope_nonclaim": (
++            "source spelling does not prove wire compatibility, SHA-256 security, "
++            "cache identity, race freedom, allocation success, payload durability, "
++            "delta efficiency, restart behavior, or target-scale memory"
++        ),
++        "root": str(root),
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if output is None:
++        sys.stdout.write(rendered)
++    else:
++        output.parent.mkdir(parents=True, exist_ok=True)
++        output.write_text(rendered, encoding="utf-8")
++    return 0 if not violations else 1
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++    checks: list[Check] = []
++
++    def require(condition: bool, check_id: str, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    missing = [path.as_posix() for path in REQUIRED if not (root / path).is_file()]
++    require(not missing, "required_files_exist", f"missing={missing}")
++    bootstrap_path = root.parent.parent / "BOOTSTRAPROSE.md"
++    require(bootstrap_path.is_file(), "release_root_bootstrap_exists", str(bootstrap_path))
++    if missing or not bootstrap_path.is_file():
++        return emit(root, args.json, checks)
++
++    text = {path.as_posix(): (root / path).read_text(encoding="utf-8") for path in REQUIRED}
++    bootstrap = bootstrap_path.read_text(encoding="utf-8")
++    cmake = text["CMakeLists.txt"]
++    readme = text["README.md"]
++    design = text["MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md"]
++    notes = text["REVISION_NOTES_rev0992.md"]
++    protocol_h = text["src/sync_replica_reconciliation_protocol.hpp"]
++    protocol_c = text["src/sync_replica_reconciliation_protocol.cpp"]
++    service_h = text["src/sync_replica_reconciliation_service.hpp"]
++    service_c = text["src/sync_replica_reconciliation_service.cpp"]
++    tls_h = text["src/sync_replica_reconciliation_tls_exchange.hpp"]
++    tls_c = text["src/sync_replica_reconciliation_tls_exchange.cpp"]
++    replica_cli = text["src/anonsync_replica.cpp"]
++    sync_cli = text["src/anonsync_sync.cpp"]
++    protocol_test = text["tests/sync_replica_reconciliation_protocol_test.cpp"]
++    service_test = text["tests/sync_replica_reconciliation_service_test.cpp"]
++    tls_test = text["tests/sync_replica_tls_transport_test.cpp"]
++    fixed_audit = text["tools/audit_sync_replica_fixed_block_delta.py"]
++    structural = text["tools/audit_sync_file_payload_store.py"]
++    verifier = text["tools/verify_release_package.py"]
++    self_text = text["tools/audit_sync_replica_manifest_reference.py"]
++    normalized_design = " ".join(design.split())
++    normalized_notes = " ".join(notes.split())
++
++    require(
++        "anonsync_sync_replica_manifest_reference_source_audit" in cmake
++        and "tools/audit_sync_replica_manifest_reference.py" in cmake,
++        "focused_source_audit_is_registered",
++        "the rev0992 source-shape audit is part of the ordinary CTest registry",
++    )
++    require(
++        "kSyncReplicaReconciliationProtocolVersion = 5U" in protocol_h
++        and "anonsync-sync-replica-reconciliation-request-v5" in protocol_c
++        and "anonsync-sync-replica-reconciliation-response-v5" in protocol_c,
++        "protocol_generation_and_frame_domains_are_v5",
++        "cached-manifest framing cannot be decoded as generation 4",
++    )
++    require(
++        "cached_fixed_block_manifest_digest" in protocol_h
++        and "payload_continuation.has_value()" in protocol_c
++        and "cached fixed-block manifest has no payload continuation" in protocol_c,
++        "cache_claim_requires_exact_payload_continuation",
++        "a free-standing digest cannot become target-manifest authority",
++    )
++    require(
++        "sync_replica_reconciliation_fixed_block_manifest_digest_or_throw" in protocol_h
++        and "kFixedBlockManifestDigestDomain" in protocol_c
++        and "append_digest_framed(digest, content_sha256)" in protocol_c
++        and "digest.update(u64_be(total_size_bytes))" in protocol_c
++        and "digest.update(u64_be(manifest.block_size_bytes))" in protocol_c
++        and "manifest.block_sha256.size()" in protocol_c
++        and "append_digest_framed(digest, block_digest)" in protocol_c,
++        "manifest_digest_binds_identity_geometry_count_and_ordered_blocks",
++        "the constant-size reference names one exact canonical complete manifest",
++    )
++    require(
++        "fixed_block_manifest_digest" in protocol_h
++        and "fixed_block_manifest" in protocol_h
++        and "ranged payload lacks a valid fixed-block manifest digest" in protocol_c,
++        "every_ranged_payload_carries_manifest_identity",
++        "reference-only ranges do not lose target block geometry authority",
++    )
++    require(
++        "cached_fixed_block_manifest_digest.has_value()" in protocol_c
++        and "fixed_block_manifest.has_value()" in protocol_c
++        and "cached fixed-block manifest" in protocol_c,
++        "cross_message_validation_distinguishes_publication_and_reference",
++        "cache-cold requests require a full manifest while cache claims require digest-only framing",
++    )
++    require(
++        "CachedTargetFixedBlockManifest" in service_h
++        and all(token in service_h for token in (
++            "operation_id", "content_sha256", "total_size_bytes",
++            "manifest_digest", "SyncReplicaReconciliationFixedBlockManifest manifest",
++        )),
++        "target_cache_is_one_cohesive_exact_identity_record",
++        "parallel optional fields cannot drift independently",
++    )
++    require(
++        "CachedPredecessorFixedBlockManifest" in service_h
++        and "std::vector<std::size_t> digest_order" in service_h,
++        "predecessor_cache_retains_one_sorted_index",
++        "the 4,096-entry order vector is not rebuilt for every eligible range",
++    )
++    require(
++        "delta_target_manifest_->operation_id" in service_c
++        and "delta_target_manifest_->content_sha256" in service_c
++        and "delta_target_manifest_->total_size_bytes" in service_c
++        and "delta_target_manifest_->manifest_digest" in service_c
++        and "request.cached_fixed_block_manifest_digest" in service_c,
++        "request_advertises_only_the_actual_matching_target_cache",
++        "a continuation over another operation, digest, or extent is cache-cold",
++    )
++    require(
++        "session.fixed_block_manifest_digest_" in service_c
++        and "request.cached_fixed_block_manifest_digest" in service_c
++        and "requested fixed-block manifest cache does not match current source bytes" in service_c,
++        "source_compares_receiver_claim_with_its_own_manifest",
++        "the receiver-provided digest never becomes source payload authority",
++    )
++    require(
++        "ranged payload references a fixed-block manifest absent from this receiver process" in service_c
++        and "delta_target_manifest_.has_value()" in service_c,
++        "receiver_reference_requires_actual_process_cache",
++        "a crafted request object cannot lend cache authority to response application",
++    )
++    require(
++        "ranged payload bytes do not match the retained fixed-block manifest reference" in service_c
++        and "wire.chunk_sha256 != retained.block_sha256" in service_c,
++        "complete_referenced_block_is_checked_before_staging",
++        "wire bytes and a matching wire chunk digest cannot smuggle another target block",
++    )
++    require(
++        "projected.digest_order.resize" in service_c
++        and "std::iota" in service_c
++        and "std::sort" in service_c
++        and "std::lower_bound" in service_c
++        and "candidate_indices = &delta_predecessor_manifest_->digest_order" in service_c,
++        "predecessor_digest_order_is_built_once_and_reused",
++        "candidate lookup retains only indices and reuses manifest strings",
++    )
++    require(
++        "fixed_block_manifest_publications" in service_h
++        and "fixed_block_manifest_references" in service_h
++        and "target_fixed_block_manifest_publications" in service_h
++        and "target_fixed_block_manifest_reuses" in service_h
++        and "delta_predecessor_index_builds" in service_h
++        and "delta_predecessor_index_reuses" in service_h,
++        "source_receiver_and_index_work_are_counted_separately",
++        "operator evidence can distinguish bootstrap, reuse, and local-index work",
++    )
++    require(
++        all(token in tls_h + tls_c for token in (
++            "fixed_block_manifest_publications",
++            "fixed_block_manifest_references",
++            "target_fixed_block_manifest_publications",
++            "target_fixed_block_manifest_reuses",
++            "delta_predecessor_index_builds",
++            "delta_predecessor_index_reuses",
++        )),
++        "tls_exchange_preserves_manifest_and_index_accounting",
++        "the real framed transport does not discard the focused service counters",
++    )
++    require(
++        all(token in replica_cli + sync_cli for token in (
++            "fixed_block_manifest_publications",
++            "fixed_block_manifest_references",
++            "target_fixed_block_manifest_publications",
++            "target_fixed_block_manifest_reuses",
++            "delta_predecessor_index_builds",
++            "delta_predecessor_index_reuses",
++        )),
++        "shipping_cli_json_exposes_manifest_and_index_work",
++        "the optimization remains observable from retained product surfaces",
++    )
++    require(
++        "maximum manifest reference did not remove the complete digest vector" in protocol_test
++        and "more than 256 GiB of repeated manifest bytes" in protocol_test
++        and "1'048'576U" in protocol_test,
++        "maximum_extent_shape_proves_wire_multiplier_removed",
++        "the 4 TiB / 4 MiB shape checks the full-versus-reference frame rather than allocating 4 TiB",
++    )
++    require(
++        "target_manifest_publications == 1U" in service_test
++        and "target_manifest_reuses == 1U" in service_test
++        and "predecessor_index_builds == 1U" in service_test
++        and "predecessor_index_reuses == 1U" in service_test,
++        "live_delta_regression_proves_publication_reference_build_and_reuse",
++        "the three-block transfer exercises both bounded caches",
++    )
++    require(
++        "one pinned source walk did not bootstrap manifests only for cache-cold receiver requests" in service_test
++        and "replay_apply.target_fixed_block_manifest_publications == 1U" in service_test
++        and "replay_apply.target_fixed_block_manifest_reuses == 0U" in service_test,
++        "service_restart_returns_to_full_manifest_bootstrap",
++        "process-local acceleration is never described as durable admission state",
++    )
++    require(
++        "receiver accepted full-block bytes under a different cached manifest" in service_test
++        and "retained fixed-block manifest reference" in service_test
++        and "staged prefix" in service_test,
++        "forged_reference_regression_preserves_durable_prefix",
++        "negative control observes zero staged mutation on authority failure",
++    )
++    require(
++        "fixed_block_manifest_publications == 1U" in tls_test
++        and "fixed_block_manifest_references == 1U" in tls_test
++        and "cache-cold TLS replay did not republish the complete target manifest" in tls_test,
++        "tls_regression_observes_full_then_reference_transition",
++        "generation-5 behavior survives the actual bounded TLS exchange",
++    )
++    require(
++        "kSyncReplicaReconciliationProtocolVersion = 5U" in fixed_audit
++        and "generation-5" in fixed_audit,
++        "existing_fixed_block_audit_tracks_generation_5",
++        "the rev0986 assurance surface was upgraded rather than weakened",
++    )
++    require(
++        "309,237,350,400" in normalized_design
++        and "just under 288 GiB" in normalized_design
++        and "one target manifest, one predecessor manifest" in normalized_design
++        and "not a measured peak-RSS result" in normalized_design,
++        "design_quantifies_removed_multiplier_and_memory_nonclaim",
++        "the release record names both exact arithmetic and the remaining measurement gap",
++    )
++    require(
++        "fixed-block delta" in normalized_notes
++        and "content-defined chunking" in normalized_notes
++        and "multi-terabyte-shape" in normalized_notes,
++        "revision_notes_keep_insertion_resilient_delta_and_scale_measurement_open",
++        "a first-generation optimization is not presented as final delta sync",
++    )
++    require(
++        all(token in verifier for token in (
++            "MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md",
++            "REVISION_NOTES_rev0992.md",
++            "src/sync_replica_reconciliation_protocol.hpp",
++            "src/sync_replica_reconciliation_service.hpp",
++            "tests/sync_replica_reconciliation_protocol_test.cpp",
++            "tests/sync_replica_reconciliation_service_test.cpp",
++            "tests/sync_replica_tls_transport_test.cpp",
++            "tools/audit_sync_replica_manifest_reference.py",
++            "tools/audit_sync_file_payload_store.py",
++        )),
++        "release_verifier_binds_rev0992_authority_chain",
++        "the package cannot omit protocol, service, runtime proof, records, or audits",
++    )
++    require(
++        "MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md" in structural
++        and "rev0992" in structural,
++        "complete_structural_audit_composes_rev0992",
++        "the focused lexical check is not an isolated assurance island",
++    )
++    require(
++        "## Rev0992:" in readme
++        and "REV0992 RELEASE CUTPOINT" in bootstrap,
++        "visible_release_surfaces_name_rev0992",
++        "README and release-root runbook describe the same C++ slice",
++    )
++    require(
++        "VALIDATION_PENDING_REV0992" not in notes
++        and "ARCHIVE_PENDING_REV0992" not in notes
++        and "VALIDATION_PENDING_REV0992" not in design
++        and "ARCHIVE_PENDING_REV0992" not in design
++        and "VALIDATION_PENDING_REV0992" not in readme
++        and "ARCHIVE_PENDING_REV0992" not in readme
++        and "VALIDATION_PENDING_REV0992" not in bootstrap
++        and "ARCHIVE_PENDING_REV0992" not in bootstrap,
++        "final_release_placeholders_are_sealed",
++        "validation and archive identity must be concrete before release",
++    )
++    require(
++        "lexical-hygiene-not-semantic-proof" in self_text
++        and "not semantic proof" in self_text
++        and "Compiler, sanitizer, runtime, stress, reconstruction, and\npackage evidence" in self_text,
++        "lexical_audit_disclaims_semantic_authority",
++        "source spelling cannot replace executable and package proof",
++    )
++
++    return emit(root, args.json, checks)
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/audit_sync_replica_selective_sync.py b/tools/audit_sync_replica_selective_sync.py
+index 5e551f90d910dddf841f5706bc4d008161f4d7e9..c2b4935f6df37b7f0716349d5b9265bfd1b09bc5 100644
+--- a/tools/audit_sync_replica_selective_sync.py
++++ b/tools/audit_sync_replica_selective_sync.py
+@@ -256,11 +256,11 @@ def main() -> int:
+         "excluded local absence cannot become a local file observation",
+     )
+     require(
+-        "kSyncReplicaReconciliationProtocolVersion = 4U" in protocol_h
+-        and "reconciliation-request-frame-v4" in protocol_c
+-        and "reconciliation-response-frame-v4" in protocol_c,
++        "kSyncReplicaReconciliationProtocolVersion = 5U" in protocol_h
++        and "reconciliation-request-frame-v5" in protocol_c
++        and "reconciliation-response-frame-v5" in protocol_c,
+         "protocol_generation_and_digest_domains_advance_together",
+-        "older frames cannot be accepted under selective-sync semantics",
++        "older frames cannot be accepted under selective-sync and manifest-reference semantics",
+     )
+     require(
+         "SyncReplicaSelectiveSyncPolicy selective_sync_policy" in protocol_h
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 6c60223f85cf9d5d8abb09e40c745cdd74736d83..e41f1e1376d4efffba1ff9aed05df25ca48a9b46 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1886,6 +1886,29 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 992:
++        revision_scoped_required.update({
++            "MANIFEST_REFERENCE_AND_DELTA_INDEX_CACHE_AUDIT_rev0992.md",
++            "REVISION_NOTES_rev0992.md",
++            "README.md",
++            "CMakeLists.txt",
++            "src/anonsync_replica.cpp",
++            "src/anonsync_sync.cpp",
++            "src/sync_replica_reconciliation_protocol.hpp",
++            "src/sync_replica_reconciliation_protocol.cpp",
++            "src/sync_replica_reconciliation_service.hpp",
++            "src/sync_replica_reconciliation_service.cpp",
++            "src/sync_replica_reconciliation_tls_exchange.hpp",
++            "src/sync_replica_reconciliation_tls_exchange.cpp",
++            "tests/sync_replica_reconciliation_protocol_test.cpp",
++            "tests/sync_replica_reconciliation_service_test.cpp",
++            "tests/sync_replica_tls_transport_test.cpp",
++            "tools/audit_sync_replica_fixed_block_delta.py",
++            "tools/audit_sync_replica_manifest_reference.py",
++            "tools/audit_sync_replica_selective_sync.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

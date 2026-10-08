@@ -1,0 +1,3024 @@
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index 4ea7274652921dbb4fae30986106108d50b9cc42..3e638d853920eced0ae22800cfcbf88c9542d466 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -76,7 +76,7 @@ constexpr std::string_view kHistoricalVersionPinResponseSchema =
+ constexpr std::string_view kHistoricalVersionUnpinResponseSchema =
+     "anonsync.local-historical-version-unpin.response.v1";
+ constexpr std::string_view kRetentionPlanResponseSchema =
+-    "anonsync.local-retention-plan.response.v5";
++    "anonsync.local-retention-plan.response.v6";
+ constexpr std::string_view kUnsupportedResponse =
+     "{\"schema\":\"anonsync.local-status.response.v1\","
+     "\"ok\":false,\"error\":\"unsupported_request\"}";
+diff --git a/src/sync_replica_file_payload_retention_mark.hpp b/src/sync_replica_file_payload_retention_mark.hpp
+index 788bc15231f23fc0b4a8a8f83a89b57704d989cf..6fe3b2931f001f6af0616c5bfddfd185f03e9ebe 100644
+--- a/src/sync_replica_file_payload_retention_mark.hpp
++++ b/src/sync_replica_file_payload_retention_mark.hpp
+@@ -77,6 +77,10 @@ struct SyncReplicaFilePayloadRetentionMark final {
+     std::string source_payload_snapshot_digest;
+     std::string source_payload_transient_namespace_digest;
+     std::string unreferenced_candidate_set_digest;
++    // Opaque v2 witness over the exact database incarnation, recovery epoch,
++    // state generation, causal roots, payload namespace, and candidate set.
++    // Keeping the lineage inside this canonical digest preserves the fixed v1
++    // record layout while making prior unbound witness generations fail closed.
+     std::string durable_candidate_witness_digest;
+     std::uint64_t unreferenced_candidate_payload_count = 0U;
+     std::uint64_t unreferenced_candidate_payload_bytes = 0U;
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index 6de17b21311db98890f58ab1b5df03a47d9e551d..c44c29c3c903437e12056327c8d7188516c2a56b 100644
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -86,11 +86,11 @@ constexpr std::string_view
+     kRetentionPlanUnreferencedCandidateSetDigestDomain =
+         "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1";
+ constexpr std::string_view kRetentionPlanDurableCandidateWitnessDigestDomain =
+-    "anonsync:sync-replica-retention-plan-durable-candidate-witness:v1";
++    "anonsync:sync-replica-retention-plan-durable-candidate-witness:v2";
+ constexpr std::string_view kRetentionPlanDeletionFreeMarkDigestDomain =
+-    "anonsync:sync-replica-retention-plan-deletion-free-mark:v4";
++    "anonsync:sync-replica-retention-plan-deletion-free-mark:v5";
+ constexpr std::string_view kRetentionPlanWriterFencedCandidatePageDigestDomain =
+-    "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v1";
++    "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v2";
+ 
+ [[nodiscard]] constexpr bool historical_payload_mask_has(
+     std::uint8_t mask,
+@@ -5482,10 +5482,13 @@ SyncReplicaFolderScanOwner::mark_payload_retention_or_throw(
+             state_->label +
+             " payload retention mark requires one current exact v4 cutpoint");
+     }
+-    if (request.expected_source_replica_state_generation == 0U) {
++    if (!is_lowercase_sha256_hex(
++            request.expected_source_replica_database_incarnation_sha256) ||
++        request.expected_source_replica_database_recovery_epoch == 0U ||
++        request.expected_source_replica_state_generation == 0U) {
+         throw std::invalid_argument(
+             state_->label +
+-            " payload retention mark source generation is zero");
++            " payload retention mark source database lineage is invalid");
+     }
+     if (!is_lowercase_sha256_hex(
+             request.expected_durable_candidate_witness_digest)) {
+@@ -5554,14 +5557,18 @@ SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
+     const SyncReplicaSqliteSnapshot replica_snapshot =
+         state_->replica_owner->snapshot_or_throw();
+     if (mark_request != nullptr &&
+-        mark_request->expected_source_replica_state_generation !=
+-            replica_snapshot.state_generation) {
++        (mark_request->expected_source_replica_database_incarnation_sha256 !=
++             replica_snapshot.database_incarnation_sha256 ||
++         mark_request->expected_source_replica_database_recovery_epoch !=
++             replica_snapshot.database_recovery_epoch ||
++         mark_request->expected_source_replica_state_generation !=
++             replica_snapshot.state_generation)) {
+         throw SyncReplicaHistoricalVersionSourceChangedError(
+             SyncReplicaHistoricalVersionSourceChangeStage::
+                 RetentionMarkPublication,
+             state_->label +
+-                " payload retention mark source generation changed before "
+-                "payload observation; recompute the mark");
++                " payload retention mark source database lineage changed "
++                "before payload observation; recompute the mark");
+     }
+     if (query.expected_source_cutpoint.has_value() &&
+         query.expected_source_cutpoint->operation_set_digest !=
+@@ -5598,6 +5605,10 @@ SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
+         replica_snapshot.durable, replica_snapshot.limits.model);
+     SyncReplicaRetentionPlan plan;
+     plan.query = query;
++    plan.source_replica_database_incarnation_sha256 =
++        replica_snapshot.database_incarnation_sha256;
++    plan.source_replica_database_recovery_epoch =
++        replica_snapshot.database_recovery_epoch;
+     plan.source_replica_state_generation = replica_snapshot.state_generation;
+     plan.source_operation_set_digest = replica_snapshot.operation_set_digest;
+     plan.source_evidence_set_digest = replica_snapshot.evidence_set_digest;
+@@ -6146,6 +6157,14 @@ SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
+         durable_candidate_witness,
+         kRetentionPlanDurableCandidateWitnessDigestDomain);
+     append_string(durable_candidate_witness, state_->folder_id);
++    append_string(
++        durable_candidate_witness,
++        plan.source_replica_database_incarnation_sha256);
++    append_u64(
++        durable_candidate_witness,
++        plan.source_replica_database_recovery_epoch);
++    append_u64(
++        durable_candidate_witness, plan.source_replica_state_generation);
+     append_string(
+         durable_candidate_witness, plan.source_operation_set_digest);
+     append_string(
+@@ -6192,6 +6211,15 @@ SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
+         writer_fenced_candidate_page_digest,
+         kSyncReplicaFilePayloadUseLeaseProtocol);
+     append_string(writer_fenced_candidate_page_digest, state_->folder_id);
++    append_string(
++        writer_fenced_candidate_page_digest,
++        plan.source_replica_database_incarnation_sha256);
++    append_u64(
++        writer_fenced_candidate_page_digest,
++        plan.source_replica_database_recovery_epoch);
++    append_u64(
++        writer_fenced_candidate_page_digest,
++        plan.source_replica_state_generation);
+     append_string(
+         writer_fenced_candidate_page_digest,
+         plan.source_operation_set_digest);
+@@ -6278,6 +6306,18 @@ SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
+ 
+     const SyncReplicaSqliteSnapshot replica_final =
+         state_->replica_owner->snapshot_or_throw();
++    if (replica_snapshot.database_incarnation_sha256 !=
++            replica_final.database_incarnation_sha256 ||
++        replica_snapshot.database_recovery_epoch !=
++            replica_final.database_recovery_epoch ||
++        replica_snapshot.state_generation != replica_final.state_generation) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                RetentionMarkPublication,
++            state_->label +
++                " retention-plan source database lineage changed during "
++                "writer-fenced projection; restart pagination");
++    }
+     if (replica_snapshot.operation_set_digest !=
+         replica_final.operation_set_digest) {
+         throw SyncReplicaHistoricalVersionSourceChangedError(
+@@ -6333,6 +6373,14 @@ SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
+         deletion_free_mark_digest,
+         kSyncReplicaFilePayloadUseLeaseProtocol);
+     append_string(deletion_free_mark_digest, state_->folder_id);
++    append_string(
++        deletion_free_mark_digest,
++        plan.source_replica_database_incarnation_sha256);
++    append_u64(
++        deletion_free_mark_digest,
++        plan.source_replica_database_recovery_epoch);
++    append_u64(
++        deletion_free_mark_digest, plan.source_replica_state_generation);
+     append_string(
+         deletion_free_mark_digest, plan.source_operation_set_digest);
+     append_string(
+@@ -6543,16 +6591,25 @@ SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
+                 state_->label +
+                 " payload retention mark lacks its publication result");
+         }
+-        if (mark_request->expected_source_replica_state_generation !=
++        if (mark_request->
++                    expected_source_replica_database_incarnation_sha256 !=
++                plan.source_replica_database_incarnation_sha256 ||
++            mark_request->expected_source_replica_database_recovery_epoch !=
++                plan.source_replica_database_recovery_epoch ||
++            mark_request->expected_source_replica_state_generation !=
+                 plan.source_replica_state_generation ||
++            replica_final.database_incarnation_sha256 !=
++                plan.source_replica_database_incarnation_sha256 ||
++            replica_final.database_recovery_epoch !=
++                plan.source_replica_database_recovery_epoch ||
+             replica_final.state_generation !=
+                 plan.source_replica_state_generation) {
+             throw SyncReplicaHistoricalVersionSourceChangedError(
+                 SyncReplicaHistoricalVersionSourceChangeStage::
+                     RetentionMarkPublication,
+                 state_->label +
+-                    " payload retention mark source generation changed before "
+-                    "publication; recompute the mark");
++                    " payload retention mark source database lineage changed "
++                    "before publication; recompute the mark");
+         }
+         if (mark_request->expected_durable_candidate_witness_digest !=
+                 plan.durable_candidate_witness_digest) {
+@@ -6611,7 +6668,11 @@ SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
+         // evidence but can never inherit grace after that change.
+         const SyncReplicaSqliteSnapshot replica_after_mark =
+             state_->replica_owner->snapshot_or_throw();
+-        if (replica_after_mark.state_generation !=
++        if (replica_after_mark.database_incarnation_sha256 !=
++                plan.source_replica_database_incarnation_sha256 ||
++            replica_after_mark.database_recovery_epoch !=
++                plan.source_replica_database_recovery_epoch ||
++            replica_after_mark.state_generation !=
+                 plan.source_replica_state_generation ||
+             replica_after_mark.operation_set_digest !=
+                 plan.source_operation_set_digest ||
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index 7aea7000de3145e6bc4eac917834fdebb8750bc8..29172b687208746d03e2d001036a52d779c53903 100644
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -367,6 +367,8 @@ struct SyncReplicaRetentionPlanEntry final {
+ // bit.
+ struct SyncReplicaRetentionPlan final {
+     SyncReplicaRetentionPlanQuery query;
++    std::string source_replica_database_incarnation_sha256;
++    std::uint64_t source_replica_database_recovery_epoch = 0U;
+     std::uint64_t source_replica_state_generation = 0U;
+     std::string source_operation_set_digest;
+     std::string source_evidence_set_digest;
+@@ -446,13 +448,17 @@ struct SyncReplicaRetentionPlan final {
+ 
+ // One explicit request to persist a deletion-free retention observation. The
+ // request binds both the exact v4 causal/payload cutpoint and its complete
+-// restart-stable candidate witness. The source generation prevents a stale
+-// request from crossing a digest-level causal ABA within the retained SQLite
+-// database lineage. It is not external database anti-rollback authority. The
+-// supplied wall-clock value is historical operator evidence only; a future
+-// collector must still bind a recovery epoch and re-prove trusted elapsed time.
++// restart-stable candidate witness. The database incarnation distinguishes
++// independent SQLite files with otherwise identical contents; the recovery
++// epoch and source generation prevent stale same-incarnation evidence from
++// crossing an explicit recovery or digest-level causal ABA. These values live
++// inside SQLite and are therefore not external exact-image anti-rollback
++// authority. The supplied wall-clock value is historical operator evidence
++// only; a future collector must still re-prove trusted elapsed time.
+ struct SyncReplicaPayloadRetentionMarkRequest final {
+     SyncReplicaHistoricalVersionSourceCutpoint expected_source_cutpoint;
++    std::string expected_source_replica_database_incarnation_sha256;
++    std::uint64_t expected_source_replica_database_recovery_epoch = 0U;
+     std::uint64_t expected_source_replica_state_generation = 0U;
+     std::string expected_durable_candidate_witness_digest;
+     std::uint64_t marked_at_unix_seconds = 0U;
+diff --git a/src/sync_replica_historical_version_inventory_json.cpp b/src/sync_replica_historical_version_inventory_json.cpp
+index 7256562aa3b6665b48a0fdda5dcb61c074661cb1..11bb8c6c58a0de81383652fc05ce4951eaf035d0 100644
+--- a/src/sync_replica_historical_version_inventory_json.cpp
++++ b/src/sync_replica_historical_version_inventory_json.cpp
+@@ -210,9 +210,14 @@ void append_retention_plan(
+         << json_bool(
+                plan.
+                    cooperating_new_namespace_activity_excluded_during_observation)
+-        << ",\"source_replica_state_generation\":"
+-        << plan.source_replica_state_generation
+-        << ",\"source_operation_set_digest\":";
++        << ",\"source_replica_database_incarnation_sha256\":";
++    append_json_quoted(
++        output, plan.source_replica_database_incarnation_sha256);
++    output << ",\"source_replica_database_recovery_epoch\":"
++           << plan.source_replica_database_recovery_epoch
++           << ",\"source_replica_state_generation\":"
++           << plan.source_replica_state_generation
++           << ",\"source_operation_set_digest\":";
+     append_json_quoted(output, plan.source_operation_set_digest);
+     output << ",\"source_evidence_set_digest\":";
+     append_json_quoted(output, plan.source_evidence_set_digest);
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index 16b1da79f4d147d26f9ec531734b643ef5b6c6de..205bea3ae3cddab6d5e74f5ef86fba777bd1bf55 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v23";
++    "anonsync.peer-service.status.v24";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/src/sync_replica_sqlite_owner.cpp b/src/sync_replica_sqlite_owner.cpp
+index 6608631ef7ba164578165e559645eb3574cd62f5..1a3923aadcb582ec9b089ff53191489af269d287 100644
+--- a/src/sync_replica_sqlite_owner.cpp
++++ b/src/sync_replica_sqlite_owner.cpp
+@@ -32,7 +32,8 @@ constexpr std::uint64_t kPreviousSchemaVersion = 2U;
+ constexpr std::uint64_t kClockSchemaVersion = 3U;
+ constexpr std::uint64_t kRetryProvenanceSchemaVersion = 4U;
+ constexpr std::uint64_t kRetentionRootSchemaVersion = 5U;
+-constexpr std::uint64_t kSchemaVersion = 6U;
++constexpr std::uint64_t kHistoricalPinSchemaVersion = 6U;
++constexpr std::uint64_t kSchemaVersion = 7U;
+ constexpr std::uint64_t kMaxSchemaSqlBytes = 1024U * 1024U;
+ 
+ struct SchemaDefinition final {
+@@ -515,11 +516,11 @@ constexpr std::array<SchemaDefinition, 10> kRetentionRootSchema{{
+ }};
+ 
+ 
+-// Current schema adds explicit local retention roots over exact immutable File
+-// operations. The sorted pin set and its redundant digest are restored and
+-// re-attested with every owner cutpoint; pins remain policy roots only and never
+-// authorize payload deletion by themselves.
+-constexpr std::array<SchemaDefinition, 11> kSchema{{
++// Rev0973 schema retained as an exact migration source. It adds explicit
++// local retention roots over exact immutable File operations but predates a
++// database-incarnation and recovery-epoch identity. Exact v6 restoration is
++// required before migration can mint the new lineage.
++constexpr std::array<SchemaDefinition, 11> kHistoricalPinSchema{{
+     {"table", "sync_replica_meta", "sync_replica_meta",
+      "CREATE TABLE sync_replica_meta("
+      "id INTEGER PRIMARY KEY CHECK(id=1),"
+@@ -623,8 +624,122 @@ constexpr std::array<SchemaDefinition, 11> kSchema{{
+      "CREATE INDEX sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_before_epoch_be,lease_expires_at_epoch_be,destination_device_id,operation_id)"},
+ }};
+ 
++// Current schema binds every cutpoint to one randomly minted database
++// incarnation and a monotonic operator-controlled recovery epoch. The lineage
++// distinguishes independent database files with otherwise identical contents;
++// the epoch lets an explicit recovery invalidate stale same-incarnation
++// evidence. Because both fields live inside SQLite, exact whole-image rollback
++// still requires an external anchor or an explicit post-restore epoch advance.
++constexpr std::array<SchemaDefinition, 11> kSchema{{
++    {"table", "sync_replica_meta", "sync_replica_meta",
++     "CREATE TABLE sync_replica_meta("
++     "id INTEGER PRIMARY KEY CHECK(id=1),"
++     "schema_version INTEGER NOT NULL CHECK(schema_version=7),"
++     "database_incarnation_sha256 TEXT NOT NULL CHECK(length(database_incarnation_sha256)=64),"
++     "database_recovery_epoch_be BLOB NOT NULL CHECK(length(database_recovery_epoch_be)=8),"
++     "folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),"
++     "local_device_id TEXT NOT NULL CHECK(length(local_device_id) BETWEEN 1 AND 128),"
++     "local_epoch_be BLOB NOT NULL CHECK(length(local_epoch_be)=8),"
++     "last_local_counter_be BLOB NOT NULL CHECK(length(last_local_counter_be)=8),"
++     "state_generation_be BLOB NOT NULL CHECK(length(state_generation_be)=8),"
++     "policy_generation_be BLOB NOT NULL CHECK(length(policy_generation_be)=8),"
++     "max_operations_be BLOB NOT NULL CHECK(length(max_operations_be)=8),"
++     "max_context_entries_be BLOB NOT NULL CHECK(length(max_context_entries_be)=8),"
++     "max_predecessor_ids_be BLOB NOT NULL CHECK(length(max_predecessor_ids_be)=8),"
++     "max_canonical_operation_bytes_be BLOB NOT NULL CHECK(length(max_canonical_operation_bytes_be)=8),"
++     "max_retained_canonical_bytes_be BLOB NOT NULL CHECK(length(max_retained_canonical_bytes_be)=8),"
++     "max_retained_context_entries_be BLOB NOT NULL CHECK(length(max_retained_context_entries_be)=8),"
++     "max_retained_predecessor_ids_be BLOB NOT NULL CHECK(length(max_retained_predecessor_ids_be)=8),"
++     "max_outbox_intents_be BLOB NOT NULL CHECK(length(max_outbox_intents_be)=8),"
++     "max_outbox_destination_bytes_be BLOB NOT NULL CHECK(length(max_outbox_destination_bytes_be)=8),"
++     "max_outbox_clock_uncertainty_ns_be BLOB NOT NULL CHECK(length(max_outbox_clock_uncertainty_ns_be)=8),"
++     "max_outbox_clock_forward_step_seconds_be BLOB NOT NULL CHECK(length(max_outbox_clock_forward_step_seconds_be)=8),"
++     "max_outbox_clock_realtime_lag_seconds_be BLOB NOT NULL CHECK(length(max_outbox_clock_realtime_lag_seconds_be)=8),"
++     "evidence_count_be BLOB NOT NULL CHECK(length(evidence_count_be)=8),"
++     "active_count_be BLOB NOT NULL CHECK(length(active_count_be)=8),"
++     "retained_canonical_bytes_be BLOB NOT NULL CHECK(length(retained_canonical_bytes_be)=8),"
++     "retained_context_entries_be BLOB NOT NULL CHECK(length(retained_context_entries_be)=8),"
++     "retained_predecessor_ids_be BLOB NOT NULL CHECK(length(retained_predecessor_ids_be)=8),"
++     "outbox_intent_count_be BLOB NOT NULL CHECK(length(outbox_intent_count_be)=8),"
++     "outbox_destination_bytes_be BLOB NOT NULL CHECK(length(outbox_destination_bytes_be)=8),"
++     "historical_version_pin_count_be BLOB NOT NULL CHECK(length(historical_version_pin_count_be)=8),"
++     "historical_version_pin_set_digest TEXT NOT NULL CHECK(length(historical_version_pin_set_digest)=64),"
++     "local_actor_compromised INTEGER NOT NULL CHECK(local_actor_compromised IN (0,1)),"
++     "local_operation_digest TEXT NOT NULL CHECK(length(local_operation_digest)=64),"
++     "operation_set_digest TEXT NOT NULL CHECK(length(operation_set_digest)=64),"
++     "evidence_set_digest TEXT NOT NULL CHECK(length(evidence_set_digest)=64),"
++     "visible_state_digest TEXT NOT NULL CHECK(length(visible_state_digest)=64),"
++     "outbox_digest TEXT NOT NULL CHECK(length(outbox_digest)=64),"
++     "cutpoint_digest TEXT NOT NULL CHECK(length(cutpoint_digest)=64)) STRICT"},
++    {"table", "sync_replica_operations", "sync_replica_operations",
++     "CREATE TABLE sync_replica_operations("
++     "operation_id TEXT PRIMARY KEY CHECK(length(operation_id)=64),"
++     "canonical_bytes BLOB NOT NULL,"
++     "canonical_size_be BLOB NOT NULL CHECK(length(canonical_size_be)=8),"
++     "context_count_be BLOB NOT NULL CHECK(length(context_count_be)=8),"
++     "predecessor_count_be BLOB NOT NULL CHECK(length(predecessor_count_be)=8),"
++     "evidence_state TEXT NOT NULL CHECK(evidence_state IN ('active','pending_missing_dependency','quarantined_dot_fork','quarantined_dependency','quarantined_causal_envelope','quarantined_dependency_cycle'))) STRICT"},
++    {"table", "sync_replica_history_pins", "sync_replica_history_pins",
++     "CREATE TABLE sync_replica_history_pins("
++     "operation_id TEXT PRIMARY KEY CHECK(length(operation_id)=64),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_parent_edges", "sync_replica_parent_edges",
++     "CREATE TABLE sync_replica_parent_edges("
++     "child_operation_id TEXT NOT NULL,"
++     "parent_ordinal INTEGER NOT NULL CHECK(parent_ordinal>=0),"
++     "parent_operation_id TEXT NOT NULL CHECK(length(parent_operation_id)=64),"
++     "PRIMARY KEY(child_operation_id,parent_ordinal),"
++     "UNIQUE(child_operation_id,parent_operation_id),"
++     "FOREIGN KEY(child_operation_id) REFERENCES sync_replica_operations(operation_id) ON DELETE CASCADE) STRICT"},
++    {"table", "sync_replica_local_operations", "sync_replica_local_operations",
++     "CREATE TABLE sync_replica_local_operations("
++     "counter_be BLOB PRIMARY KEY CHECK(length(counter_be)=8),"
++     "operation_id TEXT NOT NULL UNIQUE,"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_heads", "sync_replica_heads",
++     "CREATE TABLE sync_replica_heads("
++     "operation_id TEXT PRIMARY KEY,"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_visible", "sync_replica_visible",
++     "CREATE TABLE sync_replica_visible("
++     "canonical_path TEXT NOT NULL CHECK(length(canonical_path) BETWEEN 1 AND 4096),"
++     "visible_ordinal INTEGER NOT NULL CHECK(visible_ordinal>=0),"
++     "operation_id TEXT NOT NULL,"
++     "is_primary INTEGER NOT NULL CHECK(is_primary IN (0,1)),"
++     "preserve_file INTEGER NOT NULL CHECK(preserve_file IN (0,1)),"
++     "PRIMARY KEY(canonical_path,visible_ordinal),"
++     "UNIQUE(canonical_path,operation_id),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_outbox", "sync_replica_outbox",
++     "CREATE TABLE sync_replica_outbox("
++     "destination_device_id TEXT NOT NULL CHECK(length(destination_device_id) BETWEEN 1 AND 128),"
++     "operation_id TEXT NOT NULL,"
++     "enqueued_generation_be BLOB NOT NULL CHECK(length(enqueued_generation_be)=8),"
++     "dispatch_attempts_be BLOB NOT NULL CHECK(length(dispatch_attempts_be)=8),"
++     "claim_id TEXT NOT NULL CHECK(length(claim_id) IN (0,64)),"
++     "worker_id TEXT NOT NULL CHECK(length(worker_id) BETWEEN 0 AND 128),"
++     "claimed_at_epoch_be BLOB NOT NULL CHECK(length(claimed_at_epoch_be)=8),"
++     "lease_expires_at_epoch_be BLOB NOT NULL CHECK(length(lease_expires_at_epoch_be)=8),"
++     "retry_not_before_epoch_be BLOB NOT NULL CHECK(length(retry_not_before_epoch_be)=8),"
++     "retry_released_at_epoch_be BLOB NOT NULL CHECK(length(retry_released_at_epoch_be)=8),"
++     "retry_release_provenance INTEGER NOT NULL CHECK(retry_release_provenance BETWEEN 0 AND 2),"
++     "PRIMARY KEY(destination_device_id,operation_id),"
++     "FOREIGN KEY(operation_id) REFERENCES sync_replica_operations(operation_id)) STRICT"},
++    {"table", "sync_replica_outbox_clock", "sync_replica_outbox_clock",
++     "CREATE TABLE sync_replica_outbox_clock("
++     "id INTEGER PRIMARY KEY CHECK(id=1),"
++     "clock_state_bytes BLOB NOT NULL CHECK(length(clock_state_bytes) BETWEEN 1 AND 512),"
++     "clock_digest TEXT NOT NULL CHECK(length(clock_digest)=64)) STRICT"},
++    {"index", "sync_replica_outbox_operation", "sync_replica_outbox",
++     "CREATE INDEX sync_replica_outbox_operation ON sync_replica_outbox(operation_id,destination_device_id)"},
++    {"index", "sync_replica_outbox_schedule", "sync_replica_outbox",
++     "CREATE INDEX sync_replica_outbox_schedule ON sync_replica_outbox(retry_not_before_epoch_be,lease_expires_at_epoch_be,destination_device_id,operation_id)"},
++}};
++
+ struct DurableMeta final {
+     std::uint64_t schema_version = kSchemaVersion;
++    std::string database_incarnation_sha256;
++    std::uint64_t database_recovery_epoch = 0U;
+     std::string folder_id;
+     SyncReplicaActor local_actor;
+     std::uint64_t last_local_counter = 0;
+@@ -803,6 +918,27 @@ void append_framed(
+     digest.update(bytes);
+ }
+ 
++[[nodiscard]] std::string mint_database_incarnation_or_throw(
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    const std::string& label) {
++    std::string entropy(32U, '\0');
++    const int result = RAND_bytes(
++        reinterpret_cast<unsigned char*>(entropy.data()),
++        static_cast<int>(entropy.size()));
++    if (result != 1) {
++        throw std::runtime_error(
++            label + " database-incarnation CSPRNG failed");
++    }
++    Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-database-incarnation-v1");
++    append_framed(digest, folder_id);
++    append_framed(digest, local_actor.device_id);
++    digest.update(u64_be(local_actor.epoch));
++    append_framed(digest, entropy);
++    return digest.finish_hex();
++}
++
+ [[nodiscard]] std::string legacy_outbox_digest_or_throw(
+     const std::string& folder_id,
+     const std::vector<SyncReplicaSqliteOutboxIntent>& outbox) {
+@@ -1024,9 +1160,9 @@ void append_cutpoint_authority(
+             limits.max_outbox_clock_realtime_lag_seconds};
+ }
+ 
+-[[nodiscard]] std::string cutpoint_digest_or_throw(
++[[nodiscard]] std::string historical_pin_schema_cutpoint_digest_or_throw(
+     const DurableMeta& meta) {
+-    if (meta.schema_version != kSchemaVersion) {
++    if (meta.schema_version != kHistoricalPinSchemaVersion) {
+         throw std::logic_error(
+             "sync replica SQLite v6 cutpoint has wrong schema version");
+     }
+@@ -1042,6 +1178,31 @@ void append_cutpoint_authority(
+     return digest.finish_hex();
+ }
+ 
++[[nodiscard]] std::string cutpoint_digest_or_throw(
++    const DurableMeta& meta) {
++    if (meta.schema_version != kSchemaVersion) {
++        throw std::logic_error(
++            "sync replica SQLite v7 cutpoint has wrong schema version");
++    }
++    if (!is_lowercase_sha256_hex(meta.database_incarnation_sha256) ||
++        meta.database_recovery_epoch == 0U) {
++        throw std::logic_error(
++            "sync replica SQLite v7 cutpoint has invalid database lineage");
++    }
++    Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-cutpoint-v7");
++    digest.update(u64_be(meta.schema_version));
++    append_framed(digest, meta.database_incarnation_sha256);
++    digest.update(u64_be(meta.database_recovery_epoch));
++    append_cutpoint_authority(digest, meta);
++    digest.update(u64_be(meta.limits.max_outbox_clock_uncertainty_ns));
++    digest.update(u64_be(meta.limits.max_outbox_clock_forward_step_seconds));
++    digest.update(u64_be(meta.limits.max_outbox_clock_realtime_lag_seconds));
++    digest.update(u64_be(meta.historical_version_pin_count));
++    append_framed(digest, meta.historical_version_pin_set_digest);
++    return digest.finish_hex();
++}
++
+ [[nodiscard]] std::string legacy_outbox_clock_digest_or_throw(
+     const std::string& folder_id,
+     const SyncReplicaActor& local_actor,
+@@ -1295,54 +1456,46 @@ void require_no_foreign_key_violations_or_throw(
+     const std::string& label) {
+     const bool has_clock_policy =
+         expected_schema_version == kRetentionRootSchemaVersion ||
++        expected_schema_version == kHistoricalPinSchemaVersion ||
+         expected_schema_version == kSchemaVersion;
+     const bool has_historical_version_pins =
++        expected_schema_version == kHistoricalPinSchemaVersion ||
++        expected_schema_version == kSchemaVersion;
++    const bool has_database_lineage =
+         expected_schema_version == kSchemaVersion;
+-    const std::string query = has_historical_version_pins
+-        ? "SELECT schema_version,folder_id,local_device_id,local_epoch_be,"
+-          "last_local_counter_be,state_generation_be,policy_generation_be,"
+-          "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
+-          "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
+-          "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
+-          "max_outbox_intents_be,max_outbox_destination_bytes_be,"
+-          "max_outbox_clock_uncertainty_ns_be,"
+-          "max_outbox_clock_forward_step_seconds_be,"
+-          "max_outbox_clock_realtime_lag_seconds_be,"
+-          "evidence_count_be,active_count_be,retained_canonical_bytes_be,"
+-          "retained_context_entries_be,retained_predecessor_ids_be,"
+-          "outbox_intent_count_be,outbox_destination_bytes_be,"
+-          "historical_version_pin_count_be,historical_version_pin_set_digest,"
+-          "local_actor_compromised,local_operation_digest,operation_set_digest,"
+-          "evidence_set_digest,visible_state_digest,outbox_digest,cutpoint_digest "
+-          "FROM main.sync_replica_meta WHERE id=1 LIMIT 2;"
+-        : has_clock_policy
+-        ? "SELECT schema_version,folder_id,local_device_id,local_epoch_be,"
+-          "last_local_counter_be,state_generation_be,policy_generation_be,"
+-          "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
+-          "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
+-          "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
+-          "max_outbox_intents_be,max_outbox_destination_bytes_be,"
+-          "max_outbox_clock_uncertainty_ns_be,"
+-          "max_outbox_clock_forward_step_seconds_be,"
+-          "max_outbox_clock_realtime_lag_seconds_be,"
+-          "evidence_count_be,active_count_be,retained_canonical_bytes_be,"
+-          "retained_context_entries_be,retained_predecessor_ids_be,"
+-          "outbox_intent_count_be,outbox_destination_bytes_be,"
+-          "local_actor_compromised,local_operation_digest,operation_set_digest,"
+-          "evidence_set_digest,visible_state_digest,outbox_digest,cutpoint_digest "
+-          "FROM main.sync_replica_meta WHERE id=1 LIMIT 2;"
+-        : "SELECT schema_version,folder_id,local_device_id,local_epoch_be,"
+-          "last_local_counter_be,state_generation_be,policy_generation_be,"
+-          "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
+-          "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
+-          "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
+-          "max_outbox_intents_be,max_outbox_destination_bytes_be,"
+-          "evidence_count_be,active_count_be,retained_canonical_bytes_be,"
+-          "retained_context_entries_be,retained_predecessor_ids_be,"
+-          "outbox_intent_count_be,outbox_destination_bytes_be,"
+-          "local_actor_compromised,local_operation_digest,operation_set_digest,"
+-          "evidence_set_digest,visible_state_digest,outbox_digest,cutpoint_digest "
+-          "FROM main.sync_replica_meta WHERE id=1 LIMIT 2;";
++
++    std::string query = "SELECT schema_version,";
++    if (has_database_lineage) {
++        query +=
++            "database_incarnation_sha256,database_recovery_epoch_be,";
++    }
++    query +=
++        "folder_id,local_device_id,local_epoch_be,"
++        "last_local_counter_be,state_generation_be,policy_generation_be,"
++        "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
++        "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
++        "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
++        "max_outbox_intents_be,max_outbox_destination_bytes_be,";
++    if (has_clock_policy) {
++        query +=
++            "max_outbox_clock_uncertainty_ns_be,"
++            "max_outbox_clock_forward_step_seconds_be,"
++            "max_outbox_clock_realtime_lag_seconds_be,";
++    }
++    query +=
++        "evidence_count_be,active_count_be,retained_canonical_bytes_be,"
++        "retained_context_entries_be,retained_predecessor_ids_be,"
++        "outbox_intent_count_be,outbox_destination_bytes_be,";
++    if (has_historical_version_pins) {
++        query +=
++            "historical_version_pin_count_be,"
++            "historical_version_pin_set_digest,";
++    }
++    query +=
++        "local_actor_compromised,local_operation_digest,operation_set_digest,"
++        "evidence_set_digest,visible_state_digest,outbox_digest,cutpoint_digest "
++        "FROM main.sync_replica_meta WHERE id=1 LIMIT 2;";
++
+     SyncSqliteStmt statement = sqlite_prepare_or_throw(
+         db, query, label + " meta query prepare");
+     require_row_or_throw(statement.stmt, label + " meta query");
+@@ -1355,12 +1508,20 @@ void require_no_foreign_key_violations_or_throw(
+          observed_schema_version != kClockSchemaVersion &&
+          observed_schema_version != kRetryProvenanceSchemaVersion &&
+          observed_schema_version != kRetentionRootSchemaVersion &&
++         observed_schema_version != kHistoricalPinSchemaVersion &&
+          observed_schema_version != kSchemaVersion)) {
+         throw std::runtime_error(label + " schema version is unsupported");
+     }
+ 
+     DurableMeta meta;
+     meta.schema_version = observed_schema_version;
++    if (has_database_lineage) {
++        meta.database_incarnation_sha256 = sqlite_column_text_or_throw(
++            statement.stmt, index++, 64U,
++            label + " database incarnation digest");
++        meta.database_recovery_epoch = column_u64_be_or_throw(
++            statement.stmt, index++, label + " database recovery epoch");
++    }
+     meta.folder_id = sqlite_column_text_or_throw(
+         statement.stmt, index++, kSyncManifestIdMaxBytes, label + " folder id");
+     meta.local_actor.device_id = sqlite_column_text_or_throw(
+@@ -1395,10 +1556,14 @@ void require_no_foreign_key_violations_or_throw(
+     if (has_clock_policy) {
+         meta.limits.max_outbox_clock_uncertainty_ns = column_u64_be_or_throw(
+             statement.stmt, index++, label + " max outbox clock uncertainty");
+-        meta.limits.max_outbox_clock_forward_step_seconds = column_u64_be_or_throw(
+-            statement.stmt, index++, label + " max outbox clock forward step");
+-        meta.limits.max_outbox_clock_realtime_lag_seconds = column_u64_be_or_throw(
+-            statement.stmt, index++, label + " max outbox clock realtime lag");
++        meta.limits.max_outbox_clock_forward_step_seconds =
++            column_u64_be_or_throw(
++                statement.stmt, index++,
++                label + " max outbox clock forward step");
++        meta.limits.max_outbox_clock_realtime_lag_seconds =
++            column_u64_be_or_throw(
++                statement.stmt, index++,
++                label + " max outbox clock realtime lag");
+     }
+     meta.evidence_count = column_u64_be_or_throw(
+         statement.stmt, index++, label + " evidence count");
+@@ -1417,10 +1582,9 @@ void require_no_foreign_key_violations_or_throw(
+     if (has_historical_version_pins) {
+         meta.historical_version_pin_count = column_u64_be_or_throw(
+             statement.stmt, index++, label + " historical-version pin count");
+-        meta.historical_version_pin_set_digest =
+-            sqlite_column_text_or_throw(
+-                statement.stmt, index++, 64U,
+-                label + " historical-version pin-set digest");
++        meta.historical_version_pin_set_digest = sqlite_column_text_or_throw(
++            statement.stmt, index++, 64U,
++            label + " historical-version pin-set digest");
+     }
+     meta.local_actor_compromised = sqlite_column_bool_or_throw(
+         statement.stmt, index++, label + " local actor compromised");
+@@ -1441,6 +1605,12 @@ void require_no_foreign_key_violations_or_throw(
+     if (meta.state_generation == 0U || meta.policy_generation == 0U) {
+         throw std::runtime_error(label + " durable generation is zero");
+     }
++    if (has_database_lineage &&
++        (!is_lowercase_sha256_hex(meta.database_incarnation_sha256) ||
++         meta.database_recovery_epoch == 0U)) {
++        throw std::runtime_error(
++            label + " durable database lineage is noncanonical");
++    }
+     if (!is_lowercase_sha256_hex(meta.local_operation_digest) ||
+         !is_lowercase_sha256_hex(meta.operation_set_digest) ||
+         !is_lowercase_sha256_hex(meta.evidence_set_digest) ||
+@@ -1465,6 +1635,8 @@ void require_no_foreign_key_violations_or_throw(
+         expected_cutpoint = retry_provenance_cutpoint_digest_or_throw(meta);
+     } else if (meta.schema_version == kRetentionRootSchemaVersion) {
+         expected_cutpoint = retention_root_schema_cutpoint_digest_or_throw(meta);
++    } else if (meta.schema_version == kHistoricalPinSchemaVersion) {
++        expected_cutpoint = historical_pin_schema_cutpoint_digest_or_throw(meta);
+     } else {
+         expected_cutpoint = cutpoint_digest_or_throw(meta);
+     }
+@@ -1480,6 +1652,12 @@ void bind_meta_common_or_throw(
+     const DurableMeta& meta,
+     const std::string& label) {
+     int index = first_index;
++    sqlite_bind_text_or_throw(
++        statement, index++, meta.database_incarnation_sha256,
++        label + " bind database incarnation");
++    bind_u64_be_or_throw(
++        statement, index++, meta.database_recovery_epoch,
++        label + " bind database recovery epoch");
+     sqlite_bind_text_or_throw(
+         statement, index++, meta.folder_id, label + " bind folder");
+     sqlite_bind_text_or_throw(
+@@ -1590,7 +1768,8 @@ void insert_meta_row_or_throw(
+     SyncSqliteStmt statement = sqlite_prepare_or_throw(
+         db,
+         "INSERT INTO main.sync_replica_meta("
+-        "id,schema_version,folder_id,local_device_id,local_epoch_be,"
++        "id,schema_version,database_incarnation_sha256,"
++        "database_recovery_epoch_be,folder_id,local_device_id,local_epoch_be,"
+         "last_local_counter_be,state_generation_be,policy_generation_be,"
+         "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
+         "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
+@@ -1605,7 +1784,7 @@ void insert_meta_row_or_throw(
+         "historical_version_pin_count_be,historical_version_pin_set_digest,"
+         "local_actor_compromised,local_operation_digest,operation_set_digest,"
+         "evidence_set_digest,visible_state_digest,outbox_digest,cutpoint_digest)"
+-        "VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
++        "VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
+         label + " meta insert prepare");
+     sqlite_bind_u64_or_throw(
+         statement.stmt, 1, meta.schema_version,
+@@ -1622,6 +1801,9 @@ void insert_meta_row_or_throw(
+     const std::string& label) {
+     SyncReplicaModel empty(folder_id, local_actor, limits.model);
+     DurableMeta meta;
++    meta.database_incarnation_sha256 = mint_database_incarnation_or_throw(
++        folder_id, local_actor, label + " initial");
++    meta.database_recovery_epoch = 1U;
+     meta.folder_id = folder_id;
+     meta.local_actor = local_actor;
+     meta.state_generation = 1U;
+@@ -2379,6 +2561,7 @@ read_historical_version_pins_or_throw(
+                   migration_floor, label + " synthetic legacy clock"),
+               label + " synthetic legacy outbox clock")
+         : (schema_version == kSchemaVersion ||
++                   schema_version == kHistoricalPinSchemaVersion ||
+                    schema_version == kRetentionRootSchemaVersion
+                ? read_current_outbox_clock_or_throw(
+                      db, meta.folder_id, meta.local_actor, label)
+@@ -2388,13 +2571,15 @@ read_historical_version_pins_or_throw(
+             label + " outbox clock predates retained lease authority");
+     }
+     if (schema_version == kSchemaVersion ||
++        schema_version == kHistoricalPinSchemaVersion ||
+         schema_version == kRetentionRootSchemaVersion) {
+         validate_sync_replica_outbox_clock_state_against_policy_or_throw(
+             outbox_clock.state, outbox_clock_policy(meta.limits),
+             label + " durable outbox clock");
+     }
+     std::vector<std::string> historical_version_pins =
+-        schema_version == kSchemaVersion
++        (schema_version == kSchemaVersion ||
++         schema_version == kHistoricalPinSchemaVersion)
+             ? read_historical_version_pins_or_throw(
+                   db, meta, model, label)
+             : std::vector<std::string>{};
+@@ -2465,14 +2650,35 @@ read_historical_version_pins_or_throw(
+         false, true, true, label);
+ }
+ 
++[[nodiscard]] LoadedState load_historical_pin_state_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& expected_folder_id,
++    const SyncReplicaActor& expected_local_actor,
++    const std::string& label) {
++    return load_state_for_schema_or_throw(
++        db, expected_folder_id, expected_local_actor,
++        kHistoricalPinSchema, kHistoricalPinSchemaVersion,
++        false, true, true, label);
++}
++
+ [[nodiscard]] DurableMeta meta_from_state_or_throw(
+     const SyncReplicaModel& model,
++    std::string database_incarnation_sha256,
++    std::uint64_t database_recovery_epoch,
+     const SyncReplicaSqliteOwnerLimits& limits,
+     std::uint64_t state_generation,
+     std::uint64_t policy_generation,
+     const std::vector<SyncReplicaSqliteOutboxIntent>& outbox,
+     std::span<const std::string> historical_version_pins) {
++    if (!is_lowercase_sha256_hex(database_incarnation_sha256) ||
++        database_recovery_epoch == 0U) {
++        throw std::invalid_argument(
++            "sync replica SQLite database lineage is invalid");
++    }
+     DurableMeta meta;
++    meta.database_incarnation_sha256 =
++        std::move(database_incarnation_sha256);
++    meta.database_recovery_epoch = database_recovery_epoch;
+     meta.folder_id = model.folder_id();
+     meta.local_actor = model.local_actor();
+     meta.last_local_counter = model.last_local_counter();
+@@ -2518,6 +2724,7 @@ void update_meta_or_throw(
+     SyncSqliteStmt statement = sqlite_prepare_or_throw(
+         db,
+         "UPDATE main.sync_replica_meta SET "
++        "database_incarnation_sha256=?,database_recovery_epoch_be=?,"
+         "folder_id=?,local_device_id=?,local_epoch_be=?,"
+         "last_local_counter_be=?,state_generation_be=?,policy_generation_be=?,"
+         "max_operations_be=?,max_context_entries_be=?,max_predecessor_ids_be=?,"
+@@ -2976,6 +3183,9 @@ void require_snapshot_authority_or_throw(
+     SyncReplicaSqliteSnapshot snapshot;
+     snapshot.durable = loaded.model.durable_state();
+     snapshot.limits = loaded.meta.limits;
++    snapshot.database_incarnation_sha256 =
++        loaded.meta.database_incarnation_sha256;
++    snapshot.database_recovery_epoch = loaded.meta.database_recovery_epoch;
+     snapshot.state_generation = loaded.meta.state_generation;
+     snapshot.policy_generation = loaded.meta.policy_generation;
+     snapshot.outbox = loaded.outbox;
+@@ -3130,7 +3340,8 @@ void publish_outbox_lease_update_or_throw(
+     const std::uint64_t generation = increment_or_throw(
+         loaded.meta.state_generation, label + " state generation");
+     const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
++        loaded.model, loaded.meta.database_incarnation_sha256,
++        loaded.meta.database_recovery_epoch, loaded.meta.limits, generation,
+         loaded.meta.policy_generation, loaded.outbox,
+         loaded.historical_version_pins);
+     update_meta_or_throw(db, meta, label);
+@@ -3151,19 +3362,32 @@ void migrate_prior_schema_or_throw(
+         prior.meta.schema_version != kPreviousSchemaVersion &&
+         prior.meta.schema_version != kClockSchemaVersion &&
+         prior.meta.schema_version != kRetryProvenanceSchemaVersion &&
+-        prior.meta.schema_version != kRetentionRootSchemaVersion) {
++        prior.meta.schema_version != kRetentionRootSchemaVersion &&
++        prior.meta.schema_version != kHistoricalPinSchemaVersion) {
+         throw std::logic_error(
+-            label + " migration source is not schema v1 through v5");
++            label + " migration source is not schema v1 through v6");
++    }
++    const bool source_has_historical_version_pins =
++        prior.meta.schema_version == kHistoricalPinSchemaVersion;
++    if (!source_has_historical_version_pins &&
++        !prior.historical_version_pins.empty()) {
++        throw std::logic_error(
++            label + " pre-v6 migration source unexpectedly has history pins");
+     }
+     const std::uint64_t generation = increment_or_throw(
+         prior.meta.state_generation, label + " migration state generation");
++    const std::string database_incarnation_sha256 =
++        mint_database_incarnation_or_throw(
++            folder_id, local_actor, label + " migration");
++    constexpr std::uint64_t database_recovery_epoch = 1U;
+ 
+     // Keep canonical evidence and projections in place. Replace only the
+     // meta/outbox protocol surfaces after exact prior-version restoration.
+     if (prior.meta.schema_version == kPreviousSchemaVersion ||
+         prior.meta.schema_version == kClockSchemaVersion ||
+         prior.meta.schema_version == kRetryProvenanceSchemaVersion ||
+-        prior.meta.schema_version == kRetentionRootSchemaVersion) {
++        prior.meta.schema_version == kRetentionRootSchemaVersion ||
++        prior.meta.schema_version == kHistoricalPinSchemaVersion) {
+         sqlite_exec_or_throw(
+             db, "DROP INDEX main.sync_replica_outbox_schedule;",
+             label + " retire previous outbox schedule index");
+@@ -3173,18 +3397,22 @@ void migrate_prior_schema_or_throw(
+         "DROP TABLE main.sync_replica_outbox;";
+     if (prior.meta.schema_version == kClockSchemaVersion ||
+         prior.meta.schema_version == kRetryProvenanceSchemaVersion ||
+-        prior.meta.schema_version == kRetentionRootSchemaVersion) {
++        prior.meta.schema_version == kRetentionRootSchemaVersion ||
++        prior.meta.schema_version == kHistoricalPinSchemaVersion) {
+         retire_sql += "DROP TABLE main.sync_replica_outbox_clock;";
+     }
+     retire_sql += "DROP TABLE main.sync_replica_meta;";
+     sqlite_exec_or_throw(db, retire_sql, label + " retire prior outbox schema");
+     for (const SchemaDefinition& definition : kSchema) {
+-        if (definition.name == "sync_replica_meta" ||
++        const bool selected =
++            definition.name == "sync_replica_meta" ||
+             definition.name == "sync_replica_outbox" ||
+             definition.name == "sync_replica_outbox_clock" ||
+-            definition.name == "sync_replica_history_pins" ||
+             definition.name == "sync_replica_outbox_operation" ||
+-            definition.name == "sync_replica_outbox_schedule") {
++            definition.name == "sync_replica_outbox_schedule" ||
++            (definition.name == "sync_replica_history_pins" &&
++             !source_has_historical_version_pins);
++        if (selected) {
+             sqlite_exec_or_throw(
+                 db, create_statement(definition),
+                 label + " create " + std::string(definition.name));
+@@ -3193,15 +3421,16 @@ void migrate_prior_schema_or_throw(
+     verify_schema_or_throw(db, label + " migrated schema");
+ 
+     const DurableMeta meta = meta_from_state_or_throw(
+-        prior.model, prior.meta.limits, generation,
+-        prior.meta.policy_generation, prior.outbox, {});
++        prior.model, database_incarnation_sha256, database_recovery_epoch,
++        prior.meta.limits, generation, prior.meta.policy_generation,
++        prior.outbox, prior.historical_version_pins);
+     insert_meta_row_or_throw(db, meta, label + " migrated");
+     insert_outbox_intents_or_throw(db, prior.outbox, label + " migrated");
+     insert_outbox_clock_or_throw(
+         db, prior.outbox_clock, label + " migrated");
+     attest_and_commit_staged_cutpoint_or_throw(
+         transaction, db, folder_id, local_actor, prior.model, meta,
+-        prior.outbox_clock, prior.outbox, {},
++        prior.outbox_clock, prior.outbox, prior.historical_version_pins,
+         label + " migration publication");
+ }
+ 
+@@ -3294,7 +3523,8 @@ persist_staged_local_publication_or_throw(
+     rewrite_projection_or_throw(
+         db, loaded.model, loaded.persisted_states, label);
+     const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
++        loaded.model, loaded.meta.database_incarnation_sha256,
++        loaded.meta.database_recovery_epoch, loaded.meta.limits, generation,
+         loaded.meta.policy_generation, loaded.outbox,
+         loaded.historical_version_pins);
+     update_meta_or_throw(db, meta, label);
+@@ -3604,41 +3834,47 @@ SyncReplicaSqliteOwner::SyncReplicaSqliteOwner(
+         require_write_authority_or_throw(
+             transaction, db_, label_ + " existing database");
+         transaction.commit();
++    } else if (schema_matches(observed, kHistoricalPinSchema)) {
++        LoadedState historical_pin = load_historical_pin_state_or_throw(
++            db_, folder_id_, local_actor_, label_ + " schema v6 database");
++        migrate_prior_schema_or_throw(
++            transaction, db_, std::move(historical_pin), folder_id_,
++            local_actor_, label_ + " schema v6 to v7");
+     } else if (schema_matches(observed, kLegacySchema)) {
+         LoadedState legacy = load_legacy_state_or_throw(
+             db_, folder_id_, local_actor_, label_ + " legacy database");
+         migrate_prior_schema_or_throw(
+             transaction, db_, std::move(legacy), folder_id_, local_actor_,
+-            label_ + " schema v1 to v6");
++            label_ + " schema v1 to v7");
+     } else if (schema_matches(observed, kPreviousSchema)) {
+         LoadedState previous = load_previous_state_or_throw(
+             db_, folder_id_, local_actor_, label_ + " previous database");
+         migrate_prior_schema_or_throw(
+             transaction, db_, std::move(previous), folder_id_, local_actor_,
+-            label_ + " schema v2 to v6");
++            label_ + " schema v2 to v7");
+     } else if (schema_matches(observed, kClockSchema)) {
+         LoadedState clock = load_clock_state_or_throw(
+             db_, folder_id_, local_actor_, label_ + " schema v3 database");
+         migrate_prior_schema_or_throw(
+             transaction, db_, std::move(clock), folder_id_, local_actor_,
+-            label_ + " schema v3 to v6");
++            label_ + " schema v3 to v7");
+     } else if (schema_matches(observed, kRetryProvenanceSchema)) {
+         LoadedState retry = load_retry_provenance_state_or_throw(
+             db_, folder_id_, local_actor_, label_ + " schema v4 database");
+         migrate_prior_schema_or_throw(
+             transaction, db_, std::move(retry), folder_id_, local_actor_,
+-            label_ + " schema v4 to v6");
++            label_ + " schema v4 to v7");
+     } else if (schema_matches(observed, kRetentionRootSchema)) {
+         LoadedState retention_root = load_retention_root_state_or_throw(
+             db_, folder_id_, local_actor_, label_ + " schema v5 database");
+         migrate_prior_schema_or_throw(
+             transaction, db_, std::move(retention_root), folder_id_,
+-            local_actor_, label_ + " schema v5 to v6");
++            local_actor_, label_ + " schema v5 to v7");
+     } else {
+         throw std::runtime_error(
+-            label_ + " database does not match schema v6, exact rev0874 v5, "
+-                     "exact rev0873 v4, exact rev0872 v3, exact rev0871 v2, "
+-                     "or exact rev0869 v1");
++            label_ + " database does not match schema v7, exact rev0973 v6, "
++                     "exact rev0874 v5, exact rev0873 v4, exact rev0872 v3, "
++                     "exact rev0871 v2, or exact rev0869 v1");
+     }
+ 
+     // Constructor publication is withheld until every exact operation and
+@@ -3661,6 +3897,62 @@ SyncReplicaSqliteSnapshot SyncReplicaSqliteOwner::snapshot_or_throw() {
+     return snapshot;
+ }
+ 
++SyncReplicaSqliteDatabaseRecoveryEpochResult
++SyncReplicaSqliteOwner::advance_database_recovery_epoch_or_throw(
++    std::string expected_database_incarnation_sha256,
++    std::uint64_t expected_database_recovery_epoch,
++    std::string expected_cutpoint_digest) {
++    if (!is_lowercase_sha256_hex(expected_database_incarnation_sha256) ||
++        expected_database_recovery_epoch == 0U ||
++        !is_lowercase_sha256_hex(expected_cutpoint_digest)) {
++        throw std::invalid_argument(
++            label_ + " database recovery expectation is invalid");
++    }
++
++    SyncSqliteTransaction transaction(
++        db_, label_ + " database recovery epoch advance",
++        SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " database recovery epoch advance");
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_,
++        label_ + " database recovery epoch advance");
++    if (loaded.meta.database_incarnation_sha256 !=
++            expected_database_incarnation_sha256 ||
++        loaded.meta.database_recovery_epoch !=
++            expected_database_recovery_epoch ||
++        loaded.meta.cutpoint_digest != expected_cutpoint_digest) {
++        throw std::runtime_error(
++            label_ + " database recovery expectation is stale");
++    }
++
++    const std::uint64_t recovery_epoch = increment_or_throw(
++        loaded.meta.database_recovery_epoch,
++        label_ + " database recovery epoch");
++    const std::uint64_t state_generation = increment_or_throw(
++        loaded.meta.state_generation,
++        label_ + " database recovery state generation");
++    const DurableMeta meta = meta_from_state_or_throw(
++        loaded.model, loaded.meta.database_incarnation_sha256,
++        recovery_epoch, loaded.meta.limits, state_generation,
++        loaded.meta.policy_generation, loaded.outbox,
++        loaded.historical_version_pins);
++    update_meta_or_throw(
++        db_, meta, label_ + " database recovery epoch advance");
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
++        loaded.outbox_clock, loaded.outbox,
++        loaded.historical_version_pins,
++        label_ + " database recovery epoch publication");
++    return {
++        meta.database_incarnation_sha256,
++        expected_database_recovery_epoch,
++        meta.database_recovery_epoch,
++        meta.state_generation,
++        meta.cutpoint_digest,
++    };
++}
++
+ SyncReplicaSqliteEvidencePage
+ SyncReplicaSqliteOwner::evidence_page_or_throw(
+     std::optional<std::string> after_operation_id,
+@@ -3825,7 +4117,8 @@ SyncReplicaSqliteOwner::pin_historical_version_or_throw(
+         loaded.meta.state_generation,
+         label_ + " historical-version pin state generation");
+     const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
++        loaded.model, loaded.meta.database_incarnation_sha256,
++        loaded.meta.database_recovery_epoch, loaded.meta.limits, generation,
+         loaded.meta.policy_generation, loaded.outbox,
+         loaded.historical_version_pins);
+     update_meta_or_throw(db_, meta, label_ + " historical-version pin");
+@@ -3891,7 +4184,8 @@ SyncReplicaSqliteOwner::unpin_historical_version_or_throw(
+         loaded.meta.state_generation,
+         label_ + " historical-version unpin state generation");
+     const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
++        loaded.model, loaded.meta.database_incarnation_sha256,
++        loaded.meta.database_recovery_epoch, loaded.meta.limits, generation,
+         loaded.meta.policy_generation, loaded.outbox,
+         loaded.historical_version_pins);
+     update_meta_or_throw(db_, meta, label_ + " historical-version unpin");
+@@ -4281,7 +4575,8 @@ SyncReplicaSqliteOwner::enqueue_operation_for_destinations_or_throw(
+         });
+ 
+     const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
++        loaded.model, loaded.meta.database_incarnation_sha256,
++        loaded.meta.database_recovery_epoch, loaded.meta.limits, generation,
+         loaded.meta.policy_generation, loaded.outbox,
+         loaded.historical_version_pins);
+     update_meta_or_throw(db_, meta, operation_label);
+@@ -4341,7 +4636,8 @@ SyncReplicaSqliteOwner::accept_remote_with_cutpoint_or_throw(
+         db_, loaded.model, loaded.persisted_states,
+         label_ + " remote admission");
+     const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
++        loaded.model, loaded.meta.database_incarnation_sha256,
++        loaded.meta.database_recovery_epoch, loaded.meta.limits, generation,
+         loaded.meta.policy_generation, loaded.outbox,
+         loaded.historical_version_pins);
+     update_meta_or_throw(db_, meta, label_ + " remote admission");
+@@ -4822,7 +5118,8 @@ SyncReplicaSqliteOwner::settle_outbox_or_throw(
+     const std::uint64_t generation = increment_or_throw(
+         loaded.meta.state_generation, label_ + " state generation");
+     const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
++        loaded.model, loaded.meta.database_incarnation_sha256,
++        loaded.meta.database_recovery_epoch, loaded.meta.limits, generation,
+         loaded.meta.policy_generation, loaded.outbox,
+         loaded.historical_version_pins);
+     update_meta_or_throw(db_, meta, label_ + " outbox settlement");
+@@ -5083,7 +5380,8 @@ void SyncReplicaSqliteOwner::replace_limits_or_throw(
+         loaded.meta.policy_generation,
+         label_ + " policy generation");
+     const DurableMeta meta = meta_from_state_or_throw(
+-        replacement_model, replacement, state_generation,
++        replacement_model, loaded.meta.database_incarnation_sha256,
++        loaded.meta.database_recovery_epoch, replacement, state_generation,
+         policy_generation, loaded.outbox,
+         loaded.historical_version_pins);
+     update_meta_or_throw(db_, meta, label_ + " policy replacement");
+diff --git a/src/sync_replica_sqlite_owner.hpp b/src/sync_replica_sqlite_owner.hpp
+index 146e71649d6a8dc8efdbd878cfaf7bfecccde551..f8b0b6afb4a66f8d52777afde3359de1223b308f 100644
+--- a/src/sync_replica_sqlite_owner.hpp
++++ b/src/sync_replica_sqlite_owner.hpp
+@@ -207,6 +207,15 @@ struct SyncReplicaSqliteHistoricalVersionPinResult final {
+ struct SyncReplicaSqliteSnapshot final {
+     SyncReplicaDurableState durable;
+     SyncReplicaSqliteOwnerLimits limits;
++    // Randomly minted once for a new database or exact pre-v7 migration.
++    // Distinguishes independent SQLite files that otherwise contain identical
++    // causal state. Because it is stored in the database, it is not by itself
++    // an external exact-image rollback detector.
++    std::string database_incarnation_sha256;
++    // Monotonic within the retained database image. An explicit recovery
++    // transition advances this value and the state generation together so
++    // stale same-incarnation retention evidence cannot cross that boundary.
++    std::uint64_t database_recovery_epoch = 0U;
+     std::uint64_t state_generation = 0;
+     std::uint64_t policy_generation = 0;
+     std::vector<SyncReplicaSqliteOutboxIntent> outbox;
+@@ -237,6 +246,17 @@ struct SyncReplicaSqliteSnapshot final {
+     bool operator==(const SyncReplicaSqliteSnapshot&) const = default;
+ };
+ 
++struct SyncReplicaSqliteDatabaseRecoveryEpochResult final {
++    std::string database_incarnation_sha256;
++    std::uint64_t previous_database_recovery_epoch = 0U;
++    std::uint64_t database_recovery_epoch = 0U;
++    std::uint64_t state_generation = 0U;
++    std::string cutpoint_digest;
++
++    bool operator==(
++        const SyncReplicaSqliteDatabaseRecoveryEpochResult&) const = default;
++};
++
+ // Exact-current-schema observation for a connection already constrained to
+ // read-only/query-only authority. Unlike SyncReplicaSqliteOwner construction,
+ // this surface never initializes or migrates schema and never acquires a
+@@ -375,6 +395,19 @@ public:
+ 
+     [[nodiscard]] SyncReplicaSqliteSnapshot snapshot_or_throw();
+ 
++    // Explicitly invalidates stale same-incarnation evidence after an operator
++    // has restored, repaired, or otherwise re-authorized this exact database.
++    // The transition is generation- and cutpoint-fenced, preserves all causal,
++    // outbox, clock, and pin state, and advances the recovery epoch plus the
++    // ordinary state generation atomically. It cannot independently discover
++    // restoration of an older exact whole-database image; an external anchor or
++    // a post-restore call using freshly trusted expectations is still required.
++    [[nodiscard]] SyncReplicaSqliteDatabaseRecoveryEpochResult
++    advance_database_recovery_epoch_or_throw(
++        std::string expected_database_incarnation_sha256,
++        std::uint64_t expected_database_recovery_epoch,
++        std::string expected_cutpoint_digest);
++
+     // Returns one exact page from the retained share-global evidence set. A
+     // non-empty cursor must be paired with the evidence-set digest obtained from
+     // the preceding page. The digest may also be supplied with an empty cursor
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index fbe9aa615f641262341d4c1c47a0278abcbb53c3..32a10e293ce10622ca5927e6bd3229ccb3f20578 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -363,6 +363,8 @@ void test_historical_inventory_status_byte_frontier() {
+ 
+     anonsync::SyncReplicaRetentionPlan plan;
+     plan.query.maximum_entries = 2U;
++    plan.source_replica_database_incarnation_sha256 = std::string(64U, '7');
++    plan.source_replica_database_recovery_epoch = 3U;
+     plan.source_replica_state_generation = 19U;
+     plan.source_operation_set_digest = std::string(64U, 'a');
+     plan.source_evidence_set_digest = std::string(64U, 'b');
+@@ -1717,7 +1719,7 @@ int main() {
+                     socket_path, plan_query);
+             require(
+                 accepted_plan ==
+-                    "{\"schema\":\"anonsync.local-retention-plan.response.v5\","
++                    "{\"schema\":\"anonsync.local-retention-plan.response.v6\","
+                     "\"command\":\"retention-plan\","
+                     "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":1,\"maximum_entries\":2,"
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index f5fc4228272c336b3525954d213486f0c5e99c46..a27a249b2f605322e16f9260ff46f0072b1cc53b 100644
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -493,8 +493,13 @@ retention_unreferenced_candidate_set_digest_for_test(
+     anonsync::Sha256DigestBuilder digest;
+     append_test_string(
+         digest,
+-        "anonsync:sync-replica-retention-plan-durable-candidate-witness:v1");
++        "anonsync:sync-replica-retention-plan-durable-candidate-witness:v2");
+     append_test_string(digest, folder_id);
++    append_test_string(
++        digest, plan.source_replica_database_incarnation_sha256);
++    append_test_u64(
++        digest, plan.source_replica_database_recovery_epoch);
++    append_test_u64(digest, plan.source_replica_state_generation);
+     append_test_string(digest, plan.source_operation_set_digest);
+     append_test_string(digest, plan.source_evidence_set_digest);
+     append_test_string(
+@@ -522,10 +527,15 @@ retention_unreferenced_candidate_set_digest_for_test(
+     anonsync::Sha256DigestBuilder digest;
+     append_test_string(
+         digest,
+-        "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v1");
++        "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v2");
+     append_test_string(
+         digest, anonsync::kSyncReplicaFilePayloadUseLeaseProtocol);
+     append_test_string(digest, folder_id);
++    append_test_string(
++        digest, plan.source_replica_database_incarnation_sha256);
++    append_test_u64(
++        digest, plan.source_replica_database_recovery_epoch);
++    append_test_u64(digest, plan.source_replica_state_generation);
+     append_test_string(digest, plan.source_operation_set_digest);
+     append_test_string(digest, plan.source_evidence_set_digest);
+     append_test_string(
+@@ -565,10 +575,15 @@ retention_unreferenced_candidate_set_digest_for_test(
+     anonsync::Sha256DigestBuilder digest;
+     append_test_string(
+         digest,
+-        "anonsync:sync-replica-retention-plan-deletion-free-mark:v4");
++        "anonsync:sync-replica-retention-plan-deletion-free-mark:v5");
+     append_test_string(
+         digest, anonsync::kSyncReplicaFilePayloadUseLeaseProtocol);
+     append_test_string(digest, folder_id);
++    append_test_string(
++        digest, plan.source_replica_database_incarnation_sha256);
++    append_test_u64(
++        digest, plan.source_replica_database_recovery_epoch);
++    append_test_u64(digest, plan.source_replica_state_generation);
+     append_test_string(digest, plan.source_operation_set_digest);
+     append_test_string(digest, plan.source_evidence_set_digest);
+     append_test_string(
+@@ -6044,6 +6059,11 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             retention_plan, Fixture::folder_id);
+     require(
+         retention_plan.source_cutpoint() == exact_cutpoint &&
++            anonsync::is_lowercase_sha256_hex(
++                retention_plan.source_replica_database_incarnation_sha256) &&
++            retention_plan.source_replica_database_recovery_epoch == 1U &&
++            retention_plan.source_replica_state_generation ==
++                fixture.replica.snapshot_or_throw().state_generation &&
+             retention_plan.historical_version_pin_count == 1U &&
+             retention_plan.payload_transient_entry_count == 1U &&
+             retention_plan.payload_transient_bytes == 4U &&
+@@ -6151,6 +6171,11 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+     anonsync::SyncReplicaPayloadRetentionMarkRequest retention_mark_request;
+     retention_mark_request.expected_source_cutpoint =
+         retention_plan.source_cutpoint();
++    retention_mark_request.
++        expected_source_replica_database_incarnation_sha256 =
++        retention_plan.source_replica_database_incarnation_sha256;
++    retention_mark_request.expected_source_replica_database_recovery_epoch =
++        retention_plan.source_replica_database_recovery_epoch;
+     retention_mark_request.expected_source_replica_state_generation =
+         retention_plan.source_replica_state_generation;
+     retention_mark_request.expected_durable_candidate_witness_digest =
+@@ -6347,19 +6372,31 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+     require(
+         current_retention_plan.source_cutpoint() ==
+                 retention_plan.source_cutpoint() &&
++            current_retention_plan.source_replica_database_incarnation_sha256 ==
++                retention_plan.source_replica_database_incarnation_sha256 &&
++            current_retention_plan.source_replica_database_recovery_epoch ==
++                retention_plan.source_replica_database_recovery_epoch &&
+             current_retention_plan.source_replica_state_generation ==
+                 replica_after_pin_aba.state_generation &&
+-            current_retention_plan.durable_candidate_witness_digest ==
++            current_retention_plan.durable_candidate_witness_digest !=
+                 retention_plan.durable_candidate_witness_digest &&
++            current_retention_plan.exact_deletion_free_mark_digest !=
++                retention_plan.exact_deletion_free_mark_digest &&
+             current_retention_plan.unreferenced_candidate_set_digest ==
+                 retention_plan.unreferenced_candidate_set_digest &&
+             current_retention_plan.source_payload_snapshot_digest ==
+                 retention_plan.source_payload_snapshot_digest,
+-        "retention-mark metadata changed the physical cutpoint or ABA candidate witness");
++        "digest-level replica ABA did not advance the lineage-bound retention witnesses");
+ 
+     auto replacement_mark_request = retention_mark_request;
+     replacement_mark_request.expected_source_cutpoint =
+         current_retention_plan.source_cutpoint();
++    replacement_mark_request.
++        expected_source_replica_database_incarnation_sha256 =
++        current_retention_plan.source_replica_database_incarnation_sha256;
++    replacement_mark_request.
++        expected_source_replica_database_recovery_epoch =
++        current_retention_plan.source_replica_database_recovery_epoch;
+     replacement_mark_request.expected_source_replica_state_generation =
+         current_retention_plan.source_replica_state_generation;
+     replacement_mark_request.expected_durable_candidate_witness_digest =
+@@ -6428,9 +6465,9 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             snapshot_rooted_plan.exact_deletion_free_mark_digest;
+         require(
+             snapshot_rooted_plan.live_capability_process_store_scope_digest ==
+-                    retention_plan.live_capability_process_store_scope_digest &&
++                    current_retention_plan.live_capability_process_store_scope_digest &&
+                 snapshot_rooted_plan.live_capability_process_store_scope_incarnation_digest ==
+-                retention_plan.live_capability_process_store_scope_incarnation_digest &&
++                current_retention_plan.live_capability_process_store_scope_incarnation_digest &&
+                 snapshot_rooted_plan.live_snapshot_count == 1U &&
+                 snapshot_rooted_plan.live_opened_payload_count == 0U &&
+                 snapshot_rooted_plan.live_targeted_access_count == 0U &&
+@@ -6445,11 +6482,11 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                 snapshot_rooted_plan.unreferenced_live_capability_rooted_payload_bytes ==
+                     orphan_bytes.size() &&
+                 snapshot_rooted_plan.live_capability_set_digest !=
+-                    retention_plan.live_capability_set_digest &&
++                    current_retention_plan.live_capability_set_digest &&
+                 snapshot_rooted_plan.durable_candidate_witness_digest ==
+-                    retention_plan.durable_candidate_witness_digest &&
++                    current_retention_plan.durable_candidate_witness_digest &&
+                 snapshot_rooted_plan.exact_deletion_free_mark_digest !=
+-                    retention_plan.exact_deletion_free_mark_digest &&
++                    current_retention_plan.exact_deletion_free_mark_digest &&
+                 std::all_of(
+                     snapshot_rooted_plan.entries.begin(),
+                     snapshot_rooted_plan.entries.end(),
+@@ -6467,7 +6504,7 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                 replacement_rooted_plan.live_capability_set_digest !=
+                     first_live_snapshot_set_digest &&
+                 replacement_rooted_plan.durable_candidate_witness_digest ==
+-                    retention_plan.durable_candidate_witness_digest &&
++                    current_retention_plan.durable_candidate_witness_digest &&
+                 replacement_rooted_plan.exact_deletion_free_mark_digest !=
+                     first_live_snapshot_mark_digest,
+             "same-count live snapshot replacement aliased the exact capability-set cutpoint");
+@@ -6476,11 +6513,11 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+         scan->plan_payload_retention_or_throw();
+     require(
+         after_snapshot_release_plan.live_capability_set_digest ==
+-                retention_plan.live_capability_set_digest &&
++                current_retention_plan.live_capability_set_digest &&
+             after_snapshot_release_plan.durable_candidate_witness_digest ==
+-                retention_plan.durable_candidate_witness_digest &&
++                current_retention_plan.durable_candidate_witness_digest &&
+             after_snapshot_release_plan.exact_deletion_free_mark_digest ==
+-                retention_plan.exact_deletion_free_mark_digest &&
++                current_retention_plan.exact_deletion_free_mark_digest &&
+             after_snapshot_release_plan.live_snapshot_count == 0U &&
+             after_snapshot_release_plan.live_capability_rooted_physical_payload_count == 0U,
+         "released same-process-store snapshot remained a retention root");
+@@ -6500,7 +6537,7 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+         require(
+             independent_owner_rooted_plan
+                     .live_capability_process_store_scope_digest ==
+-                    retention_plan.live_capability_process_store_scope_digest &&
++                    current_retention_plan.live_capability_process_store_scope_digest &&
+                 independent_owner_rooted_plan
+                     .live_capability_process_store_scope_incarnation_digest ==
+                     retention_plan
+@@ -6522,10 +6559,10 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+         scan->plan_payload_retention_or_throw();
+     require(
+         after_independent_owner_release_plan.live_capability_set_digest ==
+-                retention_plan.live_capability_set_digest &&
++                current_retention_plan.live_capability_set_digest &&
+             after_independent_owner_release_plan
+                     .exact_deletion_free_mark_digest ==
+-                retention_plan.exact_deletion_free_mark_digest &&
++                current_retention_plan.exact_deletion_free_mark_digest &&
+             after_independent_owner_release_plan.live_snapshot_count == 0U,
+         "released independent owner remained in the process-store retention cutpoint");
+ 
+@@ -6585,20 +6622,20 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                     retention_writer_fenced_candidate_page_digest_for_test(
+                         opened_rooted_plan, Fixture::folder_id) &&
+                 opened_rooted_plan.writer_fenced_candidate_page_digest !=
+-                    retention_plan.writer_fenced_candidate_page_digest &&
++                    current_retention_plan.writer_fenced_candidate_page_digest &&
+                 opened_rooted_plan.durable_candidate_witness_digest ==
+-                    retention_plan.durable_candidate_witness_digest &&
++                    current_retention_plan.durable_candidate_witness_digest &&
+                 opened_rooted_plan.exact_deletion_free_mark_digest !=
+-                    retention_plan.exact_deletion_free_mark_digest,
++                    current_retention_plan.exact_deletion_free_mark_digest,
+             "opened payload descriptor was not projected as one exact same-process-store live root");
+     }
+     const auto after_opened_release_plan =
+         scan->plan_payload_retention_or_throw();
+     require(
+         after_opened_release_plan.live_capability_set_digest ==
+-                retention_plan.live_capability_set_digest &&
++                current_retention_plan.live_capability_set_digest &&
+             after_opened_release_plan.exact_deletion_free_mark_digest ==
+-                retention_plan.exact_deletion_free_mark_digest &&
++                current_retention_plan.exact_deletion_free_mark_digest &&
+             after_opened_release_plan.live_opened_payload_count == 0U &&
+             after_opened_release_plan.live_capability_rooted_physical_payload_count == 0U &&
+             after_opened_release_plan.writer_fenced_candidate_page_entry_count == 2U &&
+@@ -6606,7 +6643,7 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             after_opened_release_plan.returned_candidate_payload_use_exclusive_available_count == 1U &&
+             after_opened_release_plan.returned_candidate_payload_use_busy_count == 0U &&
+             after_opened_release_plan.writer_fenced_candidate_page_digest ==
+-                retention_plan.writer_fenced_candidate_page_digest,
++                current_retention_plan.writer_fenced_candidate_page_digest,
+         "released opened payload descriptor remained a retention root");
+ 
+     anonsync::SyncReplicaRetentionPlanQuery first_plan_page;
+@@ -6638,13 +6675,13 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+     require(
+         second_page.source_cutpoint() == first_page.source_cutpoint() &&
+             first_page.unreferenced_candidate_set_digest ==
+-                retention_plan.unreferenced_candidate_set_digest &&
++                current_retention_plan.unreferenced_candidate_set_digest &&
+             second_page.unreferenced_candidate_set_digest ==
+-                retention_plan.unreferenced_candidate_set_digest &&
++                current_retention_plan.unreferenced_candidate_set_digest &&
+             first_page.exact_deletion_free_mark_digest ==
+-                retention_plan.exact_deletion_free_mark_digest &&
++                current_retention_plan.exact_deletion_free_mark_digest &&
+             second_page.exact_deletion_free_mark_digest ==
+-                retention_plan.exact_deletion_free_mark_digest &&
++                current_retention_plan.exact_deletion_free_mark_digest &&
+             second_page.entries.size() == 1U && !second_page.truncated &&
+             second_page.writer_fenced_candidate_page_entry_count == 1U &&
+             !second_page.next_start_after_content_sha256.has_value() &&
+@@ -6804,6 +6841,191 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+         "retained-reachability fixture could not remove its negative-control entry");
+ }
+ 
++void test_retention_witness_binds_exact_replica_database_incarnation() {
++    Fixture fixture("anonsync-retention-database-incarnation");
++    const std::string orphan_bytes = "database-lineage-orphan";
++    const auto orphan = fixture.payload_store.put_payload_or_throw(orphan_bytes);
++
++    anonsync::SyncSqliteDb second_replica_db = open_database(
++        fixture.temporary.path() / "replica-second.sqlite3",
++        "second retention replica database");
++    anonsync::SyncReplicaSqliteOwner second_replica(
++        second_replica_db.db, Fixture::folder_id, Fixture::local_actor, {},
++        "second retention replica owner",
++        std::make_unique<TestOutboxClockSource>());
++    anonsync::SyncSqliteDb first_catalog_db = open_database(
++        fixture.temporary.path() / "catalog-first.sqlite3",
++        "first retention catalog database");
++    anonsync::SyncSqliteDb second_catalog_db = open_database(
++        fixture.temporary.path() / "catalog-second.sqlite3",
++        "second retention catalog database");
++    auto first_scan = std::make_unique<anonsync::SyncReplicaFolderScanOwner>(
++        first_catalog_db.db, Fixture::folder_id, fixture.shared_root,
++        fixture.replica, fixture.payload_store, Fixture::scan_limits(),
++        "first retention lineage scan owner");
++    auto second_scan = std::make_unique<anonsync::SyncReplicaFolderScanOwner>(
++        second_catalog_db.db, Fixture::folder_id, fixture.shared_root,
++        second_replica, fixture.payload_store, Fixture::scan_limits(),
++        "second retention lineage scan owner");
++
++    const auto first = first_scan->plan_payload_retention_or_throw();
++    const auto second = second_scan->plan_payload_retention_or_throw();
++    require(
++        first.source_cutpoint() == second.source_cutpoint() &&
++            first.source_replica_state_generation ==
++                second.source_replica_state_generation &&
++            first.source_operation_set_digest ==
++                second.source_operation_set_digest &&
++            first.source_evidence_set_digest == second.source_evidence_set_digest &&
++            first.source_historical_version_pin_set_digest ==
++                second.source_historical_version_pin_set_digest &&
++            first.source_visible_state_digest ==
++                second.source_visible_state_digest &&
++            first.source_payload_snapshot_digest ==
++                second.source_payload_snapshot_digest &&
++            first.unreferenced_candidate_set_digest ==
++                second.unreferenced_candidate_set_digest &&
++            first.unreferenced_by_retained_file_operations ==
++                second.unreferenced_by_retained_file_operations &&
++            first.unreferenced_by_retained_file_operations.payload_count == 1U &&
++            first.unreferenced_by_retained_file_operations.payload_bytes ==
++                orphan_bytes.size(),
++        "independent retention databases did not begin with identical causal and payload facts");
++    require(
++        anonsync::is_lowercase_sha256_hex(
++            first.source_replica_database_incarnation_sha256) &&
++            anonsync::is_lowercase_sha256_hex(
++                second.source_replica_database_incarnation_sha256) &&
++            first.source_replica_database_incarnation_sha256 !=
++                second.source_replica_database_incarnation_sha256 &&
++            first.source_replica_database_recovery_epoch == 1U &&
++            second.source_replica_database_recovery_epoch == 1U &&
++            first.durable_candidate_witness_digest !=
++                second.durable_candidate_witness_digest &&
++            first.exact_deletion_free_mark_digest !=
++                second.exact_deletion_free_mark_digest &&
++            first.writer_fenced_candidate_page_digest !=
++                second.writer_fenced_candidate_page_digest,
++        "independent identical replica databases aliased retention authority");
++
++    anonsync::SyncReplicaPayloadRetentionMarkRequest stale_request;
++    stale_request.expected_source_cutpoint = first.source_cutpoint();
++    stale_request.expected_source_replica_database_incarnation_sha256 =
++        first.source_replica_database_incarnation_sha256;
++    stale_request.expected_source_replica_database_recovery_epoch =
++        first.source_replica_database_recovery_epoch;
++    stale_request.expected_source_replica_state_generation =
++        first.source_replica_state_generation;
++    stale_request.expected_durable_candidate_witness_digest =
++        first.durable_candidate_witness_digest;
++    stale_request.marked_at_unix_seconds = 1'800'000'001U;
++    stale_request.policy = anonsync::SyncReplicaFilePayloadRetentionPolicy{
++        .minimum_grace_seconds = 86'400U,
++        .maximum_candidate_payload_count = 1U,
++        .maximum_candidate_payload_bytes = orphan.size_bytes,
++        .maximum_collection_payload_count = 1U,
++        .maximum_collection_payload_bytes = orphan.size_bytes,
++    };
++
++    bool caught_foreign_database = false;
++    {
++        auto exclusive_payload_mutation =
++            fixture.payload_store.begin_mutation_batch_or_throw();
++        try {
++            (void)second_scan->mark_payload_retention_or_throw(stale_request);
++        } catch (const anonsync::SyncReplicaHistoricalVersionSourceChangedError&
++                     error) {
++            caught_foreign_database = true;
++            require(
++                error.stage() == anonsync::
++                    SyncReplicaHistoricalVersionSourceChangeStage::
++                        RetentionMarkPublication,
++                "foreign database retention request reported the wrong stage");
++        }
++    }
++    const auto before_recovery = second_replica.snapshot_or_throw();
++    const auto recovery = second_replica.advance_database_recovery_epoch_or_throw(
++        before_recovery.database_incarnation_sha256,
++        before_recovery.database_recovery_epoch, before_recovery.cutpoint_digest);
++    require(
++        recovery.database_incarnation_sha256 ==
++                before_recovery.database_incarnation_sha256 &&
++            recovery.previous_database_recovery_epoch == 1U &&
++            recovery.database_recovery_epoch == 2U &&
++            recovery.state_generation == before_recovery.state_generation + 1U,
++        "explicit replica recovery did not advance one exact lineage epoch");
++
++    anonsync::SyncReplicaPayloadRetentionMarkRequest stale_epoch_request;
++    stale_epoch_request.expected_source_cutpoint = second.source_cutpoint();
++    stale_epoch_request.expected_source_replica_database_incarnation_sha256 =
++        second.source_replica_database_incarnation_sha256;
++    stale_epoch_request.expected_source_replica_database_recovery_epoch =
++        second.source_replica_database_recovery_epoch;
++    stale_epoch_request.expected_source_replica_state_generation =
++        second.source_replica_state_generation;
++    stale_epoch_request.expected_durable_candidate_witness_digest =
++        second.durable_candidate_witness_digest;
++    stale_epoch_request.marked_at_unix_seconds = 1'800'000'002U;
++    stale_epoch_request.policy = stale_request.policy;
++
++    bool caught_stale_recovery_epoch = false;
++    {
++        auto exclusive_payload_mutation =
++            fixture.payload_store.begin_mutation_batch_or_throw();
++        try {
++            (void)second_scan->mark_payload_retention_or_throw(
++                stale_epoch_request);
++        } catch (const anonsync::
++                     SyncReplicaHistoricalVersionSourceChangedError& error) {
++            caught_stale_recovery_epoch = true;
++            require(
++                error.stage() == anonsync::
++                    SyncReplicaHistoricalVersionSourceChangeStage::
++                        RetentionMarkPublication,
++                "stale recovery-epoch retention request reported the wrong stage");
++        }
++    }
++
++    const auto after_recovery =
++        second_scan->plan_payload_retention_or_throw();
++    require(
++        after_recovery.source_cutpoint() == second.source_cutpoint() &&
++            after_recovery.source_replica_database_incarnation_sha256 ==
++                second.source_replica_database_incarnation_sha256 &&
++            after_recovery.source_replica_database_recovery_epoch == 2U &&
++            after_recovery.source_replica_state_generation ==
++                second.source_replica_state_generation + 1U &&
++            after_recovery.source_operation_set_digest ==
++                second.source_operation_set_digest &&
++            after_recovery.source_evidence_set_digest ==
++                second.source_evidence_set_digest &&
++            after_recovery.source_historical_version_pin_set_digest ==
++                second.source_historical_version_pin_set_digest &&
++            after_recovery.source_visible_state_digest ==
++                second.source_visible_state_digest &&
++            after_recovery.source_payload_snapshot_digest ==
++                second.source_payload_snapshot_digest &&
++            after_recovery.unreferenced_candidate_set_digest ==
++                second.unreferenced_candidate_set_digest &&
++            after_recovery.durable_candidate_witness_digest !=
++                second.durable_candidate_witness_digest &&
++            after_recovery.writer_fenced_candidate_page_digest !=
++                second.writer_fenced_candidate_page_digest &&
++            after_recovery.exact_deletion_free_mark_digest !=
++                second.exact_deletion_free_mark_digest,
++        "explicit replica recovery epoch did not invalidate retention authority while preserving causal and payload facts");
++
++    const auto after = fixture.payload_store.snapshot_or_throw();
++    require(
++        caught_foreign_database && caught_stale_recovery_epoch &&
++            after.retention_mark_observation_known() &&
++            !after.retention_mark_present() &&
++            !after.retention_mark_usable() &&
++            !after.retention_mark().has_value() &&
++            !after.retention_mark_digest().has_value(),
++        "foreign or stale-recovery retention evidence reached payload observation or durable mark publication");
++}
++
+ void test_historical_version_restore_from_tombstone() {
+     Fixture fixture("anonsync-folder-historical-version-tombstone-restore");
+     constexpr std::string_view path = "deleted/report.txt";
+@@ -7607,6 +7829,7 @@ int main() {
+         test_historical_version_inspection_and_causal_restore();
+         test_historical_version_metadata_only_is_payload_cold();
+         test_historical_version_payload_reachability_and_evidence_cutpoint();
++        test_retention_witness_binds_exact_replica_database_incarnation();
+         test_historical_version_restore_from_tombstone();
+         test_rev0951_cyclic_catalog_migrates_cursor_and_resets_sweep();
+         test_rev0950_fair_scan_catalog_migrates_without_losing_journal();
+diff --git a/tests/sync_replica_sqlite_owner_test.cpp b/tests/sync_replica_sqlite_owner_test.cpp
+index dd92f31a5af6bcb2f0035c6a70a5e4184db70b51..a3af1107cd8aa79b0a26696d4e691c4cc47b54cc 100644
+--- a/tests/sync_replica_sqlite_owner_test.cpp
++++ b/tests/sync_replica_sqlite_owner_test.cpp
+@@ -166,6 +166,16 @@ public:
+     [[nodiscard]] anonsync::SyncReplicaSqliteSnapshot snapshot_or_throw() {
+         return owner_.snapshot_or_throw();
+     }
++    [[nodiscard]] anonsync::SyncReplicaSqliteDatabaseRecoveryEpochResult
++    advance_database_recovery_epoch_or_throw(
++        std::string expected_database_incarnation_sha256,
++        std::uint64_t expected_database_recovery_epoch,
++        std::string expected_cutpoint_digest) {
++        return owner_.advance_database_recovery_epoch_or_throw(
++            std::move(expected_database_incarnation_sha256),
++            expected_database_recovery_epoch,
++            std::move(expected_cutpoint_digest));
++    }
+     [[nodiscard]] anonsync::SyncReplicaSqliteEvidencePage
+     evidence_page_or_throw(
+         std::optional<std::string> after_operation_id = std::nullopt,
+@@ -733,6 +743,24 @@ std::string retention_root_v5_cutpoint_digest(const LegacyV1Meta& meta) {
+     return digest.finish_hex();
+ }
+ 
++std::string historical_pin_v6_cutpoint_digest(
++    const LegacyV1Meta& meta,
++    std::uint64_t pin_count,
++    std::string_view pin_set_digest) {
++    anonsync::Sha256DigestBuilder digest;
++    digest.update("anonsync-sync-replica-sqlite-cutpoint-v6");
++    digest.update(test_u64_be(6U));
++    append_test_cutpoint_authority(digest, meta);
++    digest.update(test_u64_be(meta.limits.max_outbox_clock_uncertainty_ns));
++    digest.update(test_u64_be(
++        meta.limits.max_outbox_clock_forward_step_seconds));
++    digest.update(test_u64_be(
++        meta.limits.max_outbox_clock_realtime_lag_seconds));
++    digest.update(test_u64_be(pin_count));
++    test_append_framed(digest, pin_set_digest);
++    return digest.finish_hex();
++}
++
+ LegacyV1Meta legacy_meta_from_snapshot(
+     const SyncReplicaSqliteSnapshot& snapshot) {
+     anonsync::SyncReplicaModel model =
+@@ -1470,12 +1498,12 @@ RetentionRootV5Fixture create_retention_root_v5_fixture(
+     LegacyV1Meta meta = legacy_meta_from_snapshot(source);
+     meta.cutpoint_digest = retention_root_v5_cutpoint_digest(meta);
+ 
+-    const std::string v6_meta_sql = scalar_text_query(
++    const std::string v7_meta_sql = scalar_text_query(
+         db,
+         "SELECT sql FROM main.sqlite_schema "
+         "WHERE type='table' AND name='sync_replica_meta';",
+         "retention-v5 source meta SQL");
+-    std::string v5_meta_sql = v6_meta_sql;
++    std::string v5_meta_sql = v7_meta_sql;
+     const auto replace_once = [&](std::string_view from, std::string_view to,
+                                   const std::string& label) {
+         const std::size_t at = v5_meta_sql.find(from);
+@@ -1485,8 +1513,16 @@ RetentionRootV5Fixture create_retention_root_v5_fixture(
+         }
+         v5_meta_sql.replace(at, from.size(), to);
+     };
+-    replace_once("schema_version=6", "schema_version=5",
++    replace_once("schema_version=7", "schema_version=5",
+                  "schema-version check");
++    replace_once(
++        "database_incarnation_sha256 TEXT NOT NULL "
++        "CHECK(length(database_incarnation_sha256)=64),",
++        "", "database-incarnation column");
++    replace_once(
++        "database_recovery_epoch_be BLOB NOT NULL "
++        "CHECK(length(database_recovery_epoch_be)=8),",
++        "", "database-recovery-epoch column");
+     replace_once(
+         "historical_version_pin_count_be BLOB NOT NULL "
+         "CHECK(length(historical_version_pin_count_be)=8),",
+@@ -1536,6 +1572,108 @@ RetentionRootV5Fixture create_retention_root_v5_fixture(
+     return {operation, source, meta};
+ }
+ 
++struct HistoricalPinV6Fixture final {
++    SyncReplicaOperation operation;
++    SyncReplicaSqliteSnapshot source;
++    LegacyV1Meta meta;
++};
++
++HistoricalPinV6Fixture create_historical_pin_v6_fixture(
++    SyncSqliteDb& db,
++    const std::string& folder,
++    const SyncReplicaActor& local,
++    const SyncReplicaSqliteOwnerLimits& fixture_limits) {
++    SyncReplicaOperation operation;
++    SyncReplicaSqliteSnapshot source;
++    {
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, fixture_limits,
++            "historical-pin-v6 fixture source owner");
++        operation = owner.publish_local_file_or_throw(
++            "legacy-v6/file.bin", 9U, anonsync::sha256_hex("legacy-v6"));
++        const auto pin = owner.pin_historical_version_or_throw(
++            operation.operation_id);
++        if (pin.pin_count != 1U) {
++            fail("historical-pin-v6 fixture did not publish one pin");
++        }
++        source = owner.snapshot_or_throw();
++    }
++    if (source.historical_version_pins !=
++            std::vector<std::string>{operation.operation_id} ||
++        source.historical_version_pin_count != 1U) {
++        fail("historical-pin-v6 fixture source lost its exact pin");
++    }
++
++    LegacyV1Meta meta = legacy_meta_from_snapshot(source);
++    meta.cutpoint_digest = historical_pin_v6_cutpoint_digest(
++        meta, source.historical_version_pin_count,
++        source.historical_version_pin_set_digest);
++
++    const std::string v7_meta_sql = scalar_text_query(
++        db,
++        "SELECT sql FROM main.sqlite_schema "
++        "WHERE type='table' AND name='sync_replica_meta';",
++        "historical-pin-v6 source meta SQL");
++    std::string v6_meta_sql = v7_meta_sql;
++    const auto replace_once = [&](std::string_view from, std::string_view to,
++                                  const std::string& label) {
++        const std::size_t at = v6_meta_sql.find(from);
++        if (at == std::string::npos ||
++            v6_meta_sql.find(from, at + from.size()) != std::string::npos) {
++            fail("historical-pin-v6 fixture could not identify one " + label);
++        }
++        v6_meta_sql.replace(at, from.size(), to);
++    };
++    replace_once("schema_version=7", "schema_version=6",
++                 "schema-version check");
++    replace_once(
++        "database_incarnation_sha256 TEXT NOT NULL "
++        "CHECK(length(database_incarnation_sha256)=64),",
++        "", "database-incarnation column");
++    replace_once(
++        "database_recovery_epoch_be BLOB NOT NULL "
++        "CHECK(length(database_recovery_epoch_be)=8),",
++        "", "database-recovery-epoch column");
++
++    exec(db, "BEGIN IMMEDIATE;");
++    exec(db,
++         "CREATE TEMP TABLE sync_replica_historical_pin_v6_meta AS SELECT "
++         "id,6 AS schema_version,folder_id,local_device_id,local_epoch_be,"
++         "last_local_counter_be,state_generation_be,policy_generation_be,"
++         "max_operations_be,max_context_entries_be,max_predecessor_ids_be,"
++         "max_canonical_operation_bytes_be,max_retained_canonical_bytes_be,"
++         "max_retained_context_entries_be,max_retained_predecessor_ids_be,"
++         "max_outbox_intents_be,max_outbox_destination_bytes_be,"
++         "max_outbox_clock_uncertainty_ns_be,"
++         "max_outbox_clock_forward_step_seconds_be,"
++         "max_outbox_clock_realtime_lag_seconds_be,evidence_count_be,"
++         "active_count_be,retained_canonical_bytes_be,"
++         "retained_context_entries_be,retained_predecessor_ids_be,"
++         "outbox_intent_count_be,outbox_destination_bytes_be,"
++         "historical_version_pin_count_be,historical_version_pin_set_digest,"
++         "local_actor_compromised,local_operation_digest,operation_set_digest,"
++         "evidence_set_digest,visible_state_digest,outbox_digest,"
++         "cutpoint_digest FROM main.sync_replica_meta WHERE id=1;");
++    anonsync::SyncSqliteStmt meta_update = anonsync::sqlite_prepare_or_throw(
++        db.db,
++        "UPDATE temp.sync_replica_historical_pin_v6_meta "
++        "SET cutpoint_digest=? WHERE id=1;",
++        "historical-pin-v6 fixture meta prepare");
++    anonsync::sqlite_bind_text_or_throw(
++        meta_update.stmt, 1, meta.cutpoint_digest,
++        "historical-pin-v6 fixture bind cutpoint");
++    anonsync::sqlite_step_done_or_throw(
++        meta_update.stmt, "historical-pin-v6 fixture meta update");
++    exec(db, "DROP TABLE main.sync_replica_meta;");
++    exec(db, v6_meta_sql + ";");
++    exec(db,
++         "INSERT INTO main.sync_replica_meta SELECT * FROM "
++         "temp.sync_replica_historical_pin_v6_meta;"
++         "DROP TABLE temp.sync_replica_historical_pin_v6_meta;"
++         "COMMIT;");
++    return {operation, source, meta};
++}
++
+ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v1-migration");
+     const std::string folder = "folder-sqlite-v1-migration";
+@@ -1582,7 +1720,7 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+         require(scalar_u64_query(
+                     db,
+                     "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+-                    "migrated schema version") == 6U &&
++                    "migrated schema version") == 7U &&
+                     scalar_u64_query(
+                         db,
+                         "SELECT count(*) FROM main.sqlite_schema "
+@@ -1592,7 +1730,7 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+                     migrated.outbox_time_high_water_epoch == 0U &&
+                     anonsync::is_lowercase_sha256_hex(
+                         migrated.outbox_clock_digest),
+-                "v1 migration did not publish the exact schema-v6 surface");
++                "v1 migration did not publish the exact schema-v7 surface");
+ 
+         const auto claim = owner.claim_next_outbox_or_throw(
+             "worker-v1-migration", 100U, 20U, destination);
+@@ -1603,13 +1741,13 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+                     claim->intent.lease.lease_expires_at_epoch == 120U &&
+                     anonsync::is_lowercase_sha256_hex(
+                         claim->intent.lease.claim_id),
+-                "migrated v1 intent was not immediately claimable under v6 authority");
++                "migrated v1 intent was not immediately claimable under v7 authority");
+         claimed = owner.snapshot_or_throw();
+         require(claimed.state_generation == 4U &&
+                     claimed.outbox.size() == 1U &&
+                     claimed.outbox_time_high_water_epoch == 100U &&
+                     claimed.outbox.front() == claim->intent,
+-                "claim after migration did not publish one exact v6 lease cutpoint");
++                "claim after migration did not publish one exact v7 lease cutpoint");
+     }
+ 
+     {
+@@ -1628,7 +1766,7 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+     }
+ }
+ 
+-void test_malformed_v1_is_not_laundered_into_v6() {
++void test_malformed_v1_is_not_laundered_into_v7() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v1-malformed");
+     const std::string folder = "folder-sqlite-v1-malformed";
+     const SyncReplicaActor local = actor("device-sqlite-v1-malformed", 907U);
+@@ -1655,7 +1793,7 @@ void test_malformed_v1_is_not_laundered_into_v6() {
+                     "SELECT count(*) FROM main.sqlite_schema "
+                     "WHERE type='index' AND name='sync_replica_outbox_schedule';",
+                     "failed migration schedule index count") == 0U,
+-            "failed v1 attestation partially published schema v6");
++            "failed v1 attestation partially published schema v7");
+ }
+ 
+ 
+@@ -1740,7 +1878,7 @@ void test_exact_v2_migration_preserves_live_receipt_and_seeds_clock() {
+         require(scalar_u64_query(
+                     db,
+                     "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+-                    "v2 migrated schema version") == 6U &&
++                    "v2 migrated schema version") == 7U &&
+                     scalar_count(db, "sync_replica_outbox_clock") == 1U &&
+                     migrated.outbox_time_high_water_epoch ==
+                         fixture.intent.lease.claimed_at_epoch &&
+@@ -1785,7 +1923,7 @@ void test_exact_v2_migration_preserves_live_receipt_and_seeds_clock() {
+     }
+ }
+ 
+-void test_unreachable_v2_lease_is_not_laundered_into_v6() {
++void test_unreachable_v2_lease_is_not_laundered_into_v7() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v2-unreachable");
+     const std::string folder = "folder-sqlite-v2-unreachable";
+     const SyncReplicaActor local = actor("device-sqlite-v2-unreachable", 919U);
+@@ -1806,7 +1944,7 @@ void test_unreachable_v2_lease_is_not_laundered_into_v6() {
+                 "unreachable v2 migration owner");
+         },
+         "without active or retry authority",
+-        "unreachable v2 lease state was laundered into schema v6");
++        "unreachable v2 lease state was laundered into schema v7");
+     require(scalar_u64_query(
+                 db,
+                 "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+@@ -1816,7 +1954,7 @@ void test_unreachable_v2_lease_is_not_laundered_into_v6() {
+                     "SELECT count(*) FROM main.sqlite_schema "
+                     "WHERE type='table' AND name='sync_replica_outbox_clock';",
+                     "failed v2 migration clock table count") == 0U,
+-            "failed v2 attestation partially published schema v6");
++            "failed v2 attestation partially published schema v7");
+ }
+ 
+ void test_exact_v3_migration_preserves_clock_and_marks_retry_gap() {
+@@ -1873,7 +2011,7 @@ void test_exact_v3_migration_preserves_clock_and_marks_retry_gap() {
+         require(scalar_u64_query(
+                     db,
+                     "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+-                    "v3 migrated schema version") == 6U &&
++                    "v3 migrated schema version") == 7U &&
+                     scalar_u64_query(
+                         db,
+                         "SELECT retry_release_provenance "
+@@ -1886,7 +2024,7 @@ void test_exact_v3_migration_preserves_clock_and_marks_retry_gap() {
+                         "'retry_released_at_epoch_be',"
+                         "'retry_release_provenance');",
+                         "v3 migrated provenance column count") == 2U,
+-                "v3 migration did not publish the exact schema-v6 surface");
++                "v3 migration did not publish the exact schema-v7 surface");
+     }
+ 
+     SyncReplicaSqliteSnapshot exact_release;
+@@ -2023,7 +2161,7 @@ void test_exact_v4_migration_preserves_retry_provenance_and_quarantines_clock()
+         require(scalar_u64_query(
+                     db,
+                     "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+-                    "v4 migrated schema version") == 6U &&
++                    "v4 migrated schema version") == 7U &&
+                     scalar_u64_query(
+                         db,
+                         "SELECT count(*) FROM pragma_table_info("
+@@ -2035,7 +2173,7 @@ void test_exact_v4_migration_preserves_retry_provenance_and_quarantines_clock()
+                         "SELECT retry_release_provenance "
+                         "FROM main.sync_replica_outbox;",
+                         "v4 migrated retry provenance") == 1U,
+-                "v4 migration did not publish the exact schema-v6 surface");
++                "v4 migration did not publish the exact schema-v7 surface");
+     }
+ 
+     {
+@@ -2082,7 +2220,7 @@ void test_exact_v4_migration_preserves_retry_provenance_and_quarantines_clock()
+     }
+ }
+ 
+-void test_malformed_v4_provenance_is_not_laundered_into_v6() {
++void test_malformed_v4_provenance_is_not_laundered_into_v7() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v4-malformed");
+     const std::string folder = "folder-sqlite-v4-malformed";
+     const SyncReplicaActor local = actor("device-sqlite-v4-malformed", 949U);
+@@ -2101,7 +2239,7 @@ void test_malformed_v4_provenance_is_not_laundered_into_v6() {
+                 "malformed v4 migration owner");
+         },
+         "outbox attestation mismatch",
+-        "tampered v4 retry provenance was laundered into schema v6");
++        "tampered v4 retry provenance was laundered into schema v7");
+     require(scalar_u64_query(
+                 db,
+                 "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+@@ -2112,7 +2250,7 @@ void test_malformed_v4_provenance_is_not_laundered_into_v6() {
+                     "'sync_replica_outbox_clock') "
+                     "WHERE name='high_water_epoch_be';",
+                     "failed v4 migration clock column count") == 1U,
+-            "failed v4 attestation partially published schema v6");
++            "failed v4 attestation partially published schema v7");
+ }
+ 
+ void test_exact_v5_migration_seeds_empty_pins_and_preserves_authority() {
+@@ -2180,14 +2318,14 @@ void test_exact_v5_migration_seeds_empty_pins_and_preserves_authority() {
+             scalar_u64_query(
+                 db,
+                 "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
+-                "v5 migrated schema version") == 6U &&
++                "v5 migrated schema version") == 7U &&
+                 scalar_u64_query(
+                     db,
+                     "SELECT count(*) FROM main.sqlite_schema WHERE "
+                     "type='table' AND name='sync_replica_history_pins';",
+                     "v5 migrated pin-table count") == 1U &&
+                 scalar_count(db, "sync_replica_history_pins") == 0U,
+-            "v5 migration did not atomically publish the schema-v6 pin surface");
++            "v5 migration did not atomically publish the schema-v7 pin surface");
+ 
+         const auto result = owner.pin_historical_version_or_throw(
+             fixture.operation.operation_id);
+@@ -2216,7 +2354,7 @@ void test_exact_v5_migration_seeds_empty_pins_and_preserves_authority() {
+     }
+ }
+ 
+-void test_malformed_v5_is_not_laundered_into_v6() {
++void test_malformed_v5_is_not_laundered_into_v7() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-v5-malformed");
+     const std::string folder = "folder-sqlite-v5-malformed";
+     const SyncReplicaActor local = actor("device-sqlite-v5-malformed", 969U);
+@@ -2236,7 +2374,7 @@ void test_malformed_v5_is_not_laundered_into_v6() {
+                 "malformed v5 migration owner");
+         },
+         "durable cutpoint digest mismatch",
+-        "tampered v5 retention root was laundered into schema v6");
++        "tampered v5 retention root was laundered into schema v7");
+     require(
+         scalar_u64_query(
+             db,
+@@ -2247,7 +2385,203 @@ void test_malformed_v5_is_not_laundered_into_v6() {
+                 "SELECT count(*) FROM main.sqlite_schema WHERE "
+                 "type='table' AND name='sync_replica_history_pins';",
+                 "failed v5 migration pin-table count") == 0U,
+-        "failed v5 attestation partially published schema v6");
++        "failed v5 attestation partially published schema v7");
++}
++
++void test_exact_v6_migration_preserves_pins_and_mints_database_lineage() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-v6-migration");
++    const std::string folder = "folder-sqlite-v6-migration";
++    const SyncReplicaActor local = actor("device-sqlite-v6-migration", 979U);
++    const SyncReplicaSqliteOwnerLimits fixture_limits = limits(16U, 8U, 256U);
++    HistoricalPinV6Fixture fixture;
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        fixture = create_historical_pin_v6_fixture(
++            db, folder, local, fixture_limits);
++        require(
++            scalar_u64_query(
++                db,
++                "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
++                "historical-pin-v6 schema version") == 6U &&
++                scalar_count(db, "sync_replica_history_pins") == 1U,
++            "historical-pin-v6 fixture was not the exact rev0973 schema");
++    }
++
++    SyncReplicaSqliteSnapshot migrated;
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(999U, 999U, 9999U),
++            "exact v6 migration owner");
++        migrated = owner.snapshot_or_throw();
++        require(
++            migrated.state_generation == fixture.source.state_generation + 1U &&
++                migrated.policy_generation == fixture.source.policy_generation &&
++                migrated.limits == fixture.source.limits &&
++                migrated.durable == fixture.source.durable &&
++                migrated.outbox == fixture.source.outbox &&
++                migrated.outbox_clock_state == fixture.source.outbox_clock_state &&
++                migrated.outbox_time_high_water_epoch ==
++                    fixture.source.outbox_time_high_water_epoch &&
++                migrated.outbox_clock_digest ==
++                    fixture.source.outbox_clock_digest &&
++                migrated.historical_version_pins ==
++                    fixture.source.historical_version_pins &&
++                migrated.historical_version_pin_count == 1U &&
++                migrated.historical_version_pin_set_digest ==
++                    fixture.source.historical_version_pin_set_digest,
++            "v6 migration changed causal, policy, outbox, clock, or pin authority");
++        require(
++            anonsync::is_lowercase_sha256_hex(
++                migrated.database_incarnation_sha256) &&
++                migrated.database_incarnation_sha256 !=
++                    fixture.source.database_incarnation_sha256 &&
++                migrated.database_recovery_epoch == 1U &&
++                anonsync::is_lowercase_sha256_hex(migrated.cutpoint_digest) &&
++                migrated.cutpoint_digest != fixture.meta.cutpoint_digest,
++            "v6 migration did not mint one new exact database lineage");
++        require(
++            scalar_u64_query(
++                db,
++                "SELECT schema_version FROM main.sync_replica_meta WHERE id=1;",
++                "v6 migrated schema version") == 7U &&
++                scalar_count(db, "sync_replica_history_pins") == 1U,
++            "v6 migration did not atomically publish the schema-v7 lineage surface");
++    }
++
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner restarted(
++            db.db, folder, local, limits(1U),
++            "v6 migration restart owner");
++        require(
++            restarted.snapshot_or_throw() == migrated,
++            "restart changed v6-migrated database lineage or pin authority");
++    }
++}
++
++void test_database_incarnation_and_explicit_recovery_epoch() {
++    TempDatabasePath first_file("anonsync-replica-sqlite-lineage-first");
++    TempDatabasePath second_file("anonsync-replica-sqlite-lineage-second");
++    const std::string folder = "folder-sqlite-database-lineage";
++    const SyncReplicaActor local = actor("device-sqlite-database-lineage", 989U);
++    const SyncReplicaSqliteOwnerLimits owner_limits = limits(16U, 8U, 256U);
++
++    SyncReplicaSqliteSnapshot first;
++    SyncReplicaSqliteSnapshot second;
++    {
++        SyncSqliteDb first_db = open_database(first_file.path);
++        SyncSqliteDb second_db = open_database(second_file.path);
++        SyncReplicaSqliteOwner first_owner(
++            first_db.db, folder, local, owner_limits, "first lineage owner");
++        SyncReplicaSqliteOwner second_owner(
++            second_db.db, folder, local, owner_limits, "second lineage owner");
++        first = first_owner.snapshot_or_throw();
++        second = second_owner.snapshot_or_throw();
++    }
++    require(
++        first.durable == second.durable && first.limits == second.limits &&
++            first.state_generation == second.state_generation &&
++            first.policy_generation == second.policy_generation &&
++            first.operation_set_digest == second.operation_set_digest &&
++            first.evidence_set_digest == second.evidence_set_digest &&
++            first.visible_state_digest == second.visible_state_digest &&
++            first.outbox_digest == second.outbox_digest &&
++            first.historical_version_pin_set_digest ==
++                second.historical_version_pin_set_digest &&
++            first.database_recovery_epoch == 1U &&
++            second.database_recovery_epoch == 1U,
++        "independent empty databases did not begin with identical causal authority");
++    require(
++        anonsync::is_lowercase_sha256_hex(
++            first.database_incarnation_sha256) &&
++            anonsync::is_lowercase_sha256_hex(
++                second.database_incarnation_sha256) &&
++            first.database_incarnation_sha256 !=
++                second.database_incarnation_sha256 &&
++            first.cutpoint_digest != second.cutpoint_digest,
++        "independent identical databases aliased one incarnation or cutpoint");
++
++    SyncReplicaSqliteSnapshot recovered;
++    {
++        SyncSqliteDb db = open_database(first_file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, owner_limits, "database recovery owner");
++        const SyncReplicaSqliteSnapshot baseline = owner.snapshot_or_throw();
++        require_error(
++            [&] {
++                (void)owner.advance_database_recovery_epoch_or_throw(
++                    std::string(64U, '0'), baseline.database_recovery_epoch,
++                    baseline.cutpoint_digest);
++            },
++            "expectation is stale",
++            "foreign database incarnation advanced the recovery epoch");
++        require_error(
++            [&] {
++                (void)owner.advance_database_recovery_epoch_or_throw(
++                    baseline.database_incarnation_sha256,
++                    baseline.database_recovery_epoch + 1U,
++                    baseline.cutpoint_digest);
++            },
++            "expectation is stale",
++            "stale database recovery epoch advanced the recovery epoch");
++        require_error(
++            [&] {
++                (void)owner.advance_database_recovery_epoch_or_throw(
++                    baseline.database_incarnation_sha256,
++                    baseline.database_recovery_epoch,
++                    std::string(64U, '0'));
++            },
++            "expectation is stale",
++            "stale database cutpoint advanced the recovery epoch");
++        require(
++            owner.snapshot_or_throw() == baseline,
++            "rejected database recovery expectation changed durable state");
++
++        const auto result = owner.advance_database_recovery_epoch_or_throw(
++            baseline.database_incarnation_sha256,
++            baseline.database_recovery_epoch,
++            baseline.cutpoint_digest);
++        recovered = owner.snapshot_or_throw();
++        require(
++            result.database_incarnation_sha256 ==
++                    baseline.database_incarnation_sha256 &&
++                result.previous_database_recovery_epoch == 1U &&
++                result.database_recovery_epoch == 2U &&
++                result.state_generation == baseline.state_generation + 1U &&
++                result.cutpoint_digest == recovered.cutpoint_digest,
++            "database recovery transition returned the wrong exact cutpoint");
++        require(
++            recovered.database_incarnation_sha256 ==
++                    baseline.database_incarnation_sha256 &&
++                recovered.database_recovery_epoch == 2U &&
++                recovered.state_generation == baseline.state_generation + 1U &&
++                recovered.policy_generation == baseline.policy_generation &&
++                recovered.durable == baseline.durable &&
++                recovered.limits == baseline.limits &&
++                recovered.outbox == baseline.outbox &&
++                recovered.outbox_clock_state == baseline.outbox_clock_state &&
++                recovered.operation_set_digest == baseline.operation_set_digest &&
++                recovered.evidence_set_digest == baseline.evidence_set_digest &&
++                recovered.visible_state_digest == baseline.visible_state_digest &&
++                recovered.outbox_digest == baseline.outbox_digest &&
++                recovered.historical_version_pins ==
++                    baseline.historical_version_pins &&
++                recovered.historical_version_pin_set_digest ==
++                    baseline.historical_version_pin_set_digest &&
++                recovered.cutpoint_digest != baseline.cutpoint_digest,
++            "database recovery transition changed causal authority or failed to invalidate the cutpoint");
++    }
++
++    {
++        SyncSqliteDb db = open_database(first_file.path);
++        SyncReplicaSqliteOwner restarted(
++            db.db, folder, local, owner_limits, "database recovery restart owner");
++        require(
++            restarted.snapshot_or_throw() == recovered,
++            "restart lost the explicit database recovery epoch");
++    }
+ }
+ 
+ void test_atomic_local_publication_and_single_copy_outbox() {
+@@ -3870,7 +4204,7 @@ void test_schema_contract_and_outbox_tamper_detection() {
+                     db.db, folder, local, limits(16U),
+                     "schema reopen owner");
+             },
+-            "does not match schema v6",
++            "does not match schema v7",
+             "partial durable schema was silently repaired or accepted");
+     }
+ }
+@@ -5306,14 +5640,16 @@ int main(int argc, char** argv) {
+                 "unexpected sync replica SQLite owner test arguments");
+         }
+         test_exact_v1_migration_preserves_evidence_and_outbox();
+-        test_malformed_v1_is_not_laundered_into_v6();
++        test_malformed_v1_is_not_laundered_into_v7();
+         test_exact_v2_migration_preserves_live_receipt_and_seeds_clock();
+-        test_unreachable_v2_lease_is_not_laundered_into_v6();
++        test_unreachable_v2_lease_is_not_laundered_into_v7();
+         test_exact_v3_migration_preserves_clock_and_marks_retry_gap();
+         test_exact_v4_migration_preserves_retry_provenance_and_quarantines_clock();
+-        test_malformed_v4_provenance_is_not_laundered_into_v6();
++        test_malformed_v4_provenance_is_not_laundered_into_v7();
+         test_exact_v5_migration_seeds_empty_pins_and_preserves_authority();
+-        test_malformed_v5_is_not_laundered_into_v6();
++        test_malformed_v5_is_not_laundered_into_v7();
++        test_exact_v6_migration_preserves_pins_and_mints_database_lineage();
++        test_database_incarnation_and_explicit_recovery_epoch();
+         test_atomic_local_publication_and_single_copy_outbox();
+         test_observed_head_guard_and_explicit_conflict_resolution();
+         test_historical_version_pins_are_durable_exact_policy_roots();
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 36a81a1078c2fc305172df6947fd92efd85a8371..6c62bbee996caa82e86e3a28e647575e9de26210 100644
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -165,6 +165,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0978.md"),
+     Path("DURABLE_PAYLOAD_RETENTION_MARK_AND_POLICY_AUDIT_rev0979.md"),
+     Path("REVISION_NOTES_rev0979.md"),
++    Path("REPLICA_DATABASE_LINEAGE_AND_RETENTION_WITNESS_AUDIT_rev0980.md"),
++    Path("REVISION_NOTES_rev0980.md"),
+ )
+ 
+ 
+@@ -545,6 +547,10 @@ def main() -> int:
+         "DURABLE_PAYLOAD_RETENTION_MARK_AND_POLICY_AUDIT_rev0979.md"
+     ]
+     rev0979_notes = text["REVISION_NOTES_rev0979.md"]
++    database_lineage_design = text[
++        "REPLICA_DATABASE_LINEAGE_AND_RETENTION_WITNESS_AUDIT_rev0980.md"
++    ]
++    rev0980_notes = text["REVISION_NOTES_rev0980.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -776,6 +782,17 @@ def main() -> int:
+         if rev0979_verifier_start >= 0 and rev0979_verifier_end >= 0
+         else ""
+     )
++    rev0980_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 980:"
++    )
++    rev0980_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0980_verifier_start
++    )
++    rev0980_verifier_block = (
++        verifier[rev0980_verifier_start:rev0980_verifier_end]
++        if rev0980_verifier_start >= 0 and rev0980_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -4686,7 +4703,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -5100,12 +5117,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v23"'
++        and '"anonsync.peer-service.status.v24"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v23"'
++        and '"anonsync.peer-service.status.v24"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -6591,7 +6608,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6802,7 +6819,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"' in peer_status_h
++        and '"anonsync.peer-service.status.v24"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -7012,7 +7029,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -7028,8 +7045,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v23"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v23"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v24"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v24"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7722,7 +7739,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"' in peer_status_h
++        and '"anonsync.peer-service.status.v24"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7962,7 +7979,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and all(
+             token in peer_status + historical_inventory_json
+             for token in (
+@@ -8047,6 +8064,7 @@ def main() -> int:
+                 "tests/sync_local_status_socket_test.cpp",
+                 "tools/test_anonsync_service_configuration_status.py",
+                 "tools/audit_sync_file_payload_store.py",
++                "tools/audit_sync_replica_sqlite_owner.py",
+                 "tools/verify_release_package.py",
+             )
+         ),
+@@ -8110,7 +8128,7 @@ def main() -> int:
+                 r'\"expected_source_cutpoint\"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"' in peer_status_h
++        and '"anonsync.peer-service.status.v24"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -8227,11 +8245,11 @@ def main() -> int:
+                 "historical_version_generation",
+                 "historical_version_failure_class",
+                 "historical_version_source_change_stage",
+-                '"schema": "anonsync.peer-service.status.v23"',
++                '"schema": "anonsync.peer-service.status.v24"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v24"' in service_i2p_ingress_runtime,
+         "rev0968_regressions_bind_token_codec_payload_drift_causal_drift_and_real_service_continuation",
+         "focused C++ tests and real process oracles cover canonical framing, both externally inducible drift classes, exact page-token reuse, stable retained failure evidence, transient matching-step coherence, current schemas, and route status compatibility",
+     )
+@@ -8393,7 +8411,7 @@ def main() -> int:
+                 "status.restore_request.operation_id",
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"' in peer_status_h,
++        and '"anonsync.peer-service.status.v24"' in peer_status_h,
+         "rev0969_full_restore_identity_controls_coalescing_execution_and_status",
+         "a different expected head cannot coalesce with pending work, and stable plus matching transient status retain the exact request and typed source-change stage",
+     )
+@@ -8426,12 +8444,12 @@ def main() -> int:
+                 "restore_current_operation",
+                 "stale exact-current historical restore",
+                 "stale exact-current restore terminated the service",
+-                '"schema": "anonsync.peer-service.status.v23"',
++                '"schema": "anonsync.peer-service.status.v24"',
+                 '"expected_current_operation_id"',
+                 '"historical_version_restore_request"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v24"' in service_i2p_ingress_runtime,
+         "rev0969_regressions_prove_no_payload_work_full_request_coalescing_and_same_pid_stale_failure",
+         "focused C++ and real-process oracles mechanically distinguish the early stale fence from lease access, cover strict framing, and prove the daemon survives a replayed stale operator intent",
+     )
+@@ -8655,7 +8673,7 @@ def main() -> int:
+                 "[--inspection-mode exact|metadata]",
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"' in peer_status_h,
++        and '"anonsync.peer-service.status.v24"' in peer_status_h,
+         "rev0970_cli_socket_and_status_share_one_mode_bearing_contract",
+         "the shipping default remains exact, new clients send one canonical five-field request, legacy three/four-field requests remain exact, and live plus terminal status advance together",
+     )
+@@ -8726,11 +8744,11 @@ def main() -> int:
+                 '"v4:metadata:"',
+                 "causal-metadata historical inspection fabricated",
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v23"',
++                '"schema": "anonsync.peer-service.status.v24"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"'
++        and '"anonsync.peer-service.status.v24"'
+         in service_i2p_ingress_runtime,
+         "rev0970_shipping_process_oracles_require_null_payload_evidence_and_schema_coherence",
+         "one real retained two-peer service executes the metadata CLI, publishes a v2 token and null payload facts, accounts the completed action, and keeps direct plus I2P status readers on v15",
+@@ -8850,7 +8868,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and "append_sync_replica_historical_version_inventory_json" in peer_status
+         and "summary.last_step->historical_version_inventory.reset();" in peer_status,
+         "rev0971_status_uses_the_canonical_encoder_and_retains_one_completed_inventory",
+@@ -8871,10 +8889,10 @@ def main() -> int:
+             for token in (
+                 "historical inventory omitted its status byte limit",
+                 "duplicated the stable history result",
+-                '"schema": "anonsync.peer-service.status.v23"',
++                '"schema": "anonsync.peer-service.status.v24"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v23"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v24"' in service_i2p_ingress_runtime,
+         "rev0971_regressions_prove_the_large_page_frontier_and_single_copy_shipping_status",
+         "the focused C++ oracle constructs the accepted 1,024-entry worst-shape page, while real configured-service and I2P readers require v16, coherent stop reasons, and no duplicate stable inventory in last_step",
+     )
+@@ -9037,10 +9055,10 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and '"anonsync.local-historical-versions.response.v5"' in local_status
+-        and "anonsync.peer-service.status.v23" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v24" in service_configuration_runtime
++        and "anonsync.peer-service.status.v24" in service_i2p_ingress_runtime
+         and "anonsync.peer-service.status.v16" not in peer_status_h
+         and "anonsync.peer-service.status.v16" not in service_configuration_runtime
+         and "anonsync.peer-service.status.v16" not in service_i2p_ingress_runtime,
+@@ -9148,7 +9166,7 @@ def main() -> int:
+         all(
+             token in sqlite_owner
+             for token in (
+-                "constexpr std::uint64_t kSchemaVersion = 6U;",
++                "constexpr std::uint64_t kHistoricalPinSchemaVersion = 6U;",
+                 "sync_replica_history_pins",
+                 "historical_version_pin_count_be",
+                 "historical_version_pin_set_digest",
+@@ -9167,10 +9185,10 @@ def main() -> int:
+             token in sqlite_owner
+             for token in (
+                 "constexpr std::uint64_t kRetentionRootSchemaVersion = 5U;",
+-                "migration source is not schema v1 through v5",
++                "migration source is not schema v1 through v6",
+                 "definition.name == \"sync_replica_history_pins\"",
+                 "meta_from_state_or_throw(",
+-                "prior.outbox, {}",
++                "prior.outbox, prior.historical_version_pins",
+                 "label + \" migration publication\"",
+                 "schema_matches(observed, kRetentionRootSchema)",
+             )
+@@ -9339,7 +9357,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9386,10 +9404,10 @@ def main() -> int:
+                 '"historical_version_pins": 1',
+                 '"historical_version_unpins": 1',
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v23"',
++                '"schema": "anonsync.peer-service.status.v24"',
+             )
+         )
+-        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime,
++        and "anonsync.peer-service.status.v24" in service_i2p_ingress_runtime,
+         "rev0973_real_process_proves_pin_reinspect_unpin_reinspect_and_schema_coherence",
+         "one retained configured daemon accepts the exact owner commands, survives the corrected validator, exposes durable policy through metadata-only pages, removes it, continues operating, and keeps direct and I2P readers on v18",
+     )
+@@ -9583,7 +9601,7 @@ def main() -> int:
+             for token in (
+                 "RetentionPlan",
+                 "retention-plan ",
+-                "anonsync.local-retention-plan.response.v5",
++                "anonsync.local-retention-plan.response.v6",
+                 "SyncReplicaRetentionPlanQuery retention_plan_query",
+                 "different_historical_version_pending",
+                 "request_sync_local_status_retention_plan_or_throw",
+@@ -9605,7 +9623,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
++        '"anonsync.peer-service.status.v24"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9677,14 +9695,14 @@ def main() -> int:
+             token in service_configuration_runtime
+             for token in (
+                 "owner-only deletion-free retention plan",
+-                "anonsync.local-retention-plan.response.v5",
++                "anonsync.local-retention-plan.response.v6",
+                 "retention plan did not bind the exact pinned source",
+                 "retention plan did not explain the exact pinned payload",
+                 '"historical_version_retention_plans": 1',
+-                '"schema": "anonsync.peer-service.status.v23"',
++                '"schema": "anonsync.peer-service.status.v24"',
+             )
+         )
+-        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v24" in service_i2p_ingress_runtime
+         and all(
+             token in service_configuration_runtime
+             for token in (
+@@ -9779,7 +9797,7 @@ def main() -> int:
+             token in folder_scan + folder_scan_h
+             for token in (
+                 "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1",
+-                "anonsync:sync-replica-retention-plan-deletion-free-mark:v4",
++                "anonsync:sync-replica-retention-plan-deletion-free-mark:v5",
+                 "unreferenced_candidate_set_digest",
+                 "exact_deletion_free_mark_digest",
+             )
+@@ -9843,11 +9861,11 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
+-        and "anonsync.local-retention-plan.response.v5" in local_status
++        '"anonsync.peer-service.status.v24"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v6" in local_status
+         and "anonsync.peer-service.status.v19" not in peer_status_h
+         and "anonsync.local-retention-plan.response.v1" not in local_status
+-        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime,
++        and "anonsync.peer-service.status.v24" in service_i2p_ingress_runtime,
+         "rev0975_local_and_peer_status_contract_has_current_successor_schemas",
+         "the current response and service schemas supersede rev0975 while direct plus I2P status oracles remain coherent",
+     )
+@@ -9957,7 +9975,7 @@ def main() -> int:
+         all(
+             token in folder_scan + folder_scan_h
+             for token in (
+-                "anonsync:sync-replica-retention-plan-deletion-free-mark:v4",
++                "anonsync:sync-replica-retention-plan-deletion-free-mark:v5",
+                 "source_payload_transient_namespace_digest",
+                 "payload_transient_entry_count",
+                 "payload_transient_bytes",
+@@ -10016,12 +10034,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v23"' in peer_status_h
+-        and "anonsync.local-retention-plan.response.v5" in local_status
+-        and "anonsync.local-retention-plan.response.v5" in local_status_runtime
+-        and "anonsync.local-retention-plan.response.v5" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v23" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime
++        '"anonsync.peer-service.status.v24"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v6" in local_status
++        and "anonsync.local-retention-plan.response.v6" in local_status_runtime
++        and "anonsync.local-retention-plan.response.v6" in service_configuration_runtime
++        and "anonsync.peer-service.status.v24" in service_configuration_runtime
++        and "anonsync.peer-service.status.v24" in service_i2p_ingress_runtime
+         and all(
+             token in service_configuration_runtime
+             for token in (
+@@ -10311,8 +10329,8 @@ def main() -> int:
+         )
+         and "## Rev0977: payload-use lease and current snapshot reader fence"
+         in readme
+-        and "anonsync.peer-service.status.v23" in readme
+-        and "anonsync.local-retention-plan.response.v5" in readme,
++        and "anonsync.peer-service.status.v24" in readme
++        and "anonsync.local-retention-plan.response.v6" in readme,
+         "rev0977_records_exact_protocol_nonclaims_research_and_source_hygiene",
+         "the design record, revision notes, and README preserve the corrected defect, lock order, executable evidence, advisory and filesystem limits, and deletion-free boundary",
+     )
+@@ -10416,7 +10434,7 @@ def main() -> int:
+         ) == 2
+         and "live_capabilities_after != live_capabilities_before" in retention_plan_owner
+         and "RetentionLiveCapabilitySet" in retention_plan_owner
+-        and "anonsync:sync-replica-retention-plan-deletion-free-mark:v4" in folder_scan
++        and "anonsync:sync-replica-retention-plan-deletion-free-mark:v5" in folder_scan
+         and all(
+             token in retention_plan_owner
+             for token in (
+@@ -10447,12 +10465,12 @@ def main() -> int:
+         and r'\"already_copied_response_bytes_bound\":false' in historical_inventory_json
+         and r'\"live_payload_capabilities\":{\"process_store_scope_digest\":' in historical_inventory_json
+         and r'\"same_process_store_live_capability\":' in historical_inventory_json
+-        and '"anonsync.peer-service.status.v23"' in peer_status_h
+-        and "anonsync.local-retention-plan.response.v5" in local_status
+-        and "anonsync.local-retention-plan.response.v5" in local_status_runtime
+-        and "anonsync.local-retention-plan.response.v5" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v23" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v24"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v6" in local_status
++        and "anonsync.local-retention-plan.response.v6" in local_status_runtime
++        and "anonsync.local-retention-plan.response.v6" in service_configuration_runtime
++        and "anonsync.peer-service.status.v24" in service_configuration_runtime
++        and "anonsync.peer-service.status.v24" in service_i2p_ingress_runtime,
+         "rev0978_v23_v5_operator_contract_exposes_same_process_owner_truth_and_external_nonclaims",
+         "live, terminal, local, configured-service, and I2P readers share one canonical bounded result while other processes and copied buffers remain explicitly unbound",
+     )
+@@ -10663,9 +10681,9 @@ def main() -> int:
+     )
+ 
+     require(
+-        "anonsync:sync-replica-retention-plan-durable-candidate-witness:v1" in folder_scan
+-        and "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v1" in folder_scan
+-        and "anonsync:sync-replica-retention-plan-deletion-free-mark:v4" in folder_scan
++        "anonsync:sync-replica-retention-plan-durable-candidate-witness:v2" in folder_scan
++        and "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v2" in folder_scan
++        and "anonsync:sync-replica-retention-plan-deletion-free-mark:v5" in folder_scan
+         and "live_capability_process_store_scope_incarnation_digest" not in function_body(
+             folder_scan, "Sha256DigestBuilder durable_candidate_witness"
+         )
+@@ -10693,8 +10711,8 @@ def main() -> int:
+         and r'\"writer_fenced_candidate_page_digest\":' in historical_inventory_json
+         and r'\"durable_candidate_witness_digest\":' in historical_inventory_json
+         and r'\"payload_use_disposition\":' in historical_inventory_json
+-        and "anonsync.peer-service.status.v23" in peer_status_h
+-        and "anonsync.local-retention-plan.response.v5" in local_status
++        and "anonsync.peer-service.status.v24" in peer_status_h
++        and "anonsync.local-retention-plan.response.v6" in local_status
+         and all(
+             token in service_configuration_runtime
+             for token in (
+@@ -10732,8 +10750,8 @@ def main() -> int:
+             )
+         )
+         and "## Rev0978: process-store live roots and writer-fenced retention observation" in readme
+-        and "anonsync.peer-service.status.v23" in readme
+-        and "anonsync.local-retention-plan.response.v5" in readme,
++        and "anonsync.peer-service.status.v24" in readme
++        and "anonsync.local-retention-plan.response.v6" in readme,
+         "rev0978_records_bind_the_exact_defects_mechanisms_nonclaims_and_next_safe_collection_edge",
+         "the design audit, notes, and README state the same-process composition defect, writer-fence correction, digest separation, deletion-free boundary, and next durable-policy protocol",
+     )
+@@ -10880,8 +10898,8 @@ def main() -> int:
+         and "payload_store_limits.max_entries" in retention_mark_owner
+         and "payload_store_limits.max_indexed_bytes" in retention_mark_owner
+         and "query.maximum_entries = 1U" in retention_mark_owner
+-        and "external database anti-rollback authority" in folder_scan_h
+-        and "bind a recovery epoch" in folder_scan_h,
++        and "external exact-image anti-rollback" in folder_scan_h
++        and "database_recovery_epoch" in folder_scan_h,
+         "rev0979_folder_owner_requires_exact_v4_source_generation_witness_and_policy",
+         "marking cannot start from metadata-only history, a cursor page, an unknown generation, a malformed witness, malformed policy, or a store-impossible capacity frontier; all fail before writer-fenced payload observation",
+     )
+@@ -11009,6 +11027,199 @@ def main() -> int:
+         "release verification requires every implementation, runtime, record, structural-audit, and package-policy surface changed by rev0979",
+     )
+ 
++    require(
++        all(
++            token in sqlite_owner
++            for token in (
++                "constexpr std::uint64_t kSchemaVersion = 7U;",
++                "database_incarnation_sha256 TEXT NOT NULL",
++                "database_recovery_epoch_be BLOB NOT NULL",
++                "mint_database_incarnation_or_throw(",
++                "RAND_bytes(",
++                "anonsync-sync-replica-sqlite-database-incarnation-v1",
++                "constexpr std::uint64_t database_recovery_epoch = 1U;",
++            )
++        ),
++        "rev0980_schema_v7_mints_one_random_database_incarnation_and_nonzero_epoch",
++        "new and migrated databases gain a CSPRNG-derived lineage identity rather than deriving authority from path, time, PID, or logical contents",
++    )
++
++    require(
++        "constexpr std::uint64_t kHistoricalPinSchemaVersion = 6U;" in sqlite_owner
++        and "constexpr std::array<SchemaDefinition, 11> kHistoricalPinSchema" in sqlite_owner
++        and "historical_pin_schema_cutpoint_digest_or_throw" in sqlite_owner
++        and "anonsync-sync-replica-sqlite-cutpoint-v6" in sqlite_owner
++        and "schema_matches(observed, kHistoricalPinSchema)" in sqlite_owner
++        and "label_ + \" schema v6 to v7\"" in sqlite_owner
++        and "prior.outbox, prior.historical_version_pins" in sqlite_owner
++        and "test_exact_v6_migration_preserves_pins_and_mints_database_lineage"
++        in sqlite_owner_runtime,
++        "rev0980_exact_v6_migration_preserves_pins_before_minting_v7_lineage",
++        "the released v6 schema and cutpoint remain exact migration authority; v7 publication retains causal, outbox, clock, policy, limit, and pin state",
++    )
++
++    v7_cutpoint_body = last_function_body(
++        sqlite_owner, "std::string cutpoint_digest_or_throw(")
++    shared_cutpoint_authority_body = function_body(
++        sqlite_owner, "void append_cutpoint_authority(")
++    require(
++        ordered(
++            v7_cutpoint_body,
++            "anonsync-sync-replica-sqlite-cutpoint-v7",
++            "meta.database_incarnation_sha256",
++            "meta.database_recovery_epoch",
++            "append_cutpoint_authority(digest, meta)",
++            "historical_version_pin_set_digest",
++        )
++        and ordered(
++            shared_cutpoint_authority_body,
++            "meta.state_generation",
++            "meta.policy_generation",
++            "meta.operation_set_digest",
++            "meta.evidence_set_digest",
++            "meta.visible_state_digest",
++            "meta.outbox_digest",
++        )
++        and "database_incarnation_sha256" in sqlite_owner_h
++        and "database_recovery_epoch" in sqlite_owner_h,
++        "rev0980_v7_cutpoint_binds_lineage_before_all_mutable_replica_authority",
++        "the v7 cutpoint prefixes exact lineage, then composes the shared causal/policy authority and historical-pin root without duplicating the shared digest grammar",
++    )
++
++    require(
++        "advance_database_recovery_epoch_or_throw(" in sqlite_owner_h
++        and all(
++            token in function_body(
++                sqlite_owner,
++                "SyncReplicaSqliteOwner::advance_database_recovery_epoch_or_throw(",
++            )
++            for token in (
++                "SyncSqliteTransactionMode::Immediate",
++                "expected_database_incarnation_sha256",
++                "expected_database_recovery_epoch",
++                "expected_cutpoint_digest",
++                "increment_or_throw",
++                "database recovery epoch publication",
++            )
++        )
++        and "test_database_incarnation_and_explicit_recovery_epoch"
++        in sqlite_owner_runtime,
++        "rev0980_explicit_recovery_epoch_is_one_exact_atomic_full_state_transition",
++        "stale expectations fail under the writer transaction; an accepted recovery preserves all prior state while advancing epoch and generation exactly once",
++    )
++
++    require(
++        all(
++            token in folder_scan + folder_scan_h
++            for token in (
++                "source_replica_database_incarnation_sha256",
++                "source_replica_database_recovery_epoch",
++                "expected_source_replica_database_incarnation_sha256",
++                "expected_source_replica_database_recovery_epoch",
++                "anonsync:sync-replica-retention-plan-durable-candidate-witness:v2",
++                "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v2",
++                "anonsync:sync-replica-retention-plan-deletion-free-mark:v5",
++            )
++        )
++        and retention_plan_impl.count(
++            "source_replica_database_incarnation_sha256"
++        ) >= 4
++        and retention_plan_impl.count(
++            "source_replica_database_recovery_epoch"
++        ) >= 4,
++        "rev0980_retention_candidate_page_and_mark_domains_bind_exact_database_lineage",
++        "planning and mark publication compare incarnation, recovery epoch, and state generation before payload work, before commit, and after commit",
++    )
++
++    require(
++        "Opaque v2 witness" in retention_mark_h
++        and "preserves the fixed v1" in retention_mark_h
++        and "source_replica_database_incarnation_sha256" in historical_inventory_json
++        and "source_replica_database_recovery_epoch" in historical_inventory_json
++        and '"anonsync.peer-service.status.v24"' in peer_status_h
++        and '"anonsync.local-retention-plan.response.v6"' in local_status
++        and "source_replica_database_incarnation_sha256"
++        in service_configuration_runtime
++        and "source_replica_database_recovery_epoch"
++        in service_configuration_runtime,
++        "rev0980_fixed_retention_record_transitively_binds_lineage_and_runtime_exposes_it",
++        "the existing checksum-framed record carries the v2 witness without a competing codec, while status and the real process parser expose canonical lineage fields",
++    )
++
++    require(
++        "test_retention_witness_binds_exact_replica_database_incarnation"
++        in folder_scan_runtime
++        and "independent identical replica databases aliased retention authority"
++        in folder_scan_runtime
++        and "caught_foreign_database" in folder_scan_runtime
++        and "caught_stale_recovery_epoch" in folder_scan_runtime
++        and "explicit replica recovery epoch did not invalidate retention authority"
++        in folder_scan_runtime
++        and "test_exact_v6_migration_preserves_pins_and_mints_database_lineage"
++        in sqlite_owner_runtime
++        and "test_database_incarnation_and_explicit_recovery_epoch"
++        in sqlite_owner_runtime,
++        "rev0980_runtime_proves_cross_database_separation_v6_migration_and_recovery_invalidation",
++        "focused tests distinguish identical independent databases, preserve v6 pins, reject stale lineage before payload observation, and invalidate pre-recovery evidence without changing causal facts",
++    )
++
++    require(
++        all(
++            token in normalized_prose(database_lineage_design)
++            for token in (
++                "Defect: identical databases could alias retention authority",
++                "Schema v7 lineage",
++                "Exact v6 migration",
++                "Explicit recovery epoch",
++                "Retention-witness binding",
++                "What this does not prove",
++                "external anti-rollback authority",
++                "Next safe edge",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0980_notes)
++            for token in (
++                "Database-lineage correction",
++                "Retention authority correction",
++                "Adjacent audit/refactor",
++                "deletion-free",
++            )
++        )
++        and "## Rev0980: database incarnation, recovery epoch, and retention witness"
++        in readme
++        and "not external anti-rollback authority" in readme,
++        "rev0980_records_exact_authority_nonclaims_migration_and_rejected_contamination",
++        "design, notes, README, and bootstrap distinguish in-database lineage continuity from exact-image anti-rollback and preserve the deletion-free product boundary",
++    )
++
++    require(
++        rev0980_verifier_block.count(
++            "if revision_number is not None and revision_number >= 980:"
++        ) == 1
++        and all(
++            token in rev0980_verifier_block
++            for token in (
++                "REPLICA_DATABASE_LINEAGE_AND_RETENTION_WITNESS_AUDIT_rev0980.md",
++                "REVISION_NOTES_rev0980.md",
++                "src/sync_replica_sqlite_owner.hpp",
++                "src/sync_replica_sqlite_owner.cpp",
++                "src/sync_replica_folder_scan_owner.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_replica_historical_version_inventory_json.cpp",
++                "src/sync_replica_peer_service_status.hpp",
++                "tests/sync_replica_sqlite_owner_test.cpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0980_package_policy_binds_lineage_migration_retention_runtime_and_records",
++        "release verification requires every schema, owner, renderer, regression, design, audit, and package-policy surface changed by the database-lineage correction",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -11174,6 +11385,17 @@ def main() -> int:
+         "the durable mark and policy cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0979 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0980" not in rev0980_notes
++        and "VALIDATION_PENDING_REV0980" not in database_lineage_design
++        and "VALIDATION_PENDING_REV0980" not in readme
++        and "ARCHIVE_PENDING_REV0980" not in bootstrap
++        and "CODENAME_PENDING_REV0980" not in bootstrap
++        and "VALIDATION_PENDING_REV0980" not in bootstrap,
++        "rev0980_final_validation_and_visible_release_cutpoint_are_sealed",
++        "database lineage and retention-witness changes cannot pass the structural audit until final validation and the visible bootstrap bind the sealed rev0980 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/audit_sync_replica_sqlite_owner.py b/tools/audit_sync_replica_sqlite_owner.py
+index b58481ccca41ff8ab9d60a8939a3c7508ad7b7c5..2a15002f21dc75ab153a5bef74ad219e3c3fa283 100644
+--- a/tools/audit_sync_replica_sqlite_owner.py
++++ b/tools/audit_sync_replica_sqlite_owner.py
+@@ -61,7 +61,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-sqlite-owner-audit-v10",
++        "format": "anonsync-sync-replica-sqlite-owner-audit-v11",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -335,24 +335,29 @@ def main() -> int:
+                 "load_clock_state_or_throw",
+                 "load_retry_provenance_state_or_throw",
+                 "load_retention_root_state_or_throw",
+-                "schema v1 to v6",
+-                "schema v2 to v6",
+-                "schema v3 to v6",
+-                "schema v4 to v6",
+-                "schema v5 to v6",
++                "load_historical_pin_state_or_throw",
++                "schema v1 to v7",
++                "schema v2 to v7",
++                "schema v3 to v7",
++                "schema v4 to v7",
++                "schema v5 to v7",
++                "schema v6 to v7",
+             )
+         )
+         and all(
+             token in migrate
+             for token in (
+-                "migration source is not schema v1 through v5",
++                "migration source is not schema v1 through v6",
++                "source_has_historical_version_pins",
+                 "sync_replica_history_pins",
+-                "prior.outbox, {}",
++                "mint_database_incarnation_or_throw",
++                "database_recovery_epoch = 1U",
++                "prior.outbox, prior.historical_version_pins",
+                 "attest_and_commit_staged_cutpoint_or_throw",
+             )
+         ),
+-        "migration_requires_full_prior_attestation_and_atomic_v6_publication",
+-        "malformed old state cannot be laundered and v5 gains only one exact empty pin root",
++        "migration_requires_full_prior_attestation_and_atomic_v7_publication",
++        "malformed v1-v6 state cannot be laundered, v6 pins are preserved, and every migration mints one new database lineage",
+     )
+     require(
+         "make_legacy_unbound_sync_replica_outbox_clock_state_or_throw" in owner
+@@ -696,11 +701,16 @@ def main() -> int:
+                 "test_exact_v2_migration_preserves_live_receipt_and_seeds_clock",
+                 "test_exact_v3_migration_preserves_clock_and_marks_retry_gap",
+                 "test_exact_v4_migration_preserves_retry_provenance_and_quarantines_clock",
+-                "test_malformed_v4_provenance_is_not_laundered_into_v6",
++                "test_malformed_v4_provenance_is_not_laundered_into_v7",
+                 "test_exact_v5_migration_seeds_empty_pins_and_preserves_authority",
+-                "test_malformed_v5_is_not_laundered_into_v6",
++                "test_malformed_v5_is_not_laundered_into_v7",
++                "test_exact_v6_migration_preserves_pins_and_mints_database_lineage",
++                "test_database_incarnation_and_explicit_recovery_epoch",
+                 "v5 migration did not seed one exact empty retention-root set",
+-                "failed v5 attestation partially published schema v6",
++                "failed v5 attestation partially published schema v7",
++                "v6 migration did not atomically publish the schema-v7 lineage surface",
++                "foreign database incarnation advanced the recovery epoch",
++                "database recovery transition changed causal authority or failed to invalidate the cutpoint",
+                 "v2 migration must not relabel a caller epoch as trusted host time",
+                 "v3 migration must quarantine its caller-supplied legacy epoch",
+                 "v4 migration discarded exact retry-release provenance",
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index c5f98f4c6c2cc44fd026aa7f0b2d4a78b57e47b1..75f97030fc586ec8ec015d7234bb9d33258a0282 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -835,6 +835,13 @@ def require_retention_plan(plan: Any, label: str) -> None:
+         "v4:exact:"
+     ):
+         fail(f"{label} retention plan omitted its exact v4 cutpoint")
++    if not is_canonical_sha256(
++        plan.get("source_replica_database_incarnation_sha256")
++    ):
++        fail(f"{label} retention plan omitted its database incarnation")
++    recovery_epoch = plan.get("source_replica_database_recovery_epoch")
++    if not isinstance(recovery_epoch, int) or recovery_epoch <= 0:
++        fail(f"{label} retention plan omitted its database recovery epoch")
+     for integer_field in (
+         "source_replica_state_generation", "historical_version_pin_count",
+         "payload_transient_entries", "payload_transient_bytes",
+@@ -1911,7 +1918,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v23",
++                    "schema": "anonsync.peer-service.status.v24",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -3444,7 +3451,7 @@ def main() -> int:
+                 label="owner-only deletion-free retention plan",
+             )
+             expected_retention_plan_response = {
+-                "schema": "anonsync.local-retention-plan.response.v5",
++                "schema": "anonsync.local-retention-plan.response.v6",
+                 "command": "retention-plan",
+                 "terminal_class": "accepted",
+                 "request_generation": retention_plan_generation,
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index 21c13b194a3eddcf56ea3ed49671a6d8f850822f..24391d7c34d142883de7765e301572a0cf53f61d 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v23"
++                    value.get("schema") == "anonsync.peer-service.status.v24"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 039419f14ed2eee8c7624e88ccd5a8c9c1c3563b..2bbe401eddcbb4b752cc04583cf4a35d5695963b 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1649,6 +1649,28 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 980:
++        revision_scoped_required.update({
++            "REPLICA_DATABASE_LINEAGE_AND_RETENTION_WITNESS_AUDIT_rev0980.md",
++            "REVISION_NOTES_rev0980.md",
++            "README.md",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_file_payload_retention_mark.hpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_historical_version_inventory_json.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_sqlite_owner.hpp",
++            "src/sync_replica_sqlite_owner.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tests/sync_replica_sqlite_owner_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/audit_sync_replica_sqlite_owner.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

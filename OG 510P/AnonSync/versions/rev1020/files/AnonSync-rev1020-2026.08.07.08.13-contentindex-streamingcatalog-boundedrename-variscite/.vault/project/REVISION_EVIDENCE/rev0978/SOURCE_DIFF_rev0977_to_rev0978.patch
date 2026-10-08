@@ -1,0 +1,3409 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d8f7b3fc60425dfc8108c568c3b9ec3531255696..33f81fffe736ec8ea1678ca11ec5ac4090b4c74f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2860,6 +2860,7 @@ target_include_directories(anonsync_sync_local_status_socket_test PRIVATE
+ target_link_libraries(anonsync_sync_local_status_socket_test PRIVATE
+   anonsync_sync_local_status_socket
+   anonsync_sync_replica_peer_service_status
++  anonsync_json_parser
+   Threads::Threads)
+ target_compile_options(anonsync_sync_local_status_socket_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index 19cf9b5ba7707fc053331384bbc2176d17712462..4ea7274652921dbb4fae30986106108d50b9cc42 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -76,7 +76,7 @@ constexpr std::string_view kHistoricalVersionPinResponseSchema =
+ constexpr std::string_view kHistoricalVersionUnpinResponseSchema =
+     "anonsync.local-historical-version-unpin.response.v1";
+ constexpr std::string_view kRetentionPlanResponseSchema =
+-    "anonsync.local-retention-plan.response.v4";
++    "anonsync.local-retention-plan.response.v5";
+ constexpr std::string_view kUnsupportedResponse =
+     "{\"schema\":\"anonsync.local-status.response.v1\","
+     "\"ok\":false,\"error\":\"unsupported_request\"}";
+diff --git a/src/sync_replica_file_payload_store.cpp b/src/sync_replica_file_payload_store.cpp
+index 3a0732c2103ca4d5063719de7225da431fb929ed..1d81f0e71f1f97193bb6a99ceda0778c65dcad2a 100644
+--- a/src/sync_replica_file_payload_store.cpp
++++ b/src/sync_replica_file_payload_store.cpp
+@@ -141,11 +141,21 @@ constexpr auto kPayloadScrubMinimumInterval = std::chrono::minutes(1);
+ // disposable. A second drift remains terminal and bounded rather than turning
+ // an externally mutable private store into an unbounded retry loop.
+ constexpr std::uint32_t kMaximumCompleteScanObservationAttempts = 2U;
+-constexpr std::string_view kLiveCapabilityStoreOwnerIncarnationDomain =
+-    "anonsync:sync-replica-file-payload-store-live-capability-store-owner:v1";
++constexpr std::string_view kLiveCapabilityProcessStoreScopeDomain =
++    "anonsync:sync-replica-file-payload-store-live-capability-process-store-scope:v1";
++constexpr std::string_view kLiveCapabilityProcessStoreScopeIncarnationDomain =
++    "anonsync:sync-replica-file-payload-store-live-capability-process-store-incarnation:v1";
+ constexpr std::string_view kLiveCapabilitySetDigestDomain =
+-    "anonsync:sync-replica-file-payload-store-live-capability-set:v1";
++    "anonsync:sync-replica-file-payload-store-live-capability-set:v2";
+ constexpr std::uint64_t kLiveCapabilityFixedRecordAllowance = 4096U;
++constexpr std::size_t kMaximumProcessLiveCapabilityStoreScopes = 4096U;
++static_assert(
++    kSyncReplicaFilePayloadStoreMaxEntries <=
++    std::numeric_limits<std::uint64_t>::max() -
++        kLiveCapabilityFixedRecordAllowance);
++constexpr std::uint64_t kMaximumProcessLiveCapabilityRecordsPerStore =
++    kSyncReplicaFilePayloadStoreMaxEntries +
++    kLiveCapabilityFixedRecordAllowance;
+ 
+ class PayloadStoreObservationStaleError final : public std::runtime_error {
+ public:
+@@ -1436,11 +1446,40 @@ struct PayloadStoreLiveCapabilityRecord final {
+ };
+ 
+ [[nodiscard]] std::string
+-new_payload_store_live_capability_store_owner_incarnation_or_throw() {
+-    // This is a store-owner-incarnation discriminator for a non-authoritative
+-    // retention cutpoint, not a persisted secret. Mix independent OS entropy
+-    // with process/time/counter inputs so a stale mark cannot silently survive
+-    // an owner reconstruction even on a platform with a weak random_device backend.
++payload_store_live_capability_process_store_scope_digest_or_throw(
++    std::string_view root_attestation_digest,
++    std::string_view identity_basename,
++    std::string_view expected_identity,
++    std::string_view label_view) {
++    const std::string label(label_view);
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "payload-store process-store-scope label is empty");
++    }
++    if (!is_lowercase_sha256_hex(root_attestation_digest)) {
++        throw std::invalid_argument(
++            label + " root-attestation digest is invalid");
++    }
++    if (identity_basename.empty() || expected_identity.empty()) {
++        throw std::invalid_argument(
++            label + " immutable identity binding is incomplete");
++    }
++
++    Sha256DigestBuilder digest;
++    append_string(digest, kLiveCapabilityProcessStoreScopeDomain);
++    append_string(digest, root_attestation_digest);
++    append_string(digest, identity_basename);
++    append_string(digest, expected_identity);
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::string
++new_payload_store_live_capability_process_store_scope_incarnation_or_throw() {
++    // This is one process/store-scope incarnation discriminator for a
++    // non-authoritative retention cutpoint, not a persisted secret. Mix
++    // independent OS entropy with process/time/counter inputs so a stale mark
++    // cannot silently survive release of the final owner and later scope
++    // reconstruction even on a platform with a weak random_device backend.
+     static std::atomic<std::uint64_t> process_counter{0U};
+     std::uint64_t counter = process_counter.load(std::memory_order_relaxed);
+     for (;;) {
+@@ -1458,7 +1497,7 @@ new_payload_store_live_capability_store_owner_incarnation_or_throw() {
+ 
+     std::random_device random;
+     Sha256DigestBuilder digest;
+-    append_string(digest, kLiveCapabilityStoreOwnerIncarnationDomain);
++    append_string(digest, kLiveCapabilityProcessStoreScopeIncarnationDomain);
+     append_u64(digest, static_cast<std::uint64_t>(::getpid()));
+     append_u64(
+         digest,
+@@ -1474,12 +1513,19 @@ new_payload_store_live_capability_store_owner_incarnation_or_throw() {
+ class PayloadStoreLiveCapabilityRegistry final {
+ public:
+     explicit PayloadStoreLiveCapabilityRegistry(
++        std::string process_store_scope_digest,
+         std::uint64_t maximum_records,
+         std::string label)
+-        : maximum_records_(maximum_records),
++        : process_store_scope_digest_(
++              std::move(process_store_scope_digest)),
++          maximum_records_(maximum_records),
+           label_(std::move(label)),
+-          store_owner_incarnation_digest_(
+-              new_payload_store_live_capability_store_owner_incarnation_or_throw()) {
++          process_store_scope_incarnation_digest_(
++              new_payload_store_live_capability_process_store_scope_incarnation_or_throw()) {
++        if (!is_lowercase_sha256_hex(process_store_scope_digest_)) {
++            throw std::invalid_argument(
++                label_ + " process-store-scope digest is invalid");
++        }
+         if (maximum_records_ == 0U) {
+             throw std::invalid_argument(
+                 label_ + " live-capability record limit is zero");
+@@ -1593,7 +1639,8 @@ public:
+         }
+ 
+         SyncReplicaFilePayloadStoreLiveCapabilityCutpoint out;
+-        out.store_owner_incarnation_digest = store_owner_incarnation_digest_;
++        out.process_store_scope_digest = process_store_scope_digest_;
++        out.process_store_scope_incarnation_digest = process_store_scope_incarnation_digest_;
+         out.activity_generation = activity_generation_;
+         if (records_.size() > 1U) {
+             out.opened_payload_roots.reserve(records_.size() - 1U);
+@@ -1601,7 +1648,8 @@ public:
+ 
+         Sha256DigestBuilder digest;
+         append_string(digest, kLiveCapabilitySetDigestDomain);
+-        append_string(digest, store_owner_incarnation_digest_);
++        append_string(digest, process_store_scope_digest_);
++        append_string(digest, process_store_scope_incarnation_digest_);
+         std::uint64_t retained_record_count = 0U;
+         for (const auto& [registration_id, record] : records_) {
+             if (registration_id == excluded_snapshot_registration_id) {
+@@ -1677,9 +1725,10 @@ public:
+     }
+ 
+ private:
++    const std::string process_store_scope_digest_;
+     const std::uint64_t maximum_records_;
+     const std::string label_;
+-    const std::string store_owner_incarnation_digest_;
++    const std::string process_store_scope_incarnation_digest_;
+     mutable std::mutex mutex_;
+     std::uint64_t next_registration_id_ = 1U;
+     std::uint64_t activity_generation_ = 0U;
+@@ -1687,6 +1736,86 @@ private:
+     std::map<std::uint64_t, PayloadStoreLiveCapabilityRecord> records_;
+ };
+ 
++class PayloadStoreLiveCapabilityRegistryBroker final {
++public:
++    [[nodiscard]] static PayloadStoreLiveCapabilityRegistryBroker& instance() {
++        static PayloadStoreLiveCapabilityRegistryBroker broker;
++        return broker;
++    }
++
++    [[nodiscard]] std::shared_ptr<PayloadStoreLiveCapabilityRegistry>
++    acquire_or_throw(
++        std::string process_store_scope_digest,
++        std::string_view label_view) {
++        const std::string label(label_view);
++        if (label.empty()) {
++            throw std::invalid_argument(
++                "payload-store live-capability broker label is empty");
++        }
++        if (!is_lowercase_sha256_hex(process_store_scope_digest)) {
++            throw std::invalid_argument(
++                label + " process-store-scope digest is invalid");
++        }
++
++        std::lock_guard<std::mutex> lock(mutex_);
++        for (auto position = registries_.begin();
++             position != registries_.end();) {
++            if (position->second.expired()) {
++                position = registries_.erase(position);
++            } else {
++                ++position;
++            }
++        }
++
++        const auto existing = registries_.find(process_store_scope_digest);
++        if (existing != registries_.end()) {
++            if (auto retained = existing->second.lock()) {
++                return retained;
++            }
++            registries_.erase(existing);
++        }
++        if (registries_.size() >=
++            kMaximumProcessLiveCapabilityStoreScopes) {
++            throw std::length_error(
++                label + " process live-capability store-scope frontier is exhausted");
++        }
++
++        auto registry = std::make_shared<PayloadStoreLiveCapabilityRegistry>(
++            process_store_scope_digest,
++            kMaximumProcessLiveCapabilityRecordsPerStore,
++            label + " process store scope");
++        const auto [position, inserted] = registries_.emplace(
++            std::move(process_store_scope_digest), registry);
++        (void)position;
++        if (!inserted) {
++            throw std::logic_error(
++                label + " process live-capability store-scope insertion collided");
++        }
++        return registry;
++    }
++
++private:
++    PayloadStoreLiveCapabilityRegistryBroker() = default;
++
++    std::mutex mutex_;
++    std::map<
++        std::string,
++        std::weak_ptr<PayloadStoreLiveCapabilityRegistry>> registries_;
++};
++
++[[nodiscard]] std::shared_ptr<PayloadStoreLiveCapabilityRegistry>
++acquire_payload_store_live_capability_registry_or_throw(
++    std::string_view root_attestation_digest,
++    std::string_view identity_basename,
++    std::string_view expected_identity,
++    std::string_view label) {
++    return PayloadStoreLiveCapabilityRegistryBroker::instance().acquire_or_throw(
++        payload_store_live_capability_process_store_scope_digest_or_throw(
++            root_attestation_digest, identity_basename, expected_identity,
++            label),
++        label);
++}
++
+ class PayloadStoreLiveCapabilityRegistration final {
+ public:
+     PayloadStoreLiveCapabilityRegistration() noexcept = default;
+@@ -3059,10 +3188,9 @@ void acquire_flock_nonblocking_or_throw(
+         " lease acquisition failed: " + error_text(error));
+ }
+ 
+-void acquire_payload_use_flock_nonblocking_or_throw(
++[[nodiscard]] bool try_acquire_payload_use_flock_nonblocking_or_throw(
+     int descriptor,
+     int operation,
+-    SyncReplicaFilePayloadStoreLeaseMode mode,
+     const std::string& label) {
+     if (descriptor < 0 ||
+         (operation != LOCK_SH && operation != LOCK_EX)) {
+@@ -3073,17 +3201,26 @@ void acquire_payload_use_flock_nonblocking_or_throw(
+     do {
+         result = ::flock(descriptor, operation | LOCK_NB);
+     } while (result != 0 && errno == EINTR);
+-    if (result == 0) return;
++    if (result == 0) return true;
+     const int error = errno;
+-    if (flock_conflict_error(error)) {
+-        throw SyncReplicaFilePayloadStoreLeaseBusyError(
+-            mode,
+-            label + " payload-use " + store_lease_mode_name(mode) +
+-                " lease is busy");
+-    }
++    if (flock_conflict_error(error)) return false;
+     throw std::runtime_error(
++        label + " payload-use lease acquisition failed: " + error_text(error));
++}
++
++void acquire_payload_use_flock_nonblocking_or_throw(
++    int descriptor,
++    int operation,
++    SyncReplicaFilePayloadStoreLeaseMode mode,
++    const std::string& label) {
++    if (try_acquire_payload_use_flock_nonblocking_or_throw(
++            descriptor, operation, label)) {
++        return;
++    }
++    throw SyncReplicaFilePayloadStoreLeaseBusyError(
++        mode,
+         label + " payload-use " + store_lease_mode_name(mode) +
+-        " lease acquisition failed: " + error_text(error));
++            " lease is busy");
+ }
+ 
+ void acquire_shared_payload_use_lease_or_throw(
+@@ -5291,6 +5428,11 @@ struct SyncReplicaFilePayloadStoreSnapshot::State final {
+     std::string folder_id;
+     fs::path root_path;
+     SyncDirectoryAuthority root_authority;
++    // Present only for the private retention planner. The exact identity-marker
++    // EX flock outlives the complete namespace scan and every causal/inode probe
++    // performed by the folder owner, then releases automatically with this
++    // snapshot. It is deliberately not exposed through ordinary snapshot APIs.
++    std::unique_ptr<StoreLease> retained_writer_fence;
+     std::string identity_basename;
+     std::string expected_identity;
+     StoreObservationDurability durability =
+@@ -7298,16 +7440,10 @@ SyncReplicaFilePayloadStore::SyncReplicaFilePayloadStore(
+     state->root_attestation_digest =
+         sync_directory_attestation_digest_or_throw(
+             state->root_authority.attestation());
+-    if (state->limits.max_entries >
+-        std::numeric_limits<std::uint64_t>::max() -
+-            kLiveCapabilityFixedRecordAllowance) {
+-        throw std::overflow_error(
+-            state->label + " live-capability record frontier overflows");
+-    }
+     state->live_capability_registry =
+-        std::make_shared<PayloadStoreLiveCapabilityRegistry>(
+-            state->limits.max_entries + kLiveCapabilityFixedRecordAllowance,
+-            state->label);
++        acquire_payload_store_live_capability_registry_or_throw(
++            state->root_attestation_digest, state->identity_basename,
++            state->expected_identity, state->label);
+     state_ = std::move(state);
+ }
+ 
+@@ -7329,6 +7465,13 @@ SyncReplicaFilePayloadStore::SyncReplicaFilePayloadStore(
+     state_->expected_identity = product_store_identity_payload_or_throw(
+         deployment_identity, state_->label + " deployment identity");
+     state_->allow_existing_payload_adoption = false;
++    // The delegating standalone constructor has not issued any capability.
++    // Rebind its temporary standalone scope to the exact product identity
++    // before this fully constructed owner can expose snapshot/access authority.
++    state_->live_capability_registry =
++        acquire_payload_store_live_capability_registry_or_throw(
++            state_->root_attestation_digest, state_->identity_basename,
++            state_->expected_identity, state_->label);
+ }
+ 
+ SyncReplicaFilePayloadStore::~SyncReplicaFilePayloadStore() noexcept = default;
+@@ -7364,13 +7507,15 @@ void SyncReplicaFilePayloadStore::require_exact_snapshot_origin_or_throw(
+     state_->root_authority.verify_or_throw(label + " retained store root");
+     candidate.root_authority.verify_or_throw(label + " candidate root");
+ 
+-    // The shared verification cache and live-capability registry are the exact
+-    // process/store-owner identity. Two handles
+-    // may legitimately attest the same durable folder, root, limits, and marker
+-    // while owning independent integrity epochs. Treating those observations as
+-    // interchangeable would allow one owner to bypass another owner's active
+-    // fail-closed witness. The remaining comparisons make accidental structural
+-    // drift fail explicitly rather than relying on pointer identity alone.
++    // The verification cache remains the exact retained-owner identity. The
++    // live-capability registry is deliberately shared by independently opened
++    // owners over this exact process/store scope, so registry identity alone
++    // cannot authorize snapshot handoff. Two handles may legitimately attest
++    // the same durable folder, root, limits, and marker while owning independent
++    // integrity epochs. Treating their snapshots as interchangeable would let
++    // one owner bypass another owner's active fail-closed witness. The remaining
++    // comparisons make accidental structural drift fail explicitly rather than
++    // relying only on the verification-cache pointer.
+     if (!candidate.verification_cache ||
+         candidate.verification_cache.get() !=
+             state_->verification_cache.get() ||
+@@ -7419,6 +7564,91 @@ live_capability_cutpoint_excluding_snapshot_or_throw(
+             registration.registration_id(), label);
+ }
+ 
++void SyncReplicaFilePayloadStore::
++verify_writer_fenced_retention_snapshot_or_throw(
++    const SyncReplicaFilePayloadStoreSnapshot& snapshot,
++    std::string_view label_view) const {
++    if (!state_) throw std::logic_error("file payload store is inactive");
++    const std::string label(label_view);
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "writer-fenced retention snapshot label must not be empty");
++    }
++    require_exact_snapshot_origin_or_throw(
++        snapshot, label + " exact snapshot origin");
++    const SyncReplicaFilePayloadStoreSnapshot::State& candidate =
++        snapshot.require_state_or_throw(label + " retained snapshot");
++    if (!candidate.retained_writer_fence ||
++        candidate.retained_writer_fence->mode() !=
++            SyncReplicaFilePayloadStoreLeaseMode::ExclusiveMutation) {
++        throw std::logic_error(
++            label + " snapshot does not retain the exact writer fence");
++    }
++    candidate.retained_writer_fence->verify_or_throw(
++        candidate.root_authority, label + " identity lease cutpoint");
++    candidate.root_authority.verify_or_throw(label + " snapshot root proof");
++    state_->root_authority.verify_or_throw(label + " retained-root proof");
++}
++
++bool SyncReplicaFilePayloadStore::
++writer_fenced_payload_use_exclusive_available_or_throw(
++    const SyncReplicaFilePayloadStoreSnapshot& snapshot,
++    std::string_view content_sha256,
++    std::uint64_t size_bytes,
++    std::string_view label_view) const {
++    if (!is_lowercase_sha256_hex(content_sha256)) {
++        throw std::invalid_argument(
++            std::string(label_view) +
++            " writer-fenced payload-use probe digest is invalid");
++    }
++    const std::string label(label_view);
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "writer-fenced payload-use probe label must not be empty");
++    }
++    verify_writer_fenced_retention_snapshot_or_throw(
++        snapshot, label + " opening cutpoint");
++    const SyncReplicaFilePayloadStoreSnapshot::State& candidate =
++        snapshot.require_state_or_throw(label + " retained snapshot");
++    const PayloadIndexEntry* indexed =
++        find_entry(candidate.entries, content_sha256);
++    if (indexed == nullptr || indexed->size_bytes != size_bytes) {
++        throw std::invalid_argument(
++            label + " candidate is not one exact retained snapshot entry");
++    }
++
++    using Access = sync_directory_authority_detail::
++        SyncDirectoryAuthorityAccess;
++    auto descriptor_lease =
++        Access::duplicate_shared_open_description_or_throw(
++            candidate.root_authority, label + " retained root");
++    OwnedFd root_descriptor(descriptor_lease.release_descriptor());
++    SyncPosixOpenedRegularFile opened = open_store_file_or_throw(
++        root_descriptor.get(), content_sha256, candidate.root_path,
++        descriptor_lease.resolution_capability(),
++        descriptor_lease.mount_identity(), label + " candidate");
++    OwnedFd file(opened.descriptor);
++    require_private_regular_file_or_throw(
++        opened.status, candidate.root_authority.attestation(),
++        label + " candidate");
++    if (opened.status.st_size < 0 ||
++        static_cast<std::uint64_t>(opened.status.st_size) != size_bytes ||
++        !same_regular_file_observation(indexed->status, opened.status)) {
++        throw PayloadStoreObservationStaleError(
++            label + " candidate changed after the writer-fenced scan");
++    }
++
++    const bool exclusive_available =
++        try_acquire_payload_use_flock_nonblocking_or_throw(
++            file.get(), LOCK_EX, label + " candidate");
++    verify_named_regular_file_or_throw(
++        root_descriptor.get(), std::string(content_sha256), opened.status,
++        candidate.root_authority.attestation(), label + " candidate");
++    verify_writer_fenced_retention_snapshot_or_throw(
++        snapshot, label + " final cutpoint");
++    return exclusive_available;
++}
++
+ SyncReplicaFilePayloadStoreScrubStatus
+ SyncReplicaFilePayloadStore::scrub_status() const {
+     if (!state_) throw std::logic_error("file payload store is inactive");
+@@ -7558,13 +7788,19 @@ SyncReplicaFilePayloadStore::begin_targeted_access_or_throw(
+ 
+ SyncReplicaFilePayloadStoreSnapshot
+ SyncReplicaFilePayloadStore::snapshot_or_throw() const {
+-    return snapshot_with_reuse_policy_or_throw(false);
++    return snapshot_with_reuse_policy_or_throw(false, false);
+ }
+ 
+ SyncReplicaFilePayloadStoreSnapshot
+ SyncReplicaFilePayloadStore::snapshot_rechecking_current_bytes_or_throw()
+     const {
+-    return snapshot_with_reuse_policy_or_throw(true);
++    return snapshot_with_reuse_policy_or_throw(true, false);
++}
++
++SyncReplicaFilePayloadStoreSnapshot
++SyncReplicaFilePayloadStore::snapshot_writer_fenced_for_retention_or_throw()
++    const {
++    return snapshot_with_reuse_policy_or_throw(false, true);
+ }
+ 
+ SyncReplicaFilePayloadStoreQuarantineResult
+@@ -8084,7 +8320,8 @@ SyncReplicaFilePayloadStore::release_quarantined_payload_or_throw(
+ 
+ SyncReplicaFilePayloadStoreSnapshot
+ SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
+-    bool require_current_bytes) const {
++    bool require_current_bytes,
++    bool retain_exclusive_writer_fence) const {
+     if (!state_) throw std::logic_error("file payload store is inactive");
+     State& store = *state_;
+     const StoreObservationDurability durability =
+@@ -8098,6 +8335,19 @@ SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
+             store.label +
+             " read-only inspection cannot accept an operator recheck");
+     }
++    if (retain_exclusive_writer_fence &&
++        !synchronizes_store_observation(durability)) {
++        throw std::logic_error(
++            store.label +
++            " read-only inspection cannot retain a writer-fenced retention "
++            "observation");
++    }
++    if (require_current_bytes && retain_exclusive_writer_fence) {
++        throw std::logic_error(
++            store.label +
++            " current-byte recheck and writer-fenced retention modes cannot "
++            "be combined");
++    }
+     store.root_authority.verify_or_throw(
+         store.label + " snapshot source preflight");
+     if (synchronizes_store_observation(durability)) {
+@@ -8111,19 +8361,26 @@ SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
+     bool refresh_verification_index = false;
+     std::unique_ptr<SyncReplicaFilePayloadStoreSnapshot::State> snapshot;
+     {
++        const SyncReplicaFilePayloadStoreLeaseMode observation_mode =
++            retain_exclusive_writer_fence
++                ? SyncReplicaFilePayloadStoreLeaseMode::ExclusiveMutation
++                : SyncReplicaFilePayloadStoreLeaseMode::SharedObservation;
++        const std::string snapshot_label =
++            store.label +
++            (retain_exclusive_writer_fence
++                 ? " writer-fenced retention snapshot"
++                 : " snapshot");
+         SyncDirectoryAuthority snapshot_root =
+             reopen_matching_root_authority_or_throw(
+-                store.root_authority, store.label + " snapshot");
++                store.root_authority, snapshot_label);
+         StoreLease observation_lease = acquire_store_lease_or_throw(
+             snapshot_root, store.identity_basename, expected_identity,
+-            SyncReplicaFilePayloadStoreLeaseMode::SharedObservation,
+-            store.label + " snapshot", durability);
++            observation_mode, snapshot_label, durability);
+ 
+         ScannedPayloadIndex scanned = scan_store_under_lease_or_throw(
+             snapshot_root, store.limits, store.identity_basename,
+             expected_identity, observation_lease,
+-            SyncReplicaFilePayloadStoreLeaseMode::SharedObservation,
+-            store.label + " snapshot", durability,
++            observation_mode, snapshot_label, durability,
+             synchronizes_store_observation(durability)
+                 ? store.verification_cache.get()
+                 : nullptr,
+@@ -8216,13 +8473,36 @@ SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
+             snapshot->transient_reserved_bytes,
+             snapshot->transient_namespace_digest,
+             snapshot->indexed_bytes, snapshot->entries);
+-        // Keep the shared observation lease live through every allocation and
+-        // derived-index construction. The final proof prevents an identical-bytes
+-        // replacement marker from turning a completed scan into authority bound to
+-        // a different lock inode before the snapshot is returned.
++        // Keep the observation lease live through every allocation and
++        // derived-index construction. The final proof prevents an
++        // identical-bytes replacement marker from turning a completed scan into
++        // authority bound to a different lock inode before the snapshot is
++        // returned. The retention-only mode then transfers this exact EX lock
++        // into the snapshot instead of releasing it at the end of the scope.
+         observation_lease.verify_or_throw(
+             snapshot->root_authority,
+-            store.label + " snapshot final lease cutpoint");
++            snapshot_label + " final lease cutpoint");
++        if (retain_exclusive_writer_fence) {
++            snapshot->retained_writer_fence =
++                std::make_unique<StoreLease>(std::move(observation_lease));
++        }
++    }
++
++    if (retain_exclusive_writer_fence) {
++        const SyncReplicaFilePayloadScrubState* retained_state =
++            snapshot->scrub_state_usable && snapshot->scrub_state.has_value()
++                ? &*snapshot->scrub_state
++                : nullptr;
++        snapshot->scrub_report = scrub_report_from_state(
++            payload_scrub_enabled(store.limits)
++                ? SyncReplicaFilePayloadStoreScrubDisposition::DeferredLeaseBusy
++                : SyncReplicaFilePayloadStoreScrubDisposition::Disabled,
++            retained_state);
++        snapshot->live_capability_registration =
++            PayloadStoreLiveCapabilityRegistration(
++                store.live_capability_registry,
++                PayloadStoreLiveCapabilityKind::Snapshot);
++        return SyncReplicaFilePayloadStoreSnapshot(std::move(snapshot));
+     }
+ 
+     const std::uint64_t scrub_cycles_before_attempt =
+diff --git a/src/sync_replica_file_payload_store.hpp b/src/sync_replica_file_payload_store.hpp
+index 786f26a8436e04de977523eabc030f01cf4a996b..959b065bd9d0ee2bf5b5b8681bc6aa2fc9839729 100644
+--- a/src/sync_replica_file_payload_store.hpp
++++ b/src/sync_replica_file_payload_store.hpp
+@@ -378,11 +378,12 @@ class SyncReplicaFilePayloadStoreTargetedAccess;
+ class SyncReplicaFolderScanOwner;
+ struct SyncReplicaFilePayloadStoreTestAccess;
+ 
+-// Exact same-store-owner process capabilities that can still consume or
+-// reopen payload bytes independently of the retention planner's own snapshot
+-// lease. This is intentionally narrower than global collection authority:
+-// another process or independently opened store handle owns a different
+-// incarnation and is not visible here.
++// Exact same-process, same-durable-store capabilities that can still consume
++// or reopen payload bytes independently of the retention planner's own
++// snapshot lease. Independently opened owners over the same attested root and
++// immutable store identity share this bounded registry. This is intentionally
++// narrower than global collection authority: another process is not visible
++// here and remains fenced only by the cross-process exact-inode use lease.
+ struct SyncReplicaFilePayloadStoreLiveOpenedPayloadRoot final {
+     std::string content_sha256;
+     std::uint64_t size_bytes = 0U;
+@@ -393,7 +394,11 @@ struct SyncReplicaFilePayloadStoreLiveOpenedPayloadRoot final {
+ };
+ 
+ struct SyncReplicaFilePayloadStoreLiveCapabilityCutpoint final {
+-    std::string store_owner_incarnation_digest;
++    // Deterministic binding of the attested root, current identity basename,
++    // and immutable expected identity. The incarnation changes whenever the
++    // final in-process owner releases the scope and a later owner recreates it.
++    std::string process_store_scope_digest;
++    std::string process_store_scope_incarnation_digest;
+     std::string capability_set_digest;
+     // Non-durable interval witness. The registry advances this generation on
+     // every successful capability registration and unregister. It is excluded
+@@ -424,7 +429,7 @@ struct SyncReplicaFilePayloadStoreLiveCapabilityCutpoint final {
+ // descriptor remains positioned independently because all consumers use
+ // pread(2). Metadata and digest are frozen at selection; descriptor-streaming
+ // publication re-proves both before the destination namespace is committed.
+-// This object owns the selected descriptor, its same-store-owner live-root
++// This object owns the selected descriptor, its same-process-store live-root
+ // registration, and the shared per-payload inode use lease attached to the
+ // descriptor's open file description. It never owns the store-wide namespace
+ // lease or a cleanup capability. The inode lease survives rename and is
+@@ -918,7 +923,33 @@ public:
+ 
+ private:
+     [[nodiscard]] SyncReplicaFilePayloadStoreSnapshot
+-    snapshot_with_reuse_policy_or_throw(bool require_current_bytes) const;
++    snapshot_with_reuse_policy_or_throw(
++        bool require_current_bytes,
++        bool retain_exclusive_writer_fence) const;
++
++    // Private retention-planner observation. The complete namespace scan is
++    // made beneath the current store identity's fail-fast exclusive lease and
++    // that exact lock remains owned by the returned snapshot until destruction.
++    // The snapshot is metadata-only while fenced: byte-selection methods would
++    // attempt the normal shared re-entry and are intentionally unavailable to
++    // the folder owner. No scrub or checkpoint publication is scheduled while
++    // the fence is retained.
++    [[nodiscard]] SyncReplicaFilePayloadStoreSnapshot
++    snapshot_writer_fenced_for_retention_or_throw() const;
++
++    // Probes one exact snapshot entry for an exclusive per-payload use lease
++    // while the snapshot's store-global writer fence is still live. False is a
++    // typed point-in-time busy observation, not an error and not a durable root.
++    [[nodiscard]] bool
++    writer_fenced_payload_use_exclusive_available_or_throw(
++        const SyncReplicaFilePayloadStoreSnapshot& snapshot,
++        std::string_view content_sha256,
++        std::uint64_t size_bytes,
++        std::string_view label) const;
++
++    void verify_writer_fenced_retention_snapshot_or_throw(
++        const SyncReplicaFilePayloadStoreSnapshot& snapshot,
++        std::string_view label) const;
+ 
+     // Exact-owner composition fence for a snapshot handed directly into the
+     // retained folder owner. Folder/root/limit equality is not enough: another
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index 299b9052bd54e6496849276556435910a962026a..397cfd7d44362a6148b38cab0a9dfa84e0ad51e5 100644
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -85,8 +85,12 @@ constexpr std::uint8_t kHistoricalPayloadExplicitPinMask = 8U;
+ constexpr std::string_view
+     kRetentionPlanUnreferencedCandidateSetDigestDomain =
+         "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1";
++constexpr std::string_view kRetentionPlanDurableCandidateWitnessDigestDomain =
++    "anonsync:sync-replica-retention-plan-durable-candidate-witness:v1";
+ constexpr std::string_view kRetentionPlanDeletionFreeMarkDigestDomain =
+-    "anonsync:sync-replica-retention-plan-deletion-free-mark:v3";
++    "anonsync:sync-replica-retention-plan-deletion-free-mark:v4";
++constexpr std::string_view kRetentionPlanWriterFencedCandidatePageDigestDomain =
++    "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v1";
+ 
+ [[nodiscard]] constexpr bool historical_payload_mask_has(
+     std::uint8_t mask,
+@@ -5500,55 +5504,6 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+ 
+     const SyncReplicaModel model = SyncReplicaModel::restore_or_throw(
+         replica_snapshot.durable, replica_snapshot.limits.model);
+-    SyncReplicaFilePayloadStoreSnapshot payload_snapshot =
+-        state_->payload_store->snapshot_or_throw();
+-    payload_snapshot.require_folder_or_throw(
+-        state_->folder_id, state_->label + " retention-plan payload snapshot");
+-    const SyncReplicaFilePayloadStoreLiveCapabilityCutpoint
+-        live_capabilities_before =
+-            state_->payload_store->
+-                live_capability_cutpoint_excluding_snapshot_or_throw(
+-                    payload_snapshot,
+-                    state_->label +
+-                        " retention-plan live-capability opening cutpoint");
+-    const SyncReplicaSqliteSnapshot replica_after_payload =
+-        state_->replica_owner->snapshot_or_throw();
+-    if (replica_snapshot.operation_set_digest !=
+-        replica_after_payload.operation_set_digest) {
+-        throw SyncReplicaHistoricalVersionSourceChangedError(
+-            SyncReplicaHistoricalVersionSourceChangeStage::
+-                OperationSetDuringPayloadObservation,
+-            state_->label +
+-                " retention-plan operation set changed during payload "
+-                "observation; restart pagination");
+-    }
+-    if (replica_snapshot.evidence_set_digest !=
+-        replica_after_payload.evidence_set_digest) {
+-        throw SyncReplicaHistoricalVersionSourceChangedError(
+-            SyncReplicaHistoricalVersionSourceChangeStage::
+-                EvidenceSetDuringPayloadObservation,
+-            state_->label +
+-                " retention-plan retained evidence set changed during payload "
+-                "observation; restart pagination");
+-    }
+-    if (replica_snapshot.historical_version_pin_set_digest !=
+-        replica_after_payload.historical_version_pin_set_digest) {
+-        throw SyncReplicaHistoricalVersionSourceChangedError(
+-            SyncReplicaHistoricalVersionSourceChangeStage::
+-                HistoricalVersionPinSetDuringPayloadObservation,
+-            state_->label +
+-                " retention-plan pin set changed during payload observation; "
+-                "restart pagination");
+-    }
+-    if (query.expected_source_cutpoint.has_value() &&
+-        *query.expected_source_cutpoint->payload_snapshot_digest !=
+-            payload_snapshot.snapshot_digest()) {
+-        throw SyncReplicaHistoricalVersionSourceChangedError(
+-            SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot,
+-            state_->label +
+-                " retention-plan payload snapshot changed; restart pagination");
+-    }
+-
+     SyncReplicaRetentionPlan plan;
+     plan.query = query;
+     plan.source_replica_state_generation = replica_snapshot.state_generation;
+@@ -5559,41 +5514,6 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+     plan.historical_version_pin_count =
+         replica_snapshot.historical_version_pin_count;
+     plan.source_visible_state_digest = replica_snapshot.visible_state_digest;
+-    plan.source_payload_snapshot_digest = payload_snapshot.snapshot_digest();
+-    plan.source_payload_transient_namespace_digest =
+-        payload_snapshot.transient_namespace_digest();
+-    plan.payload_transient_entry_count =
+-        payload_snapshot.transient_entry_count();
+-    plan.payload_transient_bytes = payload_snapshot.transient_bytes();
+-    plan.payload_transient_reserved_bytes =
+-        payload_snapshot.transient_reserved_bytes();
+-    plan.payload_scan_hashed_entry_count =
+-        payload_snapshot.scan_hashed_entry_count();
+-    plan.payload_scan_hashed_bytes = payload_snapshot.scan_hashed_bytes();
+-    plan.payload_scan_reused_entry_count =
+-        payload_snapshot.scan_reused_entry_count();
+-    plan.payload_scan_reused_bytes = payload_snapshot.scan_reused_bytes();
+-    plan.live_capability_store_owner_incarnation_digest =
+-        live_capabilities_before.store_owner_incarnation_digest;
+-    plan.live_capability_set_digest =
+-        live_capabilities_before.capability_set_digest;
+-    plan.live_snapshot_count = live_capabilities_before.snapshot_count;
+-    plan.live_opened_payload_count =
+-        live_capabilities_before.opened_payload_count;
+-    plan.live_targeted_access_count =
+-        live_capabilities_before.targeted_access_count;
+-    plan.live_mutation_batch_count =
+-        live_capabilities_before.mutation_batch_count;
+-    plan.distinct_live_opened_payload_root_count =
+-        live_capabilities_before.distinct_opened_payload_root_count;
+-    plan.distinct_live_opened_payload_root_bytes =
+-        live_capabilities_before.distinct_opened_payload_root_bytes;
+-    plan.live_capabilities_may_reopen_all_current_payloads =
+-        live_capabilities_before.all_current_payloads_may_be_reopened();
+-    plan.retained_payload_reachability.payload_entry_count =
+-        payload_snapshot.entry_count();
+-    plan.retained_payload_reachability.payload_indexed_bytes =
+-        payload_snapshot.indexed_bytes();
+     plan.entries.reserve(static_cast<std::size_t>(query.maximum_entries));
+ 
+     const auto increment_or_throw = [&](std::uint64_t& value,
+@@ -5782,6 +5702,100 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+             "retained-union distinct content");
+     }
+ 
++    // The causal projection above is bound to replica_snapshot but does not
++    // require payload namespace exclusion. Perform its allocations and sort
++    // before taking the global writer fence so ordinary synchronization is
++    // stalled only for the complete physical merge and bounded inode probes.
++    SyncReplicaFilePayloadStoreSnapshot payload_snapshot =
++        state_->payload_store->
++            snapshot_writer_fenced_for_retention_or_throw();
++    payload_snapshot.require_folder_or_throw(
++        state_->folder_id, state_->label + " retention-plan payload snapshot");
++    const SyncReplicaFilePayloadStoreLiveCapabilityCutpoint
++        live_capabilities_before =
++            state_->payload_store->
++                live_capability_cutpoint_excluding_snapshot_or_throw(
++                    payload_snapshot,
++                    state_->label +
++                        " retention-plan live-capability opening cutpoint");
++    const SyncReplicaSqliteSnapshot replica_after_payload =
++        state_->replica_owner->snapshot_or_throw();
++    if (replica_snapshot.operation_set_digest !=
++        replica_after_payload.operation_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                OperationSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan operation set changed during payload "
++                "observation; restart pagination");
++    }
++    if (replica_snapshot.evidence_set_digest !=
++        replica_after_payload.evidence_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                EvidenceSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan retained evidence set changed during payload "
++                "observation; restart pagination");
++    }
++    if (replica_snapshot.historical_version_pin_set_digest !=
++        replica_after_payload.historical_version_pin_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                HistoricalVersionPinSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan pin set changed during payload observation; "
++                "restart pagination");
++    }
++    if (query.expected_source_cutpoint.has_value() &&
++        *query.expected_source_cutpoint->payload_snapshot_digest !=
++            payload_snapshot.snapshot_digest()) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot,
++            state_->label +
++                " retention-plan payload snapshot changed; restart pagination");
++    }
++
++    plan.source_payload_snapshot_digest = payload_snapshot.snapshot_digest();
++    plan.source_payload_transient_namespace_digest =
++        payload_snapshot.transient_namespace_digest();
++    plan.payload_transient_entry_count =
++        payload_snapshot.transient_entry_count();
++    plan.payload_transient_bytes = payload_snapshot.transient_bytes();
++    plan.payload_transient_reserved_bytes =
++        payload_snapshot.transient_reserved_bytes();
++    plan.payload_scan_hashed_entry_count =
++        payload_snapshot.scan_hashed_entry_count();
++    plan.payload_scan_hashed_bytes = payload_snapshot.scan_hashed_bytes();
++    plan.payload_scan_reused_entry_count =
++        payload_snapshot.scan_reused_entry_count();
++    plan.payload_scan_reused_bytes = payload_snapshot.scan_reused_bytes();
++    plan.writer_fenced_observation = true;
++    plan.cooperating_new_namespace_activity_excluded_during_observation = true;
++    plan.live_capability_process_store_scope_digest =
++        live_capabilities_before.process_store_scope_digest;
++    plan.live_capability_process_store_scope_incarnation_digest =
++        live_capabilities_before.process_store_scope_incarnation_digest;
++    plan.live_capability_set_digest =
++        live_capabilities_before.capability_set_digest;
++    plan.live_snapshot_count = live_capabilities_before.snapshot_count;
++    plan.live_opened_payload_count =
++        live_capabilities_before.opened_payload_count;
++    plan.live_targeted_access_count =
++        live_capabilities_before.targeted_access_count;
++    plan.live_mutation_batch_count =
++        live_capabilities_before.mutation_batch_count;
++    plan.distinct_live_opened_payload_root_count =
++        live_capabilities_before.distinct_opened_payload_root_count;
++    plan.distinct_live_opened_payload_root_bytes =
++        live_capabilities_before.distinct_opened_payload_root_bytes;
++    plan.live_capabilities_may_reopen_all_current_payloads =
++        live_capabilities_before.all_current_payloads_may_be_reopened();
++    plan.retained_payload_reachability.payload_entry_count =
++        payload_snapshot.entry_count();
++    plan.retained_payload_reachability.payload_indexed_bytes =
++        payload_snapshot.indexed_bytes();
++
+     const auto account_present = [&]
+         (SyncReplicaHistoricalVersionPayloadReachabilityClass& value,
+          std::uint64_t size_bytes,
+@@ -5898,10 +5912,10 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+             live_capabilities_before
+                     .opened_payload_roots[live_opened_root_index]
+                     .size_bytes == physical_key.size_bytes;
+-        const bool same_store_owner_live_capability =
++        const bool same_process_store_live_capability =
+             plan.live_capabilities_may_reopen_all_current_payloads ||
+             exact_opened_payload_root;
+-        if (same_store_owner_live_capability) {
++        if (same_process_store_live_capability) {
+             increment_or_throw(
+                 plan.live_capability_rooted_physical_payload_count,
+                 "live-capability rooted physical payload");
+@@ -5928,7 +5942,7 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+                 "unreferenced payload bytes");
+             append_string(candidate_set_digest, digest);
+             append_u64(candidate_set_digest, *payload_size);
+-            if (same_store_owner_live_capability) {
++            if (same_process_store_live_capability) {
+                 increment_or_throw(
+                     plan.unreferenced_live_capability_rooted_payload_count,
+                     "unreferenced live-capability rooted payload");
+@@ -6009,8 +6023,8 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+                 root_mask, kHistoricalPayloadInactiveEvidenceMask),
+             .explicit_pin = historical_payload_mask_has(
+                 root_mask, kHistoricalPayloadExplicitPinMask),
+-            .same_store_owner_live_capability =
+-                same_store_owner_live_capability,
++            .same_process_store_live_capability =
++                same_process_store_live_capability,
+             .disposition = disposition,
+         });
+     }
+@@ -6030,6 +6044,179 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+     plan.unreferenced_candidate_set_digest =
+         candidate_set_digest.finish_hex();
+ 
++    // A grace-period identity must survive process restart. The process-store
++    // incarnation and live-capability generation intentionally do not, so they
++    // remain in the same-process deletion-free mark only. Future collection
++    // must reacquire the global writer fence, re-prove every durable root and
++    // transient obligation, and separately exclude current payload-use leases.
++    Sha256DigestBuilder durable_candidate_witness;
++    append_string(
++        durable_candidate_witness,
++        kRetentionPlanDurableCandidateWitnessDigestDomain);
++    append_string(durable_candidate_witness, state_->folder_id);
++    append_string(
++        durable_candidate_witness, plan.source_operation_set_digest);
++    append_string(
++        durable_candidate_witness, plan.source_evidence_set_digest);
++    append_string(
++        durable_candidate_witness,
++        plan.source_historical_version_pin_set_digest);
++    append_string(
++        durable_candidate_witness, plan.source_visible_state_digest);
++    append_string(
++        durable_candidate_witness, plan.source_payload_snapshot_digest);
++    append_string(
++        durable_candidate_witness,
++        plan.source_payload_transient_namespace_digest);
++    append_u64(
++        durable_candidate_witness, plan.payload_transient_entry_count);
++    append_u64(
++        durable_candidate_witness, plan.payload_transient_bytes);
++    append_u64(
++        durable_candidate_witness, plan.payload_transient_reserved_bytes);
++    append_string(
++        durable_candidate_witness,
++        plan.unreferenced_candidate_set_digest);
++    append_u64(
++        durable_candidate_witness,
++        reachability.unreferenced_payload_count);
++    append_u64(
++        durable_candidate_witness,
++        reachability.unreferenced_payload_bytes);
++    plan.durable_candidate_witness_digest =
++        durable_candidate_witness.finish_hex();
++
++    // The complete physical observation remains beneath the store-global EX
++    // fence while each bounded returned candidate is tested against the exact
++    // inode-use protocol. A busy result is retained as evidence rather than
++    // escalated into whole-plan lease deferral: it proves that an already-open
++    // cooperating descriptor outlived its namespace observation. The probe is
++    // deliberately page-bounded; unreturned candidates remain unclassified.
++    Sha256DigestBuilder writer_fenced_candidate_page_digest;
++    append_string(
++        writer_fenced_candidate_page_digest,
++        kRetentionPlanWriterFencedCandidatePageDigestDomain);
++    append_string(
++        writer_fenced_candidate_page_digest,
++        kSyncReplicaFilePayloadUseLeaseProtocol);
++    append_string(writer_fenced_candidate_page_digest, state_->folder_id);
++    append_string(
++        writer_fenced_candidate_page_digest,
++        plan.source_operation_set_digest);
++    append_string(
++        writer_fenced_candidate_page_digest,
++        plan.source_evidence_set_digest);
++    append_string(
++        writer_fenced_candidate_page_digest,
++        plan.source_historical_version_pin_set_digest);
++    append_string(
++        writer_fenced_candidate_page_digest,
++        plan.source_payload_snapshot_digest);
++    append_string(
++        writer_fenced_candidate_page_digest,
++        plan.unreferenced_candidate_set_digest);
++    append_u64(
++        writer_fenced_candidate_page_digest,
++        query.start_after_content_sha256.has_value() ? 1U : 0U);
++    if (query.start_after_content_sha256.has_value()) {
++        append_string(
++            writer_fenced_candidate_page_digest,
++            *query.start_after_content_sha256);
++    }
++    append_u64(
++        writer_fenced_candidate_page_digest, query.maximum_entries);
++    plan.writer_fenced_candidate_page_entry_count =
++        static_cast<std::uint64_t>(plan.entries.size());
++    append_u64(
++        writer_fenced_candidate_page_digest,
++        plan.writer_fenced_candidate_page_entry_count);
++    for (SyncReplicaRetentionPlanEntry& entry : plan.entries) {
++        if (entry.disposition ==
++            SyncReplicaRetentionPlanDisposition::
++                UnreferencedByRetainedFileOperations) {
++            increment_or_throw(
++                plan.returned_unreferenced_candidate_count,
++                "returned unreferenced candidate");
++            const bool exclusive_available =
++                state_->payload_store->
++                    writer_fenced_payload_use_exclusive_available_or_throw(
++                        payload_snapshot, entry.content_sha256,
++                        entry.size_bytes,
++                        state_->label +
++                            " retention-plan returned candidate payload-use "
++                            "probe");
++            if (exclusive_available) {
++                entry.payload_use_disposition =
++                    SyncReplicaRetentionPlanPayloadUseDisposition::
++                        ExclusiveAvailableAtCutpoint;
++                increment_or_throw(
++                    plan.
++                        returned_candidate_payload_use_exclusive_available_count,
++                    "returned candidate exclusive payload-use availability");
++            } else {
++                entry.payload_use_disposition =
++                    SyncReplicaRetentionPlanPayloadUseDisposition::
++                        BusyAtCutpoint;
++                increment_or_throw(
++                    plan.returned_candidate_payload_use_busy_count,
++                    "returned candidate busy payload-use lease");
++            }
++        }
++        append_string(
++            writer_fenced_candidate_page_digest, entry.content_sha256);
++        append_u64(writer_fenced_candidate_page_digest, entry.size_bytes);
++        append_u64(
++            writer_fenced_candidate_page_digest,
++            static_cast<std::uint64_t>(entry.disposition));
++        append_u64(
++            writer_fenced_candidate_page_digest,
++            static_cast<std::uint64_t>(entry.payload_use_disposition));
++    }
++    append_u64(
++        writer_fenced_candidate_page_digest,
++        plan.returned_unreferenced_candidate_count);
++    append_u64(
++        writer_fenced_candidate_page_digest,
++        plan.returned_candidate_payload_use_exclusive_available_count);
++    append_u64(
++        writer_fenced_candidate_page_digest,
++        plan.returned_candidate_payload_use_busy_count);
++    plan.writer_fenced_candidate_page_digest =
++        writer_fenced_candidate_page_digest.finish_hex();
++
++    const SyncReplicaSqliteSnapshot replica_final =
++        state_->replica_owner->snapshot_or_throw();
++    if (replica_snapshot.operation_set_digest !=
++        replica_final.operation_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                OperationSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan operation set changed during writer-fenced "
++                "projection; restart pagination");
++    }
++    if (replica_snapshot.evidence_set_digest !=
++        replica_final.evidence_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                EvidenceSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan retained evidence set changed during "
++                "writer-fenced projection; restart pagination");
++    }
++    if (replica_snapshot.historical_version_pin_set_digest !=
++        replica_final.historical_version_pin_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                HistoricalVersionPinSetDuringPayloadObservation,
++            state_->label +
++                " retention-plan pin set changed during writer-fenced "
++                "projection; restart pagination");
++    }
++    state_->payload_store->verify_writer_fenced_retention_snapshot_or_throw(
++        payload_snapshot,
++        state_->label + " retention-plan final writer-fence cutpoint");
++
+     const SyncReplicaFilePayloadStoreLiveCapabilityCutpoint
+         live_capabilities_after =
+             state_->payload_store->
+@@ -6050,6 +6237,9 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+     append_string(
+         deletion_free_mark_digest,
+         kRetentionPlanDeletionFreeMarkDigestDomain);
++    append_string(
++        deletion_free_mark_digest,
++        kSyncReplicaFilePayloadUseLeaseProtocol);
+     append_string(deletion_free_mark_digest, state_->folder_id);
+     append_string(
+         deletion_free_mark_digest, plan.source_operation_set_digest);
+@@ -6073,7 +6263,10 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         deletion_free_mark_digest, plan.payload_transient_reserved_bytes);
+     append_string(
+         deletion_free_mark_digest,
+-        plan.live_capability_store_owner_incarnation_digest);
++        plan.live_capability_process_store_scope_digest);
++    append_string(
++        deletion_free_mark_digest,
++        plan.live_capability_process_store_scope_incarnation_digest);
+     append_string(
+         deletion_free_mark_digest, plan.live_capability_set_digest);
+     append_u64(
+@@ -6171,6 +6364,37 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         planned_byte_partition,
+         plan.unreferenced_by_retained_file_operations.payload_bytes,
+         "planned byte partition");
++    std::uint64_t returned_unreferenced_candidate_count = 0U;
++    for (const SyncReplicaRetentionPlanEntry& entry : plan.entries) {
++        if (entry.disposition ==
++            SyncReplicaRetentionPlanDisposition::
++                UnreferencedByRetainedFileOperations) {
++            increment_or_throw(
++                returned_unreferenced_candidate_count,
++                "returned unreferenced candidate consistency count");
++            if (entry.payload_use_disposition ==
++                SyncReplicaRetentionPlanPayloadUseDisposition::
++                    NotApplicable) {
++                throw std::logic_error(
++                    state_->label +
++                    " retention-plan returned candidate lacks an exact-inode "
++                    "payload-use observation");
++            }
++        } else if (entry.payload_use_disposition !=
++                   SyncReplicaRetentionPlanPayloadUseDisposition::
++                       NotApplicable) {
++            throw std::logic_error(
++                state_->label +
++                " retention-plan retained payload carried a candidate-only "
++                "payload-use observation");
++        }
++    }
++    std::uint64_t returned_candidate_payload_use_partition =
++        plan.returned_candidate_payload_use_exclusive_available_count;
++    add_or_throw(
++        returned_candidate_payload_use_partition,
++        plan.returned_candidate_payload_use_busy_count,
++        "returned candidate payload-use partition");
+     if (physical_entry_partition != reachability.payload_entry_count ||
+         physical_byte_partition != reachability.payload_indexed_bytes ||
+         operation_partition != reachability.retained_union.file_operation_count ||
+@@ -6192,6 +6416,12 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+             reachability.unreferenced_payload_count ||
+         plan.unreferenced_live_capability_rooted_payload_bytes >
+             reachability.unreferenced_payload_bytes ||
++        returned_unreferenced_candidate_count !=
++            plan.returned_unreferenced_candidate_count ||
++        plan.writer_fenced_candidate_page_entry_count !=
++            static_cast<std::uint64_t>(plan.entries.size()) ||
++        returned_candidate_payload_use_partition !=
++            plan.returned_unreferenced_candidate_count ||
+         (plan.live_capabilities_may_reopen_all_current_payloads &&
+          (plan.live_capability_rooted_physical_payload_count !=
+               reachability.payload_entry_count ||
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index cab4ddbad686af6bafc59a50f76720d62fb3fb4e..493f50ddc1d4614125d0fcfb725597be88c79aa6 100644
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -266,6 +266,33 @@ enum class SyncReplicaRetentionPlanDisposition : std::uint8_t {
+     UnreferencedByRetainedFileOperations = 3U,
+ };
+ 
++// Historical result of one exact-inode exclusive payload-use lease probe made
++// while the complete payload namespace remained beneath the store-global
++// exclusive writer fence. NotApplicable is used for entries retained by a
++// File-operation root. Available and Busy are point-in-time observations only:
++// the dry-run planner releases both the inode probe and the global fence before
++// returning, so neither value grants later quarantine or unlink authority.
++enum class SyncReplicaRetentionPlanPayloadUseDisposition : std::uint8_t {
++    NotApplicable = 1U,
++    ExclusiveAvailableAtCutpoint = 2U,
++    BusyAtCutpoint = 3U,
++};
++
++[[nodiscard]] constexpr std::string_view
++sync_replica_retention_plan_payload_use_disposition_name(
++    SyncReplicaRetentionPlanPayloadUseDisposition disposition) noexcept {
++    switch (disposition) {
++        case SyncReplicaRetentionPlanPayloadUseDisposition::NotApplicable:
++            return "not_applicable";
++        case SyncReplicaRetentionPlanPayloadUseDisposition::
++                ExclusiveAvailableAtCutpoint:
++            return "exclusive_available_at_cutpoint";
++        case SyncReplicaRetentionPlanPayloadUseDisposition::BusyAtCutpoint:
++            return "busy_at_cutpoint";
++    }
++    return "unknown";
++}
++
+ [[nodiscard]] constexpr std::string_view
+ sync_replica_retention_plan_disposition_name(
+     SyncReplicaRetentionPlanDisposition disposition) noexcept {
+@@ -295,11 +322,13 @@ struct SyncReplicaRetentionPlanEntry final {
+     bool superseded_active = false;
+     bool inactive_evidence = false;
+     bool explicit_pin = false;
+-    // True only when a capability registered by this exact retained payload-
+-    // store owner can still consume this physical payload after the planner's
+-    // own shared lease is released. This is a same-owner process observation,
+-    // not a cross-process or durable root.
+-    bool same_store_owner_live_capability = false;
++    // True only when a capability registered by any retained owner in this
++    // process for the exact attested payload-store scope can still consume this
++    // physical payload after the planner's own shared lease is released. This
++    // is not a cross-process or durable root.
++    bool same_process_store_live_capability = false;
++    SyncReplicaRetentionPlanPayloadUseDisposition payload_use_disposition =
++        SyncReplicaRetentionPlanPayloadUseDisposition::NotApplicable;
+     SyncReplicaRetentionPlanDisposition disposition =
+         SyncReplicaRetentionPlanDisposition::UnreferencedByRetainedFileOperations;
+ 
+@@ -319,12 +348,20 @@ struct SyncReplicaRetentionPlanEntry final {
+ // reserved capacity. This closes aggregate count/byte aliasing, but does not
+ // claim that opened senders, active service passes, or future collector restart
+ // obligations have all been modeled. The mark also binds an exact bounded
+-// census of capabilities issued by this exact in-process payload-store owner.
+-// It excludes the planner's own snapshot, brackets the projection, and roots
+-// either every current payload (snapshot/targeted-access/mutation authority) or
+-// one exact digest/size object (opened payload). Independently opened owners,
+-// other processes, already-copied response bytes, and durable restart roots are
+-// deliberately outside this census.
++// census of capabilities issued by every retained owner in this process for
++// the exact attested payload-store scope. It excludes the planner's own
++// snapshot, brackets the projection, and roots either every current payload
++// (snapshot/targeted-access/mutation authority) or one exact digest/size object
++// (opened payload). Other processes, already-copied response bytes, and durable
++// restart roots are deliberately outside this census. The CPU- and
++// allocation-heavy causal projection is prepared before exclusion; the
++// complete payload observation, exact physical/root merge, and bounded
++// candidate probes are made while one store-global exclusive writer fence
++// remains live. Every returned unreferenced candidate is additionally probed
++// for an exact-inode exclusive payload-use lease before that fence is released.
++// This excludes cooperating new namespace work during the physical cutpoint
++// and detects already-open cooperating descriptors on the bounded returned
++// page; it still does not bind future work after return.
+ // Neither digest is durable collection authority: this object remains
+ // explanatory dry-run evidence and deliberately has no reclaimable-authority
+ // bit.
+@@ -345,7 +382,8 @@ struct SyncReplicaRetentionPlan final {
+     std::uint64_t payload_scan_hashed_bytes = 0U;
+     std::uint64_t payload_scan_reused_entry_count = 0U;
+     std::uint64_t payload_scan_reused_bytes = 0U;
+-    std::string live_capability_store_owner_incarnation_digest;
++    std::string live_capability_process_store_scope_digest;
++    std::string live_capability_process_store_scope_incarnation_digest;
+     std::string live_capability_set_digest;
+     std::uint64_t live_snapshot_count = 0U;
+     std::uint64_t live_opened_payload_count = 0U;
+@@ -358,11 +396,29 @@ struct SyncReplicaRetentionPlan final {
+     std::uint64_t live_capability_rooted_physical_payload_bytes = 0U;
+     std::uint64_t unreferenced_live_capability_rooted_payload_count = 0U;
+     std::uint64_t unreferenced_live_capability_rooted_payload_bytes = 0U;
++    bool writer_fenced_observation = false;
++    bool cooperating_new_namespace_activity_excluded_during_observation =
++        false;
++    // Number of entries in the logical query page while the writer fence was
++    // held. The independent status-byte frontier may later expose only a
++    // canonical prefix of those already-probed entries; the digest and counts
++    // below continue to describe the complete logical page.
++    std::uint64_t writer_fenced_candidate_page_entry_count = 0U;
++    std::uint64_t returned_unreferenced_candidate_count = 0U;
++    std::uint64_t returned_candidate_payload_use_exclusive_available_count =
++        0U;
++    std::uint64_t returned_candidate_payload_use_busy_count = 0U;
++    std::string writer_fenced_candidate_page_digest;
+     SyncReplicaHistoricalVersionPayloadReachability retained_payload_reachability;
+     SyncReplicaRetentionPlanClass current_or_explicit_pin;
+     SyncReplicaRetentionPlanClass retained_history_or_evidence;
+     SyncReplicaRetentionPlanClass unreferenced_by_retained_file_operations;
+     std::string unreferenced_candidate_set_digest;
++    // Restart-stable candidate identity over durable replica roots, the exact
++    // physical/transient payload snapshot, and the complete candidate set. It
++    // deliberately excludes process-store incarnation and live-capability
++    // generation; future mutation must re-prove current reader exclusion.
++    std::string durable_candidate_witness_digest;
+     std::string exact_deletion_free_mark_digest;
+     std::uint64_t physical_payload_count_after_cursor = 0U;
+     bool entry_limit_frontier_reached = false;
+diff --git a/src/sync_replica_historical_version_inventory_json.cpp b/src/sync_replica_historical_version_inventory_json.cpp
+index a9c476d309d57c5f407b3b6f36595d536d41d31b..7256562aa3b6665b48a0fdda5dcb61c074661cb1 100644
+--- a/src/sync_replica_historical_version_inventory_json.cpp
++++ b/src/sync_replica_historical_version_inventory_json.cpp
+@@ -204,6 +204,12 @@ void append_retention_plan(
+         << ",\"grace_period_applied\":false"
+         << ",\"writer_fenced_collection\":false"
+         << ",\"durable_mark_persisted\":false"
++        << ",\"writer_fenced_observation\":"
++        << json_bool(plan.writer_fenced_observation)
++        << ",\"cooperating_new_namespace_activity_excluded_during_observation\":"
++        << json_bool(
++               plan.
++                   cooperating_new_namespace_activity_excluded_during_observation)
+         << ",\"source_replica_state_generation\":"
+         << plan.source_replica_state_generation
+         << ",\"source_operation_set_digest\":";
+@@ -221,7 +227,8 @@ void append_retention_plan(
+     append_json_quoted(output, plan.source_payload_snapshot_digest);
+     output << ",\"payload_store_transient_namespace_bound\":true"
+            << ",\"durable_receiver_restart_obligations_bound\":true"
+-           << ",\"same_store_owner_live_payload_capabilities_bound\":true"
++           << ",\"same_process_store_live_payload_capabilities_bound\":true"
++           << ",\"independently_opened_same_process_store_owner_live_payload_capabilities_bound\":true"
+            << ",\"independent_store_owner_live_payload_capabilities_bound\":false"
+            << ",\"cross_process_live_payload_capabilities_bound\":false"
+            << ",\"already_copied_response_bytes_bound\":false"
+@@ -238,9 +245,12 @@ void append_retention_plan(
+            << plan.payload_transient_bytes
+            << ",\"payload_transient_reserved_bytes\":"
+            << plan.payload_transient_reserved_bytes
+-           << ",\"live_payload_capabilities\":{\"store_owner_incarnation_digest\":";
++           << ",\"live_payload_capabilities\":{\"process_store_scope_digest\":";
+     append_json_quoted(
+-        output, plan.live_capability_store_owner_incarnation_digest);
++        output, plan.live_capability_process_store_scope_digest);
++    output << ",\"process_store_scope_incarnation_digest\":";
++    append_json_quoted(
++        output, plan.live_capability_process_store_scope_incarnation_digest);
+     output << ",\"capability_set_digest\":";
+     append_json_quoted(output, plan.live_capability_set_digest);
+     output << ",\"snapshot_count\":" << plan.live_snapshot_count
+@@ -266,9 +276,24 @@ void append_retention_plan(
+            << ",\"unreferenced_rooted_payload_bytes\":"
+            << plan.unreferenced_live_capability_rooted_payload_bytes
+            << '}';
++    output << ",\"writer_fenced_candidate_page_entry_count\":"
++           << plan.writer_fenced_candidate_page_entry_count
++           << ",\"returned_unreferenced_candidate_count\":"
++           << plan.returned_unreferenced_candidate_count
++           << ",\"returned_candidate_payload_use_exclusive_available_count\":"
++           << plan.
++                  returned_candidate_payload_use_exclusive_available_count
++           << ",\"returned_candidate_payload_use_busy_count\":"
++           << plan.returned_candidate_payload_use_busy_count
++           << ",\"writer_fenced_candidate_page_digest\":";
++    append_json_quoted(
++        output, plan.writer_fenced_candidate_page_digest);
+     output << ",\"unreferenced_candidate_set_digest\":";
+     append_json_quoted(
+         output, plan.unreferenced_candidate_set_digest);
++    output << ",\"durable_candidate_witness_digest\":";
++    append_json_quoted(
++        output, plan.durable_candidate_witness_digest);
+     output << ",\"exact_deletion_free_mark_digest\":";
+     append_json_quoted(
+         output, plan.exact_deletion_free_mark_digest);
+@@ -328,8 +353,14 @@ void append_retention_plan(
+             << ",\"inactive_evidence\":"
+             << json_bool(entry.inactive_evidence)
+             << ",\"explicit_pin\":" << json_bool(entry.explicit_pin)
+-            << ",\"same_store_owner_live_capability\":"
+-            << json_bool(entry.same_store_owner_live_capability)
++            << ",\"same_process_store_live_capability\":"
++            << json_bool(entry.same_process_store_live_capability)
++            << ",\"payload_use_disposition\":";
++        append_json_quoted(
++            output,
++            sync_replica_retention_plan_payload_use_disposition_name(
++                entry.payload_use_disposition));
++        output
+             << ",\"disposition\":";
+         append_json_quoted(
+             output,
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index b34d3fbb812a99fa335f0992d4214c2fe584d333..16b1da79f4d147d26f9ec531734b643ef5b6c6de 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v22";
++    "anonsync.peer-service.status.v23";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index afc82d0a3f99084dc9a0d47e826b6a51bcbe4d73..fbe9aa615f641262341d4c1c47a0278abcbb53c3 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -1,4 +1,5 @@
+ #include "sync_local_status_socket.hpp"
++#include "anonsync_json_parser.hpp"
+ #include "sync_replica_historical_version_inventory_json.hpp"
+ #include "sync_replica_peer_service_status.hpp"
+ 
+@@ -41,6 +42,18 @@ void require(bool condition, std::string_view message) {
+     if (!condition) throw std::runtime_error(std::string(message));
+ }
+ 
++void require_valid_json(
++    const std::string& document,
++    std::string_view message) {
++    ++checks;
++    try {
++        (void)anonsync::parse_json_text(document);
++    } catch (const std::exception& error) {
++        throw std::runtime_error(
++            std::string(message) + ": " + error.what());
++    }
++}
++
+ template <typename Function>
+ void require_throws(Function&& function, std::string_view message) {
+     ++checks;
+@@ -361,7 +374,9 @@ void test_historical_inventory_status_byte_frontier() {
+     plan.payload_transient_entry_count = 2U;
+     plan.payload_transient_bytes = 14U;
+     plan.payload_transient_reserved_bytes = 29U;
+-    plan.live_capability_store_owner_incarnation_digest =
++    plan.live_capability_process_store_scope_digest =
++        std::string(64U, '1');
++    plan.live_capability_process_store_scope_incarnation_digest =
+         std::string(64U, '2');
+     plan.live_capability_set_digest = std::string(64U, '3');
+     plan.live_snapshot_count = 1U;
+@@ -375,7 +390,15 @@ void test_historical_inventory_status_byte_frontier() {
+     plan.live_capability_rooted_physical_payload_bytes = 70U;
+     plan.unreferenced_live_capability_rooted_payload_count = 2U;
+     plan.unreferenced_live_capability_rooted_payload_bytes = 20U;
++    plan.writer_fenced_observation = true;
++    plan.cooperating_new_namespace_activity_excluded_during_observation =
++        true;
++    plan.writer_fenced_candidate_page_entry_count = 2U;
++    plan.returned_unreferenced_candidate_count = 1U;
++    plan.returned_candidate_payload_use_busy_count = 1U;
++    plan.writer_fenced_candidate_page_digest = std::string(64U, '9');
+     plan.unreferenced_candidate_set_digest = std::string(64U, 'f');
++    plan.durable_candidate_witness_digest = std::string(64U, 'e');
+     plan.exact_deletion_free_mark_digest = std::string(64U, '0');
+     plan.retained_payload_reachability =
+         inventory.retained_payload_reachability.value();
+@@ -388,14 +411,17 @@ void test_historical_inventory_status_byte_frontier() {
+             .size_bytes = 10U,
+             .current_visible = true,
+             .inactive_evidence = true,
+-            .same_store_owner_live_capability = true,
++            .same_process_store_live_capability = true,
+             .disposition = anonsync::
+                 SyncReplicaRetentionPlanDisposition::CurrentOrExplicitPin,
+         },
+         {
+             .content_sha256 = synthetic_operation_id(7002U),
+             .size_bytes = 20U,
+-            .same_store_owner_live_capability = true,
++            .same_process_store_live_capability = true,
++            .payload_use_disposition = anonsync::
++                SyncReplicaRetentionPlanPayloadUseDisposition::
++                    BusyAtCutpoint,
+             .disposition = anonsync::SyncReplicaRetentionPlanDisposition::
+                 UnreferencedByRetainedFileOperations,
+         },
+@@ -429,6 +455,9 @@ void test_historical_inventory_status_byte_frontier() {
+     const std::string stable_plan = anonsync::
+         render_sync_replica_peer_service_historical_version_status_json(
+             plan_status);
++    require_valid_json(
++        stable_plan,
++        "stable retention-plan status renderer emitted invalid JSON");
+     require(
+         stable_plan.find("\"retention_plan_query\"") !=
+                 std::string::npos &&
+@@ -438,11 +467,18 @@ void test_historical_inventory_status_byte_frontier() {
+                 std::string::npos &&
+             stable_plan.find("\"reclaimable_authority\":false") !=
+                 std::string::npos &&
++            stable_plan.find("\"writer_fenced_observation\":true") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"cooperating_new_namespace_activity_excluded_during_observation\":true") !=
++                std::string::npos &&
+             stable_plan.find("\"durable_mark_persisted\":false") !=
+                 std::string::npos &&
+             stable_plan.find("\"payload_store_transient_namespace_bound\":true") !=
+                 std::string::npos &&
+-            stable_plan.find("\"same_store_owner_live_payload_capabilities_bound\":true") !=
++            stable_plan.find("\"same_process_store_live_payload_capabilities_bound\":true") !=
++                std::string::npos &&
++            stable_plan.find("\"independently_opened_same_process_store_owner_live_payload_capabilities_bound\":true") !=
+                 std::string::npos &&
+             stable_plan.find("\"independent_store_owner_live_payload_capabilities_bound\":false") !=
+                 std::string::npos &&
+@@ -463,8 +499,10 @@ void test_historical_inventory_status_byte_frontier() {
+             stable_plan.find("\"payload_transient_reserved_bytes\":29") !=
+                 std::string::npos &&
+             stable_plan.find(
+-                "\"live_payload_capabilities\":{\"store_owner_incarnation_digest\":\"" +
+-                plan.live_capability_store_owner_incarnation_digest + "\"") !=
++                "\"live_payload_capabilities\":{\"process_store_scope_digest\":\"" +
++                plan.live_capability_process_store_scope_digest +
++                "\",\"process_store_scope_incarnation_digest\":\"" +
++                plan.live_capability_process_store_scope_incarnation_digest + "\"") !=
+                 std::string::npos &&
+             stable_plan.find(
+                 "\"capability_set_digest\":\"" +
+@@ -492,12 +530,35 @@ void test_historical_inventory_status_byte_frontier() {
+                 std::string::npos &&
+             stable_plan.find("\"unreferenced_rooted_payload_bytes\":20") !=
+                 std::string::npos &&
+-            stable_plan.find("\"same_store_owner_live_capability\":true") !=
++            stable_plan.find("\"same_process_store_live_capability\":true") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"returned_unreferenced_candidate_count\":1") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"writer_fenced_candidate_page_entry_count\":2") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"returned_candidate_payload_use_exclusive_available_count\":0") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"returned_candidate_payload_use_busy_count\":1") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"writer_fenced_candidate_page_digest\":\"" +
++                plan.writer_fenced_candidate_page_digest + "\"") !=
++                std::string::npos &&
++            stable_plan.find(
++                "\"payload_use_disposition\":\"busy_at_cutpoint\"") !=
+                 std::string::npos &&
+             stable_plan.find(
+                 "\"unreferenced_candidate_set_digest\":\"" +
+                 plan.unreferenced_candidate_set_digest + "\"") !=
+                 std::string::npos &&
++            stable_plan.find(
++                "\"durable_candidate_witness_digest\":\"" +
++                plan.durable_candidate_witness_digest + "\"") !=
++                std::string::npos &&
+             stable_plan.find(
+                 "\"exact_deletion_free_mark_digest\":\"" +
+                 plan.exact_deletion_free_mark_digest + "\"") !=
+@@ -512,6 +573,12 @@ void test_historical_inventory_status_byte_frontier() {
+         anonsync::kSyncReplicaRetentionPlanMaximumEntries * 4096U};
+     large_plan.retained_history_or_evidence = {};
+     large_plan.unreferenced_by_retained_file_operations = {};
++    large_plan.returned_unreferenced_candidate_count = 0U;
++    large_plan.returned_candidate_payload_use_exclusive_available_count = 0U;
++    large_plan.returned_candidate_payload_use_busy_count = 0U;
++    large_plan.writer_fenced_candidate_page_digest = std::string(64U, '8');
++    large_plan.writer_fenced_candidate_page_entry_count = anonsync::
++        kSyncReplicaRetentionPlanMaximumEntries;
+     large_plan.physical_payload_count_after_cursor = anonsync::
+         kSyncReplicaRetentionPlanMaximumEntries;
+     large_plan.entries.clear();
+@@ -536,6 +603,9 @@ void test_historical_inventory_status_byte_frontier() {
+         original_plan_entries = large_plan.entries;
+     const std::string unbounded_plan = anonsync::
+         render_sync_replica_retention_plan_json(large_plan);
++    require_valid_json(
++        unbounded_plan,
++        "unbounded retention-plan renderer emitted invalid JSON");
+     require(
+         unbounded_plan.size() > anonsync::
+             kSyncReplicaRetentionPlanMaximumStatusBytes,
+@@ -566,6 +636,9 @@ void test_historical_inventory_status_byte_frontier() {
+ 
+     const std::string bounded_plan = anonsync::
+         render_sync_replica_retention_plan_json(large_plan);
++    require_valid_json(
++        bounded_plan,
++        "bounded retention-plan renderer emitted invalid JSON");
+     require(
+         bounded_plan.size() <= anonsync::
+                 kSyncReplicaRetentionPlanMaximumStatusBytes &&
+@@ -573,6 +646,11 @@ void test_historical_inventory_status_byte_frontier() {
+                 std::string::npos &&
+             bounded_plan.find("\"reclaimable_authority\":false") !=
+                 std::string::npos &&
++            bounded_plan.find("\"writer_fenced_observation\":true") !=
++                std::string::npos &&
++            bounded_plan.find(
++                "\"cooperating_new_namespace_activity_excluded_during_observation\":true") !=
++                std::string::npos &&
+             bounded_plan.find("\"writer_fenced_collection\":false") !=
+                 std::string::npos &&
+             bounded_plan.find("\"durable_mark_persisted\":false") !=
+@@ -581,7 +659,9 @@ void test_historical_inventory_status_byte_frontier() {
+                 std::string::npos &&
+             bounded_plan.find("\"durable_receiver_restart_obligations_bound\":true") !=
+                 std::string::npos &&
+-            bounded_plan.find("\"same_store_owner_live_payload_capabilities_bound\":true") !=
++            bounded_plan.find("\"same_process_store_live_payload_capabilities_bound\":true") !=
++                std::string::npos &&
++            bounded_plan.find("\"independently_opened_same_process_store_owner_live_payload_capabilities_bound\":true") !=
+                 std::string::npos &&
+             bounded_plan.find("\"independent_store_owner_live_payload_capabilities_bound\":false") !=
+                 std::string::npos &&
+@@ -605,6 +685,19 @@ void test_historical_inventory_status_byte_frontier() {
+                 "\"unreferenced_candidate_set_digest\":\"" +
+                 large_plan.unreferenced_candidate_set_digest + "\"") !=
+                 std::string::npos &&
++            bounded_plan.find(
++                "\"durable_candidate_witness_digest\":\"" +
++                large_plan.durable_candidate_witness_digest + "\"") !=
++                std::string::npos &&
++            bounded_plan.find(
++                "\"writer_fenced_candidate_page_digest\":\"" +
++                large_plan.writer_fenced_candidate_page_digest + "\"") !=
++                std::string::npos &&
++            bounded_plan.find(
++                "\"writer_fenced_candidate_page_entry_count\":" +
++                std::to_string(anonsync::
++                    kSyncReplicaRetentionPlanMaximumEntries)) !=
++                std::string::npos &&
+             bounded_plan.find(
+                 "\"exact_deletion_free_mark_digest\":\"" +
+                 large_plan.exact_deletion_free_mark_digest + "\"") !=
+@@ -1624,7 +1717,7 @@ int main() {
+                     socket_path, plan_query);
+             require(
+                 accepted_plan ==
+-                    "{\"schema\":\"anonsync.local-retention-plan.response.v4\","
++                    "{\"schema\":\"anonsync.local-retention-plan.response.v5\","
+                     "\"command\":\"retention-plan\","
+                     "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":1,\"maximum_entries\":2,"
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index 804ce262b359229755eaf65829825d600ff26788..c02725f829ac064318d28501a1ac45b102c6da81 100644
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -99,6 +99,23 @@ struct SyncReplicaFilePayloadStoreTestAccess final {
+         return store.live_capability_cutpoint_excluding_snapshot_or_throw(
+             snapshot, label);
+     }
++
++    [[nodiscard]] static SyncReplicaFilePayloadStoreSnapshot
++    writer_fenced_retention_snapshot_or_throw(
++        const SyncReplicaFilePayloadStore& store) {
++        return store.snapshot_writer_fenced_for_retention_or_throw();
++    }
++
++    [[nodiscard]] static bool
++    writer_fenced_payload_use_exclusive_available_or_throw(
++        const SyncReplicaFilePayloadStore& store,
++        const SyncReplicaFilePayloadStoreSnapshot& snapshot,
++        std::string_view content_sha256,
++        std::uint64_t size_bytes,
++        std::string_view label) {
++        return store.writer_fenced_payload_use_exclusive_available_or_throw(
++            snapshot, content_sha256, size_bytes, label);
++    }
+ };
+ 
+ }  // namespace anonsync
+@@ -2933,15 +2950,17 @@ void test_live_capability_cutpoint_detects_complete_interval_aba() {
+         auto ephemeral_snapshot = store.snapshot_or_throw();
+         require(
+             ephemeral_snapshot.active(),
+-            "ephemeral same-owner snapshot was not active");
++            "ephemeral same-process-store snapshot was not active");
+     }
+ 
+     const auto after = anonsync::SyncReplicaFilePayloadStoreTestAccess::
+         live_capability_cutpoint_excluding_snapshot_or_throw(
+             store, planner_snapshot, "live-capability interval ABA after");
+     require(
+-        before.store_owner_incarnation_digest ==
+-                after.store_owner_incarnation_digest &&
++        before.process_store_scope_digest ==
++                after.process_store_scope_digest &&
++            before.process_store_scope_incarnation_digest ==
++                after.process_store_scope_incarnation_digest &&
+             before.capability_set_digest == after.capability_set_digest &&
+             before.snapshot_count == 0U && after.snapshot_count == 0U &&
+             before.opened_payload_count == 0U &&
+@@ -2955,6 +2974,248 @@ void test_live_capability_cutpoint_detects_complete_interval_aba() {
+         "complete create-and-destroy capability interval aliased equal live cutpoints");
+ }
+ 
++void test_live_capability_scope_spans_independent_store_owners() {
++    TemporaryDirectory temporary;
++    const fs::path root =
++        temporary.make_store_root("live-capability-cross-owner");
++    const fs::path other_root =
++        temporary.make_store_root("live-capability-other-store");
++    const std::string folder = "folder-live-capability-cross-owner";
++
++    anonsync::SyncReplicaFilePayloadStoreLimits limits;
++    limits.max_entries = 8U;
++    limits.max_payload_bytes = 4096U;
++    limits.max_indexed_bytes = 16384U;
++    limits.max_transient_entries = 8U;
++    limits.max_transient_bytes = 1024U * 1024U;
++
++    anonsync::SyncReplicaFilePayloadStore first(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::CreateIfMissing,
++        limits, "live-capability first independent owner");
++    {
++        auto bootstrap_snapshot = first.snapshot_or_throw();
++        require(
++            bootstrap_snapshot.active(),
++            "first independent owner did not bootstrap the store identity");
++    }
++    anonsync::SyncReplicaFilePayloadStore second(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++        limits, "live-capability second independent owner");
++    auto planner_snapshot = second.snapshot_or_throw();
++    const auto before = anonsync::SyncReplicaFilePayloadStoreTestAccess::
++        live_capability_cutpoint_excluding_snapshot_or_throw(
++            second, planner_snapshot,
++            "live-capability cross-owner before");
++    require(
++        anonsync::is_lowercase_sha256_hex(
++            before.process_store_scope_digest) &&
++            anonsync::is_lowercase_sha256_hex(
++                before.process_store_scope_incarnation_digest) &&
++            before.snapshot_count == 0U,
++        "independent-owner process-store scope began non-canonical");
++
++    {
++        auto first_owner_snapshot = first.snapshot_or_throw();
++        const auto during = anonsync::SyncReplicaFilePayloadStoreTestAccess::
++            live_capability_cutpoint_excluding_snapshot_or_throw(
++                second, planner_snapshot,
++                "live-capability cross-owner during");
++        require(
++            during.process_store_scope_digest ==
++                    before.process_store_scope_digest &&
++                during.process_store_scope_incarnation_digest ==
++                    before.process_store_scope_incarnation_digest &&
++                during.snapshot_count == 1U &&
++                during.capability_set_digest !=
++                    before.capability_set_digest &&
++                during.activity_generation > before.activity_generation,
++            "independently opened owner was invisible to the shared process-store scope");
++        require_error(
++            [&] {
++                (void)anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                    live_capability_cutpoint_excluding_snapshot_or_throw(
++                        second, first_owner_snapshot,
++                        "live-capability foreign snapshot rejection");
++            },
++            "exact retained store owner",
++            "shared live registry accidentally authorized foreign-owner snapshot handoff");
++    }
++
++    const auto after = anonsync::SyncReplicaFilePayloadStoreTestAccess::
++        live_capability_cutpoint_excluding_snapshot_or_throw(
++            second, planner_snapshot,
++            "live-capability cross-owner after");
++    require(
++        after.process_store_scope_digest ==
++                before.process_store_scope_digest &&
++            after.process_store_scope_incarnation_digest ==
++                before.process_store_scope_incarnation_digest &&
++            after.capability_set_digest == before.capability_set_digest &&
++            after.snapshot_count == 0U &&
++            after.activity_generation > before.activity_generation,
++        "released independent-owner capability did not restore the canonical set");
++
++    anonsync::SyncReplicaFilePayloadStore other(
++        folder, other_root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::CreateIfMissing,
++        limits, "live-capability different process-store scope");
++    auto other_planner_snapshot = other.snapshot_or_throw();
++    const auto other_cutpoint =
++        anonsync::SyncReplicaFilePayloadStoreTestAccess::
++            live_capability_cutpoint_excluding_snapshot_or_throw(
++                other, other_planner_snapshot,
++                "live-capability different process-store cutpoint");
++    require(
++        other_cutpoint.process_store_scope_digest !=
++                before.process_store_scope_digest &&
++            other_cutpoint.process_store_scope_incarnation_digest !=
++                before.process_store_scope_incarnation_digest,
++        "distinct attested payload stores shared one process-store capability scope");
++}
++
++void test_live_capability_scope_recreates_after_final_owner_release() {
++    TemporaryDirectory temporary;
++    const fs::path root =
++        temporary.make_store_root("live-capability-scope-recreation");
++    const std::string folder = "folder-live-capability-scope-recreation";
++
++    anonsync::SyncReplicaFilePayloadStoreLimits limits;
++    limits.max_entries = 8U;
++    limits.max_payload_bytes = 4096U;
++    limits.max_indexed_bytes = 16384U;
++    limits.max_transient_entries = 8U;
++    limits.max_transient_bytes = 1024U * 1024U;
++
++    std::string scope_digest;
++    std::string first_incarnation;
++    {
++        anonsync::SyncReplicaFilePayloadStore first(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::
++                CreateIfMissing,
++            limits, "live-capability first scope incarnation");
++        auto planner_snapshot = first.snapshot_or_throw();
++        const auto cutpoint =
++            anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                live_capability_cutpoint_excluding_snapshot_or_throw(
++                    first, planner_snapshot,
++                    "live-capability first scope cutpoint");
++        scope_digest = cutpoint.process_store_scope_digest;
++        first_incarnation =
++            cutpoint.process_store_scope_incarnation_digest;
++    }
++
++    anonsync::SyncReplicaFilePayloadStore recreated(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++        limits, "live-capability recreated scope incarnation");
++    auto recreated_snapshot = recreated.snapshot_or_throw();
++    const auto recreated_cutpoint =
++        anonsync::SyncReplicaFilePayloadStoreTestAccess::
++            live_capability_cutpoint_excluding_snapshot_or_throw(
++                recreated, recreated_snapshot,
++                "live-capability recreated scope cutpoint");
++    require(
++        recreated_cutpoint.process_store_scope_digest == scope_digest,
++        "recreated owner changed the deterministic process-store scope binding");
++    require(
++        recreated_cutpoint.process_store_scope_incarnation_digest !=
++            first_incarnation,
++        "process-store capability incarnation survived release of the final owner");
++}
++
++void test_writer_fenced_retention_snapshot_excludes_namespace_work_and_probes_inode_use() {
++    TemporaryDirectory temporary;
++    const fs::path root =
++        temporary.make_store_root("writer-fenced-retention-probe");
++    const std::string folder = "folder-writer-fenced-retention-probe";
++    const std::string payload =
++        "writer-fenced-retention-probe-current-payload";
++    const std::string other_payload =
++        "writer-fenced-retention-probe-followup-payload";
++    const std::string digest = anonsync::sha256_hex(payload);
++
++    anonsync::SyncReplicaFilePayloadStoreLimits limits;
++    limits.max_entries = 8U;
++    limits.max_payload_bytes = 4096U;
++    limits.max_indexed_bytes = 16384U;
++    limits.max_transient_entries = 8U;
++    limits.max_transient_bytes = 1024U * 1024U;
++
++    anonsync::SyncReplicaFilePayloadStore first(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::CreateIfMissing,
++        limits, "writer-fenced retention first owner");
++    require(
++        first.put_payload_or_throw(payload).disposition ==
++            anonsync::SyncReplicaFilePayloadStorePutDisposition::Inserted,
++        "writer-fenced retention fixture did not publish its payload");
++    anonsync::SyncReplicaFilePayloadStore second(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++        limits, "writer-fenced retention second owner");
++
++    {
++        const auto ordinary = first.snapshot_or_throw();
++        require_error(
++            [&] {
++                (void)anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                    writer_fenced_payload_use_exclusive_available_or_throw(
++                        first, ordinary, digest, payload.size(),
++                        "ordinary snapshot rejection");
++            },
++            "does not retain the exact writer fence",
++            "ordinary snapshot was accepted as writer-fenced retention authority");
++    }
++
++    ChildHeldFileLock cross_process_reader(
++        root / digest, LOCK_SH, temporary.path(),
++        "writer-fenced-retention-reader");
++    {
++        const auto writer_fenced =
++            anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                writer_fenced_retention_snapshot_or_throw(first);
++        require(
++            writer_fenced.payload_size_or_none(digest) ==
++                std::optional<std::uint64_t>(payload.size()),
++            "writer-fenced retention snapshot lost its exact payload");
++        require(
++            !anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                writer_fenced_payload_use_exclusive_available_or_throw(
++                    first, writer_fenced, digest, payload.size(),
++                    "cross-process reader probe"),
++            "writer-fenced probe ignored a cross-process shared inode-use lease");
++        require_lease_busy(
++            [&] { (void)second.snapshot_or_throw(); },
++            anonsync::SyncReplicaFilePayloadStoreLeaseMode::SharedObservation,
++            "writer-fenced retention snapshot admitted new namespace observation");
++        require_lease_busy(
++            [&] { (void)first.put_payload_or_throw(other_payload); },
++            anonsync::SyncReplicaFilePayloadStoreLeaseMode::ExclusiveMutation,
++            "writer-fenced retention snapshot admitted concurrent namespace mutation");
++
++        cross_process_reader.release_and_wait_or_fail();
++        require(
++            anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                writer_fenced_payload_use_exclusive_available_or_throw(
++                    first, writer_fenced, digest, payload.size(),
++                    "released reader probe"),
++            "writer-fenced probe remained busy after the final reader released");
++    }
++
++    const auto after_fence = second.snapshot_or_throw();
++    require(
++        after_fence.payload_size_or_none(digest) ==
++                std::optional<std::uint64_t>(payload.size()),
++        "writer-fenced snapshot release did not restore namespace observation");
++    require(
++        first.put_payload_or_throw(other_payload).disposition ==
++            anonsync::SyncReplicaFilePayloadStorePutDisposition::Inserted,
++        "writer-fenced snapshot release did not restore namespace mutation");
++}
++
+ void test_live_payload_descriptor_fences_quarantine_inode_mutation() {
+     TemporaryDirectory temporary;
+     const fs::path root =
+@@ -6413,6 +6674,9 @@ int main() {
+         test_disabled_scrub_settles_damaged_restart_fence_once();
+         test_scrub_failure_is_reproved_persisted_and_repairable();
+         test_live_capability_cutpoint_detects_complete_interval_aba();
++        test_live_capability_scope_spans_independent_store_owners();
++        test_live_capability_scope_recreates_after_final_owner_release();
++        test_writer_fenced_retention_snapshot_excludes_namespace_work_and_probes_inode_use();
+         test_live_payload_descriptor_fences_quarantine_inode_mutation();
+         test_exact_corrupt_payload_quarantine_is_bounded_and_recoverable();
+         test_exact_quarantine_release_preserves_unrelated_byte_proof();
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index afdd68cb3a06f6984966c83150136e562d41b9b2..c0ab259ce6612c78ca178567e0bde3fe1dcbc939 100644
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -485,6 +485,78 @@ retention_unreferenced_candidate_set_digest_for_test(
+     return digest.finish_hex();
+ }
+ 
++[[nodiscard]] std::string retention_durable_candidate_witness_for_test(
++    const anonsync::SyncReplicaRetentionPlan& plan,
++    std::string_view folder_id,
++    std::string_view candidate_set_digest) {
++    anonsync::Sha256DigestBuilder digest;
++    append_test_string(
++        digest,
++        "anonsync:sync-replica-retention-plan-durable-candidate-witness:v1");
++    append_test_string(digest, folder_id);
++    append_test_string(digest, plan.source_operation_set_digest);
++    append_test_string(digest, plan.source_evidence_set_digest);
++    append_test_string(
++        digest, plan.source_historical_version_pin_set_digest);
++    append_test_string(digest, plan.source_visible_state_digest);
++    append_test_string(digest, plan.source_payload_snapshot_digest);
++    append_test_string(
++        digest, plan.source_payload_transient_namespace_digest);
++    append_test_u64(digest, plan.payload_transient_entry_count);
++    append_test_u64(digest, plan.payload_transient_bytes);
++    append_test_u64(digest, plan.payload_transient_reserved_bytes);
++    append_test_string(digest, candidate_set_digest);
++    append_test_u64(
++        digest,
++        plan.unreferenced_by_retained_file_operations.payload_count);
++    append_test_u64(
++        digest,
++        plan.unreferenced_by_retained_file_operations.payload_bytes);
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::string retention_writer_fenced_candidate_page_digest_for_test(
++    const anonsync::SyncReplicaRetentionPlan& plan,
++    std::string_view folder_id) {
++    anonsync::Sha256DigestBuilder digest;
++    append_test_string(
++        digest,
++        "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v1");
++    append_test_string(
++        digest, anonsync::kSyncReplicaFilePayloadUseLeaseProtocol);
++    append_test_string(digest, folder_id);
++    append_test_string(digest, plan.source_operation_set_digest);
++    append_test_string(digest, plan.source_evidence_set_digest);
++    append_test_string(
++        digest, plan.source_historical_version_pin_set_digest);
++    append_test_string(digest, plan.source_payload_snapshot_digest);
++    append_test_string(digest, plan.unreferenced_candidate_set_digest);
++    append_test_u64(
++        digest, plan.query.start_after_content_sha256.has_value() ? 1U : 0U);
++    if (plan.query.start_after_content_sha256.has_value()) {
++        append_test_string(digest, *plan.query.start_after_content_sha256);
++    }
++    append_test_u64(digest, plan.query.maximum_entries);
++    append_test_u64(
++        digest, plan.writer_fenced_candidate_page_entry_count);
++    for (const auto& entry : plan.entries) {
++        append_test_string(digest, entry.content_sha256);
++        append_test_u64(digest, entry.size_bytes);
++        append_test_u64(
++            digest, static_cast<std::uint64_t>(entry.disposition));
++        append_test_u64(
++            digest,
++            static_cast<std::uint64_t>(entry.payload_use_disposition));
++    }
++    append_test_u64(digest, plan.returned_unreferenced_candidate_count);
++    append_test_u64(
++        digest,
++        plan.returned_candidate_payload_use_exclusive_available_count);
++    append_test_u64(
++        digest, plan.returned_candidate_payload_use_busy_count);
++    return digest.finish_hex();
++}
++
+ [[nodiscard]] std::string retention_deletion_free_mark_digest_for_test(
+     const anonsync::SyncReplicaRetentionPlan& plan,
+     std::string_view folder_id,
+@@ -492,7 +564,9 @@ retention_unreferenced_candidate_set_digest_for_test(
+     anonsync::Sha256DigestBuilder digest;
+     append_test_string(
+         digest,
+-        "anonsync:sync-replica-retention-plan-deletion-free-mark:v3");
++        "anonsync:sync-replica-retention-plan-deletion-free-mark:v4");
++    append_test_string(
++        digest, anonsync::kSyncReplicaFilePayloadUseLeaseProtocol);
+     append_test_string(digest, folder_id);
+     append_test_string(digest, plan.source_operation_set_digest);
+     append_test_string(digest, plan.source_evidence_set_digest);
+@@ -506,7 +580,9 @@ retention_unreferenced_candidate_set_digest_for_test(
+     append_test_u64(digest, plan.payload_transient_bytes);
+     append_test_u64(digest, plan.payload_transient_reserved_bytes);
+     append_test_string(
+-        digest, plan.live_capability_store_owner_incarnation_digest);
++        digest, plan.live_capability_process_store_scope_digest);
++    append_test_string(
++        digest, plan.live_capability_process_store_scope_incarnation_digest);
+     append_test_string(digest, plan.live_capability_set_digest);
+     append_test_u64(digest, plan.live_snapshot_count);
+     append_test_u64(digest, plan.live_opened_payload_count);
+@@ -5954,10 +6030,17 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+         retention_unreferenced_candidate_set_digest_for_test(
+             {{orphan.content_sha256,
+               static_cast<std::uint64_t>(orphan_bytes.size())}});
++    const std::string expected_durable_candidate_witness =
++        retention_durable_candidate_witness_for_test(
++            retention_plan, Fixture::folder_id,
++            expected_candidate_set_digest);
+     const std::string expected_deletion_free_mark_digest =
+         retention_deletion_free_mark_digest_for_test(
+             retention_plan, Fixture::folder_id,
+             expected_candidate_set_digest);
++    const std::string expected_writer_fenced_candidate_page_digest =
++        retention_writer_fenced_candidate_page_digest_for_test(
++            retention_plan, Fixture::folder_id);
+     require(
+         retention_plan.source_cutpoint() == exact_cutpoint &&
+             retention_plan.historical_version_pin_count == 1U &&
+@@ -5967,7 +6050,9 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             anonsync::is_lowercase_sha256_hex(
+                 retention_plan.source_payload_transient_namespace_digest) &&
+             anonsync::is_lowercase_sha256_hex(
+-                retention_plan.live_capability_store_owner_incarnation_digest) &&
++                retention_plan.live_capability_process_store_scope_digest) &&
++            anonsync::is_lowercase_sha256_hex(
++                retention_plan.live_capability_process_store_scope_incarnation_digest) &&
+             anonsync::is_lowercase_sha256_hex(
+                 retention_plan.live_capability_set_digest) &&
+             retention_plan.live_snapshot_count == 0U &&
+@@ -5981,6 +6066,16 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             retention_plan.live_capability_rooted_physical_payload_bytes == 0U &&
+             retention_plan.unreferenced_live_capability_rooted_payload_count == 0U &&
+             retention_plan.unreferenced_live_capability_rooted_payload_bytes == 0U &&
++            retention_plan.writer_fenced_observation &&
++            retention_plan.cooperating_new_namespace_activity_excluded_during_observation &&
++            retention_plan.writer_fenced_candidate_page_entry_count == 2U &&
++            retention_plan.returned_unreferenced_candidate_count == 1U &&
++            retention_plan.returned_candidate_payload_use_exclusive_available_count == 1U &&
++            retention_plan.returned_candidate_payload_use_busy_count == 0U &&
++            retention_plan.writer_fenced_candidate_page_digest ==
++                expected_writer_fenced_candidate_page_digest &&
++            anonsync::is_lowercase_sha256_hex(
++                retention_plan.writer_fenced_candidate_page_digest) &&
+             retention_plan.retained_payload_reachability == reachability &&
+             retention_plan.current_or_explicit_pin.payload_count == 1U &&
+             retention_plan.current_or_explicit_pin.payload_bytes ==
+@@ -5992,10 +6087,14 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                 orphan_bytes.size() &&
+             retention_plan.unreferenced_candidate_set_digest ==
+                 expected_candidate_set_digest &&
++            retention_plan.durable_candidate_witness_digest ==
++                expected_durable_candidate_witness &&
+             retention_plan.exact_deletion_free_mark_digest ==
+                 expected_deletion_free_mark_digest &&
+             anonsync::is_lowercase_sha256_hex(
+                 retention_plan.unreferenced_candidate_set_digest) &&
++            anonsync::is_lowercase_sha256_hex(
++                retention_plan.durable_candidate_witness_digest) &&
+             anonsync::is_lowercase_sha256_hex(
+                 retention_plan.exact_deletion_free_mark_digest) &&
+             retention_plan.physical_payload_count_after_cursor == 2U &&
+@@ -6024,7 +6123,9 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             !current_planned->superseded_active &&
+             current_planned->inactive_evidence &&
+             !current_planned->explicit_pin &&
+-            !current_planned->same_store_owner_live_capability &&
++            !current_planned->same_process_store_live_capability &&
++            current_planned->payload_use_disposition == anonsync::
++                SyncReplicaRetentionPlanPayloadUseDisposition::NotApplicable &&
+             current_planned->disposition == anonsync::
+                 SyncReplicaRetentionPlanDisposition::CurrentOrExplicitPin,
+         "retention planner lost overlapping current and inactive-evidence roots");
+@@ -6033,13 +6134,16 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             !orphan_planned->superseded_active &&
+             !orphan_planned->inactive_evidence &&
+             !orphan_planned->explicit_pin &&
+-            !orphan_planned->same_store_owner_live_capability &&
++            !orphan_planned->same_process_store_live_capability &&
++            orphan_planned->payload_use_disposition == anonsync::
++                SyncReplicaRetentionPlanPayloadUseDisposition::
++                    ExclusiveAvailableAtCutpoint &&
+             orphan_planned->disposition == anonsync::
+                 SyncReplicaRetentionPlanDisposition::
+                     UnreferencedByRetainedFileOperations,
+         "retention planner promoted an unreferenced physical object into a retained root");
+ 
+-    // A snapshot issued by this exact retained store owner can reopen any
++    // A snapshot issued for this exact process/store scope can reopen any
+     // indexed payload after its construction lease is gone. The planner's own
+     // snapshot is excluded, but every independent live snapshot must root the
+     // complete physical namespace and change the exact mark. Replacing one
+@@ -6056,8 +6160,10 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+         first_live_snapshot_mark_digest =
+             snapshot_rooted_plan.exact_deletion_free_mark_digest;
+         require(
+-            snapshot_rooted_plan.live_capability_store_owner_incarnation_digest ==
+-                retention_plan.live_capability_store_owner_incarnation_digest &&
++            snapshot_rooted_plan.live_capability_process_store_scope_digest ==
++                    retention_plan.live_capability_process_store_scope_digest &&
++                snapshot_rooted_plan.live_capability_process_store_scope_incarnation_digest ==
++                retention_plan.live_capability_process_store_scope_incarnation_digest &&
+                 snapshot_rooted_plan.live_snapshot_count == 1U &&
+                 snapshot_rooted_plan.live_opened_payload_count == 0U &&
+                 snapshot_rooted_plan.live_targeted_access_count == 0U &&
+@@ -6073,15 +6179,17 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                     orphan_bytes.size() &&
+                 snapshot_rooted_plan.live_capability_set_digest !=
+                     retention_plan.live_capability_set_digest &&
++                snapshot_rooted_plan.durable_candidate_witness_digest ==
++                    retention_plan.durable_candidate_witness_digest &&
+                 snapshot_rooted_plan.exact_deletion_free_mark_digest !=
+                     retention_plan.exact_deletion_free_mark_digest &&
+                 std::all_of(
+                     snapshot_rooted_plan.entries.begin(),
+                     snapshot_rooted_plan.entries.end(),
+                     [](const anonsync::SyncReplicaRetentionPlanEntry& entry) {
+-                        return entry.same_store_owner_live_capability;
++                        return entry.same_process_store_live_capability;
+                     }),
+-            "live same-owner snapshot was not projected as an all-payload retention root");
++            "live same-process-store snapshot was not projected as an all-payload retention root");
+     }
+     {
+         auto replacement_snapshot = fixture.payload_store.snapshot_or_throw();
+@@ -6091,6 +6199,8 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             replacement_rooted_plan.live_snapshot_count == 1U &&
+                 replacement_rooted_plan.live_capability_set_digest !=
+                     first_live_snapshot_set_digest &&
++                replacement_rooted_plan.durable_candidate_witness_digest ==
++                    retention_plan.durable_candidate_witness_digest &&
+                 replacement_rooted_plan.exact_deletion_free_mark_digest !=
+                     first_live_snapshot_mark_digest,
+             "same-count live snapshot replacement aliased the exact capability-set cutpoint");
+@@ -6100,11 +6210,57 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+     require(
+         after_snapshot_release_plan.live_capability_set_digest ==
+                 retention_plan.live_capability_set_digest &&
++            after_snapshot_release_plan.durable_candidate_witness_digest ==
++                retention_plan.durable_candidate_witness_digest &&
+             after_snapshot_release_plan.exact_deletion_free_mark_digest ==
+                 retention_plan.exact_deletion_free_mark_digest &&
+             after_snapshot_release_plan.live_snapshot_count == 0U &&
+             after_snapshot_release_plan.live_capability_rooted_physical_payload_count == 0U,
+-        "released same-owner snapshot remained a retention root");
++        "released same-process-store snapshot remained a retention root");
++
++    // A separately opened owner over the same attested root and immutable
++    // identity shares this process-store registry, while snapshot handoff
++    // itself remains exact-owner-bound by the independent verification cache.
++    {
++        anonsync::SyncReplicaFilePayloadStore independent_owner(
++            Fixture::folder_id, fixture.payload_root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            fixture.payload_store.limits(),
++            "retention-plan independent payload-store owner");
++        auto independent_snapshot = independent_owner.snapshot_or_throw();
++        const auto independent_owner_rooted_plan =
++            scan->plan_payload_retention_or_throw();
++        require(
++            independent_owner_rooted_plan
++                    .live_capability_process_store_scope_digest ==
++                    retention_plan.live_capability_process_store_scope_digest &&
++                independent_owner_rooted_plan
++                    .live_capability_process_store_scope_incarnation_digest ==
++                    retention_plan
++                        .live_capability_process_store_scope_incarnation_digest &&
++                independent_owner_rooted_plan.live_snapshot_count == 1U &&
++                independent_owner_rooted_plan
++                    .live_capabilities_may_reopen_all_current_payloads &&
++                independent_owner_rooted_plan
++                    .live_capability_rooted_physical_payload_count == 2U &&
++                std::all_of(
++                    independent_owner_rooted_plan.entries.begin(),
++                    independent_owner_rooted_plan.entries.end(),
++                    [](const anonsync::SyncReplicaRetentionPlanEntry& entry) {
++                        return entry.same_process_store_live_capability;
++                    }),
++            "independently opened same-process owner was absent from retention roots");
++    }
++    const auto after_independent_owner_release_plan =
++        scan->plan_payload_retention_or_throw();
++    require(
++        after_independent_owner_release_plan.live_capability_set_digest ==
++                retention_plan.live_capability_set_digest &&
++            after_independent_owner_release_plan
++                    .exact_deletion_free_mark_digest ==
++                retention_plan.exact_deletion_free_mark_digest &&
++            after_independent_owner_release_plan.live_snapshot_count == 0U,
++        "released independent owner remained in the process-store retention cutpoint");
+ 
+     // An opened payload descriptor is narrower: once its issuing snapshot is
+     // destroyed, it roots only the exact digest/size object that the descriptor
+@@ -6147,13 +6303,27 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                 opened_rooted_plan.unreferenced_live_capability_rooted_payload_bytes ==
+                     orphan_bytes.size() &&
+                 opened_entry != opened_rooted_plan.entries.end() &&
+-                opened_entry->same_store_owner_live_capability &&
++                opened_entry->same_process_store_live_capability &&
++                opened_entry->payload_use_disposition == anonsync::
++                    SyncReplicaRetentionPlanPayloadUseDisposition::
++                        BusyAtCutpoint &&
+                 opened_entry->disposition == anonsync::
+                     SyncReplicaRetentionPlanDisposition::
+                         UnreferencedByRetainedFileOperations &&
++                opened_rooted_plan.writer_fenced_candidate_page_entry_count == 2U &&
++                opened_rooted_plan.returned_unreferenced_candidate_count == 1U &&
++                opened_rooted_plan.returned_candidate_payload_use_exclusive_available_count == 0U &&
++                opened_rooted_plan.returned_candidate_payload_use_busy_count == 1U &&
++                opened_rooted_plan.writer_fenced_candidate_page_digest ==
++                    retention_writer_fenced_candidate_page_digest_for_test(
++                        opened_rooted_plan, Fixture::folder_id) &&
++                opened_rooted_plan.writer_fenced_candidate_page_digest !=
++                    retention_plan.writer_fenced_candidate_page_digest &&
++                opened_rooted_plan.durable_candidate_witness_digest ==
++                    retention_plan.durable_candidate_witness_digest &&
+                 opened_rooted_plan.exact_deletion_free_mark_digest !=
+                     retention_plan.exact_deletion_free_mark_digest,
+-            "opened payload descriptor was not projected as one exact same-owner live root");
++            "opened payload descriptor was not projected as one exact same-process-store live root");
+     }
+     const auto after_opened_release_plan =
+         scan->plan_payload_retention_or_throw();
+@@ -6163,7 +6333,13 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             after_opened_release_plan.exact_deletion_free_mark_digest ==
+                 retention_plan.exact_deletion_free_mark_digest &&
+             after_opened_release_plan.live_opened_payload_count == 0U &&
+-            after_opened_release_plan.live_capability_rooted_physical_payload_count == 0U,
++            after_opened_release_plan.live_capability_rooted_physical_payload_count == 0U &&
++            after_opened_release_plan.writer_fenced_candidate_page_entry_count == 2U &&
++            after_opened_release_plan.returned_unreferenced_candidate_count == 1U &&
++            after_opened_release_plan.returned_candidate_payload_use_exclusive_available_count == 1U &&
++            after_opened_release_plan.returned_candidate_payload_use_busy_count == 0U &&
++            after_opened_release_plan.writer_fenced_candidate_page_digest ==
++                retention_plan.writer_fenced_candidate_page_digest,
+         "released opened payload descriptor remained a retention root");
+ 
+     anonsync::SyncReplicaRetentionPlanQuery first_plan_page;
+@@ -6172,11 +6348,18 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+         scan->plan_payload_retention_or_throw(first_plan_page);
+     require(
+         first_page.entries.size() == 1U && first_page.truncated &&
++            first_page.writer_fenced_candidate_page_entry_count == 1U &&
+             first_page.entry_limit_frontier_reached &&
+             first_page.next_start_after_content_sha256 ==
+                 std::optional<std::string>(
+                     first_page.entries.front().content_sha256) &&
+-            first_page.physical_payload_count_after_cursor == 2U,
++            first_page.physical_payload_count_after_cursor == 2U &&
++            first_page.writer_fenced_candidate_page_digest ==
++                retention_writer_fenced_candidate_page_digest_for_test(
++                    first_page, Fixture::folder_id) &&
++            first_page.returned_unreferenced_candidate_count ==
++                first_page.returned_candidate_payload_use_exclusive_available_count +
++                    first_page.returned_candidate_payload_use_busy_count,
+         "retention planner did not expose one exact bounded digest page");
+     anonsync::SyncReplicaRetentionPlanQuery second_plan_page;
+     second_plan_page.maximum_entries = 1U;
+@@ -6196,8 +6379,25 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+             second_page.exact_deletion_free_mark_digest ==
+                 retention_plan.exact_deletion_free_mark_digest &&
+             second_page.entries.size() == 1U && !second_page.truncated &&
++            second_page.writer_fenced_candidate_page_entry_count == 1U &&
+             !second_page.next_start_after_content_sha256.has_value() &&
+             second_page.physical_payload_count_after_cursor == 1U &&
++            second_page.writer_fenced_candidate_page_digest ==
++                retention_writer_fenced_candidate_page_digest_for_test(
++                    second_page, Fixture::folder_id) &&
++            second_page.returned_unreferenced_candidate_count ==
++                second_page.returned_candidate_payload_use_exclusive_available_count +
++                    second_page.returned_candidate_payload_use_busy_count &&
++            first_page.returned_unreferenced_candidate_count +
++                    second_page.returned_unreferenced_candidate_count ==
++                1U &&
++            first_page.returned_candidate_payload_use_exclusive_available_count +
++                    second_page.returned_candidate_payload_use_exclusive_available_count ==
++                1U &&
++            first_page.returned_candidate_payload_use_busy_count == 0U &&
++            second_page.returned_candidate_payload_use_busy_count == 0U &&
++            first_page.writer_fenced_candidate_page_digest !=
++                second_page.writer_fenced_candidate_page_digest &&
+             first_page.entries.front().content_sha256 <
+                 second_page.entries.front().content_sha256,
+         "retention planner did not resume exactly with one page-invariant mark witness");
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 0003901fe0b6dba0f90480a4ecf05544e8e15552..c19f0033754fbee591fd8d56a4edd5bbd298558f 100644
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -158,6 +158,8 @@ REQUIRED = (
+     Path("EXACT_LIVE_PAYLOAD_CAPABILITY_CUTPOINT_AUDIT_rev0977.md"),
+     Path("PAYLOAD_USE_LEASE_AND_SNAPSHOT_READER_FENCE_AUDIT_rev0977.md"),
+     Path("REVISION_NOTES_rev0977.md"),
++    Path("PROCESS_STORE_LIVE_CAPABILITY_AND_WRITER_FENCED_RETENTION_AUDIT_rev0978.md"),
++    Path("REVISION_NOTES_rev0978.md"),
+ )
+ 
+ 
+@@ -521,6 +523,10 @@ def main() -> int:
+         "PAYLOAD_USE_LEASE_AND_SNAPSHOT_READER_FENCE_AUDIT_rev0977.md"
+     ]
+     rev0977_notes = text["REVISION_NOTES_rev0977.md"]
++    process_store_writer_fence_design = text[
++        "PROCESS_STORE_LIVE_CAPABILITY_AND_WRITER_FENCED_RETENTION_AUDIT_rev0978.md"
++    ]
++    rev0978_notes = text["REVISION_NOTES_rev0978.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -730,6 +736,17 @@ def main() -> int:
+         if rev0977_verifier_start >= 0 and rev0977_verifier_end >= 0
+         else ""
+     )
++    rev0978_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 978:"
++    )
++    rev0978_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0978_verifier_start
++    )
++    rev0978_verifier_block = (
++        verifier[rev0978_verifier_start:rev0978_verifier_end]
++        if rev0978_verifier_start >= 0 and rev0978_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -1171,7 +1188,7 @@ def main() -> int:
+                 "root authority after descriptor duplication",
+             )
+         )
+-        and store.count("duplicate_shared_open_description_or_throw(") == 15
++        and store.count("duplicate_shared_open_description_or_throw(") == 16
+         and all(
+             "duplicate_shared_open_description_or_throw" in function_body(
+                 store, signature
+@@ -1186,6 +1203,7 @@ def main() -> int:
+                 "SyncReplicaFilePayloadStore::begin_targeted_access_or_throw(",
+                 "SyncReplicaFilePayloadStore::quarantine_corrupt_payload_or_throw(",
+                 "SyncReplicaFilePayloadStore::release_quarantined_payload_or_throw(",
++                "writer_fenced_payload_use_exclusive_available_or_throw(",
+                 "SyncReplicaFilePayloadStoreSnapshot::open_payload_for_operation_or_throw(",
+                 "SyncReplicaFilePayloadStoreSnapshot::copy_payload_range_for_operation_or_throw(",
+                 "SyncReplicaFilePayloadStore::stage_payload_range_or_throw(",
+@@ -2216,13 +2234,13 @@ def main() -> int:
+             "snapshot source preflight",
+             "ensure_store_identity_or_throw",
+             "store.expected_identity",
++            "observation_mode",
+             "reopen_matching_root_authority_or_throw",
+             "acquire_store_lease_or_throw",
+-            "SyncReplicaFilePayloadStoreLeaseMode::SharedObservation",
+             "scan_store_under_lease_or_throw",
+             "SyncReplicaFileContentInventory",
+             "snapshot_digest_or_throw",
+-            "snapshot final lease cutpoint",
++            'snapshot_label + " final lease cutpoint"',
+         ),
+         "snapshot_reopens_and_binds_exact_root_before_index_authority",
+         "path rebinding or mount-namespace drift cannot redirect a retained content index",
+@@ -4626,7 +4644,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -5040,12 +5058,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v22"'
++        and '"anonsync.peer-service.status.v23"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v22"'
++        and '"anonsync.peer-service.status.v23"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -6531,7 +6549,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6742,7 +6760,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"' in peer_status_h
++        and '"anonsync.peer-service.status.v23"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -6952,7 +6970,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -6968,8 +6986,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v22"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v22"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v23"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v23"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7662,7 +7680,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"' in peer_status_h
++        and '"anonsync.peer-service.status.v23"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7902,7 +7920,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and all(
+             token in peer_status + historical_inventory_json
+             for token in (
+@@ -8050,7 +8068,7 @@ def main() -> int:
+                 r'\"expected_source_cutpoint\"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"' in peer_status_h
++        and '"anonsync.peer-service.status.v23"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -8167,11 +8185,11 @@ def main() -> int:
+                 "historical_version_generation",
+                 "historical_version_failure_class",
+                 "historical_version_source_change_stage",
+-                '"schema": "anonsync.peer-service.status.v22"',
++                '"schema": "anonsync.peer-service.status.v23"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v23"' in service_i2p_ingress_runtime,
+         "rev0968_regressions_bind_token_codec_payload_drift_causal_drift_and_real_service_continuation",
+         "focused C++ tests and real process oracles cover canonical framing, both externally inducible drift classes, exact page-token reuse, stable retained failure evidence, transient matching-step coherence, current schemas, and route status compatibility",
+     )
+@@ -8333,7 +8351,7 @@ def main() -> int:
+                 "status.restore_request.operation_id",
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"' in peer_status_h,
++        and '"anonsync.peer-service.status.v23"' in peer_status_h,
+         "rev0969_full_restore_identity_controls_coalescing_execution_and_status",
+         "a different expected head cannot coalesce with pending work, and stable plus matching transient status retain the exact request and typed source-change stage",
+     )
+@@ -8366,12 +8384,12 @@ def main() -> int:
+                 "restore_current_operation",
+                 "stale exact-current historical restore",
+                 "stale exact-current restore terminated the service",
+-                '"schema": "anonsync.peer-service.status.v22"',
++                '"schema": "anonsync.peer-service.status.v23"',
+                 '"expected_current_operation_id"',
+                 '"historical_version_restore_request"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v23"' in service_i2p_ingress_runtime,
+         "rev0969_regressions_prove_no_payload_work_full_request_coalescing_and_same_pid_stale_failure",
+         "focused C++ and real-process oracles mechanically distinguish the early stale fence from lease access, cover strict framing, and prove the daemon survives a replayed stale operator intent",
+     )
+@@ -8595,7 +8613,7 @@ def main() -> int:
+                 "[--inspection-mode exact|metadata]",
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"' in peer_status_h,
++        and '"anonsync.peer-service.status.v23"' in peer_status_h,
+         "rev0970_cli_socket_and_status_share_one_mode_bearing_contract",
+         "the shipping default remains exact, new clients send one canonical five-field request, legacy three/four-field requests remain exact, and live plus terminal status advance together",
+     )
+@@ -8666,11 +8684,11 @@ def main() -> int:
+                 '"v4:metadata:"',
+                 "causal-metadata historical inspection fabricated",
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v22"',
++                '"schema": "anonsync.peer-service.status.v23"',
+                 '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"'
++        and '"anonsync.peer-service.status.v23"'
+         in service_i2p_ingress_runtime,
+         "rev0970_shipping_process_oracles_require_null_payload_evidence_and_schema_coherence",
+         "one real retained two-peer service executes the metadata CLI, publishes a v2 token and null payload facts, accounts the completed action, and keeps direct plus I2P status readers on v15",
+@@ -8790,7 +8808,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and "append_sync_replica_historical_version_inventory_json" in peer_status
+         and "summary.last_step->historical_version_inventory.reset();" in peer_status,
+         "rev0971_status_uses_the_canonical_encoder_and_retains_one_completed_inventory",
+@@ -8811,10 +8829,10 @@ def main() -> int:
+             for token in (
+                 "historical inventory omitted its status byte limit",
+                 "duplicated the stable history result",
+-                '"schema": "anonsync.peer-service.status.v22"',
++                '"schema": "anonsync.peer-service.status.v23"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v22"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v23"' in service_i2p_ingress_runtime,
+         "rev0971_regressions_prove_the_large_page_frontier_and_single_copy_shipping_status",
+         "the focused C++ oracle constructs the accepted 1,024-entry worst-shape page, while real configured-service and I2P readers require v16, coherent stop reasons, and no duplicate stable inventory in last_step",
+     )
+@@ -8977,10 +8995,10 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and '"anonsync.local-historical-versions.response.v5"' in local_status
+-        and "anonsync.peer-service.status.v22" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v22" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v23" in service_configuration_runtime
++        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime
+         and "anonsync.peer-service.status.v16" not in peer_status_h
+         and "anonsync.peer-service.status.v16" not in service_configuration_runtime
+         and "anonsync.peer-service.status.v16" not in service_i2p_ingress_runtime,
+@@ -9279,7 +9297,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9326,10 +9344,10 @@ def main() -> int:
+                 '"historical_version_pins": 1',
+                 '"historical_version_unpins": 1',
+                 '"historical_version_inspections": 6',
+-                '"schema": "anonsync.peer-service.status.v22"',
++                '"schema": "anonsync.peer-service.status.v23"',
+             )
+         )
+-        and "anonsync.peer-service.status.v22" in service_i2p_ingress_runtime,
++        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime,
+         "rev0973_real_process_proves_pin_reinspect_unpin_reinspect_and_schema_coherence",
+         "one retained configured daemon accepts the exact owner commands, survives the corrected validator, exposes durable policy through metadata-only pages, removes it, continues operating, and keeps direct and I2P readers on v18",
+     )
+@@ -9415,19 +9433,22 @@ def main() -> int:
+             "EvidenceSetBeforePayloadObservation",
+             "HistoricalVersionPinSetBeforePayloadObservation",
+             "const SyncReplicaModel model",
+-            "state_->payload_store->snapshot_or_throw()",
++            "SyncReplicaRetentionPlan plan;",
++            "snapshot_writer_fenced_for_retention_or_throw()",
+             "const SyncReplicaSqliteSnapshot replica_after_payload",
+             "OperationSetDuringPayloadObservation",
+             "EvidenceSetDuringPayloadObservation",
+             "HistoricalVersionPinSetDuringPayloadObservation",
+             "SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot",
+-            "SyncReplicaRetentionPlan plan;",
++            "const SyncReplicaSqliteSnapshot replica_final",
++            "operation set changed during writer-fenced",
++            "verify_writer_fenced_retention_snapshot_or_throw",
+         )
+         and "begin_mutation_batch_or_throw" not in retention_plan_owner
+         and "unlink" not in retention_plan_owner
+         and "rename" not in retention_plan_owner,
+         "rev0974_owner_brackets_one_complete_payload_observation_without_mutation_authority",
+-        "known stale roots fail before payload work, a second SQLite snapshot brackets the complete physical observation, and the planner contains no mutation, rename, or unlink path",
++        "known stale roots fail before payload work, SQLite snapshots bracket both the complete physical observation and the writer-fenced candidate probes, and the planner contains no mutation, rename, or unlink path",
+     )
+ 
+     require(
+@@ -9520,7 +9541,7 @@ def main() -> int:
+             for token in (
+                 "RetentionPlan",
+                 "retention-plan ",
+-                "anonsync.local-retention-plan.response.v4",
++                "anonsync.local-retention-plan.response.v5",
+                 "SyncReplicaRetentionPlanQuery retention_plan_query",
+                 "different_historical_version_pending",
+                 "request_sync_local_status_retention_plan_or_throw",
+@@ -9542,7 +9563,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
++        '"anonsync.peer-service.status.v23"' in peer_status_h
+         and all(
+             token in peer_service
+             for token in (
+@@ -9614,14 +9635,14 @@ def main() -> int:
+             token in service_configuration_runtime
+             for token in (
+                 "owner-only deletion-free retention plan",
+-                "anonsync.local-retention-plan.response.v4",
++                "anonsync.local-retention-plan.response.v5",
+                 "retention plan did not bind the exact pinned source",
+                 "retention plan did not explain the exact pinned payload",
+                 '"historical_version_retention_plans": 1',
+-                '"schema": "anonsync.peer-service.status.v22"',
++                '"schema": "anonsync.peer-service.status.v23"',
+             )
+         )
+-        and "anonsync.peer-service.status.v22" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime
+         and all(
+             token in service_configuration_runtime
+             for token in (
+@@ -9716,7 +9737,7 @@ def main() -> int:
+             token in folder_scan + folder_scan_h
+             for token in (
+                 "anonsync:sync-replica-retention-plan-unreferenced-candidates:v1",
+-                "anonsync:sync-replica-retention-plan-deletion-free-mark:v3",
++                "anonsync:sync-replica-retention-plan-deletion-free-mark:v4",
+                 "unreferenced_candidate_set_digest",
+                 "exact_deletion_free_mark_digest",
+             )
+@@ -9780,11 +9801,11 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
+-        and "anonsync.local-retention-plan.response.v4" in local_status
++        '"anonsync.peer-service.status.v23"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v5" in local_status
+         and "anonsync.peer-service.status.v19" not in peer_status_h
+         and "anonsync.local-retention-plan.response.v1" not in local_status
+-        and "anonsync.peer-service.status.v22" in service_i2p_ingress_runtime,
++        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime,
+         "rev0975_local_and_peer_status_contract_has_current_successor_schemas",
+         "the current response and service schemas supersede rev0975 while direct plus I2P status oracles remain coherent",
+     )
+@@ -9894,7 +9915,7 @@ def main() -> int:
+         all(
+             token in folder_scan + folder_scan_h
+             for token in (
+-                "anonsync:sync-replica-retention-plan-deletion-free-mark:v3",
++                "anonsync:sync-replica-retention-plan-deletion-free-mark:v4",
+                 "source_payload_transient_namespace_digest",
+                 "payload_transient_entry_count",
+                 "payload_transient_bytes",
+@@ -9953,12 +9974,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v22"' in peer_status_h
+-        and "anonsync.local-retention-plan.response.v4" in local_status
+-        and "anonsync.local-retention-plan.response.v4" in local_status_runtime
+-        and "anonsync.local-retention-plan.response.v4" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v22" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v22" in service_i2p_ingress_runtime
++        '"anonsync.peer-service.status.v23"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v5" in local_status
++        and "anonsync.local-retention-plan.response.v5" in local_status_runtime
++        and "anonsync.local-retention-plan.response.v5" in service_configuration_runtime
++        and "anonsync.peer-service.status.v23" in service_configuration_runtime
++        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime
+         and all(
+             token in service_configuration_runtime
+             for token in (
+@@ -10054,6 +10075,7 @@ def main() -> int:
+             for token in (
+                 "kSyncReplicaFilePayloadUseLeaseProtocol",
+                 "anonsync:sync-replica-file-payload-use-flock-lease:v1",
++                "try_acquire_payload_use_flock_nonblocking_or_throw",
+                 "acquire_payload_use_flock_nonblocking_or_throw",
+                 "acquire_shared_payload_use_lease_or_throw",
+                 "acquire_exclusive_payload_use_lease_or_throw",
+@@ -10065,15 +10087,22 @@ def main() -> int:
+         )
+         and ordered(
+             function_body(
+-                store, "acquire_payload_use_flock_nonblocking_or_throw("
++                store, "try_acquire_payload_use_flock_nonblocking_or_throw("
+             ),
+             "::flock(descriptor, operation | LOCK_NB)",
+             "flock_conflict_error(error)",
++            "return false",
++        )
++        and ordered(
++            function_body(
++                store, "void acquire_payload_use_flock_nonblocking_or_throw("
++            ),
++            "try_acquire_payload_use_flock_nonblocking_or_throw",
+             "SyncReplicaFilePayloadStoreLeaseBusyError",
+         )
+         and "operation != LOCK_SH && operation != LOCK_EX"
+         in function_body(
+-            store, "acquire_payload_use_flock_nonblocking_or_throw("
++            store, "try_acquire_payload_use_flock_nonblocking_or_throw("
+         ),
+         "rev0977_stable_payload_use_protocol_is_nonblocking_typed_and_two_sided",
+         "one named helper family implements shared reader and exclusive mutator exact-inode leases with typed busy results",
+@@ -10240,8 +10269,8 @@ def main() -> int:
+         )
+         and "## Rev0977: payload-use lease and current snapshot reader fence"
+         in readme
+-        and "anonsync.peer-service.status.v22" in readme
+-        and "anonsync.local-retention-plan.response.v4" in readme,
++        and "anonsync.peer-service.status.v23" in readme
++        and "anonsync.local-retention-plan.response.v5" in readme,
+         "rev0977_records_exact_protocol_nonclaims_research_and_source_hygiene",
+         "the design record, revision notes, and README preserve the corrected defect, lock order, executable evidence, advisory and filesystem limits, and deletion-free boundary",
+     )
+@@ -10270,10 +10299,11 @@ def main() -> int:
+ 
+     require(
+         "class PayloadStoreLiveCapabilityRegistry final" in store
+-        and "anonsync:sync-replica-file-payload-store-live-capability-store-owner:v1" in store
+-        and "anonsync:sync-replica-file-payload-store-live-capability-set:v1" in store
++        and "anonsync:sync-replica-file-payload-store-live-capability-process-store-scope:v1" in store
++        and "anonsync:sync-replica-file-payload-store-live-capability-set:v2" in store
++        and "class PayloadStoreLiveCapabilityRegistryBroker final" in store
+         and "kLiveCapabilityFixedRecordAllowance = 4096U" in store
+-        and "state->limits.max_entries + kLiveCapabilityFixedRecordAllowance" in store
++        and "kMaximumProcessLiveCapabilityRecordsPerStore" in store
+         and store.count(
+             "PayloadStoreLiveCapabilityRegistration live_capability_registration;"
+         ) == 4
+@@ -10292,7 +10322,7 @@ def main() -> int:
+             )
+         ),
+         "rev0977_bounded_registry_tracks_every_same_owner_payload_capability_fail_closed",
+-        "the retained store owner has one bounded exact registry whose four move-only capability classes cannot silently lose roots",
++        "one bounded exact same-process store registry tracks all four move-only capability classes without silently losing roots",
+     )
+ 
+     require(
+@@ -10344,11 +10374,12 @@ def main() -> int:
+         ) == 2
+         and "live_capabilities_after != live_capabilities_before" in retention_plan_owner
+         and "RetentionLiveCapabilitySet" in retention_plan_owner
+-        and "anonsync:sync-replica-retention-plan-deletion-free-mark:v3" in folder_scan
++        and "anonsync:sync-replica-retention-plan-deletion-free-mark:v4" in folder_scan
+         and all(
+             token in retention_plan_owner
+             for token in (
+-                "live_capability_store_owner_incarnation_digest",
++                "live_capability_process_store_scope_digest",
++                "live_capability_process_store_scope_incarnation_digest",
+                 "live_capability_set_digest",
+                 "live_snapshot_count",
+                 "live_opened_payload_count",
+@@ -10357,62 +10388,64 @@ def main() -> int:
+                 "distinct_live_opened_payload_root_count",
+                 "live_capability_rooted_physical_payload_count",
+                 "unreferenced_live_capability_rooted_payload_count",
+-                "same_store_owner_live_capability",
++                "same_process_store_live_capability",
+             )
+         )
+         and "RetentionLiveCapabilitySet = 9U" in historical_query_h
+         and 'return "retention_live_capability_set";' in historical_query_h,
+-        "rev0977_retention_projection_is_bracketed_and_mark_v3_binds_exact_live_roots",
+-        "the planner excludes only its own exact snapshot, rejects any live-set drift, and binds all live-root aggregates into the page-invariant deletion-free mark",
++        "rev0978_retention_projection_is_bracketed_and_mark_v4_binds_process_store_roots",
++        "the writer-fenced planner excludes only its own exact snapshot, rejects any process-store live-set drift, and binds all live-root aggregates into mark v4",
+     )
+ 
+     require(
+-        r'\"same_store_owner_live_payload_capabilities_bound\":true' in historical_inventory_json
++        r'\"same_process_store_live_payload_capabilities_bound\":true' in historical_inventory_json
++        and r'\"independently_opened_same_process_store_owner_live_payload_capabilities_bound\":true' in historical_inventory_json
+         and r'\"independent_store_owner_live_payload_capabilities_bound\":false' in historical_inventory_json
+         and r'\"cross_process_live_payload_capabilities_bound\":false' in historical_inventory_json
+         and r'\"already_copied_response_bytes_bound\":false' in historical_inventory_json
+-        and r'\"live_payload_capabilities\":{\"store_owner_incarnation_digest\":' in historical_inventory_json
+-        and r'\"same_store_owner_live_capability\":' in historical_inventory_json
+-        and '"anonsync.peer-service.status.v22"' in peer_status_h
+-        and "anonsync.local-retention-plan.response.v4" in local_status
+-        and "anonsync.local-retention-plan.response.v4" in local_status_runtime
+-        and "anonsync.local-retention-plan.response.v4" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v22" in service_configuration_runtime
+-        and "anonsync.peer-service.status.v22" in service_i2p_ingress_runtime,
+-        "rev0977_v22_v4_operator_contract_exposes_narrow_same_owner_truth_and_external_nonclaims",
+-        "live, terminal, local, configured-service, and I2P readers share one canonical bounded result while other owners, processes, and copied buffers remain explicitly unbound",
++        and r'\"live_payload_capabilities\":{\"process_store_scope_digest\":' in historical_inventory_json
++        and r'\"same_process_store_live_capability\":' in historical_inventory_json
++        and '"anonsync.peer-service.status.v23"' in peer_status_h
++        and "anonsync.local-retention-plan.response.v5" in local_status
++        and "anonsync.local-retention-plan.response.v5" in local_status_runtime
++        and "anonsync.local-retention-plan.response.v5" in service_configuration_runtime
++        and "anonsync.peer-service.status.v23" in service_configuration_runtime
++        and "anonsync.peer-service.status.v23" in service_i2p_ingress_runtime,
++        "rev0978_v23_v5_operator_contract_exposes_same_process_owner_truth_and_external_nonclaims",
++        "live, terminal, local, configured-service, and I2P readers share one canonical bounded result while other processes and copied buffers remain explicitly unbound",
+     )
+ 
+     require(
+         all(
+             token in folder_scan_runtime
+             for token in (
+-                "live same-owner snapshot was not projected as an all-payload retention root",
++                "live same-process-store snapshot was not projected as an all-payload retention root",
+                 "same-count live snapshot replacement aliased the exact capability-set cutpoint",
+-                "released same-owner snapshot remained a retention root",
+-                "opened payload descriptor was not projected as one exact same-owner live root",
++                "released same-process-store snapshot remained a retention root",
++                "opened payload descriptor was not projected as one exact same-process-store live root",
+                 "released opened payload descriptor remained a retention root",
+             )
+         )
+         and all(
+             token in local_status_runtime
+             for token in (
+-                "same_store_owner_live_payload_capabilities_bound",
++                "same_process_store_live_payload_capabilities_bound",
+                 "live_payload_capabilities",
+-                "same_store_owner_live_capability",
++                "same_process_store_live_capability",
+             )
+         )
+         and all(
+             token in service_configuration_runtime
+             for token in (
+-                "store_owner_incarnation_digest",
++                "process_store_scope_digest",
++                "process_store_scope_incarnation_digest",
+                 "capability_set_digest",
+                 "may_reopen_all_current_payloads",
+                 "unreferenced_rooted_payload_count",
+             )
+         ),
+-        "rev0977_runtime_oracles_prove_all_payload_exact_descriptor_replacement_and_release_boundaries",
+-        "focused C++ and real-process readers falsify aggregate-only aliases and require roots to disappear when their move-only capability dies",
++        "rev0978_runtime_oracles_prove_process_store_exact_descriptor_replacement_and_release_boundaries",
++        "focused C++ and real-process readers falsify aggregate-only aliases across same-process owners and require roots to disappear when their move-only capability dies",
+     )
+ 
+     require(
+@@ -10444,8 +10477,8 @@ def main() -> int:
+         and "anonsync.local-retention-plan.response.v4" in readme
+         and "## Rev0976: exact transient-namespace retention cutpoint" in readme
+         and "anonsync.local-retention-plan.response.v3" in readme,
+-        "rev0977_records_precise_scope_historical_schema_hygiene_and_future_collection_boundary",
+-        "the design, notes, and README state the lifetime defect, bounded exact owner scope, immutable rev0976 history, explicit nonclaims, and safe next protocol",
++        "rev0977_records_preserve_exact_owner_history_and_immutable_schema",
++        "sealed rev0977 records retain the exact-owner boundary, v22/v4 schema, explicit nonclaims, and safe next protocol",
+     )
+ 
+     require(
+@@ -10474,6 +10507,224 @@ def main() -> int:
+         "release verification requires every implementation, renderer, schema, test, design, notes, audit, and package-policy surface changed by the exact live-capability cutpoint",
+     )
+ 
++    writer_fenced_snapshot = function_body(
++        store,
++        "SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(",
++    )
++    writer_fenced_verify = function_body(
++        store,
++        "void SyncReplicaFilePayloadStore::\nverify_writer_fenced_retention_snapshot_or_throw(",
++    )
++    writer_fenced_probe = function_body(
++        store,
++        "writer_fenced_payload_use_exclusive_available_or_throw(",
++    )
++
++    require(
++        all(
++            token in store
++            for token in (
++                "PayloadStoreLiveCapabilityRegistryBroker",
++                "kLiveCapabilityProcessStoreScopeDomain",
++                "kLiveCapabilityProcessStoreScopeIncarnationDomain",
++                "kMaximumProcessLiveCapabilityStoreScopes",
++                "kMaximumProcessLiveCapabilityRecordsPerStore",
++                "std::weak_ptr<PayloadStoreLiveCapabilityRegistry>",
++                "process_store_scope_digest",
++                "process_store_scope_incarnation_digest",
++            )
++        )
++        and ordered(
++            function_body(store, "acquire_or_throw("),
++            "std::lock_guard<std::mutex> lock(mutex_)",
++            "position->second.expired()",
++            "registries_.size() >=",
++            "std::make_shared<PayloadStoreLiveCapabilityRegistry>",
++            "registries_.emplace",
++        )
++        and "new_payload_store_live_capability_process_store_scope_incarnation_or_throw"
++        in store,
++        "rev0978_process_store_broker_is_deterministic_bounded_and_reincarnates_after_release",
++        "same-process owners over one attested immutable store share one bounded weakly retained registry and a fresh scope incarnation after final release",
++    )
++
++    require(
++        "candidate.verification_cache.get() !=\n            state_->verification_cache.get()" in store
++        and "payload snapshot was not issued by the exact retained store owner" in store
++        and "candidate.live_capability_registration.registry().get() !=\n            state_->live_capability_registry.get()" in store
++        and "test_live_capability_scope_spans_independent_store_owners" in runtime
++        and "test_live_capability_scope_recreates_after_final_owner_release" in runtime
++        and "shared live registry accidentally authorized foreign-owner snapshot handoff" in runtime,
++        "rev0978_shared_lifetime_visibility_does_not_lend_exact_owner_integrity_authority",
++        "the shared process-store census includes independently opened owners while snapshot handoff still requires the exact owner-local verification cache and integrity epoch",
++    )
++
++    require(
++        "std::unique_ptr<StoreLease> retained_writer_fence" in store
++        and "retain_exclusive_writer_fence" in writer_fenced_snapshot
++        and "SyncReplicaFilePayloadStoreLeaseMode::ExclusiveMutation" in writer_fenced_snapshot
++        and "snapshot->retained_writer_fence" in writer_fenced_snapshot
++        and "current-byte recheck and writer-fenced retention modes cannot " in writer_fenced_snapshot
++        and "read-only inspection cannot retain a writer-fenced retention " in writer_fenced_snapshot
++        and ordered(
++            writer_fenced_verify,
++            "require_exact_snapshot_origin_or_throw",
++            "retained_writer_fence->mode()",
++            "retained_writer_fence->verify_or_throw",
++            "root_authority.verify_or_throw",
++        ),
++        "rev0978_retention_snapshot_holds_exact_global_writer_fence_and_rejects_unsafe_modes",
++        "the complete observation transfers the exact store-global EX lease into a private metadata-only snapshot through final root and identity reproof",
++    )
++
++    require(
++        ordered(
++            writer_fenced_probe,
++            "verify_writer_fenced_retention_snapshot_or_throw",
++            "find_entry",
++            "open_store_file_or_throw",
++            "require_private_regular_file_or_throw",
++            "same_regular_file_observation",
++            "try_acquire_payload_use_flock_nonblocking_or_throw",
++            "verify_named_regular_file_or_throw",
++            "verify_writer_fenced_retention_snapshot_or_throw",
++        )
++        and "LOCK_EX" in writer_fenced_probe
++        and "candidate changed after the writer-fenced scan" in writer_fenced_probe
++        and "test_writer_fenced_retention_snapshot_excludes_namespace_work_and_probes_inode_use" in runtime,
++        "rev0978_returned_candidate_probe_is_rooted_exact_inode_nonblocking_and_page_bounded",
++        "each returned unreferenced object is re-opened under the global fence, matched to the scanned inode, probed for exact-inode EX availability, and re-proved before release",
++    )
++
++    require(
++        all(
++            token in retention_plan_owner
++            for token in (
++                "snapshot_writer_fenced_for_retention_or_throw",
++                "writer_fenced_observation = true",
++                "cooperating_new_namespace_activity_excluded_during_observation = true",
++                "writer_fenced_payload_use_exclusive_available_or_throw",
++                "writer_fenced_candidate_page_digest",
++                "durable_candidate_witness_digest",
++                "verify_writer_fenced_retention_snapshot_or_throw",
++                "live_capabilities_after != live_capabilities_before",
++                "replica_final",
++            )
++        )
++        and retention_plan_owner.find("model.for_each_active_path")
++        < retention_plan_owner.find("snapshot_writer_fenced_for_retention_or_throw")
++        < retention_plan_owner.find("writer_fenced_payload_use_exclusive_available_or_throw")
++        < retention_plan_owner.find("replica_final")
++        < retention_plan_owner.find("verify_writer_fenced_retention_snapshot_or_throw"),
++        "rev0978_planner_builds_causal_projection_before_writer_fenced_physical_merge_and_final_cutpoints",
++        "the immutable causal projection is built before the stall interval; the exact store-global writer fence then spans physical observation and merge, candidate probes, final SQLite snapshots, root proof, and final process-store live-set equality",
++    )
++
++    require(
++        "anonsync:sync-replica-retention-plan-durable-candidate-witness:v1" in folder_scan
++        and "anonsync:sync-replica-retention-plan-writer-fenced-candidate-page:v1" in folder_scan
++        and "anonsync:sync-replica-retention-plan-deletion-free-mark:v4" in folder_scan
++        and "live_capability_process_store_scope_incarnation_digest" not in function_body(
++            folder_scan, "Sha256DigestBuilder durable_candidate_witness"
++        )
++        and all(
++            token in retention_plan_owner
++            for token in (
++                "source_operation_set_digest",
++                "source_evidence_set_digest",
++                "source_historical_version_pin_set_digest",
++                "source_visible_state_digest",
++                "source_payload_snapshot_digest",
++                "source_payload_transient_namespace_digest",
++                "unreferenced_candidate_set_digest",
++            )
++        ),
++        "rev0978_restart_stable_candidate_witness_is_separate_from_process_interval_mark_and_page_probe_digest",
++        "the durable witness binds the complete source and candidate set without process incarnation while mark v4 and the page digest retain their narrower interval identities",
++    )
++
++    require(
++        r'\"writer_fenced_observation\":' in historical_inventory_json
++        and r'\"cooperating_new_namespace_activity_excluded_during_observation\":' in historical_inventory_json
++        and r'\"independently_opened_same_process_store_owner_live_payload_capabilities_bound\":true' in historical_inventory_json
++        and r'\"cross_process_live_payload_capabilities_bound\":false' in historical_inventory_json
++        and r'\"writer_fenced_candidate_page_digest\":' in historical_inventory_json
++        and r'\"durable_candidate_witness_digest\":' in historical_inventory_json
++        and r'\"payload_use_disposition\":' in historical_inventory_json
++        and "anonsync.peer-service.status.v23" in peer_status_h
++        and "anonsync.local-retention-plan.response.v5" in local_status
++        and all(
++            token in service_configuration_runtime
++            for token in (
++                "writer_fenced_observation",
++                "cooperating_new_namespace_activity_excluded_during_observation",
++                "writer_fenced_candidate_page_digest",
++                "durable_candidate_witness_digest",
++                "payload_use_disposition",
++                "independently_opened_same_process_store_owner_live_payload_capabilities_bound",
++                "cross_process_live_payload_capabilities_bound",
++            )
++        ),
++        "rev0978_v23_v5_runtime_contract_parses_writer_fence_process_scope_probe_and_precise_nonclaims",
++        "canonical C++ rendering and the real service oracle agree on every new writer-fence, process-store, candidate-witness, and cross-process boundary field",
++    )
++
++    require(
++        all(
++            token in normalized_prose(process_store_writer_fence_design)
++            for token in (
++                "Defect 1: independently opened same-process owners were invisible",
++                "Defect 2: planning did not hold the global writer fence",
++                "Digest separation",
++                "Explicit nonclaims",
++                "Next safe product edge",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0978_notes)
++            for token in (
++                "Process-store live-capability composition",
++                "Writer-fenced retention observation",
++                "Restart-stable candidate identity",
++                "Deliberately did not persist a mark",
++            )
++        )
++        and "## Rev0978: process-store live roots and writer-fenced retention observation" in readme
++        and "anonsync.peer-service.status.v23" in readme
++        and "anonsync.local-retention-plan.response.v5" in readme,
++        "rev0978_records_bind_the_exact_defects_mechanisms_nonclaims_and_next_safe_collection_edge",
++        "the design audit, notes, and README state the same-process composition defect, writer-fence correction, digest separation, deletion-free boundary, and next durable-policy protocol",
++    )
++
++    require(
++        rev0978_verifier_block.count(
++            "if revision_number is not None and revision_number >= 978:"
++        ) == 1
++        and all(
++            token in rev0978_verifier_block
++            for token in (
++                "PROCESS_STORE_LIVE_CAPABILITY_AND_WRITER_FENCED_RETENTION_AUDIT_rev0978.md",
++                "REVISION_NOTES_rev0978.md",
++                "CMakeLists.txt",
++                "src/sync_replica_file_payload_store.hpp",
++                "src/sync_replica_file_payload_store.cpp",
++                "src/sync_replica_folder_scan_owner.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_replica_historical_version_inventory_json.cpp",
++                "src/sync_replica_peer_service_status.hpp",
++                "tests/sync_replica_file_payload_store_test.cpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/test_anonsync_service_i2p_ingress.py",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0978_package_policy_binds_process_store_writer_fence_candidate_probe_tests_and_records",
++        "release verification requires every implementation, renderer, schema, runtime oracle, audit, notes, and package-policy surface changed by rev0978",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -10617,6 +10868,17 @@ def main() -> int:
+         "the exact same-owner live-capability cutpoint and payload-use reader fence cannot pass the structural audit until final validation and the visible bootstrap bind the sealed rev0977 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0978" not in rev0978_notes
++        and "VALIDATION_PENDING_REV0978" not in process_store_writer_fence_design
++        and "VALIDATION_PENDING_REV0978" not in readme
++        and "ARCHIVE_PENDING_REV0978" not in bootstrap
++        and "CODENAME_PENDING_REV0978" not in bootstrap
++        and "VALIDATION_PENDING_REV0978" not in bootstrap,
++        "rev0978_final_validation_and_visible_release_cutpoint_are_sealed",
++        "the process-store live-capability scope and writer-fenced retention observation cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0978 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index 31e05b4f7593cab0ed8ba9b08f161cef2709362b..c5f98f4c6c2cc44fd026aa7f0b2d4a78b57e47b1 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -743,19 +743,26 @@ def require_retention_plan(plan: Any, label: str) -> None:
+             fail(
+                 f"{label} retention plan invented {forbidden_authority}"
+             )
++    if plan.get("writer_fenced_observation") is not True or plan.get(
++        "cooperating_new_namespace_activity_excluded_during_observation"
++    ) is not True:
++        fail(f"{label} retention plan omitted its writer-fenced observation")
+     for digest_field in (
+         "source_operation_set_digest", "source_evidence_set_digest",
+         "source_historical_version_pin_set_digest",
+         "source_visible_state_digest", "source_payload_snapshot_digest",
+         "source_payload_transient_namespace_digest",
+         "unreferenced_candidate_set_digest",
++        "durable_candidate_witness_digest",
++        "writer_fenced_candidate_page_digest",
+         "exact_deletion_free_mark_digest",
+     ):
+         if not is_canonical_sha256(plan.get(digest_field)):
+             fail(f"{label} retention plan omitted {digest_field}")
+     live_capabilities = plan.get("live_payload_capabilities")
+     if not isinstance(live_capabilities, dict) or set(live_capabilities) != {
+-        "store_owner_incarnation_digest", "capability_set_digest",
++        "process_store_scope_digest",
++        "process_store_scope_incarnation_digest", "capability_set_digest",
+         "snapshot_count", "opened_payload_count", "targeted_access_count",
+         "mutation_batch_count", "distinct_opened_payload_root_count",
+         "distinct_opened_payload_root_bytes",
+@@ -765,7 +772,8 @@ def require_retention_plan(plan: Any, label: str) -> None:
+     }:
+         fail(f"{label} retention plan omitted its live capability cutpoint")
+     for digest_field in (
+-        "store_owner_incarnation_digest", "capability_set_digest",
++        "process_store_scope_digest",
++        "process_store_scope_incarnation_digest", "capability_set_digest",
+     ):
+         if not is_canonical_sha256(live_capabilities.get(digest_field)):
+             fail(f"{label} live capability cutpoint omitted {digest_field}")
+@@ -800,7 +808,8 @@ def require_retention_plan(plan: Any, label: str) -> None:
+     expected_transient_authority = {
+         "payload_store_transient_namespace_bound": True,
+         "durable_receiver_restart_obligations_bound": True,
+-        "same_store_owner_live_payload_capabilities_bound": True,
++        "same_process_store_live_payload_capabilities_bound": True,
++        "independently_opened_same_process_store_owner_live_payload_capabilities_bound": True,
+         "independent_store_owner_live_payload_capabilities_bound": False,
+         "cross_process_live_payload_capabilities_bound": False,
+         "already_copied_response_bytes_bound": False,
+@@ -815,6 +824,12 @@ def require_retention_plan(plan: Any, label: str) -> None:
+                 f"{label} retention plan reported invalid {field}: "
+                 f"{plan.get(field)!r}"
+             )
++    if plan.get("writer_fenced_observation") is not True:
++        fail(f"{label} retention plan omitted its store-global writer fence")
++    if plan.get(
++        "cooperating_new_namespace_activity_excluded_during_observation"
++    ) is not True:
++        fail(f"{label} retention plan did not exclude cooperating namespace activity")
+     source_cutpoint = plan.get("source_cutpoint")
+     if not isinstance(source_cutpoint, str) or not source_cutpoint.startswith(
+         "v4:exact:"
+@@ -827,6 +842,10 @@ def require_retention_plan(plan: Any, label: str) -> None:
+         "payload_scan_hashed_entries", "payload_scan_hashed_bytes",
+         "payload_scan_reused_entries", "payload_scan_reused_bytes",
+         "physical_payload_count_after_cursor", "entry_limit",
++        "writer_fenced_candidate_page_entry_count",
++        "returned_unreferenced_candidate_count",
++        "returned_candidate_payload_use_exclusive_available_count",
++        "returned_candidate_payload_use_busy_count",
+     ):
+         field = plan.get(integer_field)
+         if not isinstance(field, int) or field < 0:
+@@ -844,11 +863,15 @@ def require_retention_plan(plan: Any, label: str) -> None:
+         "retained_history_or_evidence": [0, 0],
+         "unreferenced_by_retained_file_operations": [0, 0],
+     }
++    visible_candidate_count = 0
++    visible_candidate_available_count = 0
++    visible_candidate_busy_count = 0
+     for index, entry in enumerate(entries):
+         if not isinstance(entry, dict) or set(entry) != {
+             "content_sha256", "size_bytes", "current_visible",
+             "superseded_active", "inactive_evidence", "explicit_pin",
+-            "same_store_owner_live_capability", "disposition",
++            "same_process_store_live_capability",
++            "payload_use_disposition", "disposition",
+         }:
+             fail(f"{label} retention entry {index} was not canonical")
+         digest = entry["content_sha256"]
+@@ -860,10 +883,16 @@ def require_retention_plan(plan: Any, label: str) -> None:
+             fail(f"{label} retention entry {index} omitted bounded bytes")
+         for root_field in (
+             "current_visible", "superseded_active", "inactive_evidence",
+-            "explicit_pin", "same_store_owner_live_capability",
++            "explicit_pin", "same_process_store_live_capability",
+         ):
+             if not isinstance(entry[root_field], bool):
+                 fail(f"{label} retention entry omitted {root_field}")
++        payload_use_disposition = entry["payload_use_disposition"]
++        if payload_use_disposition not in (
++            "not_applicable", "exclusive_available_at_cutpoint",
++            "busy_at_cutpoint",
++        ):
++            fail(f"{label} retention entry omitted payload-use disposition")
+         disposition = entry["disposition"]
+         if disposition not in class_counts:
+             fail(f"{label} retention entry omitted its disposition")
+@@ -883,10 +912,57 @@ def require_retention_plan(plan: Any, label: str) -> None:
+             )
+         ):
+             fail(f"{label} unreferenced payload retained a replica root")
++        if disposition == "unreferenced_by_retained_file_operations":
++            visible_candidate_count += 1
++            if payload_use_disposition == "exclusive_available_at_cutpoint":
++                visible_candidate_available_count += 1
++            elif payload_use_disposition == "busy_at_cutpoint":
++                visible_candidate_busy_count += 1
++            else:
++                fail(f"{label} unreferenced payload was not inode-probed")
++        elif payload_use_disposition != "not_applicable":
++            fail(f"{label} retained payload carried candidate-only probe state")
+         class_counts[disposition][0] += 1
+         class_counts[disposition][1] += size
+     if digests != sorted(digests) or len(set(digests)) != len(digests):
+         fail(f"{label} retention plan was not exact digest order")
++    logical_page_entry_count = plan[
++        "writer_fenced_candidate_page_entry_count"
++    ]
++    if (
++        logical_page_entry_count < len(entries)
++        or logical_page_entry_count > min(
++            plan["physical_payload_count_after_cursor"], plan["entry_limit"]
++        )
++        or (
++            not plan.get("status_byte_frontier_reached")
++            and logical_page_entry_count != len(entries)
++        )
++    ):
++        fail(f"{label} writer-fenced logical page cardinality was incoherent")
++    returned_candidate_count = plan["returned_unreferenced_candidate_count"]
++    returned_available_count = plan[
++        "returned_candidate_payload_use_exclusive_available_count"
++    ]
++    returned_busy_count = plan["returned_candidate_payload_use_busy_count"]
++    if (
++        returned_candidate_count > logical_page_entry_count
++        or returned_available_count + returned_busy_count
++        != returned_candidate_count
++    ):
++        fail(f"{label} retention candidate probe partition was incoherent")
++    if (
++        visible_candidate_count > returned_candidate_count
++        or visible_candidate_available_count > returned_available_count
++        or visible_candidate_busy_count > returned_busy_count
++    ):
++        fail(f"{label} visible candidate prefix exceeded writer-fenced evidence")
++    if not plan.get("status_byte_frontier_reached") and (
++        visible_candidate_count != returned_candidate_count
++        or visible_candidate_available_count != returned_available_count
++        or visible_candidate_busy_count != returned_busy_count
++    ):
++        fail(f"{label} complete returned page disagreed with probe accounting")
+     totals = plan.get("disposition_totals")
+     if not isinstance(totals, dict) or set(totals) != set(class_counts):
+         fail(f"{label} retention plan omitted disposition totals")
+@@ -1835,7 +1911,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v22",
++                    "schema": "anonsync.peer-service.status.v23",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -3368,7 +3444,7 @@ def main() -> int:
+                 label="owner-only deletion-free retention plan",
+             )
+             expected_retention_plan_response = {
+-                "schema": "anonsync.local-retention-plan.response.v4",
++                "schema": "anonsync.local-retention-plan.response.v5",
+                 "command": "retention-plan",
+                 "terminal_class": "accepted",
+                 "request_generation": retention_plan_generation,
+@@ -3404,12 +3480,19 @@ def main() -> int:
+                     "source_historical_version_pin_set_digest"
+                 ] != pin_update["pin_set_digest"]
+                 or retention_plan["truncated"] is not False
++                or retention_plan["writer_fenced_observation"] is not True
++                or retention_plan[
++                    "cooperating_new_namespace_activity_excluded_during_observation"
++                ] is not True
+                 or retention_plan["payload_store_transient_namespace_bound"]
+                 is not True
+                 or retention_plan["durable_receiver_restart_obligations_bound"]
+                 is not True
+-                or retention_plan["same_store_owner_live_payload_capabilities_bound"]
++                or retention_plan["same_process_store_live_payload_capabilities_bound"]
+                 is not True
++                or retention_plan[
++                    "independently_opened_same_process_store_owner_live_payload_capabilities_bound"
++                ] is not True
+                 or retention_plan["independent_store_owner_live_payload_capabilities_bound"]
+                 is not False
+                 or retention_plan["cross_process_live_payload_capabilities_bound"]
+@@ -3457,6 +3540,8 @@ def main() -> int:
+                 pinned_payload_entries[0]["explicit_pin"] is not True
+             ) or pinned_payload_entries[0]["disposition"] != (
+                 "current_or_explicit_pin"
++            ) or pinned_payload_entries[0]["payload_use_disposition"] != (
++                "not_applicable"
+             ):
+                 fail(
+                     "retention plan did not explain the exact pinned payload: "
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index 1aca6c7668e53d9b4e5a71b23216f9b9cd5ccd85..21c13b194a3eddcf56ea3ed49671a6d8f850822f 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v22"
++                    value.get("schema") == "anonsync.peer-service.status.v23"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 0ddbb180b1cb7977eab4ceed9c1251e302bf6ce0..9de9df4e95dcecf34b55bc6e4dfeeaba96cdfbb5 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1609,6 +1609,27 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 978:
++        revision_scoped_required.update({
++            "PROCESS_STORE_LIVE_CAPABILITY_AND_WRITER_FENCED_RETENTION_AUDIT_rev0978.md",
++            "REVISION_NOTES_rev0978.md",
++            "README.md",
++            "CMakeLists.txt",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_file_payload_store.hpp",
++            "src/sync_replica_file_payload_store.cpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_historical_version_inventory_json.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "tests/sync_replica_file_payload_store_test.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

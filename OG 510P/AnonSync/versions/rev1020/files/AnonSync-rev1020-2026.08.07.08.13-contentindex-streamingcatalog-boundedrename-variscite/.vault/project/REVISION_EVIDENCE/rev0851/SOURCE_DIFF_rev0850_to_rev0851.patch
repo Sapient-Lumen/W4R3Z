@@ -1,0 +1,1955 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0dd640e74565a4524cbcf681af018c686f9279b5..c48387f4f2e6d6a69b1c73fd509aa3b785a7c69b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -235,6 +235,21 @@ target_link_libraries(anonsync_sqlite_retained_callback_claim PUBLIC
+ target_compile_options(anonsync_sqlite_retained_callback_claim PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++# Application authorizer policy state must not remain a loose void* behind
++# SQLite's retained bridge. This dependency-light move-only owner binds the
++# callback and optional shared context to one process incarnation and gives the
++# connection state machine a safe retirement escrow outside SQLite's mutex.
++set(ANONSYNC_SQLITE_OWNED_AUTHORIZER_POLICY_SOURCE
++  src/sync_sqlite_owned_authorizer_policy.cpp)
++add_library(anonsync_sqlite_owned_authorizer_policy STATIC
++  ${ANONSYNC_SQLITE_OWNED_AUTHORIZER_POLICY_SOURCE})
++target_include_directories(anonsync_sqlite_owned_authorizer_policy PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sqlite_owned_authorizer_policy PUBLIC
++  anonsync_process_incarnation)
++target_compile_options(anonsync_sqlite_owned_authorizer_policy PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ # SQLite's singleton authorizer slot retains a raw callback context and exposes
+ # no getter or destructor.  This focused owner composes the shared client-data
+ # lifetime claim, makes replacement explicit, and revokes the callback before
+@@ -428,6 +443,7 @@ target_link_libraries(anonsync_sqlite_support
+   PRIVATE
+     anonsync_sqlite_authorizer_owner
+   PUBLIC
++    anonsync_sqlite_owned_authorizer_policy
+     anonsync_process_incarnation
+     anonsync_thread_incarnation
+     anonsync_sqlite_runtime
+@@ -1414,6 +1430,14 @@ target_link_libraries(anonsync_sqlite_busy_handler_owner_test PRIVATE
+   anonsync_sqlite_busy_handler_owner)
+ target_compile_options(anonsync_sqlite_busy_handler_owner_test PRIVATE
+   -Wall -Wextra -Wpedantic)
++add_executable(anonsync_sqlite_owned_authorizer_policy_test
++  tests/sqlite_owned_authorizer_policy_test.cpp)
++target_include_directories(anonsync_sqlite_owned_authorizer_policy_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sqlite_owned_authorizer_policy_test PRIVATE
++  anonsync_sqlite_owned_authorizer_policy)
++target_compile_options(anonsync_sqlite_owned_authorizer_policy_test PRIVATE
++  -Wall -Wextra -Wpedantic)
+ add_executable(anonsync_sqlite_authorizer_owner_test
+   tests/persistence/sqlite_authorizer_owner_tests.cpp)
+ target_include_directories(anonsync_sqlite_authorizer_owner_test PRIVATE
+@@ -1636,6 +1660,7 @@ if(TARGET anonsync_inherited_test_process)
+       anonsync_process_incarnation_test
+       anonsync_thread_incarnation_test
+       anonsync_sqlite_owner_generation_borrow_test
++      anonsync_sqlite_owned_authorizer_policy_test
+       anonsync_sqlite_persistence_process_authority_fork_test
+       anonsync_sqlite_verification_budget_test
+       anonsync_sqlite_process_authority_fork_test
+@@ -1803,6 +1828,8 @@ foreach(ANONSYNC_FOCUSED_BOUNDARY_TARGET
+     anonsync_sqlite_verification_budget_test
+     anonsync_sqlite_busy_handler_owner
+     anonsync_sqlite_busy_handler_owner_test
++    anonsync_sqlite_owned_authorizer_policy
++    anonsync_sqlite_owned_authorizer_policy_test
+     anonsync_sqlite_authorizer_owner
+     anonsync_sqlite_authorizer_owner_test
+     anonsync_sqlite_persistence_process_authority_fork_test
+@@ -1931,6 +1958,8 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_sqlite_retained_callback_claim
+     anonsync_sqlite_busy_handler_owner
+     anonsync_sqlite_busy_handler_owner_test
++    anonsync_sqlite_owned_authorizer_policy
++    anonsync_sqlite_owned_authorizer_policy_test
+     anonsync_sqlite_authorizer_owner
+     anonsync_sqlite_authorizer_owner_test
+     anonsync_sqlite_exact_value
+@@ -2096,6 +2125,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_sqlite_support_test
+       anonsync_sqlite_connection_authority_test
+       anonsync_sqlite_busy_handler_owner_test
++      anonsync_sqlite_owned_authorizer_policy_test
+       anonsync_sqlite_authorizer_owner_test
+       anonsync_sqlite_transaction_exception_composition_test
+       anonsync_sqlite_process_authority_fork_test
+@@ -2531,6 +2561,10 @@ add_test(NAME anonsync_sqlite_busy_handler_owner_test
+   COMMAND anonsync_sqlite_busy_handler_owner_test)
+ set_tests_properties(anonsync_sqlite_busy_handler_owner_test
+   PROPERTIES TIMEOUT 30)
++add_test(NAME anonsync_sqlite_owned_authorizer_policy_test
++  COMMAND anonsync_sqlite_owned_authorizer_policy_test)
++set_tests_properties(anonsync_sqlite_owned_authorizer_policy_test
++  PROPERTIES TIMEOUT 20)
+ add_test(NAME anonsync_sqlite_authorizer_owner_test
+   COMMAND anonsync_sqlite_authorizer_owner_test)
+ set_tests_properties(anonsync_sqlite_authorizer_owner_test
+diff --git a/src/sync_sqlite_connection_authority.cpp b/src/sync_sqlite_connection_authority.cpp
+index a1b080b32f9bcfd03a163ec4e92ab1af0af4d921..27fe3a3aa3035f6c6d602f6b7806ab4a1d7efcb1 100644
+--- a/src/sync_sqlite_connection_authority.cpp
++++ b/src/sync_sqlite_connection_authority.cpp
+@@ -56,8 +56,7 @@ struct ConnectionAuthorityState final {
+     std::uint64_t process_salt = 0;
+     std::uint64_t connection_incarnation = 0;
+     std::uint64_t authorizer_generation = 0;
+-    SyncSqliteAuthorizerPolicy policy = nullptr;
+-    void* policy_context = nullptr;
++    SyncSqliteOwnedAuthorizerPolicy policy_owner;
+     std::uint64_t probe_nonce = 0;
+     std::uint64_t observed_probe_nonce = 0;
+     bool probe_active = false;
+@@ -382,7 +381,10 @@ void destroy_connection_authority_state(void* raw) noexcept {
+     // replacement and connection close.  Either event is unsafe while SQLite
+     // still retains state as its authorizer context.  Only the reviewed close
+     // path first revokes the callback and its independent lifetime claim.
+-    if (state->authorizer_owner.attached()) {
++    if (state->authorizer_owner.attached() || !state->policy_owner.empty()) {
++        // A policy context may carry an application-defined shared_ptr deleter.
++        // It must be retired by the reviewed teardown path after SQLite has
++        // forgotten the callback and after the connection mutex is released.
+         fail_stop_on_sync_process_capability_violation_noexcept();
+     }
+     state->magic = 0;
+@@ -404,7 +406,7 @@ ConnectionAuthorityState* load_connection_authority_state_or_throw(
+     if (state->magic != kStateMagic || state->self != state ||
+         !state->process_id.valid() || state->process_salt == 0 ||
+         state->connection_incarnation == 0 ||
+-        state->authorizer_generation == 0) {
++        state->authorizer_generation == 0 || !state->policy_owner.valid()) {
+         throw std::runtime_error(
+             label + " connection authority client-data slot is corrupt");
+     }
+@@ -469,14 +471,13 @@ int invoke_policy_or_deny(ConnectionAuthorityState& state,
+                           const char* database_name,
+                           const char* trigger_or_view,
+                           bool ignore_is_valid) noexcept {
+-    if (state.policy == nullptr) return SQLITE_DENY;
++    if (state.policy_owner.empty()) return SQLITE_DENY;
+     try {
+-        const int decision = state.policy(state.policy_context,
+-                                          action,
+-                                          argument1,
+-                                          argument2,
+-                                          database_name,
+-                                          trigger_or_view);
++        const int decision = state.policy_owner.invoke(action,
++                                                       argument1,
++                                                       argument2,
++                                                       database_name,
++                                                       trigger_or_view);
+         if (decision == SQLITE_OK || decision == SQLITE_DENY ||
+             (ignore_is_valid && decision == SQLITE_IGNORE)) {
+             return decision;
+@@ -900,12 +901,14 @@ void clear_stale_transaction_generation_if_ended(
+ 
+ void revoke_connection_authority_state_locked_noexcept(
+     sqlite3* db,
+-    ConnectionAuthorityState* state) noexcept {
++    ConnectionAuthorityState* state,
++    SyncSqliteOwnedAuthorizerPolicy& retired_policy) noexcept {
+     if (db == nullptr || state == nullptr || state->magic != kStateMagic ||
+         state->self != state || !state->process_id.valid() ||
+         !sync_process_incarnation_is_current(state->process_id) ||
+         state->process_salt == 0 || state->connection_incarnation == 0 ||
+-        state->authorizer_generation == 0) {
++        state->authorizer_generation == 0 || !retired_policy.empty() ||
++        !state->policy_owner.valid()) {
+         fail_stop_on_sync_process_capability_violation_noexcept();
+     }
+     if (state->probe_active || state->transaction_permit_active ||
+@@ -924,9 +927,12 @@ void revoke_connection_authority_state_locked_noexcept(
+     state->active_savepoints.clear();
+ 
+     // Ordered consumption is mandatory: remove SQLite's retained callback,
+-    // release its independent lifetime claim, then clear the state slot whose
+-    // destructor finally destroys the callback context.
++    // release its independent lifetime claim, escrow the application policy
++    // outside the SQLite-owned state, and only then clear that state slot.
++    // The caller leaves the connection mutex before retired_policy's destructor
++    // can run arbitrary application-defined shared_ptr disposal code.
+     state->authorizer_owner.detach(db);
++    state->policy_owner.swap(retired_policy);
+     if (sqlite3_set_clientdata(
+             db, kConnectionAuthorityClientDataName, nullptr, nullptr) !=
+         SQLITE_OK) {
+@@ -1042,12 +1048,16 @@ bool SyncSqliteConnectionAuthorityLease::active() const noexcept {
+ SyncSqliteConnectionAuthorityProof
+ install_sync_sqlite_connection_authority_or_throw(
+     sqlite3* db,
+-    SyncSqliteAuthorizerPolicy policy,
+-    void* policy_context,
++    SyncSqliteOwnedAuthorizerPolicy policy,
+     const std::string& label) {
+-    if (policy == nullptr) {
+-        throw std::invalid_argument(label + " authorizer policy is null");
++    if (!policy.valid()) {
++        throw std::invalid_argument(label + " authorizer policy is empty");
+     }
++
++    // Declare the retirement escrow before the mutex guard. Reverse local
++    // destruction order then proves the SQLite mutex is left before an old
++    // application context (and its arbitrary custom deleter) is released.
++    SyncSqliteOwnedAuthorizerPolicy retired_policy;
+     DbMutexGuard guard(db, label + " connection authority install");
+     ConnectionAuthorityState* state =
+         load_connection_authority_state_or_throw(db, true, label);
+@@ -1077,11 +1087,12 @@ install_sync_sqlite_connection_authority_or_throw(
+         state->connection_incarnation =
+             allocate_connection_incarnation_or_throw(label);
+         state->authorizer_generation = 1;
+-        state->policy = policy;
+-        state->policy_context = policy_context;
+ 
+-        // With a non-null destructor SQLite assumes ownership even when this
+-        // call reports SQLITE_NOMEM; do not retain a second C++ owner.
++        // Keep the SQLite-owned state policy-empty until every potentially
++        // failing publication step has completed. With a non-null destructor
++        // SQLite assumes ownership even when set_clientdata reports NOMEM; its
++        // synchronous destructor is therefore forbidden from releasing user
++        // policy state.
+         const int client_data_rc = sqlite3_set_clientdata(
+             db,
+             kConnectionAuthorityClientDataName,
+@@ -1099,8 +1110,8 @@ install_sync_sqlite_connection_authority_or_throw(
+                 label + " install owned authorizer bridge");
+         } catch (...) {
+             // attach() releases its independent claim before returning an
+-            // error.  The state slot can now be consumed without leaving a
+-            // callback owned by this state pointing to freed storage.
++            // error. The state and policy are still empty, so consuming the
++            // client-data slot cannot run application disposal under SQLite.
+             if (sqlite3_set_clientdata(
+                     db, kConnectionAuthorityClientDataName, nullptr, nullptr) !=
+                 SQLITE_OK) {
+@@ -1108,6 +1119,7 @@ install_sync_sqlite_connection_authority_or_throw(
+             }
+             throw;
+         }
++        state->policy_owner.swap(policy);
+     } else {
+         if (state->authorizer_generation ==
+             std::numeric_limits<std::uint64_t>::max()) {
+@@ -1117,8 +1129,8 @@ install_sync_sqlite_connection_authority_or_throw(
+         state->authorizer_owner.replace(
+             db, connection_authorizer_bridge, state,
+             label + " supersede SQLite authorizer bridge");
+-        state->policy = policy;
+-        state->policy_context = policy_context;
++        state->policy_owner.swap(policy);
++        retired_policy.swap(policy);
+         ++state->authorizer_generation;
+     }
+ 
+@@ -1129,6 +1141,24 @@ install_sync_sqlite_connection_authority_or_throw(
+                                                state->authorizer_generation);
+ }
+ 
++SyncSqliteConnectionAuthorityProof
++install_sync_sqlite_connection_authority_or_throw(
++    sqlite3* db,
++    SyncSqliteAuthorizerPolicy policy,
++    void* policy_context,
++    const std::string& label) {
++    if (policy == nullptr) {
++        throw std::invalid_argument(label + " authorizer policy is null");
++    }
++    if (policy_context != nullptr) {
++        throw std::invalid_argument(
++            label +
++            " raw authorizer policy context is not owned; use SyncSqliteOwnedAuthorizerPolicy");
++    }
++    return install_sync_sqlite_connection_authority_or_throw(
++        db, SyncSqliteOwnedAuthorizerPolicy(policy), label);
++}
++
+ SyncSqliteConnectionAuthorityLease
+ acquire_sync_sqlite_connection_authority_or_throw(
+     sqlite3* db,
+@@ -1164,6 +1194,7 @@ acquire_sync_sqlite_connection_authority_or_throw(
+ void revoke_sync_sqlite_connection_authority_before_close_noexcept(
+     sqlite3* db) noexcept {
+     if (db == nullptr) return;
++    SyncSqliteOwnedAuthorizerPolicy retired_policy;
+     void* raw = sqlite3_get_clientdata(db, kConnectionAuthorityClientDataName);
+     if (raw == nullptr) return;
+ 
+@@ -1178,7 +1209,8 @@ void revoke_sync_sqlite_connection_authority_before_close_noexcept(
+     raw = sqlite3_get_clientdata(db, kConnectionAuthorityClientDataName);
+     if (raw != nullptr) {
+         auto* const state = static_cast<ConnectionAuthorityState*>(raw);
+-        revoke_connection_authority_state_locked_noexcept(db, state);
++        revoke_connection_authority_state_locked_noexcept(
++            db, state, retired_policy);
+     }
+     sqlite3_mutex_leave(mutex);
+ }
+diff --git a/src/sync_sqlite_connection_authority.hpp b/src/sync_sqlite_connection_authority.hpp
+index e5ad491d0e47ee34b2b982056fc1cca5d366c0db..44e11e838474c3e86ca2ce0c833c782f6b00e288 100644
+--- a/src/sync_sqlite_connection_authority.hpp
++++ b/src/sync_sqlite_connection_authority.hpp
+@@ -4,22 +4,13 @@
+ #include <string>
+ 
+ #include "sync_sqlite_mutex_capability.hpp"
++#include "sync_sqlite_owned_authorizer_policy.hpp"
+ 
+ struct sqlite3;
+ struct sqlite3_mutex;
+ 
+ namespace anonsync {
+ 
+-// Policy callback invoked by the owned SQLite authorizer bridge. The bridge
+-// itself remains under AnonSync ownership so use-time probes can distinguish
+-// the exact installed generation from an alien replacement or disablement.
+-using SyncSqliteAuthorizerPolicy = int (*)(void*,
+-                                           int,
+-                                           const char*,
+-                                           const char*,
+-                                           const char*,
+-                                           const char*);
+-
+ class SyncSqliteConnectionAuthorityLease;
+ struct SyncSqliteRetainedMutexCapabilityState;
+ 
+@@ -46,6 +37,9 @@ private:
+                                        std::uint64_t authorizer_generation) noexcept;
+ 
+     friend SyncSqliteConnectionAuthorityProof
++    install_sync_sqlite_connection_authority_or_throw(
++        sqlite3*, SyncSqliteOwnedAuthorizerPolicy, const std::string&);
++    friend SyncSqliteConnectionAuthorityProof
+     install_sync_sqlite_connection_authority_or_throw(
+         sqlite3*, SyncSqliteAuthorizerPolicy, void*, const std::string&);
+     friend class SyncSqliteConnectionAuthorityLease;
+@@ -98,7 +92,19 @@ private:
+ // Installs (or deliberately supersedes) the AnonSync bridge on one serialized
+ // connection. The first install creates SQLite-owned client data whose
+ // destructor runs at close; later installs advance the generation without
+-// replacing the state object, avoiding a dangling callback window.
++// replacing the state object, avoiding a dangling callback window.  The
++// move-only policy owner retains optional application context through the exact
++// installed generation. Replaced or revoked context is released only after the
++// callback is detached and SQLite's connection mutex has been left.
++[[nodiscard]] SyncSqliteConnectionAuthorityProof
++install_sync_sqlite_connection_authority_or_throw(
++    sqlite3* db,
++    SyncSqliteOwnedAuthorizerPolicy policy,
++    const std::string& label);
++
++// Compatibility lane for context-free policies. A non-null raw context is no
++// longer accepted because SQLite could retain it beyond its external owner;
++// use the owned-policy overload instead.
+ [[nodiscard]] SyncSqliteConnectionAuthorityProof
+ install_sync_sqlite_connection_authority_or_throw(
+     sqlite3* db,
+diff --git a/src/sync_sqlite_owned_authorizer_policy.cpp b/src/sync_sqlite_owned_authorizer_policy.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..46dbbd3e17f4436acdfd52304ddc631c7eed9b8c
+--- /dev/null
++++ b/src/sync_sqlite_owned_authorizer_policy.cpp
+@@ -0,0 +1,121 @@
++#include "sync_sqlite_owned_authorizer_policy.hpp"
++
++#include <stdexcept>
++#include <utility>
++
++namespace anonsync {
++namespace {
++
++[[noreturn]] void fail_stop_on_authorizer_policy_lifetime_violation_noexcept()
++    noexcept {
++    fail_stop_on_sync_process_capability_violation_noexcept();
++}
++
++}  // namespace
++
++SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy() noexcept
++    : process_id_(current_sync_process_incarnation_noexcept()) {}
++
++SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(
++    SyncSqliteAuthorizerPolicy policy)
++    : SyncSqliteOwnedAuthorizerPolicy(policy, {}) {}
++
++SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(
++    SyncSqliteAuthorizerPolicy policy,
++    std::shared_ptr<void> context_owner)
++    : process_id_(current_sync_process_incarnation_noexcept()),
++      policy_(policy),
++      context_owner_(std::move(context_owner)) {
++    if (policy_ == nullptr) {
++        throw std::invalid_argument("SQLite authorizer policy is null");
++    }
++    require_shape_noexcept();
++}
++
++SyncSqliteOwnedAuthorizerPolicy::~SyncSqliteOwnedAuthorizerPolicy() {
++    // Validate before context_owner_ reaches its implicit destructor.  A
++    // foreign-process owner exits here, so no inherited shared_ptr reference
++    // count or custom deleter is touched.
++    require_current_process_noexcept();
++    require_shape_noexcept();
++}
++
++SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(
++    SyncSqliteOwnedAuthorizerPolicy&& other) noexcept
++    : process_id_(current_sync_process_incarnation_noexcept()) {
++    // Source-first validation is essential: do not even move the shared_ptr
++    // out of an inherited owner before rejecting the capability.
++    other.require_current_process_noexcept();
++    other.require_shape_noexcept();
++    policy_ = other.policy_;
++    context_owner_ = std::move(other.context_owner_);
++    other.policy_ = nullptr;
++    require_shape_noexcept();
++    other.require_shape_noexcept();
++}
++
++bool SyncSqliteOwnedAuthorizerPolicy::valid() const noexcept {
++    require_current_process_noexcept();
++    require_shape_noexcept();
++    return policy_ != nullptr;
++}
++
++bool SyncSqliteOwnedAuthorizerPolicy::empty() const noexcept {
++    return !valid();
++}
++
++bool SyncSqliteOwnedAuthorizerPolicy::owns_context() const noexcept {
++    require_current_process_noexcept();
++    require_shape_noexcept();
++    return context_owner_ != nullptr;
++}
++
++int SyncSqliteOwnedAuthorizerPolicy::invoke(
++    int action,
++    const char* argument1,
++    const char* argument2,
++    const char* database_name,
++    const char* trigger_or_view) const {
++    require_current_process_noexcept();
++    require_shape_noexcept();
++    if (policy_ == nullptr) {
++        throw std::logic_error("SQLite authorizer policy owner is empty");
++    }
++    return policy_(context_owner_.get(),
++                   action,
++                   argument1,
++                   argument2,
++                   database_name,
++                   trigger_or_view);
++}
++
++void SyncSqliteOwnedAuthorizerPolicy::swap(
++    SyncSqliteOwnedAuthorizerPolicy& other) noexcept {
++    require_current_process_noexcept();
++    other.require_current_process_noexcept();
++    require_shape_noexcept();
++    other.require_shape_noexcept();
++    if (this == &other) return;
++
++    using std::swap;
++    swap(policy_, other.policy_);
++    context_owner_.swap(other.context_owner_);
++    require_shape_noexcept();
++    other.require_shape_noexcept();
++}
++
++void SyncSqliteOwnedAuthorizerPolicy::require_current_process_noexcept() const
++    noexcept {
++    if (!process_id_.valid() ||
++        !sync_process_incarnation_is_current(process_id_)) {
++        fail_stop_on_authorizer_policy_lifetime_violation_noexcept();
++    }
++}
++
++void SyncSqliteOwnedAuthorizerPolicy::require_shape_noexcept() const noexcept {
++    if (policy_ == nullptr && context_owner_ != nullptr) {
++        fail_stop_on_authorizer_policy_lifetime_violation_noexcept();
++    }
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_sqlite_owned_authorizer_policy.hpp b/src/sync_sqlite_owned_authorizer_policy.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..5babc1b05c4ac28576a2a1a8c00384103c30cf9b
+--- /dev/null
++++ b/src/sync_sqlite_owned_authorizer_policy.hpp
+@@ -0,0 +1,77 @@
++#pragma once
++
++#include "sync_process_incarnation.hpp"
++
++#include <memory>
++
++namespace anonsync {
++
++// Policy callback invoked by the owned SQLite authorizer bridge.  SQLite
++// retains only the bridge and its stable connection-state context; arbitrary
++// application policy state is retained separately by the process-bound owner
++// below.
++using SyncSqliteAuthorizerPolicy = int (*)(void*,
++                                           int,
++                                           const char*,
++                                           const char*,
++                                           const char*,
++                                           const char*);
++
++// Move-only process-local ownership for one authorizer policy and its optional
++// type-erased context.  A nonempty context is held by shared ownership so a
++// caller can deliberately share immutable or synchronized policy state, but
++// the connection authority always owns one independent lifetime reference.
++//
++// The class is fork-sensitive: invoking, moving, swapping, inspecting, or
++// destroying an instance inherited from another process fails stopped before
++// its shared_ptr control block can be touched.  This protects the parent-side
++// ownership protocol from copied post-fork teardown paths.
++//
++// Custom context deleters are application code.  The connection-authority
++// state machine therefore swaps retired policies into an ordinary C++ owner
++// and releases them only after leaving SQLite's connection mutex and after
++// revoking SQLite's retained authorizer callback.
++class SyncSqliteOwnedAuthorizerPolicy final {
++public:
++    SyncSqliteOwnedAuthorizerPolicy() noexcept;
++    explicit SyncSqliteOwnedAuthorizerPolicy(
++        SyncSqliteAuthorizerPolicy policy);
++    SyncSqliteOwnedAuthorizerPolicy(
++        SyncSqliteAuthorizerPolicy policy,
++        std::shared_ptr<void> context_owner);
++    ~SyncSqliteOwnedAuthorizerPolicy();
++
++    SyncSqliteOwnedAuthorizerPolicy(
++        const SyncSqliteOwnedAuthorizerPolicy&) = delete;
++    SyncSqliteOwnedAuthorizerPolicy& operator=(
++        const SyncSqliteOwnedAuthorizerPolicy&) = delete;
++    SyncSqliteOwnedAuthorizerPolicy(
++        SyncSqliteOwnedAuthorizerPolicy&& other) noexcept;
++    SyncSqliteOwnedAuthorizerPolicy& operator=(
++        SyncSqliteOwnedAuthorizerPolicy&&) = delete;
++
++    [[nodiscard]] bool valid() const noexcept;
++    [[nodiscard]] bool empty() const noexcept;
++    [[nodiscard]] bool owns_context() const noexcept;
++
++    int invoke(int action,
++               const char* argument1,
++               const char* argument2,
++               const char* database_name,
++               const char* trigger_or_view) const;
++
++    // Both participants must belong to the current process.  The process proof
++    // itself is not swapped: it describes each C++ owner object's provenance,
++    // while the callback and context move as one policy capability.
++    void swap(SyncSqliteOwnedAuthorizerPolicy& other) noexcept;
++
++private:
++    void require_current_process_noexcept() const noexcept;
++    void require_shape_noexcept() const noexcept;
++
++    SyncProcessIncarnation process_id_;
++    SyncSqliteAuthorizerPolicy policy_ = nullptr;
++    std::shared_ptr<void> context_owner_;
++};
++
++}  // namespace anonsync
+diff --git a/tests/sqlite_connection_authority_test.cpp b/tests/sqlite_connection_authority_test.cpp
+index 37367da80abed3c21824bc66103da528bee0f030..4e8fdcbb529a8f04a579bf63662ed2a25ef2683c 100644
+--- a/tests/sqlite_connection_authority_test.cpp
++++ b/tests/sqlite_connection_authority_test.cpp
+@@ -179,6 +179,109 @@ int ignore_savepoint_policy(void*,
+     return action == SQLITE_SAVEPOINT ? SQLITE_IGNORE : SQLITE_OK;
+ }
+ 
++struct OwnedPolicyState final {
++    std::uint64_t calls = 0;
++};
++
++int owned_allow_policy(void* raw,
++                       int,
++                       const char*,
++                       const char*,
++                       const char*,
++                       const char*) noexcept {
++    auto* const state = static_cast<OwnedPolicyState*>(raw);
++    if (state == nullptr) return SQLITE_DENY;
++    ++state->calls;
++    return SQLITE_OK;
++}
++
++// A context deleter is arbitrary application code. This pre-existing worker
++// tests the exact SQLite connection mutex at deletion time without creating a
++// thread from inside the deleter. SQLITE_OK proves the retiring function had
++// already left the connection mutex; SQLITE_BUSY exposes accidental disposal
++// inside the critical section.
++class PolicyRetirementMutexProbe final {
++public:
++    explicit PolicyRetirementMutexProbe(sqlite3* db)
++        : db_(db), worker_([this] { run(); }) {}
++
++    ~PolicyRetirementMutexProbe() {
++        stop_.store(true, std::memory_order_release);
++        request_.fetch_add(1, std::memory_order_acq_rel);
++        request_.notify_all();
++        worker_.join();
++    }
++
++    PolicyRetirementMutexProbe(const PolicyRetirementMutexProbe&) = delete;
++    PolicyRetirementMutexProbe& operator=(
++        const PolicyRetirementMutexProbe&) = delete;
++
++    void observe_release_noexcept() noexcept {
++        const std::uint64_t ticket =
++            request_.fetch_add(1, std::memory_order_acq_rel) + 1;
++        request_.notify_all();
++        for (;;) {
++            const std::uint64_t completed =
++                completed_.load(std::memory_order_acquire);
++            if (completed >= ticket) return;
++            completed_.wait(completed, std::memory_order_acquire);
++        }
++    }
++
++    [[nodiscard]] int result() const noexcept {
++        return result_.load(std::memory_order_acquire);
++    }
++
++    [[nodiscard]] std::uint64_t releases() const noexcept {
++        return releases_.load(std::memory_order_acquire);
++    }
++
++    void record_release_noexcept() noexcept {
++        releases_.fetch_add(1, std::memory_order_release);
++    }
++
++private:
++    void run() noexcept {
++        std::uint64_t observed = request_.load(std::memory_order_acquire);
++        for (;;) {
++            request_.wait(observed, std::memory_order_acquire);
++            const std::uint64_t requested =
++                request_.load(std::memory_order_acquire);
++            if (stop_.load(std::memory_order_acquire)) return;
++
++            sqlite3_mutex* const mutex = sqlite3_db_mutex(db_);
++            int result = SQLITE_MISUSE;
++            if (mutex != nullptr) {
++                result = sqlite3_mutex_try(mutex);
++                if (result == SQLITE_OK) sqlite3_mutex_leave(mutex);
++            }
++            result_.store(result, std::memory_order_release);
++            completed_.store(requested, std::memory_order_release);
++            completed_.notify_all();
++            observed = requested;
++        }
++    }
++
++    sqlite3* db_ = nullptr;
++    std::atomic<std::uint64_t> request_{0};
++    std::atomic<std::uint64_t> completed_{0};
++    std::atomic<int> result_{SQLITE_MISUSE};
++    std::atomic<std::uint64_t> releases_{0};
++    std::atomic<bool> stop_{false};
++    std::thread worker_;
++};
++
++struct OwnedPolicyStateDeleter final {
++    PolicyRetirementMutexProbe* probe = nullptr;
++
++    void operator()(OwnedPolicyState* state) const noexcept {
++        if (probe == nullptr) std::_Exit(EXIT_FAILURE);
++        probe->observe_release_noexcept();
++        probe->record_release_noexcept();
++        delete state;
++    }
++};
++
+ std::int64_t scalar_i64(sqlite3* db,
+                         const std::string& sql,
+                         const std::string& label) {
+@@ -281,6 +384,97 @@ void test_policy_boundary_fails_closed(std::uint64_t& checks) {
+     }
+ }
+ 
++void test_owned_policy_context_lifetime_and_retirement(
++    std::uint64_t& checks) {
++    SqlitePtr db = open_memory_database();
++
++    PolicyRetirementMutexProbe first_retirement(db.get());
++    auto first_context = std::shared_ptr<OwnedPolicyState>(
++        new OwnedPolicyState(),
++        OwnedPolicyStateDeleter{&first_retirement});
++    const std::weak_ptr<OwnedPolicyState> first_lifetime = first_context;
++    const SyncSqliteConnectionAuthorityProof first =
++        install_sync_sqlite_connection_authority_or_throw(
++            db.get(),
++            SyncSqliteOwnedAuthorizerPolicy(
++                owned_allow_policy, first_context),
++            "owned policy first generation");
++    first_context.reset();
++    require(!first_lifetime.expired(),
++            "connection authority did not retain its owned policy context",
++            checks);
++    require(scalar_i64(db.get(), "SELECT 17;", "owned policy first query") == 17,
++            "owned policy first query changed its result",
++            checks);
++    {
++        const std::shared_ptr<OwnedPolicyState> retained =
++            first_lifetime.lock();
++        require(retained != nullptr && retained->calls > 0,
++                "owned policy callback did not receive its retained context",
++                checks);
++    }
++
++    PolicyRetirementMutexProbe second_retirement(db.get());
++    auto second_context = std::shared_ptr<OwnedPolicyState>(
++        new OwnedPolicyState(),
++        OwnedPolicyStateDeleter{&second_retirement});
++    const std::weak_ptr<OwnedPolicyState> second_lifetime = second_context;
++    const SyncSqliteConnectionAuthorityProof second =
++        install_sync_sqlite_connection_authority_or_throw(
++            db.get(),
++            SyncSqliteOwnedAuthorizerPolicy(
++                owned_allow_policy, second_context),
++            "owned policy replacement generation");
++    require(second.authorizer_generation() ==
++                first.authorizer_generation() + 1,
++            "owned policy replacement did not advance the generation",
++            checks);
++    require(first_lifetime.expired() && first_retirement.releases() == 1,
++            "replaced policy context was not released exactly once",
++            checks);
++    require(first_retirement.result() == SQLITE_OK,
++            "replaced policy context was released while SQLite mutex remained held",
++            checks);
++
++    second_context.reset();
++    require(!second_lifetime.expired(),
++            "replacement policy context was not retained by the connection",
++            checks);
++
++    int raw_context = 0;
++    require_throws(
++        [&] {
++            (void)install_sync_sqlite_connection_authority_or_throw(
++                db.get(),
++                owned_allow_policy,
++                &raw_context,
++                "raw policy context rejection");
++        },
++        "raw authorizer policy context is not owned",
++        "raw policy context remained an accepted retained lifetime",
++        checks);
++    {
++        SyncSqliteConnectionAuthorityLease lease =
++            acquire_sync_sqlite_connection_authority_or_throw(
++                db.get(), second, "raw policy rejection continuity");
++        require(lease.active(),
++                "raw policy rejection superseded the live owned generation",
++                checks);
++    }
++
++    revoke_sync_sqlite_connection_authority_before_close_noexcept(db.get());
++    require(second_lifetime.expired() && second_retirement.releases() == 1,
++            "revoked policy context was not released exactly once",
++            checks);
++    require(second_retirement.result() == SQLITE_OK,
++            "revoked policy context was released while SQLite mutex remained held",
++            checks);
++    require(!sync_sqlite_connection_authority_state_present_or_throw(
++                db.get(), "owned policy post-revoke state"),
++            "owned policy revoke left connection authority state behind",
++            checks);
++}
++
+ void test_replacement_disable_and_generation(std::uint64_t& checks) {
+     SqlitePtr db = open_memory_database();
+     const SyncSqliteConnectionAuthorityProof first =
+@@ -1737,6 +1931,7 @@ int main(int argc, char** argv) {
+     std::uint64_t checks = 0;
+     try {
+         test_install_probe_and_policy(checks);
++        test_owned_policy_context_lifetime_and_retirement(checks);
+         test_prepared_statement_is_reauthorized(checks);
+         test_policy_boundary_fails_closed(checks);
+         test_replacement_disable_and_generation(checks);
+diff --git a/tests/sqlite_owned_authorizer_policy_test.cpp b/tests/sqlite_owned_authorizer_policy_test.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..b740885c3af4c57c24bb6a6890c13d71ab2606ff
+--- /dev/null
++++ b/tests/sqlite_owned_authorizer_policy_test.cpp
+@@ -0,0 +1,247 @@
++#include "sync_sqlite_owned_authorizer_policy.hpp"
++
++#if defined(__unix__) || defined(__APPLE__)
++#include "inherited_test_process.hpp"
++#endif
++
++#include <chrono>
++#include <cstdint>
++#include <cstdlib>
++#include <iostream>
++#include <memory>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <type_traits>
++#include <utility>
++
++namespace {
++
++using anonsync::SyncSqliteOwnedAuthorizerPolicy;
++using anonsync::kSyncProcessCapabilityViolationExitCode;
++
++#if defined(__unix__) || defined(__APPLE__)
++using anonsync::test::spawn_inherited_test_process_or_throw;
++using namespace std::chrono_literals;
++#endif
++
++struct PolicyState final {
++    std::uint64_t calls = 0;
++    int last_action = 0;
++    int decision = 0;
++};
++
++int counting_policy(void* raw,
++                    int action,
++                    const char*,
++                    const char*,
++                    const char*,
++                    const char*) noexcept {
++    auto* const state = static_cast<PolicyState*>(raw);
++    if (state == nullptr) return -1;
++    ++state->calls;
++    state->last_action = action;
++    return state->decision;
++}
++
++int contextless_policy(void* raw,
++                       int action,
++                       const char*,
++                       const char*,
++                       const char*,
++                       const char*) noexcept {
++    return raw == nullptr ? action + 1 : -1;
++}
++
++[[noreturn]] void fail(const std::string& message) {
++    throw std::runtime_error(message);
++}
++
++void expect(bool condition, std::string_view label, std::uint64_t& checks) {
++    ++checks;
++    if (!condition) fail(std::string(label));
++}
++
++template <typename Exception, typename Function>
++void expect_exception(Function&& function,
++                      std::string_view fragment,
++                      std::string_view label,
++                      std::uint64_t& checks) {
++    ++checks;
++    try {
++        function();
++    } catch (const Exception& error) {
++        if (std::string_view(error.what()).find(fragment) !=
++            std::string_view::npos) {
++            return;
++        }
++        fail(std::string(label) + ": unexpected error: " + error.what());
++    }
++    fail(std::string(label) + ": no exception");
++}
++
++void test_type_and_empty_contract(std::uint64_t& checks) {
++    static_assert(!std::is_copy_constructible_v<
++                  SyncSqliteOwnedAuthorizerPolicy>);
++    static_assert(!std::is_copy_assignable_v<
++                  SyncSqliteOwnedAuthorizerPolicy>);
++    static_assert(std::is_nothrow_move_constructible_v<
++                  SyncSqliteOwnedAuthorizerPolicy>);
++    static_assert(!std::is_move_assignable_v<
++                  SyncSqliteOwnedAuthorizerPolicy>);
++
++    SyncSqliteOwnedAuthorizerPolicy empty;
++    expect(empty.empty() && !empty.valid() && !empty.owns_context(),
++           "default policy owner is exactly empty",
++           checks);
++    expect_exception<std::logic_error>(
++        [&] { (void)empty.invoke(1, nullptr, nullptr, nullptr, nullptr); },
++        "owner is empty",
++        "empty policy invocation is rejected",
++        checks);
++    expect_exception<std::invalid_argument>(
++        [] {
++            SyncSqliteOwnedAuthorizerPolicy invalid(nullptr);
++            (void)invalid;
++        },
++        "policy is null",
++        "null callback is rejected",
++        checks);
++}
++
++void test_contextless_policy(std::uint64_t& checks) {
++    SyncSqliteOwnedAuthorizerPolicy policy(contextless_policy);
++    expect(policy.valid() && !policy.empty() && !policy.owns_context(),
++           "contextless callback remains a valid policy",
++           checks);
++    expect(policy.invoke(41, nullptr, nullptr, nullptr, nullptr) == 42,
++           "contextless callback receives a null context",
++           checks);
++}
++
++void test_owned_context_move_swap_and_release(std::uint64_t& checks) {
++    auto external = std::make_shared<PolicyState>();
++    external->decision = 73;
++    const std::weak_ptr<PolicyState> lifetime = external;
++
++    SyncSqliteOwnedAuthorizerPolicy source(counting_policy, external);
++    expect(source.valid() && source.owns_context(),
++           "policy retains an owned context",
++           checks);
++    external.reset();
++    expect(!lifetime.expired(),
++           "external release does not revoke installed policy context",
++           checks);
++
++    SyncSqliteOwnedAuthorizerPolicy moved(std::move(source));
++    expect(source.empty() && moved.valid() && moved.owns_context(),
++           "move transfers callback and context as one capability",
++           checks);
++    expect(moved.invoke(19, nullptr, nullptr, nullptr, nullptr) == 73,
++           "moved policy remains callable",
++           checks);
++    {
++        const std::shared_ptr<PolicyState> retained = lifetime.lock();
++        expect(retained != nullptr && retained->calls == 1 &&
++                   retained->last_action == 19,
++               "callback observes the exact retained context",
++               checks);
++    }
++
++    SyncSqliteOwnedAuthorizerPolicy escrow;
++    escrow.swap(moved);
++    expect(moved.empty() && escrow.valid() && escrow.owns_context(),
++           "swap escrows the complete policy capability",
++           checks);
++    escrow.swap(escrow);
++    expect(escrow.valid(), "self-swap preserves policy authority", checks);
++
++    SyncSqliteOwnedAuthorizerPolicy final_owner(std::move(escrow));
++    expect(escrow.empty() && final_owner.valid(),
++           "a second source-first move remains exact",
++           checks);
++    final_owner.swap(moved);
++    expect(final_owner.empty() && moved.valid(),
++           "policy can be retired into an ordinary owner",
++           checks);
++
++    // Retire the final reference through a nested owner scope.
++    {
++        SyncSqliteOwnedAuthorizerPolicy retiring(std::move(moved));
++        expect(!lifetime.expired(),
++               "context remains live through the retiring owner",
++               checks);
++    }
++    expect(lifetime.expired(),
++           "retiring owner releases the final policy context exactly once",
++           checks);
++}
++
++#if defined(__unix__) || defined(__APPLE__)
++
++template <typename Function>
++void expect_inherited_fail_stop(Function&& function,
++                                std::string_view label,
++                                std::uint64_t& checks) {
++    auto child = spawn_inherited_test_process_or_throw(
++        [&function] {
++            function();
++            return 99;
++        },
++        label);
++    child.wait_for_exact_exit(kSyncProcessCapabilityViolationExitCode,
++                              5s,
++                              label);
++    ++checks;
++}
++
++void test_inherited_owner_fails_before_shared_state_access(
++    std::uint64_t& checks) {
++    auto context = std::make_shared<PolicyState>();
++    auto* const policy =
++        new SyncSqliteOwnedAuthorizerPolicy(counting_policy, context);
++
++    expect_inherited_fail_stop(
++        [policy] { (void)policy->valid(); },
++        "inherited inspection fails stopped",
++        checks);
++    expect_inherited_fail_stop(
++        [policy] {
++            SyncSqliteOwnedAuthorizerPolicy moved(std::move(*policy));
++            (void)moved;
++        },
++        "inherited move validates the source before shared_ptr transfer",
++        checks);
++    expect_inherited_fail_stop(
++        [policy] { delete policy; },
++        "inherited destruction fails before shared_ptr teardown",
++        checks);
++
++    delete policy;
++    expect(context.use_count() == 1,
++           "child fail-stop paths do not alter the parent context lifetime",
++           checks);
++}
++
++#endif
++
++}  // namespace
++
++int main() {
++    std::uint64_t checks = 0;
++    try {
++        test_type_and_empty_contract(checks);
++        test_contextless_policy(checks);
++        test_owned_context_move_swap_and_release(checks);
++#if defined(__unix__) || defined(__APPLE__)
++        test_inherited_owner_fails_before_shared_state_access(checks);
++#endif
++        std::cout << "sqlite owned-authorizer-policy tests passed: " << checks
++                  << " checks\n";
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "sqlite owned-authorizer-policy tests failed after "
++                  << checks << " checks: " << error.what() << "\n";
++        return 1;
++    }
++}
+diff --git a/tests/sqlite_transaction_exception_composition_test.cpp b/tests/sqlite_transaction_exception_composition_test.cpp
+index 3032c88af17bc02e7ea10d7723b394ab0681bb54..76ead076619fec68435f257d9eb7ed5d47f8a7da 100644
+--- a/tests/sqlite_transaction_exception_composition_test.cpp
++++ b/tests/sqlite_transaction_exception_composition_test.cpp
+@@ -132,7 +132,9 @@ int one_shot_cutpoint_policy(void* raw,
+ }
+ 
+ struct Fixture final {
+-    OneShotBoundaryCutpoint cutpoint;
++    std::shared_ptr<OneShotBoundaryCutpoint> cutpoint_owner =
++        std::make_shared<OneShotBoundaryCutpoint>();
++    OneShotBoundaryCutpoint& cutpoint = *cutpoint_owner;
+     SqlitePtr db = open_memory_database();
+     SyncSqliteConnectionAuthorityProof authority;
+ 
+@@ -143,8 +145,8 @@ struct Fixture final {
+             "exception-composition schema");
+         authority = install_sync_sqlite_connection_authority_or_throw(
+             db.get(),
+-            one_shot_cutpoint_policy,
+-            &cutpoint,
++            SyncSqliteOwnedAuthorizerPolicy(
++                one_shot_cutpoint_policy, cutpoint_owner),
+             "exception-composition authority");
+         if (!authority.valid()) fail("exception-composition authority is invalid");
+     }
+diff --git a/tools/audit_inherited_test_process.py b/tools/audit_inherited_test_process.py
+index a2b4feb544dd15d46ebb3b8c48c099908d299030..46d88f9b117a83b97a9e4508ba4cac94355185f2 100644
+--- a/tools/audit_inherited_test_process.py
++++ b/tools/audit_inherited_test_process.py
+@@ -324,8 +324,8 @@ def main() -> int:
+     total_spawns = sum(observed_counts.values())
+     require(
+         raw_forks == 1
+-        and len(INHERITED_CONSUMERS) == 12
+-        and total_spawns == 22,
++        and len(INHERITED_CONSUMERS) == 13
++        and total_spawns == 23,
+         "inventory_metrics_are_exact",
+         f"raw_forks={raw_forks}, consumer_tus={len(INHERITED_CONSUMERS)}, spawn_sites={total_spawns}",
+     )
+diff --git a/tools/audit_raw_fork_boundaries.py b/tools/audit_raw_fork_boundaries.py
+index f120bc23cfa78fedba28535ad7fc2031374eb419..a0d8c05cb3c5b17a5b9a0ff3143a60b49892d4d9 100644
+--- a/tools/audit_raw_fork_boundaries.py
++++ b/tools/audit_raw_fork_boundaries.py
+@@ -35,6 +35,7 @@ INHERITED_CONSUMERS = {
+     "tests/process_incarnation_tests.cpp": 4,
+     "tests/thread_incarnation_tests.cpp": 2,
+     "tests/sqlite_owner_generation_borrow_test.cpp": 1,
++    "tests/sqlite_owned_authorizer_policy_test.cpp": 1,
+     "tests/sqlite_process_authority_fork_test.cpp": 1,
+     "tests/sqlite_replay_ledger_selftests.cpp": 3,
+     "tests/sqlite_source_first_move_test.cpp": 1,
+@@ -47,6 +48,7 @@ INHERITED_CONSUMER_TARGETS = (
+     "anonsync_process_incarnation_test",
+     "anonsync_thread_incarnation_test",
+     "anonsync_sqlite_owner_generation_borrow_test",
++    "anonsync_sqlite_owned_authorizer_policy_test",
+     "anonsync_sqlite_persistence_process_authority_fork_test",
+     "anonsync_sqlite_verification_budget_test",
+     "anonsync_sqlite_process_authority_fork_test",
+@@ -379,8 +381,8 @@ def main() -> int:
+             "production_raw_fork_calls": 0,
+             "test_raw_fork_calls": 1,
+             "raw_fork_translation_units": 1,
+-            "inherited_consumer_translation_units": 12,
+-            "inherited_spawn_sites": 22,
++            "inherited_consumer_translation_units": 13,
++            "inherited_spawn_sites": 23,
+             "fresh_image_migrated_campaigns": 7,
+         },
+         "inventory_metrics_are_exact",
+diff --git a/tools/audit_self_exec_test_process.py b/tools/audit_self_exec_test_process.py
+index ff8c62a279902198b3db0fc7c97400a7c060fe8d..8ff9addfd4730595873e7e1b7123e9f72b789107 100644
+--- a/tools/audit_self_exec_test_process.py
++++ b/tools/audit_self_exec_test_process.py
+@@ -627,9 +627,9 @@ def main() -> int:
+         in raw_fork_audit
+         and "inventory_metrics_are_exact" in raw_fork_audit
+         and '"test_raw_fork_calls": 1' in raw_fork_audit
+-        and '"inherited_spawn_sites": 22' in raw_fork_audit,
++        and '"inherited_spawn_sites": 23' in raw_fork_audit,
+         "raw_fork_inventory_is_fail_closed_and_exact",
+-        "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 29 inherited or fresh-image process sites",
++        "a separately registered audit rejects any production raw fork, centralizes the sole test call, discovers every wrapper consumer, and classifies all 30 inherited or fresh-image process sites",
+     )
+ 
+     require(
+diff --git a/tools/audit_sqlite_authorizer_owner.py b/tools/audit_sqlite_authorizer_owner.py
+old mode 100644
+new mode 100755
+index de3368853816d0e3511e0bf9ccb498606f463fb1..75039cca34e12df9ac800dbfc8633f3dea6df2ca
+--- a/tools/audit_sqlite_authorizer_owner.py
++++ b/tools/audit_sqlite_authorizer_owner.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-"""Audit SQLite authorizer callback ownership and revoke-before-close ordering."""
++"""Audit SQLite authorizer callback, policy-context, and close ordering."""
+ 
+ from __future__ import annotations
+ 
+@@ -44,28 +44,53 @@ def cpp_code_only(text: str) -> str:
+         nxt = text[i + 1] if i + 1 < len(text) else ""
+         if state == "code":
+             if ch == "/" and nxt == "/":
+-                out.extend("  "); i += 2; state = "line"; continue
++                out.extend("  ")
++                i += 2
++                state = "line"
++                continue
+             if ch == "/" and nxt == "*":
+-                out.extend("  "); i += 2; state = "block"; continue
++                out.extend("  ")
++                i += 2
++                state = "block"
++                continue
+             if ch in {'"', "'"}:
+-                quote = ch; out.append(" "); i += 1; state = "literal"; continue
+-            out.append(ch); i += 1; continue
++                quote = ch
++                out.append(" ")
++                i += 1
++                state = "literal"
++                continue
++            out.append(ch)
++            i += 1
++            continue
+         if state == "line":
+             out.append("\n" if ch == "\n" else " ")
+-            if ch == "\n": state = "code"
+-            i += 1; continue
++            if ch == "\n":
++                state = "code"
++            i += 1
++            continue
+         if state == "block":
+             if ch == "*" and nxt == "/":
+-                out.extend("  "); i += 2; state = "code"; continue
+-            out.append("\n" if ch == "\n" else " "); i += 1; continue
++                out.extend("  ")
++                i += 2
++                state = "code"
++                continue
++            out.append("\n" if ch == "\n" else " ")
++            i += 1
++            continue
+         if ch == "\\":
+-            out.append(" "); i += 1
++            out.append(" ")
++            i += 1
+             if i < len(text):
+-                out.append("\n" if text[i] == "\n" else " "); i += 1
++                out.append("\n" if text[i] == "\n" else " ")
++                i += 1
+             continue
+         if ch == quote:
+-            out.append(" "); i += 1; state = "code"; continue
+-        out.append("\n" if ch == "\n" else " "); i += 1
++            out.append(" ")
++            i += 1
++            state = "code"
++            continue
++        out.append("\n" if ch == "\n" else " ")
++        i += 1
+     return "".join(out)
+ 
+ 
+@@ -88,24 +113,31 @@ def main() -> int:
+     args = parser.parse_args()
+     root = args.root.resolve()
+ 
+-    required = [
+-        Path("CMakeLists.txt"),
+-        Path("src/persistence/sqlite_retained_callback_claim.hpp"),
+-        Path("src/persistence/sqlite_retained_callback_claim.cpp"),
+-        Path("src/persistence/sqlite_authorizer_owner.hpp"),
+-        Path("src/persistence/sqlite_authorizer_owner.cpp"),
+-        Path("src/sync_sqlite_connection_authority.cpp"),
+-        Path("src/sync_sqlite_connection_authority_internal.hpp"),
+-        Path("src/sync_sqlite_handle_slot.cpp"),
+-        Path("src/sync_peer_ingress_schema.cpp"),
+-        Path("tests/persistence/sqlite_authorizer_owner_tests.cpp"),
+-        Path("tests/sqlite_connection_authority_test.cpp"),
+-        Path("tools/verify_release_package.py"),
+-    ]
+-    missing = [path.as_posix() for path in required if not (root / path).is_file()]
++    paths = {
++        "cmake": Path("CMakeLists.txt"),
++        "claim_header": Path("src/persistence/sqlite_retained_callback_claim.hpp"),
++        "claim_owner": Path("src/persistence/sqlite_retained_callback_claim.cpp"),
++        "raw_header": Path("src/persistence/sqlite_authorizer_owner.hpp"),
++        "raw_owner": Path("src/persistence/sqlite_authorizer_owner.cpp"),
++        "policy_header": Path("src/sync_sqlite_owned_authorizer_policy.hpp"),
++        "policy_owner": Path("src/sync_sqlite_owned_authorizer_policy.cpp"),
++        "authority_header": Path("src/sync_sqlite_connection_authority.hpp"),
++        "authority": Path("src/sync_sqlite_connection_authority.cpp"),
++        "authority_internal": Path("src/sync_sqlite_connection_authority_internal.hpp"),
++        "handle_slot": Path("src/sync_sqlite_handle_slot.cpp"),
++        "schema": Path("src/sync_peer_ingress_schema.cpp"),
++        "raw_test": Path("tests/persistence/sqlite_authorizer_owner_tests.cpp"),
++        "policy_test": Path("tests/sqlite_owned_authorizer_policy_test.cpp"),
++        "authority_test": Path("tests/sqlite_connection_authority_test.cpp"),
++        "verifier": Path("tools/verify_release_package.py"),
++    }
++    missing = [path.as_posix() for path in paths.values() if not (root / path).is_file()]
+     if missing:
+-        payload = {"format": "anonsync-sqlite-authorizer-owner-audit-v1",
+-                   "passed": False, "missing": missing}
++        payload = {
++            "format": "anonsync-sqlite-authorizer-owner-audit-v2",
++            "passed": False,
++            "missing": sorted(missing),
++        }
+         rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+         if args.json:
+             args.json.parent.mkdir(parents=True, exist_ok=True)
+@@ -114,22 +146,30 @@ def main() -> int:
+             sys.stdout.write(rendered)
+         return 2
+ 
+-    texts = {path: (root / path).read_text(encoding="utf-8") for path in required}
+-    cmake = texts[required[0]]
+-    claim_header = texts[required[1]]
+-    claim_owner = texts[required[2]]
+-    header = texts[required[3]]
+-    owner = texts[required[4]]
+-    authority = texts[required[5]]
+-    authority_internal = texts[required[6]]
+-    handle_slot = texts[required[7]]
+-    schema = texts[required[8]]
+-    owner_test = texts[required[9]]
+-    authority_test = texts[required[10]]
+-    verifier = texts[required[11]]
++    text = {
++        name: (root / path).read_text(encoding="utf-8")
++        for name, path in paths.items()
++    }
++    cmake = text["cmake"]
++    claim_header = text["claim_header"]
++    claim_owner = text["claim_owner"]
++    raw_header = text["raw_header"]
++    raw_owner = text["raw_owner"]
++    policy_header = text["policy_header"]
++    policy_owner = text["policy_owner"]
++    authority_header = text["authority_header"]
++    authority = text["authority"]
++    authority_internal = text["authority_internal"]
++    handle_slot = text["handle_slot"]
++    schema = text["schema"]
++    raw_test = text["raw_test"]
++    policy_test = text["policy_test"]
++    authority_test = text["authority_test"]
++    verifier = text["verifier"]
+ 
+     sanitizer_block = cmake.split(
+-        'if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")', 1
++        'if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")',
++        1,
+     )[1].split("include(CTest)", 1)[0]
+     sanitizer_compile_targets = sanitizer_block.split(
+         "set(ANONSYNC_SANITIZER_COMPILE_TARGETS", 1
+@@ -140,214 +180,456 @@ def main() -> int:
+     authorizer_calls = call_inventory(root, "sqlite3_set_authorizer")
+     checks: list[Check] = []
+ 
+-    add(checks,
++    support_links = cmake.split(
++        "target_link_libraries(anonsync_sqlite_support", 1
++    )[1].split("target_compile_options(anonsync_sqlite_support", 1)[0]
++
++    add(
++        checks,
+         "add_library(anonsync_sqlite_authorizer_owner STATIC" in cmake
+-        and "${ANONSYNC_SQLITE_AUTHORIZER_OWNER_SOURCE}" in cmake
+-        and "anonsync_sqlite_authorizer_owner" in cmake.split(
+-            "add_library(anonsync_sqlite_support STATIC", 1
+-        )[1].split("target_compile_options(anonsync_sqlite_support", 1)[0],
+-        "owner_is_independent_support_dependency",
+-        "the raw callback owner is separately linkable and the support layer consumes it privately")
+-    add(checks,
+-        "anonsync_sqlite_authorizer_owner_test" in cmake
+-        and "anonsync_sqlite_authorizer_owner_source_audit" in cmake,
+-        "focused_test_and_audit_are_registered",
+-        "runtime and structural ownership obligations are both in CTest")
+-    add(checks,
+-        all(t in sanitizer_compile_targets for t in (
+-            "anonsync_sqlite_authorizer_owner",
+-            "anonsync_sqlite_authorizer_owner_test",
+-            "anonsync_sqlite_connection_authority_test"))
+-        and all(t in sanitizer_link_targets for t in (
+-            "anonsync_sqlite_authorizer_owner_test",
+-            "anonsync_sqlite_connection_authority_test")),
+-        "owner_and_consumers_are_in_sanitizer_graph",
+-        "ASan+UBSan instruments the focused owner and integrated authority corpus")
+-    add(checks,
+-        all(token in verifier for token in (
+-            '"src/persistence/sqlite_authorizer_owner.hpp"',
+-            '"src/persistence/sqlite_authorizer_owner.cpp"',
+-            '"tests/persistence/sqlite_authorizer_owner_tests.cpp"',
+-            '"tools/audit_sqlite_authorizer_owner.py"'))
+-        and "revision_number >= 850" in verifier,
+-        "release_verifier_requires_rev0850_boundary",
+-        "rev0850+ packages cannot omit the owner, focused proof, or audit")
+-    add(checks,
++        and "add_library(anonsync_sqlite_owned_authorizer_policy STATIC" in cmake
++        and "anonsync_sqlite_authorizer_owner" in support_links
++        and "anonsync_sqlite_owned_authorizer_policy" in support_links,
++        "owners_are_independent_support_dependencies",
++        "raw SQLite callback ownership and application policy ownership are separately linkable",
++    )
++    add(
++        checks,
++        all(
++            token in cmake
++            for token in (
++                "anonsync_sqlite_authorizer_owner_test",
++                "anonsync_sqlite_owned_authorizer_policy_test",
++                "anonsync_sqlite_authorizer_owner_source_audit",
++            )
++        ),
++        "focused_tests_and_composed_audit_are_registered",
++        "one existing structural audit covers both retained callback and policy-context ownership",
++    )
++    add(
++        checks,
++        all(
++            target in sanitizer_compile_targets
++            for target in (
++                "anonsync_sqlite_authorizer_owner",
++                "anonsync_sqlite_authorizer_owner_test",
++                "anonsync_sqlite_owned_authorizer_policy",
++                "anonsync_sqlite_owned_authorizer_policy_test",
++                "anonsync_sqlite_connection_authority_test",
++            )
++        )
++        and all(
++            target in sanitizer_link_targets
++            for target in (
++                "anonsync_sqlite_authorizer_owner_test",
++                "anonsync_sqlite_owned_authorizer_policy_test",
++                "anonsync_sqlite_connection_authority_test",
++            )
++        ),
++        "owners_and_consumers_are_in_sanitizer_graph",
++        "ASan+UBSan instruments both focused owners and the integrated authority corpus",
++    )
++    add(
++        checks,
++        all(
++            token in verifier
++            for token in (
++                '"src/persistence/sqlite_authorizer_owner.hpp"',
++                '"src/persistence/sqlite_authorizer_owner.cpp"',
++                '"tests/persistence/sqlite_authorizer_owner_tests.cpp"',
++                '"src/sync_sqlite_owned_authorizer_policy.hpp"',
++                '"src/sync_sqlite_owned_authorizer_policy.cpp"',
++                '"tests/sqlite_owned_authorizer_policy_test.cpp"',
++                '"tools/audit_sqlite_authorizer_owner.py"',
++                "revision_number >= 850",
++                "revision_number >= 851",
++            )
++        ),
++        "release_verifier_requires_both_revision_boundaries",
++        "rev0850 retains raw callback ownership and rev0851 adds owned policy context",
++    )
++    add(
++        checks,
+         authorizer_calls == {"src/persistence/sqlite_authorizer_owner.cpp": 3},
+         "all_production_authorizer_setters_are_owner_confined",
+-        f"inventory={authorizer_calls}")
+-    add(checks,
++        f"inventory={authorizer_calls}",
++    )
++    add(
++        checks,
+         "sqlite3_set_authorizer(" not in cpp_code_only(authority),
+         "connection_authority_has_no_raw_setter",
+-        "the integrated state machine consumes the focused owner")
+-    add(checks,
+-        all(token in header for token in (
+-            "class SqliteAuthorizerOwner final",
+-            "SqliteAuthorizerOwner(const SqliteAuthorizerOwner&) = delete",
+-            "SqliteAuthorizerOwner(SqliteAuthorizerOwner&&) = delete",
+-            "SqliteRetainedCallbackClaim callback_claim_",
+-            "sqlite3* database_ = nullptr",
+-            "void* callback_context_ = nullptr")),
+-        "owner_address_and_context_shape_are_stable",
+-        "the retained callback address cannot move and local lifetime shape is explicit")
+-    add(checks,
+-        "current_sync_process_incarnation_noexcept()" in owner
+-        and "sync_process_incarnation_is_current(process_id_)" in owner
+-        and "fail_stop_on_sync_process_capability_violation_noexcept()" in owner,
+-        "owner_is_process_incarnation_bound",
+-        "inherited access, detach, or destruction cannot touch copied SQLite state")
+-    add(checks,
+-        "database == nullptr || callback == nullptr || callback_context == nullptr" in owner
+-        and "label.empty()" in owner,
+-        "attach_and_replace_reject_ambient_inputs",
+-        "a retained context, callback, connection, and diagnostic identity are mandatory")
+-    add(checks,
+-        ordered(owner, "void SqliteAuthorizerOwner::attach(",
+-                "callback_claim_.attach(database",
+-                "sqlite3_set_authorizer(database, callback, callback_context)",
+-                "callback_claim_.detach(database)",
+-                "database_ = database", "callback_context_ = callback_context"),
+-        "attach_claims_lifetime_before_callback_publication",
+-        "registration failure consumes the named claim before the owner can appear live")
+-    add(checks,
+-        ordered(owner, "void SqliteAuthorizerOwner::replace(",
+-                "database_ != database", "callback_claim_.require_live(database)",
+-                "sqlite3_set_authorizer(database, callback, callback_context)",
+-                "callback_ = callback", "callback_context_ = callback_context"),
+-        "replacement_requires_exact_live_connection",
+-        "deliberate supersession cannot cross a connection or abandon the lifetime claim")
+-    add(checks,
+-        ordered(owner, "void SqliteAuthorizerOwner::detach(",
+-                "callback_claim_.require_live(database)",
+-                "sqlite3_set_authorizer(database, nullptr, nullptr)",
+-                "callback_claim_.detach(database)", "database_ = nullptr",
+-                "callback_context_ = nullptr"),
+-        "detach_revokes_callback_before_context_claim",
+-        "SQLite loses the raw address before its lifetime sentinel is consumed")
+-    add(checks,
+-        "SqliteAuthorizerOwner::~SqliteAuthorizerOwner()" in owner
+-        and "Auto-detach could dereference a database that was already closed or" in owner
+-        and "fail_stop_on_authorizer_owner_violation_noexcept();" in owner.split(
+-            "SqliteAuthorizerOwner::~SqliteAuthorizerOwner()", 1
+-        )[1].split("void SqliteAuthorizerOwner::attach", 1)[0],
+-        "destructor_rejects_unordered_implicit_detach",
+-        "a dead or replaced sqlite3 address is never guessed during destruction")
+-    add(checks,
+-        "anonsync.sqlite.authorizer-owner.v1" in owner
++        "the integrated state machine consumes the focused callback owner",
++    )
++
++    add(
++        checks,
++        all(
++            token in raw_header
++            for token in (
++                "class SqliteAuthorizerOwner final",
++                "SqliteAuthorizerOwner(const SqliteAuthorizerOwner&) = delete",
++                "SqliteAuthorizerOwner(SqliteAuthorizerOwner&&) = delete",
++                "SqliteRetainedCallbackClaim callback_claim_",
++                "sqlite3* database_ = nullptr",
++                "void* callback_context_ = nullptr",
++            )
++        ),
++        "raw_owner_address_and_context_shape_are_stable",
++        "SQLite's retained bridge context cannot move while the callback is installed",
++    )
++    add(
++        checks,
++        "current_sync_process_incarnation_noexcept()" in raw_owner
++        and "sync_process_incarnation_is_current(process_id_)" in raw_owner
++        and "fail_stop_on_sync_process_capability_violation_noexcept()" in raw_owner,
++        "raw_owner_is_process_incarnation_bound",
++        "inherited access, detach, or destruction cannot touch copied SQLite state",
++    )
++    add(
++        checks,
++        "database == nullptr || callback == nullptr || callback_context == nullptr"
++        in raw_owner
++        and "label.empty()" in raw_owner,
++        "raw_owner_rejects_ambient_inputs",
++        "a callback, stable bridge context, connection, and diagnostic identity are mandatory",
++    )
++    add(
++        checks,
++        ordered(
++            raw_owner,
++            "void SqliteAuthorizerOwner::attach(",
++            "callback_claim_.attach(database",
++            "sqlite3_set_authorizer(database, callback, callback_context)",
++            "callback_claim_.detach(database)",
++            "database_ = database",
++        ),
++        "raw_attach_claims_lifetime_before_callback_publication",
++        "registration failure consumes the named claim before the owner can appear live",
++    )
++    add(
++        checks,
++        ordered(
++            raw_owner,
++            "void SqliteAuthorizerOwner::replace(",
++            "database_ != database",
++            "callback_claim_.require_live(database)",
++            "sqlite3_set_authorizer(database, callback, callback_context)",
++            "callback_ = callback",
++        ),
++        "raw_replacement_requires_exact_live_connection",
++        "deliberate supersession cannot cross a connection or abandon the claim",
++    )
++    add(
++        checks,
++        ordered(
++            raw_owner,
++            "void SqliteAuthorizerOwner::detach(",
++            "callback_claim_.require_live(database)",
++            "sqlite3_set_authorizer(database, nullptr, nullptr)",
++            "callback_claim_.detach(database)",
++            "database_ = nullptr",
++        ),
++        "raw_detach_revokes_callback_before_claim",
++        "SQLite loses the callback address before its independent sentinel is consumed",
++    )
++    add(
++        checks,
++        "anonsync.sqlite.authorizer-owner.v1" in raw_owner
+         and "registration_pending = 0" in claim_owner
+-        and "live = 1" in claim_owner and "detaching = 2" in claim_owner
++        and "live = 1" in claim_owner
++        and "detaching = 2" in claim_owner
+         and "thread_local void* g_authorized_retained_claim_destruction" in claim_owner
+         and "class SqliteRetainedCallbackClaim final" in claim_header,
+         "shared_claim_has_state_and_exact_thread_witness",
+-        "close/replacement destruction is authorized only by reviewed synchronous calls")
+-    add(checks,
+-        "persistence::SqliteAuthorizerOwner authorizer_owner" in authority,
+-        "connection_state_composes_focused_owner",
+-        "callback context and owner share one explicit enclosing lifetime")
+-    add(checks,
+-        ordered(authority, "void destroy_connection_authority_state(void* raw) noexcept",
+-                "if (state->authorizer_owner.attached())",
+-                "fail_stop_on_sync_process_capability_violation_noexcept()", "delete state"),
+-        "state_destruction_rejects_live_callback",
+-        "same-name replacement or raw close cannot free the retained context")
+-    add(checks,
+-        ordered(authority, "ConnectionAuthorityState* load_connection_authority_state_or_throw(",
+-                "sync_process_incarnation_is_current(state->process_id)",
+-                "state->authorizer_owner.require_live(db)", "return state"),
+-        "every_state_load_proves_authorizer_lifetime_claim",
+-        "client-data presence alone is not callback-context authority")
+-    add(checks,
+-        ordered(authority, "if (state == nullptr) {", "sqlite3_set_clientdata(",
+-                "state->authorizer_owner.attach(", "run_authorizer_ownership_probe_or_throw"),
+-        "first_install_orders_state_then_callback_then_probe",
+-        "context is SQLite-owned before callback publication and proof return")
+-    add(checks,
+-        ordered(authority, "state->authorizer_owner.attach(", "} catch (...) {",
+-                "kConnectionAuthorityClientDataName, nullptr, nullptr", "throw;"),
+-        "failed_attach_consumes_state_slot",
+-        "an attach failure cannot leave an unproved authority state resident")
+-    add(checks,
+-        ordered(authority, "state->authorizer_owner.replace(", "state->policy = policy",
+-                "state->policy_context = policy_context", "++state->authorizer_generation",
+-                "run_authorizer_ownership_probe_or_throw"),
+-        "replacement_advances_generation_only_after_callback_setter",
+-        "failed supersession cannot mint a new authority proof")
+-    add(checks,
+-        "probe_nonce" in authority and "observed_probe_nonce" in authority
++        "close/replacement destruction is authorized only by reviewed synchronous calls",
++    )
++
++    add(
++        checks,
++        all(
++            token in policy_header
++            for token in (
++                "class SyncSqliteOwnedAuthorizerPolicy final",
++                "std::shared_ptr<void> context_owner_",
++                "SyncSqliteOwnedAuthorizerPolicy&& other) noexcept",
++                "SyncSqliteOwnedAuthorizerPolicy&&) = delete",
++                "void swap(SyncSqliteOwnedAuthorizerPolicy& other) noexcept",
++                "SyncProcessIncarnation process_id_",
++            )
++        ),
++        "policy_owner_is_move_only_process_bound_storage",
++        "callback and optional shared context move only through an explicit capability",
++    )
++    add(
++        checks,
++        ordered(
++            policy_owner,
++            "SyncSqliteOwnedAuthorizerPolicy::SyncSqliteOwnedAuthorizerPolicy(",
++            "SyncSqliteOwnedAuthorizerPolicy&& other) noexcept",
++            "other.require_current_process_noexcept()",
++            "context_owner_ = std::move(other.context_owner_)",
++            "other.policy_ = nullptr",
++        ),
++        "policy_move_validates_source_before_context_transfer",
++        "an inherited owner fails stopped before its shared_ptr control block is touched",
++    )
++    add(
++        checks,
++        ordered(
++            policy_owner,
++            "SyncSqliteOwnedAuthorizerPolicy::~SyncSqliteOwnedAuthorizerPolicy()",
++            "require_current_process_noexcept()",
++            "require_shape_noexcept()",
++        )
++        and "before context_owner_ reaches its implicit destructor" in policy_owner,
++        "policy_destructor_validates_before_context_release",
++        "foreign-process destruction cannot decrement inherited shared ownership",
++    )
++    add(
++        checks,
++        ordered(
++            policy_owner,
++            "int SyncSqliteOwnedAuthorizerPolicy::invoke(",
++            "require_current_process_noexcept()",
++            "if (policy_ == nullptr)",
++            "policy_(context_owner_.get()",
++        ),
++        "policy_invocation_uses_owned_context_only",
++        "the callback receives no separately retained raw application pointer",
++    )
++
++    state_block = authority.split("struct ConnectionAuthorityState final", 1)[1].split(
++        "class RetainedMutexCapabilityReservation", 1
++    )[0]
++    add(
++        checks,
++        "SyncSqliteOwnedAuthorizerPolicy policy_owner;" in state_block
++        and "persistence::SqliteAuthorizerOwner authorizer_owner;" in state_block
++        and "void* policy_context" not in state_block
++        and "SyncSqliteAuthorizerPolicy policy =" not in state_block,
++        "connection_state_composes_both_owners_without_raw_policy_state",
++        "SQLite bridge lifetime and application policy lifetime are explicit independent members",
++    )
++    add(
++        checks,
++        ordered(
++            authority,
++            "void destroy_connection_authority_state(void* raw) noexcept",
++            "state->authorizer_owner.attached() || !state->policy_owner.empty()",
++            "fail_stop_on_sync_process_capability_violation_noexcept()",
++            "delete state",
++        ),
++        "state_destruction_rejects_live_callback_or_policy",
++        "raw close or same-name replacement cannot run a policy deleter from SQLite",
++    )
++    add(
++        checks,
++        ordered(
++            authority,
++            "ConnectionAuthorityState* load_connection_authority_state_or_throw(",
++            "!state->policy_owner.valid()",
++            "state->authorizer_owner.require_live(db)",
++            "return state",
++        ),
++        "every_state_load_proves_both_lifetimes",
++        "client-data presence alone is neither callback nor policy-context authority",
++    )
++    add(
++        checks,
++        ordered(
++            authority,
++            "if (state == nullptr) {",
++            "sqlite3_set_clientdata(",
++            "state->authorizer_owner.attach(",
++            "state->policy_owner.swap(policy)",
++            "run_authorizer_ownership_probe_or_throw",
++        ),
++        "first_install_publishes_empty_state_then_callback_then_policy",
++        "SQLite allocation failure cannot synchronously dispose application policy state",
++    )
++    add(
++        checks,
++        ordered(
++            authority,
++            "state->authorizer_owner.attach(",
++            "} catch (...) {",
++            "kConnectionAuthorityClientDataName, nullptr, nullptr",
++            "throw;",
++            "state->policy_owner.swap(policy)",
++        ),
++        "failed_attach_consumes_policy_empty_state_slot",
++        "an attach failure cannot leave policy state or callback state resident",
++    )
++    add(
++        checks,
++        ordered(
++            authority,
++            "state->authorizer_owner.replace(",
++            "state->policy_owner.swap(policy)",
++            "retired_policy.swap(policy)",
++            "++state->authorizer_generation",
++            "run_authorizer_ownership_probe_or_throw",
++        ),
++        "replacement_escrows_old_policy_before_generation_advance",
++        "failed callback supersession cannot mutate policy or mint a generation",
++    )
++    add(
++        checks,
++        ordered(
++            authority,
++            "SyncSqliteAuthorizerPolicy policy,",
++            "if (policy == nullptr)",
++            "if (policy_context != nullptr)",
++            "raw authorizer policy context is not owned",
++            "SyncSqliteOwnedAuthorizerPolicy(policy)",
++        )
++        and "use the owned-policy overload instead" in authority_header,
++        "raw_api_accepts_only_context_free_compatibility",
++        "arbitrary external void* lifetime can no longer enter retained connection state",
++    )
++    add(
++        checks,
++        "state.policy_owner.invoke(" in authority
++        and "state.policy(" not in authority
++        and "state.policy_context" not in authority,
++        "bridge_invokes_only_owned_policy",
++        "all policy callbacks resolve context through the process-bound owner",
++    )
++    add(
++        checks,
++        "probe_nonce" in authority
++        and "observed_probe_nonce" in authority
+         and "run_authorizer_ownership_probe_or_throw" in authority
+         and "authorizer ownership probe failed: callback was disabled, replaced" in authority,
+         "use_time_probe_detects_unobservable_raw_replacement",
+-        "client-data claim is paired with executable callback-identity evidence")
+-    add(checks,
+-        all(token in authority for token in (
+-            "state->probe_active", "state->transaction_permit_active",
+-            "state->savepoint_permit_active", "sqlite3_get_autocommit(db) == 0")),
+-        "close_rejects_active_authority_boundaries",
+-        "revocation cannot cross a probe, permit, or live transaction")
+-    add(checks,
+-        ordered(authority, "void revoke_connection_authority_state_locked_noexcept(",
+-                "state->active_savepoints.clear()", "state->authorizer_owner.detach(db)",
+-                "kConnectionAuthorityClientDataName, nullptr, nullptr"),
+-        "close_consumes_callback_before_context_state",
+-        "callback, claim, then callback-context storage are revoked in dependency order")
+-    add(checks,
++        "client-data claims remain paired with executable callback-identity evidence",
++    )
++    add(
++        checks,
++        ordered(
++            authority,
++            "void revoke_connection_authority_state_locked_noexcept(",
++            "state->authorizer_owner.detach(db)",
++            "state->policy_owner.swap(retired_policy)",
++            "kConnectionAuthorityClientDataName, nullptr, nullptr",
++        ),
++        "locked_revoke_detaches_then_escrows_then_destroys_state",
++        "SQLite forgets callback and state before application policy can be released",
++    )
++    add(
++        checks,
+         "revoke_sync_sqlite_connection_authority_before_close_noexcept" in authority_internal
+-        and ordered(authority, "void revoke_sync_sqlite_connection_authority_before_close_noexcept(",
+-                    "sqlite3_get_clientdata(db, kConnectionAuthorityClientDataName)",
+-                    "sqlite3_db_mutex(db)", "sqlite3_mutex_enter(mutex)",
+-                    "revoke_connection_authority_state_locked_noexcept(db, state)",
+-                    "sqlite3_mutex_leave(mutex)"),
+-        "public_internal_close_hook_serializes_exact_state_consumption",
+-        "NOMUTEX connections without authority remain closable while owned state is serialized")
+-    add(checks,
+-        ordered(handle_slot, "void SyncSqliteDbHandlePolicy::dispose(Handle* handle) noexcept",
+-                "sqlite3_get_autocommit(handle)",
+-                "revoke_sync_sqlite_connection_authority_before_close_noexcept(handle)",
+-                "sqlite3_close(handle)")
++        and ordered(
++            authority,
++            "void revoke_sync_sqlite_connection_authority_before_close_noexcept(",
++            "SyncSqliteOwnedAuthorizerPolicy retired_policy",
++            "sqlite3_mutex_enter(mutex)",
++            "revoke_connection_authority_state_locked_noexcept(",
++            "sqlite3_mutex_leave(mutex)",
++        ),
++        "public_close_hook_releases_retired_policy_after_mutex_leave",
++        "the retirement escrow outlives the manually held SQLite critical section",
++    )
++    add(
++        checks,
++        ordered(
++            handle_slot,
++            "void SyncSqliteDbHandlePolicy::dispose(Handle* handle) noexcept",
++            "sqlite3_get_autocommit(handle)",
++            "revoke_sync_sqlite_connection_authority_before_close_noexcept(handle)",
++            "sqlite3_close(handle)",
++        )
+         and "sqlite3_close_v2(handle)" not in handle_slot,
+         "typed_owner_revokes_before_strict_close",
+-        "production cannot defer callback-context destruction behind zombie close")
+-    add(checks,
++        "production cannot defer callback or context destruction behind zombie close",
++    )
++    add(
++        checks,
+         schema.count("install_sync_sqlite_connection_authority_or_throw(") == 1
+-        and ordered(schema, "install_sync_sqlite_connection_authority_or_throw(",
+-                    "peer_transport_ingress_schema_authorizer", "nullptr"),
+-        "production_policy_context_is_nonretained_null",
+-        "the only production policy installation adds no external context lifetime")
+-    add(checks,
+-        all(token in owner_test for token in (
+-            "test_type_and_input_contract", "test_attach_replace_detach_and_reuse",
+-            "duplicate owner cannot replace the singleton claim",
+-            "adversarial raw replacement fixture installed",
+-            "explicit owner replacement recovers the singleton callback",
+-            "detach disables the retained callback before context release",
+-            "consumed singleton claim can be reused")),
+-        "focused_runtime_covers_attach_replacement_detach_reuse",
+-        "the owner corpus executes ordinary, duplicate, alien, and reuse transitions")
+-    add(checks,
+-        all(token in authority_test for token in (
+-            "test_authorizer_teardown_consumes_retained_context",
+-            '"anonsync.sqlite.connection-authority.v1"',
+-            '"anonsync.sqlite.authorizer-owner.v1"',
+-            "teardown left the connection-authority state live",
+-            "teardown left the authorizer lifetime claim live")),
+-        "integrated_runtime_proves_both_clientdata_slots_consumed",
+-        "ordinary teardown removes callback context and lifetime claim")
+-    add(checks,
+-        all(token in authority_test for token in (
+-            '"close-live-authorizer-only"', '"replace-live-authority-state"',
+-            "raw close with a live authorizer context did not fail-stop",
+-            "replacement of the live authorizer context state did not fail-stop")),
++        and ordered(
++            schema,
++            "install_sync_sqlite_connection_authority_or_throw(",
++            "peer_transport_ingress_schema_authorizer",
++            "nullptr",
++        ),
++        "production_uses_context_free_compatibility_lane",
++        "the current production policy supplies no external application context",
++    )
++
++    add(
++        checks,
++        all(
++            token in raw_test
++            for token in (
++                "test_type_and_input_contract",
++                "test_attach_replace_detach_and_reuse",
++                "duplicate owner cannot replace the singleton claim",
++                "adversarial raw replacement fixture installed",
++                "detach disables the retained callback before context release",
++            )
++        ),
++        "focused_raw_runtime_covers_attach_replace_detach",
++        "the callback owner corpus executes ordinary, duplicate, alien, and reuse transitions",
++    )
++    add(
++        checks,
++        all(
++            token in policy_test
++            for token in (
++                '#include "inherited_test_process.hpp"',
++                "spawn_inherited_test_process_or_throw(",
++                "test_type_and_empty_contract",
++                "test_owned_context_move_swap_and_release",
++                "test_inherited_owner_fails_before_shared_state_access",
++                "inherited move validates the source before shared_ptr transfer",
++                "retiring owner releases the final policy context exactly once",
++            )
++        )
++        and "::fork(" not in policy_test
++        and "::waitpid(" not in policy_test,
++        "focused_policy_runtime_covers_move_release_and_fork",
++        "the dependency-light owner has executable ownership and centralized inherited-process proofs",
++    )
++    add(
++        checks,
++        all(
++            token in authority_test
++            for token in (
++                "test_owned_policy_context_lifetime_and_retirement",
++                "connection authority did not retain its owned policy context",
++                "replaced policy context was released while SQLite mutex remained held",
++                "revoked policy context was released while SQLite mutex remained held",
++                "raw policy context remained an accepted retained lifetime",
++            )
++        ),
++        "integrated_runtime_proves_retirement_outside_mutex",
++        "replacement and revoke execute custom-deleter mutex probes and raw-context rejection",
++    )
++    add(
++        checks,
++        all(
++            token in authority_test
++            for token in (
++                '"close-live-authorizer-only"',
++                '"replace-live-authority-state"',
++                "raw close with a live authorizer context did not fail-stop",
++                "replacement of the live authorizer context state did not fail-stop",
++            )
++        ),
+         "raw_close_and_context_replacement_fail_stopped",
+-        "fresh-image probes make both previously unsafe destruction paths executable")
+-    add(checks,
++        "fresh-image probes keep unsafe SQLite-owned destruction paths executable",
++    )
++    add(
++        checks,
+         "revoke_sync_sqlite_connection_authority_before_close_noexcept" in authority_test
+         and "foreign close crossed a retained mutex capability" in authority_test,
+         "cross_thread_close_waits_for_live_lease",
+-        "close serialization is tested against an exact retained mutex generation")
++        "close serialization is tested against an exact retained mutex generation",
++    )
+ 
+     passed = all(check.passed for check in checks)
+     payload = {
+-        "format": "anonsync-sqlite-authorizer-owner-audit-v1",
++        "format": "anonsync-sqlite-authorizer-owner-audit-v2",
+         "passed": passed,
+         "check_count": len(checks),
+         "passed_check_count": sum(check.passed for check in checks),
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 5d82b4f6064bf0aa849ac3ab5f35481e144adb04..93b7e9c489999b47c168a24995ac09095c56b080 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -293,6 +293,12 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tests/persistence/sqlite_authorizer_owner_tests.cpp",
+             "tools/audit_sqlite_authorizer_owner.py",
+         })
++    if revision_number is not None and revision_number >= 851:
++        revision_scoped_required.update({
++            "src/sync_sqlite_owned_authorizer_policy.hpp",
++            "src/sync_sqlite_owned_authorizer_policy.cpp",
++            "tests/sqlite_owned_authorizer_policy_test.cpp",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

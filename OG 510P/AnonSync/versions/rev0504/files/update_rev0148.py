@@ -1,0 +1,1 @@
+print("AnonSync rev0148: added external-guidance source-boundary / fetch-snapshot / frozen-review-basis spec and refreshed top-level doctrine so live source locators stop masquerading as the exact reviewed instruction basis.")

@@ -1,0 +1,891 @@
+diff --git a/src/sync_replica_folder_observer.cpp b/src/sync_replica_folder_observer.cpp
+index 6a94d69..114a8c1 100644
+--- a/src/sync_replica_folder_observer.cpp
++++ b/src/sync_replica_folder_observer.cpp
+@@ -247,6 +247,7 @@ enum class WalkDisposition : std::uint8_t {
+     Continue = 1,
+     StoppedAtAggregateFileByteFrontier = 2,
+     StoppedAtRegularFileCountFrontier = 3,
++    StoppedAtDirectoryCensusFrontier = 4,
+ };
+ 
+ struct WalkContext final {
+@@ -267,6 +268,18 @@ struct WalkContext final {
+     std::uint64_t encountered_regular_file_count = 0U;
+ };
+ 
++struct SortedComponentBatch final {
++    std::vector<std::string> components;
++    std::uint64_t eligible_component_count = 0U;
++    bool has_more = false;
++};
++
++[[nodiscard]] WalkDisposition walk_directory_or_throw(
++    WalkContext& context,
++    int owned_descriptor,
++    const std::string& parent_path,
++    std::uint64_t depth);
++
+ void increment_entry_count_or_throw(WalkContext& context) {
+     if (context.summary.visited_entry_count ==
+         std::numeric_limits<std::uint64_t>::max()) {
+@@ -494,6 +507,98 @@ void observe_regular_file_or_throw(
+     return WalkDisposition::Continue;
+ }
+ 
++void note_directory_enumeration_pass_or_throw(WalkContext& context) {
++    if (context.segment == nullptr) return;
++    if (context.segment->directory_enumeration_pass_count ==
++        std::numeric_limits<std::uint64_t>::max()) {
++        throw std::runtime_error(
++            context.label + " directory enumeration pass count exceeds uint64 range");
++    }
++    ++context.segment->directory_enumeration_pass_count;
++}
++
++void note_buffered_component_count_or_throw(
++    WalkContext& context,
++    std::size_t count) {
++    if (context.segment == nullptr) return;
++    const std::uint64_t count_u64 = static_cast<std::uint64_t>(count);
++    if (static_cast<std::size_t>(count_u64) != count) {
++        throw std::runtime_error(
++            context.label + " buffered component count exceeds uint64 range");
++    }
++    context.segment->peak_buffered_directory_component_batch_count = std::max(
++        context.segment->peak_buffered_directory_component_batch_count,
++        count_u64);
++}
++
++[[nodiscard]] SortedComponentBatch
++read_next_sorted_component_batch_or_throw(
++    WalkContext& context,
++    ScopedDirectoryStream& directory,
++    const std::string& parent_path,
++    std::string_view after_component,
++    std::size_t maximum_components,
++    bool charge_entries) {
++    if (context.segment == nullptr) {
++        throw std::logic_error(
++            context.label + " bounded component batch requires a resumable segment");
++    }
++    constexpr std::size_t kBatchLimit = static_cast<std::size_t>(
++        kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch);
++    if (maximum_components == 0U || maximum_components > kBatchLimit) {
++        throw std::logic_error(
++            context.label + " invalid bounded component batch limit");
++    }
++    ::rewinddir(directory.get());
++    note_directory_enumeration_pass_or_throw(context);
++
++    std::vector<std::string> selected;
++    selected.reserve(maximum_components);
++    std::uint64_t eligible_count = 0U;
++    for (;;) {
++        errno = 0;
++        dirent* entry = ::readdir(directory.get());
++        if (entry == nullptr) {
++            const int error = errno;
++            if (error != 0) {
++                throw std::runtime_error(
++                    context.label + " readdir failed" +
++                    (parent_path.empty() ? std::string() :
++                                           " for " + parent_path) +
++                    ": " + error_text(error));
++            }
++            break;
++        }
++
++        const std::string_view component(entry->d_name);
++        if (component == "." || component == "..") continue;
++        if (charge_entries) increment_entry_count_or_throw(context);
++        if (!after_component.empty() && component <= after_component) continue;
++        if (eligible_count == std::numeric_limits<std::uint64_t>::max()) {
++            throw std::runtime_error(
++                context.label + " eligible component count exceeds uint64 range");
++        }
++        ++eligible_count;
++        if (selected.size() < maximum_components) {
++            selected.emplace_back(component);
++            std::push_heap(selected.begin(), selected.end());
++        } else if (component < selected.front()) {
++            std::pop_heap(selected.begin(), selected.end());
++            selected.back().assign(component.data(), component.size());
++            std::push_heap(selected.begin(), selected.end());
++        }
++    }
++
++    std::sort_heap(selected.begin(), selected.end());
++    SortedComponentBatch batch;
++    batch.components = std::move(selected);
++    batch.eligible_component_count = eligible_count;
++    batch.has_more = eligible_count >
++                     static_cast<std::uint64_t>(batch.components.size());
++    note_buffered_component_count_or_throw(context, batch.components.size());
++    return batch;
++}
++
+ [[nodiscard]] std::vector<std::string> read_sorted_components_or_throw(
+     WalkContext& context,
+     ScopedDirectoryStream& directory,
+@@ -514,36 +619,23 @@ void observe_regular_file_or_throw(
+             break;
+         }
+ 
+-        const std::string component(entry->d_name);
++        const std::string_view component(entry->d_name);
+         if (component == "." || component == "..") continue;
+         increment_entry_count_or_throw(context);
+-        components.push_back(component);
++        components.emplace_back(component);
+     }
+     std::sort(components.begin(), components.end());
+     return components;
+ }
+ 
+-[[nodiscard]] WalkDisposition walk_directory_or_throw(
++[[nodiscard]] WalkDisposition walk_component_batch_or_throw(
+     WalkContext& context,
+-    int owned_descriptor,
++    int parent_descriptor,
+     const std::string& parent_path,
+-    std::uint64_t depth) {
+-    ScopedDirectoryStream directory(
+-        owned_descriptor,
+-        context.label +
+-            (parent_path.empty() ? " root directory" :
+-                                   " directory " + parent_path));
+-    const int parent_descriptor = directory.descriptor();
+-    if (parent_descriptor < 0) {
+-        throw std::runtime_error(
+-            context.label + " directory descriptor became unavailable");
+-    }
+-
+-    const std::vector<std::string> components =
+-        read_sorted_components_or_throw(context, directory, parent_path);
++    std::uint64_t depth,
++    const std::vector<std::string>& components) {
+     for (const std::string& component : components) {
+-        const std::string canonical_path =
+-            child_path(parent_path, component);
++        const std::string canonical_path = child_path(parent_path, component);
+         const struct stat initial_status = lstat_child_or_throw(
+             parent_descriptor, component, canonical_path,
+             context.label + " classification");
+@@ -570,10 +662,9 @@ void observe_regular_file_or_throw(
+             canonical_path, context.limits, context.label);
+         if (S_ISREG(initial_status.st_mode)) {
+             increment_regular_file_count_or_throw(context, canonical_path);
+-            const WalkDisposition disposition =
+-                handle_regular_file_or_throw(
+-                    context, parent_descriptor, component, canonical_path,
+-                    initial_status);
++            const WalkDisposition disposition = handle_regular_file_or_throw(
++                context, parent_descriptor, component, canonical_path,
++                initial_status);
+             if (disposition != WalkDisposition::Continue) return disposition;
+             continue;
+         }
+@@ -583,8 +674,7 @@ void observe_regular_file_or_throw(
+                 context.label + " exceeds configured directory depth at " +
+                 canonical_path);
+         }
+-        const fs::path display_path =
+-            context.authority.path() / canonical_path;
++        const fs::path display_path = context.authority.path() / canonical_path;
+         SyncPosixOpenedDirectory opened =
+             sync_posix_open_directory_component_or_throw(
+                 parent_descriptor, component, display_path,
+@@ -618,6 +708,87 @@ void observe_regular_file_or_throw(
+     return WalkDisposition::Continue;
+ }
+ 
++[[nodiscard]] WalkDisposition walk_directory_or_throw(
++    WalkContext& context,
++    int owned_descriptor,
++    const std::string& parent_path,
++    std::uint64_t depth) {
++    ScopedDirectoryStream directory(
++        owned_descriptor,
++        context.label +
++            (parent_path.empty() ? " root directory" :
++                                   " directory " + parent_path));
++    const int parent_descriptor = directory.descriptor();
++    if (parent_descriptor < 0) {
++        throw std::runtime_error(
++            context.label + " directory descriptor became unavailable");
++    }
++
++    if (context.segment == nullptr) {
++        const std::vector<std::string> components =
++            read_sorted_components_or_throw(context, directory, parent_path);
++        return walk_component_batch_or_throw(
++            context, parent_descriptor, parent_path, depth, components);
++    }
++
++    constexpr std::uint64_t kBatchLimit =
++        kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch;
++    std::string after_component;
++    std::uint64_t remaining_first_census_components = 0U;
++    bool first_census = true;
++    for (;;) {
++        const std::uint64_t requested_components = first_census
++            ? kBatchLimit
++            : std::min(kBatchLimit, remaining_first_census_components);
++        if (requested_components == 0U) return WalkDisposition::Continue;
++        SortedComponentBatch batch =
++            read_next_sorted_component_batch_or_throw(
++                context, directory, parent_path, after_component,
++                static_cast<std::size_t>(requested_components),
++                first_census);
++        if (first_census) {
++            remaining_first_census_components =
++                batch.eligible_component_count;
++            first_census = false;
++        }
++        if (batch.components.empty()) return WalkDisposition::Continue;
++        const std::uint64_t consumed_components =
++            static_cast<std::uint64_t>(batch.components.size());
++        if (consumed_components > remaining_first_census_components) {
++            throw std::logic_error(
++                context.label + " component batch exceeded first census");
++        }
++
++        const WalkDisposition disposition = walk_component_batch_or_throw(
++            context, parent_descriptor, parent_path, depth,
++            batch.components);
++        if (disposition != WalkDisposition::Continue) return disposition;
++        remaining_first_census_components -= consumed_components;
++        if (remaining_first_census_components == 0U) {
++            // Names observed beyond the first census are bounded work, not
++            // end-of-namespace authority. They may also have displaced an
++            // original census member from the final selected batch. Preserve
++            // the last delivered regular-file cursor and require another
++            // segment instead of allowing deletion inference from a moving
++            // namespace.
++            return batch.has_more
++                ? WalkDisposition::StoppedAtDirectoryCensusFrontier
++                : WalkDisposition::Continue;
++        }
++        if (!batch.has_more) return WalkDisposition::Continue;
++
++        if (context.segment_limits == nullptr) {
++            throw std::logic_error(
++                context.label + " resumable traversal has no segment limits");
++        }
++        if (context.summary.regular_file_count >=
++            context.segment_limits->maximum_regular_files) {
++            return WalkDisposition::StoppedAtRegularFileCountFrontier;
++        }
++        after_component = std::move(batch.components.back());
++    }
++}
++
+ }  // namespace
+ 
+ bool sync_replica_folder_traversal_path_less(
+@@ -751,6 +922,11 @@ visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
+             segment.stop_reason = SyncReplicaFolderTraversalStopReason::
+                 RegularFileCountFrontier;
+             break;
++        case WalkDisposition::StoppedAtDirectoryCensusFrontier:
++            segment.completed = false;
++            segment.stop_reason = SyncReplicaFolderTraversalStopReason::
++                DirectoryCensusFrontier;
++            break;
+     }
+     segment.traversal = context.summary;
+     return segment;
+diff --git a/src/sync_replica_folder_observer.hpp b/src/sync_replica_folder_observer.hpp
+index b225a2f..e8e5028 100644
+--- a/src/sync_replica_folder_observer.hpp
++++ b/src/sync_replica_folder_observer.hpp
+@@ -53,6 +53,16 @@ struct SyncReplicaFolderObservationLimits final {
+ inline constexpr std::uint64_t
+     kSyncReplicaFolderTraversalDefaultMaximumRegularFiles = 4096U;
+ 
++// Resumable production walks never retain an entire flat directory's basename
++// vector. They select the next component-wise lexicographic batch with one
++// complete readdir pass, process it in order, and rescan only when the current
++// scheduling segment still has useful work capacity. This is an internal work-
++// memory boundary rather than a user policy knob: the independent namespace
++// entry ceiling remains authoritative and every non-dot entry in the first
++// complete directory census is charged exactly once.
++inline constexpr std::uint64_t
++    kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch = 4096U;
++
+ struct SyncReplicaFolderTraversalSegmentLimits final {
+     std::uint64_t maximum_regular_files =
+         kSyncReplicaFolderTraversalDefaultMaximumRegularFiles;
+@@ -97,6 +107,7 @@ enum class SyncReplicaFolderTraversalStopReason : std::uint8_t {
+     EndOfNamespace = 1,
+     AggregateFileByteFrontier = 2,
+     RegularFileCountFrontier = 3,
++    DirectoryCensusFrontier = 4,
+ };
+ 
+ [[nodiscard]] constexpr std::string_view
+@@ -111,6 +122,8 @@ sync_replica_folder_traversal_stop_reason_name(
+             return "aggregate_file_byte_frontier";
+         case SyncReplicaFolderTraversalStopReason::RegularFileCountFrontier:
+             return "regular_file_count_frontier";
++        case SyncReplicaFolderTraversalStopReason::DirectoryCensusFrontier:
++            return "directory_census_frontier";
+     }
+     return "unknown";
+ }
+@@ -127,13 +140,23 @@ struct SyncReplicaFolderTraversalSegment final {
+     SyncReplicaFolderTraversalSummary traversal;
+     // True only when the walk reached the end of the namespace. A false value
+     // means the next eligible regular file would have crossed the aggregate
+-    // byte or delivered-file-count frontier and was deliberately left for a
+-    // later segment. stop_reason distinguishes those scheduling outcomes
+-    // without making either one part of durable synchronization authority.
++    // byte or delivered-file-count frontier, or a later directory enumeration
++    // observed names beyond that visit's first census. In every case work is
++    // deliberately left for a later segment. stop_reason distinguishes those
++    // scheduling outcomes without making any of them durable synchronization
++    // authority.
+     bool completed = false;
+     SyncReplicaFolderTraversalStopReason stop_reason =
+         SyncReplicaFolderTraversalStopReason::NotStarted;
+     std::uint64_t skipped_regular_file_count = 0;
++    // Diagnostic proof of the bounded sorted-name implementation. The first
++    // value counts complete readdir passes (a large mixed directory can require
++    // another pass after one component batch); the second is the largest
++    // individual sorted basename batch. Recursive descent can retain one such
++    // batch per active directory depth. Neither value authorizes deletion,
++    // cursor publication, or filesystem effects.
++    std::uint64_t directory_enumeration_pass_count = 0;
++    std::uint64_t peak_buffered_directory_component_batch_count = 0;
+     // Last path successfully delivered to the visitor. When no new path was
+     // delivered, this retains the input continuation cursor.
+     std::string resume_after_path;
+diff --git a/tests/sync_replica_folder_observer_test.cpp b/tests/sync_replica_folder_observer_test.cpp
+index ffd2a9a..8967fc0 100644
+--- a/tests/sync_replica_folder_observer_test.cpp
++++ b/tests/sync_replica_folder_observer_test.cpp
+@@ -4,11 +4,14 @@
+ 
+ #include "sha256_digest.hpp"
+ 
++#include <algorithm>
+ #include <chrono>
+ #include <cstdint>
+ #include <filesystem>
+ #include <fstream>
++#include <iomanip>
+ #include <iostream>
++#include <sstream>
+ #include <stdexcept>
+ #include <string>
+ #include <string_view>
+@@ -559,6 +562,200 @@ void test_resumable_count_frontier_and_rooted_reproof(TestState& test) {
+         "folder-count-frontier authority after rejected substitution");
+ }
+ 
++[[nodiscard]] std::string flat_file_name(
++    std::uint64_t index,
++    char prefix = 'f') {
++    std::ostringstream name;
++    name << prefix << std::setw(5) << std::setfill('0') << index << ".dat";
++    return name.str();
++}
++
++void test_resumable_flat_directory_component_buffer(TestState& test) {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.path();
++    const std::uint64_t file_count =
++        anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch +
++        17U;
++    for (std::uint64_t index = 0U; index < file_count; ++index) {
++        write_bytes(root / flat_file_name(index), {});
++    }
++
++    anonsync::SyncDirectoryAuthority authority =
++        anonsync::SyncDirectoryAuthority::open_or_throw(
++            fs::absolute(root), "folder-flat-buffer root");
++    anonsync::SyncReplicaFolderObservationLimits limits;
++    limits.maximum_entries = file_count;
++    limits.maximum_regular_files = file_count;
++    limits.maximum_file_bytes = 1U;
++    limits.maximum_total_file_bytes = 1U;
++
++    std::vector<std::string> delivered;
++    bool all_classified_sizes_zero = true;
++    std::string cursor;
++    const std::vector<std::uint64_t> frontiers{
++        1U,
++        anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch,
++        anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch};
++    std::vector<anonsync::SyncReplicaFolderTraversalSegment> segments;
++    for (const std::uint64_t frontier : frontiers) {
++        anonsync::SyncReplicaFolderTraversalSegmentLimits segment_limits;
++        segment_limits.maximum_regular_files = frontier;
++        auto segment =
++            anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++                authority, cursor,
++                [&](const std::string& path, std::uint64_t size_bytes) {
++                    all_classified_sizes_zero =
++                        all_classified_sizes_zero && size_bytes == 0U;
++                    delivered.push_back(path);
++                },
++                limits, segment_limits,
++                "folder-flat-buffer traversal");
++        cursor = segment.resume_after_path;
++        segments.push_back(std::move(segment));
++    }
++
++    test.require(
++        all_classified_sizes_zero && delivered.size() == file_count &&
++            delivered.front() == flat_file_name(0U) &&
++            delivered.back() == flat_file_name(file_count - 1U) &&
++            std::is_sorted(delivered.begin(), delivered.end()) &&
++            std::adjacent_find(delivered.begin(), delivered.end()) ==
++                delivered.end(),
++        "bounded component batches preserve exact flat-directory order and reach every file once");
++    test.require(
++        !segments[0].completed && !segments[1].completed &&
++            segments[2].completed &&
++            segments[0].stop_reason ==
++                anonsync::SyncReplicaFolderTraversalStopReason::
++                    RegularFileCountFrontier &&
++            segments[1].stop_reason ==
++                anonsync::SyncReplicaFolderTraversalStopReason::
++                    RegularFileCountFrontier &&
++            segments[2].stop_reason ==
++                anonsync::SyncReplicaFolderTraversalStopReason::EndOfNamespace,
++        "flat-directory continuation retains exact count-frontier and completion semantics");
++    test.require(
++        segments[0].peak_buffered_directory_component_batch_count ==
++                anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch &&
++            segments[1].peak_buffered_directory_component_batch_count ==
++                anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch &&
++            segments[2].peak_buffered_directory_component_batch_count ==
++                anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch,
++        "every resumable flat-directory pass obeys the fixed basename-buffer ceiling");
++    test.require(
++        segments[0].directory_enumeration_pass_count == 1U &&
++            segments[1].directory_enumeration_pass_count == 2U &&
++            segments[2].directory_enumeration_pass_count == 2U,
++        "resumable flat-directory work rescans only when one bounded "
++        "component batch cannot finish the segment");
++    test.require(
++        segments[0].traversal.visited_entry_count == file_count &&
++            segments[1].traversal.visited_entry_count == file_count &&
++            segments[2].traversal.visited_entry_count == file_count,
++        "directory rescans do not double-charge the namespace entry ceiling");
++    authority.verify_or_throw(
++        "folder-flat-buffer authority after bounded continuation");
++}
++
++void test_resumable_directory_does_not_chase_post_census_insertions(
++    TestState& test) {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.path();
++    const std::uint64_t batch_limit =
++        anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch;
++    const std::uint64_t initial_file_count = batch_limit + 1U;
++    const std::uint64_t inserted_file_count = 17U;
++    for (std::uint64_t index = 0U; index < initial_file_count; ++index) {
++        write_bytes(root / flat_file_name(index, 'a'), {});
++    }
++    const std::string boundary_name = flat_file_name(batch_limit - 1U, 'a');
++    const std::string displaced_initial_name = flat_file_name(batch_limit, 'a');
++    std::string interleaved_name = boundary_name;
++    interleaved_name.insert(interleaved_name.find(".dat"), "x");
++
++    anonsync::SyncDirectoryAuthority authority =
++        anonsync::SyncDirectoryAuthority::open_or_throw(
++            fs::absolute(root), "folder-census-fence root");
++    anonsync::SyncReplicaFolderObservationLimits limits;
++    limits.maximum_entries = initial_file_count + inserted_file_count;
++    limits.maximum_regular_files = initial_file_count + inserted_file_count;
++    limits.maximum_file_bytes = 1U;
++    limits.maximum_total_file_bytes = 1U;
++    anonsync::SyncReplicaFolderTraversalSegmentLimits segment_limits;
++    segment_limits.maximum_regular_files = limits.maximum_regular_files;
++
++    bool inserted = false;
++    std::vector<std::string> first_delivered;
++    const auto first =
++        anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++            authority, {},
++            [&](const std::string& path, std::uint64_t) {
++                first_delivered.push_back(path);
++                if (inserted) return;
++                inserted = true;
++                // This name sorts between the first batch boundary and the one
++                // original first-census member that remained. It therefore
++                // proves a concurrent insertion cannot steal the final census
++                // slot and still manufacture end-of-namespace authority.
++                write_bytes(root / interleaved_name, {});
++                for (std::uint64_t index = 0U;
++                     index + 1U < inserted_file_count; ++index) {
++                    write_bytes(root / flat_file_name(index, 'z'), {});
++                }
++            },
++            limits, segment_limits,
++            "folder-census-fence first traversal");
++
++    test.require(
++        inserted && !first.completed &&
++            first.stop_reason ==
++                anonsync::SyncReplicaFolderTraversalStopReason::
++                    DirectoryCensusFrontier &&
++            first_delivered.size() == initial_file_count &&
++            first_delivered.front() == flat_file_name(0U, 'a') &&
++            first_delivered.back() == interleaved_name &&
++            std::find(
++                first_delivered.begin(), first_delivered.end(),
++                displaced_initial_name) == first_delivered.end() &&
++            first.resume_after_path == interleaved_name &&
++            first.traversal.visited_entry_count == initial_file_count &&
++            first.directory_enumeration_pass_count == 2U,
++        "post-census growth stops without end-of-namespace authority even "
++        "when a new name displaces an original census member");
++
++    std::vector<std::string> second_delivered;
++    const auto second =
++        anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++            authority, first.resume_after_path,
++            [&](const std::string& path, std::uint64_t) {
++                second_delivered.push_back(path);
++            },
++            limits, segment_limits,
++            "folder-census-fence continuation traversal");
++    std::vector<std::string> combined = first_delivered;
++    combined.insert(
++        combined.end(), second_delivered.begin(), second_delivered.end());
++    test.require(
++        second.completed &&
++            second.stop_reason ==
++                anonsync::SyncReplicaFolderTraversalStopReason::EndOfNamespace &&
++            second_delivered.size() == inserted_file_count &&
++            second_delivered.front() == displaced_initial_name &&
++            second_delivered.back() ==
++                flat_file_name(inserted_file_count - 2U, 'z') &&
++            second.skipped_regular_file_count == initial_file_count &&
++            second.traversal.visited_entry_count ==
++                initial_file_count + inserted_file_count &&
++            combined.size() == initial_file_count + inserted_file_count &&
++            std::is_sorted(combined.begin(), combined.end()) &&
++            std::adjacent_find(combined.begin(), combined.end()) ==
++                combined.end(),
++        "the persisted cursor resumes at the displaced original member and "
++        "then discovers every post-census name exactly once");
++    authority.verify_or_throw(
++        "folder-census-fence authority after continuation sweep");
++}
++
+ void test_limits_and_portable_paths(TestState& test) {
+     TemporaryDirectory temporary;
+     const fs::path root = temporary.path();
+@@ -728,6 +925,8 @@ int main() {
+         test_streaming_path_visitor(test);
+         test_resumable_component_order_and_progress(test);
+         test_resumable_count_frontier_and_rooted_reproof(test);
++        test_resumable_flat_directory_component_buffer(test);
++        test_resumable_directory_does_not_chase_post_census_insertions(test);
+         test_limits_and_portable_paths(test);
+         std::cout << "sync replica folder observer checks: " << test.passed
+                   << "/" << (test.passed + test.failed) << "\n";
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 6b2eacc..d21ae28 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -123,6 +123,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0962.md"),
+     Path("RESTART_DISCOVERABLE_QUARANTINE_INVENTORY_AUDIT_rev0963.md"),
+     Path("REVISION_NOTES_rev0963.md"),
++    Path("BOUNDED_RESUMABLE_DIRECTORY_COMPONENT_BATCH_AUDIT_rev0964.md"),
++    Path("REVISION_NOTES_rev0964.md"),
+ )
+ 
+ 
+@@ -155,6 +157,13 @@ def function_body(text: str, signature: str) -> str:
+     return delimited_body(text, signature, "{", "}")
+ 
+ 
++def last_function_body(text: str, signature: str) -> str:
++    start = text.rfind(signature)
++    if start < 0:
++        return ""
++    return function_body(text[start:], signature)
++
++
+ def cmake_call(text: str, command_prefix: str) -> str:
+     return delimited_body(text, command_prefix, "(", ")")
+ 
+@@ -380,6 +389,10 @@ def main() -> int:
+         "RESTART_DISCOVERABLE_QUARANTINE_INVENTORY_AUDIT_rev0963.md"
+     ]
+     rev0963_notes = text["REVISION_NOTES_rev0963.md"]
++    bounded_directory_batch_design = text[
++        "BOUNDED_RESUMABLE_DIRECTORY_COMPONENT_BATCH_AUDIT_rev0964.md"
++    ]
++    rev0964_notes = text["REVISION_NOTES_rev0964.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -435,6 +448,17 @@ def main() -> int:
+         if rev0963_verifier_start >= 0 and rev0963_verifier_end >= 0
+         else ""
+     )
++    rev0964_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 964:"
++    )
++    rev0964_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0964_verifier_start
++    )
++    rev0964_verifier_block = (
++        verifier[rev0964_verifier_start:rev0964_verifier_end]
++        if rev0964_verifier_start >= 0 and rev0964_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     store_sources = cmake_call(
+@@ -6805,6 +6829,221 @@ def main() -> int:
+         "the revision record binds the exact cached-observation boundary, status v10, rejected duplicate list path, runtime proof, research distinction from user versions, final validation, and mandatory package surface",
+     )
+ 
++    bounded_batch_reader = function_body(
++        folder_observer,
++        "read_next_sorted_component_batch_or_throw(",
++    )
++    resumable_directory_walk = last_function_body(
++        folder_observer,
++        "[[nodiscard]] WalkDisposition walk_directory_or_throw(\n"
++        "    WalkContext& context,\n"
++        "    int owned_descriptor,",
++    )
++    component_batch_walk = function_body(
++        folder_observer,
++        "[[nodiscard]] WalkDisposition walk_component_batch_or_throw(",
++    )
++    require(
++        "kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch = 4096U"
++        in folder_observer_h
++        and all(
++            token in bounded_batch_reader
++            for token in (
++                "::rewinddir(directory.get())",
++                "std::vector<std::string> selected",
++                "selected.reserve(maximum_components)",
++                "const std::string_view component(entry->d_name)",
++                "maximum_components == 0U",
++                "selected.size() < maximum_components",
++                "selected.emplace_back(component)",
++                "std::push_heap(selected.begin(), selected.end())",
++                "std::pop_heap(selected.begin(), selected.end())",
++                "selected.back().assign(component.data(), component.size())",
++                "std::sort_heap(selected.begin(), selected.end())",
++                "batch.components = std::move(selected)",
++                "batch.has_more = eligible_count >",
++            )
++        )
++        and "read_sorted_components_or_throw" not in bounded_batch_reader,
++        "resumable_directory_selection_retains_one_fixed_lexicographic_batch",
++        "the shipping restartable observer scans every candidate but allocates basename strings only for the exact smallest 4096-name component prefix after its current in-directory boundary",
++    )
++
++
++    require(
++        "#include <queue>" not in folder_observer
++        and "std::priority_queue" not in folder_observer
++        and bounded_batch_reader.count("std::vector<std::string> selected") == 1
++        and bounded_batch_reader.count("selected.reserve(maximum_components)") == 1
++        and bounded_batch_reader.count("batch.components = std::move(selected)") == 1
++        and "batch.components.reserve(selected.size())" not in bounded_batch_reader
++        and "batch.components.push_back(selected" not in bounded_batch_reader,
++        "bounded_component_selection_uses_one_heap_vector_without_copy_out_buffer",
++        "one reserved vector is the max-heap, in-place sorted output, and move-only batch payload; no priority-queue container or second O(K) copy-out vector coexists",
++    )
++
++    require(
++        folder_observer.count("read_sorted_components_or_throw(context, directory, parent_path)") == 1
++        and ordered(
++            resumable_directory_walk,
++            "if (context.segment == nullptr)",
++            "read_sorted_components_or_throw(context, directory, parent_path)",
++            "read_next_sorted_component_batch_or_throw",
++            "walk_component_batch_or_throw",
++        )
++        and all(
++            token in component_batch_walk
++            for token in (
++                "lstat_child_or_throw",
++                "increment_regular_file_count_or_throw",
++                "handle_regular_file_or_throw",
++                "walk_directory_or_throw",
++                "post-walk directory binding",
++                "same_directory_identity",
++            )
++        ),
++        "full_and_batched_walks_share_one_rooted_component_processor",
++        "the old whole-directory vector remains only in the explicit non-resumable branch while classification, recursion, callbacks, and directory rebinding cannot diverge between traversal modes",
++    )
++
++    require(
++        ordered(
++            bounded_batch_reader,
++            "if (charge_entries) increment_entry_count_or_throw(context)",
++            "if (!after_component.empty() && component <= after_component) continue",
++        )
++        and ordered(
++            resumable_directory_walk,
++            "std::uint64_t remaining_first_census_components = 0U",
++            "bool first_census = true",
++            "requested_components = first_census",
++            "batch.eligible_component_count",
++            "first_census = false",
++            "consumed_components > remaining_first_census_components",
++            "remaining_first_census_components -= consumed_components",
++            "if (remaining_first_census_components == 0U)",
++            "StoppedAtDirectoryCensusFrontier",
++            "if (!batch.has_more) return WalkDisposition::Continue",
++            "context.summary.regular_file_count >=",
++            "StoppedAtRegularFileCountFrontier",
++            "after_component = std::move(batch.components.back())",
++        )
++        and ordered(
++            component_batch_walk,
++            "increment_regular_file_count_or_throw(context, canonical_path)",
++            "handle_regular_file_or_throw",
++        ),
++        "batch_rescans_preserve_namespace_capacity_and_completion_semantics",
++        "each directory visit charges its first complete non-dot census once, avoids double charging later selection passes, stops before a useless rescan at the delivered-file frontier, refuses end-of-namespace authority when later enumeration sees extra names, and still classifies skipped regular files against whole-folder capacity",
++    )
++
++    require(
++        all(
++            token in normalized_prose(folder_observer_h)
++            for token in (
++                "directory_enumeration_pass_count",
++                "peak_buffered_directory_component_batch_count",
++                "Recursive descent can retain one such",
++                "batch per active directory depth",
++                "Neither value authorizes deletion",
++            )
++        )
++        and all(
++            token in folder_observer_runtime
++            for token in (
++                "test_resumable_flat_directory_component_buffer",
++                "kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch +",
++                "delivered.size() == file_count",
++                "std::adjacent_find(delivered.begin(), delivered.end())",
++                "segments[0].directory_enumeration_pass_count == 1U",
++                "segments[1].directory_enumeration_pass_count == 2U",
++                "segments[2].directory_enumeration_pass_count == 2U",
++                "segments[0].traversal.visited_entry_count == file_count",
++                "peak_buffered_directory_component_batch_count",
++                "test_resumable_directory_does_not_chase_post_census_insertions",
++                "DirectoryCensusFrontier",
++                "displaced_initial_name",
++                "first.resume_after_path == interleaved_name",
++                "first.traversal.visited_entry_count == initial_file_count",
++                "authority, first.resume_after_path",
++                "second.skipped_regular_file_count == initial_file_count",
++                "combined.size() == initial_file_count + inserted_file_count",
++            )
++        ),
++        "compiled_regression_binds_order_batch_ceiling_growth_fence_cursor_and_entry_charge",
++        "the stable 4113-file test binds order and the batch boundary, while the 4097+17 mutation test proves a new interleaved name cannot displace an original census member and still manufacture completion; the persisted cursor resumes at the displaced member and discovers every new name exactly once",
++    )
++
++    require(
++        all(
++            token in normalized_prose(bounded_directory_batch_design)
++            for token in (
++                "Heart of the mission",
++                "The defect",
++                "Corrected C++ shape",
++                "Preserved traversal order",
++                "Entry and file capacity accounting",
++                "Root and directory authority",
++                "Diagnostics without authority",
++                "Mechanical regression",
++                "Adjacent refactor findings",
++                "Complexity and remaining waste",
++                "What this proves",
++                "What this does not prove",
++                "O(N log K)",
++                "one bounded batch for each active directory depth",
++                "non-resumable complete observer",
++                "point-in-time namespace snapshot",
++                "non-growing processing budget",
++                "unbounded rescan chase",
++            )
++        )
++        and all(
++            token in rev0964_notes
++            for token in (
++                "bounded max-heap selector",
++                "std::string_view",
++                "walk_component_batch_or_throw",
++                "cursor-skipped regular files",
++                "process-wide simultaneous-basename ceiling",
++                "huge-tree qualification",
++                "Nonclaims",
++            )
++        ),
++        "rev0964_records_the_exact_memory_tradeoff_and_remaining_scale_boundaries",
++        "the audit and revision record claim bounded per-batch name retention only, preserve moving-namespace and recursive-depth truth, and do not substitute this slice for an indexed huge-tree architecture",
++    )
++
++    require(
++        "VALIDATION_PENDING_REV0964" not in rev0964_notes
++        and "VALIDATION_PENDING_REV0964" not in readme
++        and verifier.count(
++            "if revision_number is not None and revision_number >= 964:"
++        ) == 1
++        and all(
++            token in rev0964_verifier_block
++            for token in (
++                "BOUNDED_RESUMABLE_DIRECTORY_COMPONENT_BATCH_AUDIT_rev0964.md",
++                "REVISION_NOTES_rev0964.md",
++                "src/sync_replica_folder_observer.hpp",
++                "src/sync_replica_folder_observer.cpp",
++                "tests/sync_replica_folder_observer_test.cpp",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0964_final_validation_and_package_surface_are_mandatory",
++        "the source audit remains deliberately gated until final evidence replaces the revision placeholders and the release verifier binds every changed implementation, test, audit, and package-policy surface",
++    )
++
++    require(
++        "ARCHIVE_PENDING_REV0964" not in (root.parent.parent / "BOOTSTRAPROSE.md").read_text(encoding="utf-8")
++        and "CODENAME_PENDING_REV0964" not in (root.parent.parent / "BOOTSTRAPROSE.md").read_text(encoding="utf-8")
++        and "VALIDATION_PENDING_REV0964" not in (root.parent.parent / "BOOTSTRAPROSE.md").read_text(encoding="utf-8"),
++        "visible_restart_page_is_finalized_for_rev0964",
++        "the release-root bootstrap must name the exact archive/codename and carry final validation before the structural audit can close",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 0251320..d329fa5 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1321,6 +1321,16 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 964:
++        revision_scoped_required.update({
++            "BOUNDED_RESUMABLE_DIRECTORY_COMPONENT_BATCH_AUDIT_rev0964.md",
++            "REVISION_NOTES_rev0964.md",
++            "src/sync_replica_folder_observer.hpp",
++            "src/sync_replica_folder_observer.cpp",
++            "tests/sync_replica_folder_observer_test.cpp",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

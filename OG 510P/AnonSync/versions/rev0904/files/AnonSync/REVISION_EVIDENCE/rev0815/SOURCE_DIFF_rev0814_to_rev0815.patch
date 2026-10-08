@@ -1,0 +1,1079 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -722,6 +722,17 @@
+ target_link_libraries(anonsync_sqlite_connection_authority_test PRIVATE
+   anonsync_sqlite_support)
+ target_compile_options(anonsync_sqlite_connection_authority_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++add_executable(anonsync_sqlite_transaction_exception_composition_test
++  tests/sqlite_transaction_exception_composition_test.cpp)
++target_include_directories(
++  anonsync_sqlite_transaction_exception_composition_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(
++  anonsync_sqlite_transaction_exception_composition_test PRIVATE
++  anonsync_sqlite_support)
++target_compile_options(
++  anonsync_sqlite_transaction_exception_composition_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ add_executable(anonsync_sqlite_process_authority_fork_test
+   tests/sqlite_process_authority_fork_test.cpp)
+@@ -944,6 +955,7 @@
+     anonsync_sqlite_runtime_policy_test
+     anonsync_sqlite_support_test
+     anonsync_sqlite_connection_authority_test
++    anonsync_sqlite_transaction_exception_composition_test
+     anonsync_sqlite_process_authority_fork_test
+     anonsync_sqlite_owner_generation_borrow_test
+     anonsync_sqlite_source_first_move_test
+@@ -994,6 +1006,7 @@
+       anonsync_sqlite_runtime_policy_test
+       anonsync_sqlite_support_test
+       anonsync_sqlite_connection_authority_test
++      anonsync_sqlite_transaction_exception_composition_test
+       anonsync_sqlite_process_authority_fork_test
+       anonsync_sqlite_owner_generation_borrow_test
+       anonsync_sqlite_source_first_move_test
+@@ -1091,6 +1104,10 @@
+     COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_transaction_stack_authority.py
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
++  add_test(NAME anonsync_sqlite_transaction_exception_composition_source_audit
++    COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_transaction_exception_composition.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
+   add_test(NAME anonsync_sqlite_source_first_move_source_audit
+     COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_source_first_move.py
+@@ -1178,6 +1195,10 @@
+   COMMAND anonsync_sqlite_connection_authority_test)
+ set_tests_properties(anonsync_sqlite_connection_authority_test
+   PROPERTIES TIMEOUT 15)
++add_test(NAME anonsync_sqlite_transaction_exception_composition_test
++  COMMAND anonsync_sqlite_transaction_exception_composition_test)
++set_tests_properties(anonsync_sqlite_transaction_exception_composition_test
++  PROPERTIES TIMEOUT 15)
+ add_test(NAME anonsync_sqlite_process_authority_fork_test
+   COMMAND anonsync_sqlite_process_authority_fork_test)
+ set_tests_properties(anonsync_sqlite_process_authority_fork_test
+--- a/src/sync_sqlite_connection_authority.cpp
++++ b/src/sync_sqlite_connection_authority.cpp
+@@ -79,7 +79,12 @@
+     std::vector<ActiveSavepointFrame> active_savepoints;
+     SavepointPermitOperation savepoint_permit =
+         SavepointPermitOperation::None;
+-    std::string savepoint_permit_name;
++    // A permit is live only for the synchronous sqlite3_exec() call made by
++    // the typed boundary owner. Borrow the already-stable generated name
++    // instead of copying it. In particular, a rollback close must not perform
++    // a C++ allocation after ROLLBACK TO has rewound state but before RELEASE
++    // erases the mark.
++    std::string_view savepoint_permit_name;
+     bool savepoint_permit_active = false;
+     bool savepoint_permit_observed = false;
+ };
+@@ -238,7 +243,7 @@
+ public:
+     SavepointPermitScope(ConnectionAuthorityState& state,
+                          SavepointPermitOperation operation,
+-                         std::string name,
++                         std::string_view name,
+                          const std::string& label)
+         : state_(state) {
+         if (operation == SavepointPermitOperation::None || name.empty()) {
+@@ -251,7 +256,7 @@
+                 label + " transaction-stack permit is already armed");
+         }
+         state_.savepoint_permit = operation;
+-        state_.savepoint_permit_name = std::move(name);
++        state_.savepoint_permit_name = name;
+         state_.savepoint_permit_observed = false;
+         state_.savepoint_permit_active = true;
+     }
+@@ -260,7 +265,7 @@
+         state_.savepoint_permit_active = false;
+         state_.savepoint_permit_observed = false;
+         state_.savepoint_permit = SavepointPermitOperation::None;
+-        state_.savepoint_permit_name.clear();
++        state_.savepoint_permit_name = {};
+     }
+ 
+     SavepointPermitScope(const SavepointPermitScope&) = delete;
+@@ -273,6 +278,33 @@
+ private:
+     ConnectionAuthorityState& state_;
+ };
++
++// Precompute every C++ object needed by a compound ROLLBACK TO + RELEASE
++// close before the first SQLite effect. SQLite deliberately keeps the named
++// mark live after ROLLBACK TO, so a denied or resource-failed RELEASE remains
++// retryable. An unrelated std::bad_alloc between those two effects would be a
++// needless split boundary and is therefore excluded by construction.
++struct FencedSavepointClosePlan final {
++    std::string rollback_sql;
++    std::string release_sql;
++    std::string rollback_label;
++    std::string release_label;
++};
++
++FencedSavepointClosePlan make_fenced_savepoint_close_plan_or_throw(
++    SyncSqliteSavepointBoundaryEnd operation,
++    const std::string& savepoint_name,
++    const std::string& label) {
++    FencedSavepointClosePlan plan;
++    if (operation == SyncSqliteSavepointBoundaryEnd::Rollback) {
++        plan.rollback_sql =
++            "ROLLBACK TO SAVEPOINT " + savepoint_name + ";";
++        plan.rollback_label = label + " rollback to savepoint";
++    }
++    plan.release_sql = "RELEASE SAVEPOINT " + savepoint_name + ";";
++    plan.release_label = label + " release savepoint";
++    return plan;
++}
+ 
+ std::uint64_t process_salt() noexcept {
+     static const std::uint64_t salt = [] {
+@@ -1305,6 +1337,13 @@
+         validate_fenced_savepoint_proof_or_throw(db, proof, label, true);
+     run_authorizer_ownership_probe_or_throw(db, state, label);
+ 
++    // ROLLBACK TO leaves the mark live. Build both SQL statements, both
++    // diagnostic labels, and the borrowed permit-name view before issuing it,
++    // so only SQLite boundary outcomes can separate the rewind from RELEASE.
++    const FencedSavepointClosePlan close_plan =
++        make_fenced_savepoint_close_plan_or_throw(
++            operation, proof.savepoint_name, label);
++
+     bool bridge_observed = true;
+     if (operation == SyncSqliteSavepointBoundaryEnd::Rollback) {
+         bridge_observed = execute_permitted_savepoint_sql_or_throw(
+@@ -1312,8 +1351,8 @@
+                               state,
+                               SavepointPermitOperation::Rollback,
+                               proof.savepoint_name,
+-                              "ROLLBACK TO SAVEPOINT " + proof.savepoint_name + ";",
+-                              label + " rollback to savepoint") &&
++                              close_plan.rollback_sql,
++                              close_plan.rollback_label) &&
+                           bridge_observed;
+     }
+     bridge_observed = execute_permitted_savepoint_sql_or_throw(
+@@ -1321,8 +1360,8 @@
+                           state,
+                           SavepointPermitOperation::Release,
+                           proof.savepoint_name,
+-                          "RELEASE SAVEPOINT " + proof.savepoint_name + ";",
+-                          label + " release savepoint") &&
++                          close_plan.release_sql,
++                          close_plan.release_label) &&
+                       bridge_observed;
+ 
+     if (sqlite3_get_autocommit(db) != 0) {
+--- a/tests/sqlite_transaction_exception_composition_test.cpp
++++ b/tests/sqlite_transaction_exception_composition_test.cpp
+@@ -0,0 +1,541 @@
++#include "sync_sqlite_connection_authority.hpp"
++#include "sync_sqlite_support.hpp"
++
++#include <algorithm>
++#include <cstdint>
++#include <cstdlib>
++#include <exception>
++#include <iostream>
++#include <memory>
++#include <optional>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include <sqlite3.h>
++
++namespace {
++
++using namespace anonsync;
++
++[[noreturn]] void fail(const std::string& message) {
++    throw std::runtime_error(message);
++}
++
++void require(bool condition, const std::string& message, std::uint64_t& checks) {
++    ++checks;
++    if (!condition) fail(message);
++}
++
++template <typename Function>
++void require_throws(Function&& function,
++                    std::string_view expected_fragment,
++                    const std::string& message,
++                    std::uint64_t& checks) {
++    ++checks;
++    try {
++        function();
++    } catch (const std::exception& error) {
++        const std::string reason = error.what();
++        if (reason.find(expected_fragment) != std::string::npos) return;
++        fail(message + ": unexpected error: " + reason);
++    }
++    fail(message + ": no exception was thrown");
++}
++
++struct SqliteCloser final {
++    void operator()(sqlite3* db) const noexcept {
++        if (db != nullptr) (void)sqlite3_close_v2(db);
++    }
++};
++using SqlitePtr = std::unique_ptr<sqlite3, SqliteCloser>;
++
++SqlitePtr open_memory_database() {
++    sqlite3* raw = nullptr;
++    const int rc = sqlite3_open_v2(
++        ":memory:",
++        &raw,
++        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
++        nullptr);
++    if (rc != SQLITE_OK) {
++        const std::string reason =
++            raw != nullptr ? sqlite3_errmsg(raw) : "unknown SQLite open error";
++        if (raw != nullptr) (void)sqlite3_close_v2(raw);
++        fail("could not open exception-composition database: " + reason);
++    }
++    return SqlitePtr(raw);
++}
++
++bool ascii_case_equal(const char* raw, std::string_view expected) noexcept {
++    if (raw == nullptr) return false;
++    std::size_t index = 0;
++    for (; index < expected.size() && raw[index] != '\0'; ++index) {
++        unsigned char observed = static_cast<unsigned char>(raw[index]);
++        unsigned char wanted = static_cast<unsigned char>(expected[index]);
++        if (observed >= 'a' && observed <= 'z') {
++            observed = static_cast<unsigned char>(observed - 'a' + 'A');
++        }
++        if (wanted >= 'a' && wanted <= 'z') {
++            wanted = static_cast<unsigned char>(wanted - 'a' + 'A');
++        }
++        if (observed != wanted) return false;
++    }
++    return index == expected.size() && raw[index] == '\0';
++}
++
++// One callback denial is a deterministic cut after the typed owner has armed
++// its exact single-use permit but before SQLite applies that boundary. The
++// policy itself never mutates the connection and never throws across the C ABI.
++struct OneShotBoundaryCutpoint final {
++    int target_action = 0;
++    std::string target_operation;
++    std::uint64_t matching_callbacks = 0;
++    std::uint64_t denials = 0;
++    bool armed = false;
++
++    void arm(int action, std::string operation) {
++        if (armed) fail("attempted to arm a second boundary cutpoint");
++        target_action = action;
++        target_operation = std::move(operation);
++        matching_callbacks = 0;
++        armed = true;
++    }
++
++    void require_consumed(std::uint64_t& checks, const std::string& label) const {
++        require(!armed && matching_callbacks == 1 && denials == 1,
++                label + " did not consume exactly one policy cutpoint",
++                checks);
++    }
++};
++
++int one_shot_cutpoint_policy(void* raw,
++                             int action,
++                             const char* argument1,
++                             const char*,
++                             const char*,
++                             const char*) noexcept {
++    auto* cutpoint = static_cast<OneShotBoundaryCutpoint*>(raw);
++    if (cutpoint == nullptr || !cutpoint->armed ||
++        action != cutpoint->target_action ||
++        !ascii_case_equal(argument1, cutpoint->target_operation)) {
++        return SQLITE_OK;
++    }
++    ++cutpoint->matching_callbacks;
++    ++cutpoint->denials;
++    cutpoint->armed = false;
++    return SQLITE_DENY;
++}
++
++struct Fixture final {
++    OneShotBoundaryCutpoint cutpoint;
++    SqlitePtr db = open_memory_database();
++    SyncSqliteConnectionAuthorityProof authority;
++
++    Fixture() {
++        sqlite_exec_or_throw(
++            db.get(),
++            "CREATE TABLE trace_rows(value INTEGER PRIMARY KEY);",
++            "exception-composition schema");
++        authority = install_sync_sqlite_connection_authority_or_throw(
++            db.get(),
++            one_shot_cutpoint_policy,
++            &cutpoint,
++            "exception-composition authority");
++        if (!authority.valid()) fail("exception-composition authority is invalid");
++    }
++};
++
++std::vector<int> actual_rows(sqlite3* db) {
++    SyncSqliteStmt statement = sqlite_prepare_or_throw(
++        db,
++        "SELECT value FROM trace_rows ORDER BY value;",
++        "exception-composition row snapshot");
++    std::vector<int> rows;
++    for (;;) {
++        const int rc = sqlite3_step(statement.stmt);
++        if (rc == SQLITE_DONE) break;
++        if (rc != SQLITE_ROW) {
++            throw_sqlite_exception(db, rc, "exception-composition row step");
++        }
++        rows.push_back(sqlite3_column_int(statement.stmt, 0));
++    }
++    return rows;
++}
++
++std::string render_rows(const std::vector<int>& rows) {
++    std::string out = "[";
++    for (std::size_t index = 0; index < rows.size(); ++index) {
++        if (index != 0) out += ",";
++        out += std::to_string(rows[index]);
++    }
++    out += "]";
++    return out;
++}
++
++// This model is intentionally independent of SQLite and the C++ guard state.
++// A mark is a copy of the visible row set immediately after SAVEPOINT. The
++// split rollback transition models SQLite's documented rule precisely:
++// ROLLBACK TO rewinds but leaves the named mark live; RELEASE erases it.
++class TransactionStackModel final {
++public:
++    void begin() {
++        if (working_.has_value()) fail("model began a nested outer transaction");
++        working_ = committed_;
++    }
++
++    void insert(int value) {
++        if (!working_.has_value()) fail("model insert lacks an outer transaction");
++        working_->push_back(value);
++        std::sort(working_->begin(), working_->end());
++    }
++
++    void begin_savepoint() {
++        if (!working_.has_value()) fail("model savepoint lacks an outer transaction");
++        marks_.push_back(*working_);
++    }
++
++    void release_savepoint() {
++        if (marks_.empty()) fail("model release lacks a savepoint");
++        marks_.pop_back();
++    }
++
++    void rollback_to_keep_mark() {
++        if (marks_.empty() || !working_.has_value()) {
++            fail("model rollback-to lacks a savepoint");
++        }
++        *working_ = marks_.back();
++    }
++
++    void rollback_to_and_release() {
++        rollback_to_keep_mark();
++        release_savepoint();
++    }
++
++    void commit() {
++        if (!working_.has_value() || !marks_.empty()) {
++            fail("model commit crossed a live savepoint");
++        }
++        committed_ = *working_;
++        working_.reset();
++    }
++
++    void rollback() {
++        if (!working_.has_value()) fail("model rollback lacks a transaction");
++        working_.reset();
++        marks_.clear();
++    }
++
++    [[nodiscard]] const std::vector<int>& visible() const {
++        return working_.has_value() ? *working_ : committed_;
++    }
++
++    [[nodiscard]] std::size_t savepoint_depth() const noexcept {
++        return marks_.size();
++    }
++
++private:
++    std::vector<int> committed_;
++    std::optional<std::vector<int>> working_;
++    std::vector<std::vector<int>> marks_;
++};
++
++void insert_row(sqlite3* db, TransactionStackModel& model, int value) {
++    sqlite_exec_or_throw(
++        db,
++        "INSERT INTO trace_rows(value) VALUES(" + std::to_string(value) + ");",
++        "exception-composition insert");
++    model.insert(value);
++}
++
++void require_matches_model(sqlite3* db,
++                           const TransactionStackModel& model,
++                           const std::string& label,
++                           std::uint64_t& checks) {
++    const std::vector<int> observed = actual_rows(db);
++    require(observed == model.visible(),
++            label + " diverged: SQLite=" + render_rows(observed) +
++                " model=" + render_rows(model.visible()),
++            checks);
++}
++
++void test_denied_savepoint_begin_is_retryable(std::uint64_t& checks) {
++    Fixture fixture;
++    TransactionStackModel model;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "cutpoint savepoint begin parent",
++        SyncSqliteTransactionMode::Immediate);
++    model.begin();
++    insert_row(fixture.db.get(), model, 10);
++
++    fixture.cutpoint.arm(SQLITE_SAVEPOINT, "BEGIN");
++    require_throws(
++        [&] {
++            SyncSqliteSavepoint denied(
++                fixture.db.get(), transaction.authority(),
++                "cutpoint denied savepoint begin");
++        },
++        "not authorized",
++        "denied SAVEPOINT begin did not surface SQLITE_AUTH",
++        checks);
++    fixture.cutpoint.require_consumed(checks, "SAVEPOINT begin");
++    require(transaction.active() && model.savepoint_depth() == 0,
++            "denied SAVEPOINT begin damaged the parent or model stack",
++            checks);
++    require_matches_model(fixture.db.get(), model,
++                          "denied SAVEPOINT begin", checks);
++
++    SyncSqliteSavepoint retry(
++        fixture.db.get(), transaction.authority(),
++        "cutpoint retried savepoint begin");
++    model.begin_savepoint();
++    insert_row(fixture.db.get(), model, 11);
++    retry.release();
++    model.release_savepoint();
++    transaction.commit();
++    model.commit();
++    require_matches_model(fixture.db.get(), model,
++                          "retried SAVEPOINT begin", checks);
++}
++
++void test_denied_release_preserves_exact_mark(std::uint64_t& checks) {
++    Fixture fixture;
++    TransactionStackModel model;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "cutpoint release parent",
++        SyncSqliteTransactionMode::Immediate);
++    model.begin();
++    insert_row(fixture.db.get(), model, 20);
++    SyncSqliteSavepoint savepoint(
++        fixture.db.get(), transaction.authority(), "cutpoint release mark");
++    model.begin_savepoint();
++    insert_row(fixture.db.get(), model, 21);
++
++    fixture.cutpoint.arm(SQLITE_SAVEPOINT, "RELEASE");
++    require_throws(
++        [&] { savepoint.release(); },
++        "not authorized",
++        "denied RELEASE did not surface SQLITE_AUTH",
++        checks);
++    fixture.cutpoint.require_consumed(checks, "SAVEPOINT release");
++    require(savepoint.active() && transaction.active() &&
++                model.savepoint_depth() == 1,
++            "denied RELEASE revoked a retryable exact mark",
++            checks);
++    require_matches_model(fixture.db.get(), model,
++                          "denied RELEASE", checks);
++    require_throws(
++        [&] { transaction.commit(); },
++        "typed savepoint remains active",
++        "outer COMMIT crossed a mark whose RELEASE was denied",
++        checks);
++
++    savepoint.release();
++    model.release_savepoint();
++    transaction.commit();
++    model.commit();
++    require_matches_model(fixture.db.get(), model,
++                          "retried RELEASE", checks);
++}
++
++void test_denied_rollback_to_preserves_unrewound_state(std::uint64_t& checks) {
++    Fixture fixture;
++    TransactionStackModel model;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "cutpoint rollback-to parent",
++        SyncSqliteTransactionMode::Immediate);
++    model.begin();
++    insert_row(fixture.db.get(), model, 30);
++    SyncSqliteSavepoint savepoint(
++        fixture.db.get(), transaction.authority(), "cutpoint rollback-to mark");
++    model.begin_savepoint();
++    insert_row(fixture.db.get(), model, 31);
++
++    fixture.cutpoint.arm(SQLITE_SAVEPOINT, "ROLLBACK");
++    require_throws(
++        [&] { savepoint.rollback(); },
++        "not authorized",
++        "denied ROLLBACK TO did not surface SQLITE_AUTH",
++        checks);
++    fixture.cutpoint.require_consumed(checks, "SAVEPOINT rollback-to");
++    require(savepoint.active() && transaction.active(),
++            "denied ROLLBACK TO revoked its retry authority",
++            checks);
++    require_matches_model(fixture.db.get(), model,
++                          "denied ROLLBACK TO", checks);
++
++    savepoint.rollback();
++    model.rollback_to_and_release();
++    transaction.commit();
++    model.commit();
++    require_matches_model(fixture.db.get(), model,
++                          "retried ROLLBACK TO", checks);
++}
++
++void test_release_cut_after_rewind_models_partial_effect(std::uint64_t& checks) {
++    Fixture fixture;
++    TransactionStackModel model;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "cutpoint split rollback parent",
++        SyncSqliteTransactionMode::Immediate);
++    model.begin();
++    insert_row(fixture.db.get(), model, 40);
++    SyncSqliteSavepoint savepoint(
++        fixture.db.get(), transaction.authority(), "cutpoint split rollback mark");
++    model.begin_savepoint();
++    insert_row(fixture.db.get(), model, 41);
++
++    // Critical composition cut: ROLLBACK TO succeeds, then RELEASE is denied.
++    // The data must be rewound while the exact named mark and guard remain live.
++    fixture.cutpoint.arm(SQLITE_SAVEPOINT, "RELEASE");
++    require_throws(
++        [&] { savepoint.rollback(); },
++        "not authorized",
++        "post-rewind RELEASE denial did not surface SQLITE_AUTH",
++        checks);
++    model.rollback_to_keep_mark();
++    fixture.cutpoint.require_consumed(checks, "post-rewind RELEASE");
++    require(savepoint.active() && transaction.active() &&
++                model.savepoint_depth() == 1,
++            "post-rewind RELEASE denial erased retry authority",
++            checks);
++    require_matches_model(fixture.db.get(), model,
++                          "post-rewind RELEASE denial", checks);
++    require_throws(
++        [&] { transaction.commit(); },
++        "typed savepoint remains active",
++        "outer COMMIT crossed a rewound but unreleased mark",
++        checks);
++
++    // Work after the rewind is still inside the surviving mark. Retrying the
++    // rollback must rewind it again before erasing the mark.
++    insert_row(fixture.db.get(), model, 42);
++    savepoint.rollback();
++    model.rollback_to_and_release();
++    transaction.commit();
++    model.commit();
++    require_matches_model(fixture.db.get(), model,
++                          "retried post-rewind rollback", checks);
++}
++
++void test_nested_partial_rollback_preserves_lifo(std::uint64_t& checks) {
++    Fixture fixture;
++    TransactionStackModel model;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "cutpoint nested parent",
++        SyncSqliteTransactionMode::Immediate);
++    model.begin();
++    insert_row(fixture.db.get(), model, 70);
++    SyncSqliteSavepoint outer(
++        fixture.db.get(), transaction.authority(), "cutpoint nested outer");
++    model.begin_savepoint();
++    insert_row(fixture.db.get(), model, 71);
++    SyncSqliteSavepoint inner(
++        fixture.db.get(), transaction.authority(), "cutpoint nested inner");
++    model.begin_savepoint();
++    insert_row(fixture.db.get(), model, 72);
++
++    fixture.cutpoint.arm(SQLITE_SAVEPOINT, "RELEASE");
++    require_throws(
++        [&] { inner.rollback(); },
++        "not authorized",
++        "nested post-rewind RELEASE denial did not surface SQLITE_AUTH",
++        checks);
++    model.rollback_to_keep_mark();
++    fixture.cutpoint.require_consumed(checks, "nested post-rewind RELEASE");
++    require_matches_model(fixture.db.get(), model,
++                          "nested post-rewind RELEASE denial", checks);
++    require_throws(
++        [&] { outer.release(); },
++        "reverse construction order",
++        "outer mark crossed a partially closed inner mark",
++        checks);
++
++    inner.rollback();
++    model.rollback_to_and_release();
++    outer.release();
++    model.release_savepoint();
++    transaction.commit();
++    model.commit();
++    require_matches_model(fixture.db.get(), model,
++                          "nested retry completion", checks);
++}
++
++void test_denied_commit_is_retryable(std::uint64_t& checks) {
++    Fixture fixture;
++    TransactionStackModel model;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "cutpoint commit transaction",
++        SyncSqliteTransactionMode::Immediate);
++    model.begin();
++    insert_row(fixture.db.get(), model, 50);
++
++    fixture.cutpoint.arm(SQLITE_TRANSACTION, "COMMIT");
++    require_throws(
++        [&] { transaction.commit(); },
++        "not authorized",
++        "denied COMMIT did not surface SQLITE_AUTH",
++        checks);
++    fixture.cutpoint.require_consumed(checks, "transaction COMMIT");
++    require(transaction.active() && sqlite3_get_autocommit(fixture.db.get()) == 0,
++            "denied COMMIT revoked a still-live transaction generation",
++            checks);
++    require_matches_model(fixture.db.get(), model,
++                          "denied COMMIT", checks);
++
++    transaction.commit();
++    model.commit();
++    require_matches_model(fixture.db.get(), model,
++                          "retried COMMIT", checks);
++}
++
++void test_denied_rollback_is_retryable(std::uint64_t& checks) {
++    Fixture fixture;
++    TransactionStackModel model;
++    SyncSqliteTransaction transaction(
++        fixture.db.get(), "cutpoint outer rollback transaction",
++        SyncSqliteTransactionMode::Immediate);
++    model.begin();
++    insert_row(fixture.db.get(), model, 60);
++
++    fixture.cutpoint.arm(SQLITE_TRANSACTION, "ROLLBACK");
++    require_throws(
++        [&] { transaction.rollback(); },
++        "not authorized",
++        "denied outer ROLLBACK did not surface SQLITE_AUTH",
++        checks);
++    fixture.cutpoint.require_consumed(checks, "transaction ROLLBACK");
++    require(transaction.active() && sqlite3_get_autocommit(fixture.db.get()) == 0,
++            "denied outer ROLLBACK revoked a still-live generation",
++            checks);
++    require_matches_model(fixture.db.get(), model,
++                          "denied outer ROLLBACK", checks);
++
++    transaction.rollback();
++    model.rollback();
++    require_matches_model(fixture.db.get(), model,
++                          "retried outer ROLLBACK", checks);
++}
++
++}  // namespace
++
++int main() {
++    std::uint64_t checks = 0;
++    try {
++        test_denied_savepoint_begin_is_retryable(checks);
++        test_denied_release_preserves_exact_mark(checks);
++        test_denied_rollback_to_preserves_unrewound_state(checks);
++        test_release_cut_after_rewind_models_partial_effect(checks);
++        test_nested_partial_rollback_preserves_lifo(checks);
++        test_denied_commit_is_retryable(checks);
++        test_denied_rollback_is_retryable(checks);
++        std::cout << "sqlite transaction exception composition checks=" << checks
++                  << " failures=0\n";
++        return EXIT_SUCCESS;
++    } catch (const std::exception& error) {
++        std::cerr << "sqlite transaction exception composition checks=" << checks
++                  << " failures=1 reason=" << error.what() << "\n";
++        return EXIT_FAILURE;
++    }
++}
+--- a/tools/audit_sqlite_transaction_exception_composition.py
++++ b/tools/audit_sqlite_transaction_exception_composition.py
+@@ -0,0 +1,266 @@
++#!/usr/bin/env python3
++"""Audit the typed SQLite boundary exception-composition contract.
++
++The runtime model deliberately cuts policy authorization at each transaction-
++stack boundary. This source audit complements it by proving that C++ allocation
++work for the compound ROLLBACK TO + RELEASE path is completed before the first
++SQLite effect and that the model remains a CTest/sanitizer obligation.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++SENSITIVE_FILES = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_sqlite_connection_authority.cpp"),
++    Path("src/sync_sqlite_transaction.cpp"),
++    Path("tests/sqlite_transaction_exception_composition_test.cpp"),
++    Path("tools/audit_sqlite_transaction_stack_authority.py"),
++    Path("tools/verify_release_package.py"),
++)
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def sha256_file(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def require(checks: list[Check], condition: bool, check_id: str, detail: str) -> None:
++    checks.append(Check(check_id, condition, detail))
++
++
++def ordered(text: str, *needles: str) -> bool:
++    cursor = -1
++    for needle in needles:
++        cursor = text.find(needle, cursor + 1)
++        if cursor < 0:
++            return False
++    return True
++
++
++def segment(text: str, start: str, end: str) -> str:
++    start_index = text.find(start)
++    end_index = text.find(end, start_index + len(start)) if start_index >= 0 else -1
++    if start_index < 0 or end_index < 0:
++        return ""
++    return text[start_index:end_index]
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root",
++        type=Path,
++        default=Path(__file__).resolve().parents[1],
++        help="AnonSync source root",
++    )
++    parser.add_argument("--json", type=Path, help="write deterministic JSON report")
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
++    if missing:
++        report = {
++            "format": "anonsync-sqlite-transaction-exception-composition-audit-v1",
++            "root": str(root),
++            "passed": False,
++            "check_count": 0,
++            "checks": [],
++            "violations": [f"missing sensitive file: {path}" for path in missing],
++        }
++        rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++        if args.json:
++            args.json.parent.mkdir(parents=True, exist_ok=True)
++            args.json.write_text(rendered, encoding="utf-8")
++        else:
++            sys.stdout.write(rendered)
++        return 2
++
++    texts = {
++        path: (root / path).read_text(encoding="utf-8", errors="strict")
++        for path in SENSITIVE_FILES
++    }
++    cmake = texts[Path("CMakeLists.txt")]
++    authority = texts[Path("src/sync_sqlite_connection_authority.cpp")]
++    transaction = texts[Path("src/sync_sqlite_transaction.cpp")]
++    runtime_test = texts[Path("tests/sqlite_transaction_exception_composition_test.cpp")]
++    stack_audit = texts[Path("tools/audit_sqlite_transaction_stack_authority.py")]
++    package_verifier = texts[Path("tools/verify_release_package.py")]
++
++    checks: list[Check] = []
++
++    for needle, check_id in (
++        ("add_executable(anonsync_sqlite_transaction_exception_composition_test", "model_target_exists"),
++        ("tests/sqlite_transaction_exception_composition_test.cpp", "model_source_is_compiled"),
++        ("target_link_libraries(\n  anonsync_sqlite_transaction_exception_composition_test PRIVATE\n  anonsync_sqlite_support)", "model_links_reviewed_owner"),
++        ("add_test(NAME anonsync_sqlite_transaction_exception_composition_test", "model_is_registered_in_ctest"),
++        ("anonsync_sqlite_transaction_exception_composition_source_audit", "composition_audit_is_registered_in_ctest"),
++    ):
++        require(checks, needle in cmake, check_id, f"required CMake marker: {needle}")
++
++    require(
++        checks,
++        cmake.count("anonsync_sqlite_transaction_exception_composition_test") >= 7,
++        "model_participates_in_build_and_sanitizer_lists",
++        "the model target must be defined, linked, tested, and included in sanitizer compile/link lists",
++    )
++
++    for needle, check_id in (
++        ("std::string_view savepoint_permit_name", "permit_name_is_borrowed_view"),
++        ("SavepointPermitScope(ConnectionAuthorityState& state,", "typed_permit_scope_exists"),
++        ("std::string_view name", "permit_scope_accepts_nonallocating_name"),
++        ("state_.savepoint_permit_name = name;", "permit_scope_borrows_stable_name"),
++        ("state_.savepoint_permit_name = {};", "permit_scope_revokes_borrow"),
++        ("struct FencedSavepointClosePlan final", "close_plan_has_owned_preallocation"),
++        ("make_fenced_savepoint_close_plan_or_throw", "close_plan_builder_exists"),
++        ("std::string rollback_sql;", "close_plan_prebuilds_rollback_sql"),
++        ("std::string release_sql;", "close_plan_prebuilds_release_sql"),
++        ("std::string rollback_label;", "close_plan_prebuilds_rollback_label"),
++        ("std::string release_label;", "close_plan_prebuilds_release_label"),
++        ("An unrelated std::bad_alloc between those two effects", "allocation_failure_threat_is_documented"),
++    ):
++        require(checks, needle in authority, check_id, f"required authority marker: {needle}")
++
++    require(
++        checks,
++        "std::string savepoint_permit_name;" not in authority,
++        "connection_state_has_no_allocating_permit_name",
++        "the live callback permit must not own a copied savepoint name",
++    )
++
++    close_segment = segment(
++        authority,
++        "void end_sync_sqlite_savepoint_boundary_or_throw(",
++        "void end_sync_sqlite_transaction_boundary_or_throw(",
++    )
++    fenced_segment = close_segment[close_segment.find("ConnectionAuthorityState& state =") :]
++    require(
++        checks,
++        ordered(
++            fenced_segment,
++            "run_authorizer_ownership_probe_or_throw",
++            "const FencedSavepointClosePlan close_plan",
++            "SavepointPermitOperation::Rollback",
++            "SavepointPermitOperation::Release",
++            "state.active_savepoints.pop_back()",
++        ),
++        "compound_close_preallocates_before_first_effect",
++        "all close-plan allocations must precede ROLLBACK TO, RELEASE, and modeled-frame revocation",
++    )
++    require(
++        checks,
++        '"ROLLBACK TO SAVEPOINT " + proof.savepoint_name' not in fenced_segment
++        and '"RELEASE SAVEPOINT " + proof.savepoint_name' not in fenced_segment,
++        "fenced_close_has_no_inline_sql_allocation",
++        "the fenced close path must consume only prebuilt SQL strings",
++    )
++    require(
++        checks,
++        "label + \" rollback to savepoint\"" not in fenced_segment
++        and "label + \" release savepoint\"" not in fenced_segment,
++        "fenced_close_has_no_inline_label_allocation",
++        "the fenced close path must consume only prebuilt diagnostic labels",
++    )
++    require(
++        checks,
++        authority.count("make_fenced_savepoint_close_plan_or_throw(") == 2,
++        "close_plan_has_one_definition_and_one_use",
++        "the preallocation boundary should remain singular and reviewable",
++    )
++
++    for needle, check_id in (
++        ("class TransactionStackModel final", "independent_transaction_stack_model_exists"),
++        ("void rollback_to_keep_mark()", "model_splits_rewind_from_release"),
++        ("void rollback_to_and_release()", "model_composes_retry_completion"),
++        ("struct OneShotBoundaryCutpoint final", "one_shot_policy_cutpoint_exists"),
++        ("int one_shot_cutpoint_policy", "cutpoint_runs_at_authorizer_boundary"),
++        ("test_denied_savepoint_begin_is_retryable", "model_cuts_savepoint_begin"),
++        ("test_denied_release_preserves_exact_mark", "model_cuts_release"),
++        ("test_denied_rollback_to_preserves_unrewound_state", "model_cuts_rollback_to"),
++        ("test_release_cut_after_rewind_models_partial_effect", "model_cuts_release_after_rewind"),
++        ("test_nested_partial_rollback_preserves_lifo", "model_covers_nested_lifo_recovery"),
++        ("test_denied_commit_is_retryable", "model_cuts_outer_commit"),
++        ("test_denied_rollback_is_retryable", "model_cuts_outer_rollback"),
++        ("Critical composition cut: ROLLBACK TO succeeds, then RELEASE is denied.", "critical_partial_effect_is_explicit"),
++        ("outer COMMIT crossed a rewound but unreleased mark", "model_checks_outer_commit_fence"),
++        ("require_matches_model", "sqlite_state_is_differentially_checked"),
++    ):
++        require(checks, needle in runtime_test, check_id, f"required model marker: {needle}")
++
++    require(
++        checks,
++        runtime_test.count("fixture.cutpoint.arm(") == 7,
++        "all_seven_boundary_cut_traces_are_armed",
++        "the suite must cut begin, release, rollback-to, two post-rewind releases, commit, and rollback",
++    )
++    require(
++        checks,
++        "catch (...)" not in runtime_test,
++        "model_does_not_mask_unknown_failures",
++        "the independent test may catch only std::exception through its assertion helper and main boundary",
++    )
++    require(
++        checks,
++        "catch (...)" in transaction,
++        "production_guard_rechecks_authority_after_failure",
++        "typed commit/rollback owners must retain authority only after a use-time boundary recheck",
++    )
++    require(
++        checks,
++        "tests/sqlite_transaction_exception_composition_test.cpp" in stack_audit,
++        "stack_authority_audit_tracks_model_source",
++        "the broad transaction-stack source audit must hash the composition model",
++    )
++    require(
++        checks,
++        "tests/sqlite_transaction_exception_composition_test.cpp" in package_verifier
++        and "tools/audit_sqlite_transaction_exception_composition.py" in package_verifier
++        and "src/sync_sqlite_connection_authority.cpp" in package_verifier,
++        "release_package_requires_composition_proof_surface",
++        "the sealed cube must contain the owner, model, and source audit rather than relying on CMake references alone",
++    )
++
++    violations = [asdict(check) for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-sqlite-transaction-exception-composition-audit-v1",
++        "root": str(root),
++        "passed": not violations,
++        "check_count": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++        "sensitive_file_sha256": {
++            path.as_posix(): sha256_file(root / path) for path in SENSITIVE_FILES
++        },
++        "interpretation": (
++            "The source shape excludes application-level C++ allocation between the successful "
++            "ROLLBACK TO effect and the RELEASE attempt. SQLite errors at either boundary remain "
++            "runtime outcomes, and the exact typed guard retains retry authority while its mark lives."
++        ),
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if args.json:
++        args.json.parent.mkdir(parents=True, exist_ok=True)
++        args.json.write_text(rendered, encoding="utf-8")
++    else:
++        sys.stdout.write(rendered)
++    return 0 if report["passed"] else 2
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+--- a/tools/audit_sqlite_transaction_stack_authority.py
++++ b/tools/audit_sqlite_transaction_stack_authority.py
+@@ -32,6 +32,7 @@
+     Path("src/sync_peer_ingress_lifecycle.cpp"),
+     Path("src/sync_peer_ingress_payload_store_schema.cpp"),
+     Path("tests/sqlite_connection_authority_test.cpp"),
++    Path("tests/sqlite_transaction_exception_composition_test.cpp"),
+     Path("tests/sync_checkpoint_owner_fence_sqlite_test.cpp"),
+     Path("tests/sync_checkpoint_owner_schema_test.cpp"),
+     Path("tests/sqlite_runtime_payload_store_test.cpp"),
+@@ -152,6 +153,9 @@
+     lifecycle_cpp = texts[Path("src/sync_peer_ingress_lifecycle.cpp")]
+     payload_schema = texts[Path("src/sync_peer_ingress_payload_store_schema.cpp")]
+     authority_test = texts[Path("tests/sqlite_connection_authority_test.cpp")]
++    composition_test = texts[
++        Path("tests/sqlite_transaction_exception_composition_test.cpp")
++    ]
+     checkpoint_fence_test = texts[Path("tests/sync_checkpoint_owner_fence_sqlite_test.cpp")]
+     checkpoint_schema_test = texts[Path("tests/sync_checkpoint_owner_schema_test.cpp")]
+     payload_test = texts[Path("tests/sqlite_runtime_payload_store_test.cpp")]
+@@ -298,12 +302,29 @@
+         ordered(
+             end_segment,
+             "validate_fenced_savepoint_proof_or_throw(db, proof, label, true)",
++            "const FencedSavepointClosePlan close_plan",
+             "SavepointPermitOperation::Rollback",
+             "SavepointPermitOperation::Release",
+             "state.active_savepoints.pop_back()",
+         ),
+-        "fenced_rollback_then_release_then_revoke",
+-        "rollback must rewind, release the mark, and only then remove the modeled frame",
++        "fenced_preallocate_then_rollback_release_revoke",
++        "close-plan allocation must precede rewind, release, and modeled-frame removal",
++    )
++    require(
++        checks,
++        "std::string_view savepoint_permit_name" in authority_cpp
++        and "std::string_view name" in authority_cpp
++        and "std::string savepoint_permit_name;" not in authority_cpp,
++        "savepoint_permit_name_is_nonallocating_borrow",
++        "the exact callback permit must borrow the stable generated name rather than copy it",
++    )
++    require(
++        checks,
++        "make_fenced_savepoint_close_plan_or_throw" in authority_cpp
++        and "close_plan.rollback_sql" in end_segment
++        and "close_plan.release_sql" in end_segment,
++        "compound_savepoint_close_uses_prebuilt_plan",
++        "ROLLBACK TO and RELEASE must consume SQL and labels allocated before the first effect",
+     )
+ 
+     require(
+@@ -403,6 +424,20 @@
+         ("live unfenced savepoint did not fail-stop", "test_savepoint_close_fence"),
+     ):
+         require(checks, needle in authority_test, check_id, f"required adversarial marker: {needle}")
++    for needle, check_id in (
++        ("class TransactionStackModel final", "test_independent_stack_model"),
++        ("struct OneShotBoundaryCutpoint final", "test_one_shot_boundary_cutpoint"),
++        ("test_release_cut_after_rewind_models_partial_effect", "test_post_rewind_release_cut"),
++        ("outer COMMIT crossed a rewound but unreleased mark", "test_partial_close_commit_fence"),
++        ("test_denied_commit_is_retryable", "test_denied_commit_retry"),
++        ("test_denied_rollback_is_retryable", "test_denied_rollback_retry"),
++    ):
++        require(
++            checks,
++            needle in composition_test,
++            check_id,
++            f"required exception-composition marker: {needle}",
++        )
+     require(
+         checks,
+         "caught late reset failure cannot commit the destructive DELETE prefix" in checkpoint_fence_test,
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -118,13 +118,19 @@
+         "src/sync_sqlite_handle_slot.hpp",
+         "src/sync_sqlite_handle_slot.cpp",
+         "src/sync_sqlite_support.cpp",
++        "src/sync_sqlite_connection_authority.cpp",
++        "src/sync_sqlite_transaction.cpp",
+         "src/sqlite_replay_ledger.cpp",
+         "tests/sqlite_process_incarnation_tests.cpp",
+         "tests/sqlite_process_authority_fork_test.cpp",
++        "tests/sqlite_connection_authority_test.cpp",
++        "tests/sqlite_transaction_exception_composition_test.cpp",
+         "tests/sqlite_source_first_move_test.cpp",
+         "tests/peer_ingress_schema_attestation_test.cpp",
+         "tests/persistence/sqlite_persistence_process_authority_fork_test.cpp",
+         "tools/audit_sqlite_process_authority.py",
++        "tools/audit_sqlite_transaction_stack_authority.py",
++        "tools/audit_sqlite_transaction_exception_composition.py",
+         "tools/audit_sqlite_source_first_move.py",
+         "tools/audit_peer_ingress_schema_owner_generation.py",
+         "tools/verify_release_package.py",

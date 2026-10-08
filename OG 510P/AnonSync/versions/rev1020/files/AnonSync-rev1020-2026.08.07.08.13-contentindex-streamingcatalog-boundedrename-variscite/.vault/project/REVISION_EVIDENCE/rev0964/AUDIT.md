@@ -1,0 +1,9 @@
+# Audit — rev0964
+
+Rev0964 removes an unbounded flat-directory allocation from the shipping resumable repair walk without creating a second scanner or weakening completed-epoch deletion authority. The exact bytewise selector retains at most 4,096 immediate component names per batch, uses one reserved vector as the max-heap and in-place sorted output, and moves that vector into the existing rooted component-processing path.
+
+The adjacent concurrency audit found that a bounded heap alone was insufficient. Later directory passes could chase post-census suffix growth indefinitely, and an interleaved new name could displace an original final-census member while still allowing false end-of-namespace authority. The final implementation retains a decreasing first-census component budget and emits the non-complete `directory_census_frontier` outcome whenever later enumeration observes growth beyond that census. The persisted cursor resumes at the displaced original member; absence authority remains fenced until a complete stable epoch.
+
+The memory claim is deliberately narrow. The ceiling is per immediate-directory batch. Recursive traversal can retain one parent batch at each active depth, later batches rescan the directory, skipped prefixes still repeat metadata classification, and the non-resumable complete observer still uses the whole-directory vector. This is a production memory-cliff correction, not snapshot isolation, a durable subtree index, or huge-tree qualification.
+
+Mechanical evidence: 205/205 structural checks; 77/77 observer and 6/6 observer-race checks; 360 folder-owner checks; fresh 527-edge GCC and 238-edge Clang ASan/UBSan product graphs plus exact final-source rebuilds; 258/258 GCC registry; independent 39/39 GCC product replay; 39/39 sanitizer product tests; exact rev0963 parent 41/41 package verification; and 5/5 active-file patch reconstruction.

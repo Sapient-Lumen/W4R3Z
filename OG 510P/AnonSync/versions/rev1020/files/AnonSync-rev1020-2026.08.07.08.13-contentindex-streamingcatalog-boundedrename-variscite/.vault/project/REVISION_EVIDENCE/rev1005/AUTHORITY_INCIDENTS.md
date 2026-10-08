@@ -1,0 +1,3 @@
+# Rev1005 authority incidents
+
+Several obsolete validators and remount-vanished unsealed worktrees appeared during development. None is release authority. Final authority is the exact sealed rev1004 parent, Git commit `8a8856d2dce3e1b9d55dace26a6e70fd466bff5a`, its reconstructed tree, the retained clean GCC and Clang graphs, and the staged package checks. Aggregate CTest wrappers that stalled after independently passing binaries were replaced with bounded per-test accounting. One sanitizer service fixture run under concurrent process tests lost its owner-socket precondition; the same exact test passed serially and only the serial result is retained.

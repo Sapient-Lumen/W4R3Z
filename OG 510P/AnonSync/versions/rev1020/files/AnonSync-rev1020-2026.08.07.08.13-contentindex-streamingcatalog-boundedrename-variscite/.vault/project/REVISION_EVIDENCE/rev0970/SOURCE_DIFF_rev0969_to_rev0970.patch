@@ -1,0 +1,2134 @@
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index af0e5c0e892b451347f29c5a36d8e160006d2eef..7d33d44245b189abf78342790800660d5fb6215a 100755
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -3404,11 +3404,24 @@ int command_recheck(const Options& options) {
+ 
+ int command_versions(const Options& options) {
+     options.require_only(
+-        {"socket", "path", "after", "limit", "source-cutpoint",
+-         "timeout-milliseconds"});
++        {"socket", "path", "after", "limit", "inspection-mode",
++         "source-cutpoint", "timeout-milliseconds"});
+     const fs::path socket_path = require_absolute_path(
+         options.one("socket"), "--socket");
+     anonsync::SyncReplicaHistoricalVersionQuery query;
++    const std::string inspection_mode =
++        options.one_or("inspection-mode", "exact");
++    if (inspection_mode == "exact") {
++        query.inspection_mode = anonsync::
++            SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability;
++    } else if (inspection_mode == "metadata") {
++        query.inspection_mode = anonsync::
++            SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly;
++    } else {
++        throw std::invalid_argument(
++            "--inspection-mode must be exact or metadata");
++    }
+     query.maximum_entries = option_uint64_or(
+         options, "limit",
+         anonsync::kSyncReplicaHistoricalVersionDefaultMaximumEntries);
+@@ -3573,7 +3586,9 @@ void print_usage(std::ostream& output) {
+         << "  anonsync_sync versions --socket ABSOLUTE_SOCKET "
+            "[--path CANONICAL_RELATIVE_PATH] "
+            "[--after LOWERCASE_SHA256] [--limit 1..1024] "
+-           "[--source-cutpoint v1:OPERATION_SET_SHA256:PAYLOAD_SHA256] "
++           "[--inspection-mode exact|metadata] "
++           "[--source-cutpoint v1:OPERATION_SET_SHA256:PAYLOAD_SHA256|"
++           "v2:metadata:OPERATION_SET_SHA256] "
+            "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync restore --socket ABSOLUTE_SOCKET "
+            "--operation LOWERCASE_SHA256 "
+@@ -3600,13 +3615,15 @@ void print_usage(std::ostream& output) {
+            "payload byte and moves the exact resulting snapshot into ordinary "
+            "convergence; acceptance is not completion, so status reports the "
+            "requested and completed generations. versions accepts one bounded "
+-           "inspection page of active causal file predecessors whose immutable "
+-           "payload bytes are still retained; an exact path, page limit, and "
+-           "active superseded operation cursor may select later pages. Copying "
+-           "the first page's source_cutpoint into --source-cutpoint makes every "
+-           "later page fail closed if the active operation set or retained "
+-           "payload namespace changes; status reports the exact query, source "
+-           "cutpoint, and next cursor. "
++           "inspection page of active causal file predecessors. Exact mode "
++           "retains the existing complete payload-namespace observation and "
++           "reports immediate restore availability; metadata mode reads no "
++           "payload-store state and reports those fields as unknown. An exact "
++           "path, page limit, and active superseded operation cursor may select "
++           "later pages. Copying the first page's source_cutpoint into "
++           "--source-cutpoint makes later pages fail closed if the authority "
++           "bound by that inspection mode changes; status reports the exact "
++           "query, source cutpoint, and next cursor. "
+            "restore accepts one exact operation ID and the exact current head from "
+            "that inventory, rejects stale intent before catalog, rooted-path, or "
+            "payload-store work, then re-proves current catalog, replica, rooted-path, "
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index cf7a204f65b495e70836bd4546801c88fe716ea8..83b997dcfdbb10e0855fdb7582ee65aba67c0fc4 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -61,7 +61,7 @@ constexpr std::string_view kQuarantineResponseSchema =
+ constexpr std::string_view kQuarantineReleaseResponseSchema =
+     "anonsync.local-quarantine-release.response.v1";
+ constexpr std::string_view kHistoricalVersionsResponseSchema =
+-    "anonsync.local-historical-versions.response.v3";
++    "anonsync.local-historical-versions.response.v4";
+ constexpr std::string_view kHistoricalVersionRestoreResponseSchema =
+     "anonsync.local-historical-version-restore.response.v1";
+ constexpr std::string_view kHistoricalVersionRestoreExactResponseSchema =
+@@ -225,29 +225,49 @@ parse_historical_version_request(std::string_view request) {
+         if (request.back() != '\n') return std::nullopt;
+         request.remove_prefix(kHistoricalVersionsQueryRequestPrefix.size());
+         request.remove_suffix(1U);
+-        const std::size_t first_space = request.find(' ');
+-        if (first_space == std::string_view::npos) return std::nullopt;
+-        const std::size_t second_space = request.find(' ', first_space + 1U);
+-        if (second_space == std::string_view::npos) {
+-            return std::nullopt;
++
++        std::array<std::string_view, 5U> fields{};
++        std::size_t field_count = 0U;
++        while (!request.empty()) {
++            if (field_count == fields.size()) return std::nullopt;
++            const std::size_t space = request.find(' ');
++            const std::string_view field = space == std::string_view::npos
++                ? request
++                : request.substr(0U, space);
++            if (field.empty()) return std::nullopt;
++            fields[field_count++] = field;
++            if (space == std::string_view::npos) {
++                request = {};
++            } else {
++                request.remove_prefix(space + 1U);
++            }
+         }
+-        const std::size_t third_space = request.find(' ', second_space + 1U);
+-        if (third_space != std::string_view::npos &&
+-            request.find(' ', third_space + 1U) != std::string_view::npos) {
++        if (field_count != 3U && field_count != 4U && field_count != 5U) {
+             return std::nullopt;
+         }
+-        const std::string_view maximum_text = request.substr(0U, first_space);
+-        const std::string_view path_hex = request.substr(
+-            first_space + 1U, second_space - first_space - 1U);
+-        const std::string_view cursor = third_space == std::string_view::npos
+-            ? request.substr(second_space + 1U)
+-            : request.substr(
+-                  second_space + 1U,
+-                  third_space - second_space - 1U);
++
++        std::size_t offset = 0U;
++        SyncReplicaHistoricalVersionInspectionMode inspection_mode =
++            SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability;
++        if (field_count == 5U) {
++            try {
++                inspection_mode =
++                    sync_replica_historical_version_inspection_mode_from_name_or_throw(
++                        fields[0U],
++                        "local historical-version inspection mode");
++            } catch (const std::invalid_argument&) {
++                return std::nullopt;
++            }
++            offset = 1U;
++        }
++
++        const std::string_view maximum_text = fields[offset];
++        const std::string_view path_hex = fields[offset + 1U];
++        const std::string_view cursor = fields[offset + 2U];
+         const std::string_view source_cutpoint =
+-            third_space == std::string_view::npos
+-                ? std::string_view("-")
+-                : request.substr(third_space + 1U);
++            field_count == offset + 4U ? fields[offset + 3U]
++                                       : std::string_view("-");
+         const std::optional<std::uint64_t> maximum =
+             parse_decimal_uint64(maximum_text);
+         if (!maximum.has_value() ||
+@@ -257,6 +277,7 @@ parse_historical_version_request(std::string_view request) {
+ 
+         parsed.operation =
+             SyncLocalStatusSocketHistoricalVersionOperation::Inspect;
++        parsed.query.inspection_mode = inspection_mode;
+         parsed.query.maximum_entries = *maximum;
+         if (path_hex != "-") {
+             const std::optional<std::string> decoded =
+@@ -1035,7 +1056,7 @@ void validate_historical_version_response_or_throw(
+         restore_request.expected_current_operation_id.has_value();
+     const std::size_t expected_fields = restoring
+         ? (exact_restore ? 7U : 6U) + (rejected ? 1U : 0U)
+-        : 9U + (rejected ? 1U : 0U);
++        : 10U + (rejected ? 1U : 0U);
+     const std::string_view expected_schema = restoring
+         ? (exact_restore ? kHistoricalVersionRestoreExactResponseSchema
+                          : kHistoricalVersionRestoreResponseSchema)
+@@ -1063,6 +1084,13 @@ void validate_historical_version_response_or_throw(
+                 " changed the expected current operation ID");
+         }
+     } else {
++        if (parsed.at("inspection_mode").str() !=
++            sync_replica_historical_version_inspection_mode_name(
++                query.inspection_mode)) {
++            throw std::runtime_error(
++                std::string(label) +
++                " changed the requested historical inspection mode");
++        }
+         const std::uint64_t returned_limit = exact_nonnegative_uint64_or_throw(
+             parsed.at("maximum_entries"), label);
+         if (returned_limit != query.maximum_entries) {
+@@ -1476,7 +1504,11 @@ struct SyncLocalStatusSocketServer::State final {
+                          << "\"";
+             }
+         } else {
+-            response << ",\"maximum_entries\":" << query.maximum_entries
++            response << ",\"inspection_mode\":"
++                     << json_quote(
++                            sync_replica_historical_version_inspection_mode_name(
++                                query.inspection_mode))
++                     << ",\"maximum_entries\":" << query.maximum_entries
+                      << ",\"canonical_path\":";
+             if (query.canonical_path.has_value()) {
+                 response << json_quote(*query.canonical_path);
+@@ -2010,11 +2042,16 @@ namespace {
+                       std::string(label) +
+                           " historical-version request source cutpoint")
+                 : "-";
++        const std::string inspection_mode(
++            sync_replica_historical_version_inspection_mode_name(
++                query.inspection_mode));
+         request.reserve(
+-            kHistoricalVersionsQueryRequestPrefix.size() + 24U + 1U +
+-            path_hex.size() + 1U + cursor.size() + 1U +
+-            source_cutpoint.size() + 1U);
++            kHistoricalVersionsQueryRequestPrefix.size() +
++            inspection_mode.size() + 1U + 24U + 1U + path_hex.size() + 1U +
++            cursor.size() + 1U + source_cutpoint.size() + 1U);
+         request.append(kHistoricalVersionsQueryRequestPrefix);
++        request.append(inspection_mode);
++        request.push_back(' ');
+         request.append(std::to_string(query.maximum_entries));
+         request.push_back(' ');
+         request.append(path_hex);
+diff --git a/src/sync_local_status_socket.hpp b/src/sync_local_status_socket.hpp
+index 5ae53d323653ef629af509dbf57438fd723db35c..e9914761f24c99ced1fce416174bbed9b75a2fe9 100644
+--- a/src/sync_local_status_socket.hpp
++++ b/src/sync_local_status_socket.hpp
+@@ -93,9 +93,11 @@ struct SyncLocalStatusSocketActionSnapshot final {
+ // a current-byte proof obligation; "quarantine EXPECTED OBSERVED\n" preserves
+ // one exact corrupt image; "quarantine-release EXPECTED OBSERVED\n"
+ // releases one exact recovered diagnostic image; "versions\n" requests the
+-// default bounded causal-history projection; "versions-query LIMIT PATH_HEX
+-// CURSOR SOURCE_CUTPOINT_OR_DASH\n" requests one exact page (the rev0967
+-// three-field form remains accepted without a source pin); "restore
++// default bounded exact-payload causal-history projection; "versions-query
++// MODE LIMIT PATH_HEX CURSOR SOURCE_CUTPOINT_OR_DASH\n" requests one exact
++// query identity. MODE is exact_payload_availability or causal_metadata_only;
++// the rev0967/0968 three- and four-field forms remain accepted as exact mode.
++// "restore
+ // OPERATION_ID\n" retains the rev0966 unbound compatibility frame; and
+ // "restore-exact OPERATION_ID EXPECTED_CURRENT_OPERATION_ID\n" binds the
+ // selected value to the sole current head reviewed by the operator. Quarantine
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index 160e0bf25db7e9feadf165246fb8d7eed6c20341..67cd2d841ec1c83a24c6c7e0e0be91f904b0ab29 100755
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -4826,33 +4826,42 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+         cursor_entry->counter = cursor_operation->dot.counter;
+     }
+ 
+-    // This explicit operator action pays for one complete payload observation.
+-    // It remains independent of ordinary service status polling and therefore
+-    // cannot turn every status publication into O(payload namespace) work.
+-    const SyncReplicaFilePayloadStoreSnapshot payload_snapshot =
+-        state_->payload_store->snapshot_or_throw();
+-    payload_snapshot.require_folder_or_throw(
+-        state_->folder_id,
+-        state_->label + " historical-version payload snapshot");
+-    const SyncReplicaSqliteSnapshot replica_after_payload =
+-        state_->replica_owner->snapshot_or_throw();
+-    if (replica_snapshot.operation_set_digest !=
+-        replica_after_payload.operation_set_digest) {
+-        throw SyncReplicaHistoricalVersionSourceChangedError(
+-            SyncReplicaHistoricalVersionSourceChangeStage::
+-                OperationSetDuringPayloadObservation,
+-            state_->label +
+-                " historical-version operation set changed during payload "
+-                "observation; restart pagination");
+-    }
+-    if (query.expected_source_cutpoint.has_value() &&
+-        query.expected_source_cutpoint->payload_snapshot_digest !=
+-            payload_snapshot.snapshot_digest()) {
+-        throw SyncReplicaHistoricalVersionSourceChangedError(
+-            SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot,
+-            state_->label +
+-                " historical-version payload snapshot changed; restart "
+-                "pagination");
++    // Exact availability inspection deliberately pays for one complete payload
++    // observation and brackets it with the operation-set owner. Metadata-only
++    // inspection stops at the immutable causal snapshot above: it must not open
++    // the payload store, acquire its lease, enumerate its namespace, or invent
++    // negative availability evidence.
++    std::optional<SyncReplicaFilePayloadStoreSnapshot> payload_snapshot;
++    if (query.inspection_mode ==
++        SyncReplicaHistoricalVersionInspectionMode::
++            ExactPayloadAvailability) {
++        payload_snapshot.emplace(
++            state_->payload_store->snapshot_or_throw());
++        payload_snapshot->require_folder_or_throw(
++            state_->folder_id,
++            state_->label + " historical-version payload snapshot");
++        const SyncReplicaSqliteSnapshot replica_after_payload =
++            state_->replica_owner->snapshot_or_throw();
++        if (replica_snapshot.operation_set_digest !=
++            replica_after_payload.operation_set_digest) {
++            throw SyncReplicaHistoricalVersionSourceChangedError(
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    OperationSetDuringPayloadObservation,
++                state_->label +
++                    " historical-version operation set changed during payload "
++                    "observation; restart pagination");
++        }
++        if (query.expected_source_cutpoint.has_value() &&
++            query.expected_source_cutpoint->payload_snapshot_digest !=
++                std::optional<std::string>(
++                    payload_snapshot->snapshot_digest())) {
++            throw SyncReplicaHistoricalVersionSourceChangedError(
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    PayloadSnapshot,
++                state_->label +
++                    " historical-version payload snapshot changed; restart "
++                    "pagination");
++        }
+     }
+ 
+     SyncReplicaHistoricalVersionInventory inventory;
+@@ -4863,16 +4872,20 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+         replica_snapshot.operation_set_digest;
+     inventory.source_visible_state_digest =
+         replica_snapshot.visible_state_digest;
+-    inventory.source_payload_snapshot_digest =
+-        payload_snapshot.snapshot_digest();
+-    inventory.payload_scan_hashed_entry_count =
+-        payload_snapshot.scan_hashed_entry_count();
+-    inventory.payload_scan_hashed_bytes =
+-        payload_snapshot.scan_hashed_bytes();
+-    inventory.payload_scan_reused_entry_count =
+-        payload_snapshot.scan_reused_entry_count();
+-    inventory.payload_scan_reused_bytes =
+-        payload_snapshot.scan_reused_bytes();
++    if (payload_snapshot.has_value()) {
++        inventory.source_payload_snapshot_digest =
++            payload_snapshot->snapshot_digest();
++        inventory.payload_scan_hashed_entry_count =
++            payload_snapshot->scan_hashed_entry_count();
++        inventory.payload_scan_hashed_bytes =
++            payload_snapshot->scan_hashed_bytes();
++        inventory.payload_scan_reused_entry_count =
++            payload_snapshot->scan_reused_entry_count();
++        inventory.payload_scan_reused_bytes =
++            payload_snapshot->scan_reused_bytes();
++        inventory.payload_present_count = 0U;
++        inventory.restore_ready_count = 0U;
++    }
+     inventory.entries.reserve(
+         static_cast<std::size_t>(query.maximum_entries));
+ 
+@@ -4917,26 +4930,31 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+                 " historical-version primary operation is inactive");
+         }
+ 
+-        const bool payload_present =
+-            payload_snapshot.payload_size_or_none(
+-                operation.content_sha256) ==
+-            std::optional<std::uint64_t>(operation.size_bytes);
+-        if (payload_present) {
+-            increment_or_throw(
+-                inventory.payload_present_count,
+-                "payload-present");
+-        }
+-        const bool changes_current_value =
+-            current->kind == SyncReplicaValueKind::Tombstone ||
+-            current->size_bytes != operation.size_bytes ||
+-            current->content_sha256 != operation.content_sha256;
+-        const bool restore_ready =
+-            payload_present && view.visible_operation_ids.size() == 1U &&
+-            changes_current_value;
+-        if (restore_ready) {
+-            increment_or_throw(
+-                inventory.restore_ready_count,
+-                "restore-ready");
++        std::optional<bool> payload_present;
++        std::optional<bool> restore_ready;
++        if (payload_snapshot.has_value()) {
++            payload_present =
++                payload_snapshot->payload_size_or_none(
++                    operation.content_sha256) ==
++                std::optional<std::uint64_t>(operation.size_bytes);
++            if (*payload_present) {
++                increment_or_throw(
++                    *inventory.payload_present_count,
++                    "payload-present");
++            }
++            const bool changes_current_value =
++                current->kind == SyncReplicaValueKind::Tombstone ||
++                current->size_bytes != operation.size_bytes ||
++                current->content_sha256 != operation.content_sha256;
++            restore_ready =
++                *payload_present &&
++                view.visible_operation_ids.size() == 1U &&
++                changes_current_value;
++            if (*restore_ready) {
++                increment_or_throw(
++                    *inventory.restore_ready_count,
++                    "restore-ready");
++            }
+         }
+ 
+         SyncReplicaHistoricalVersionEntry candidate{
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index 2561a045196d4142ca1f2e51e385e373cf0c1fec..cfa5407c693dc183bd8599669a6e79f472c9ceaa 100755
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -141,8 +141,11 @@ struct SyncReplicaHistoricalVersionEntry final {
+     std::uint64_t visible_head_count = 0U;
+     std::string current_primary_operation_id;
+     SyncReplicaValueKind current_primary_kind = SyncReplicaValueKind::File;
+-    bool payload_present = false;
+-    bool restore_ready = false;
++    // Null in causal-metadata-only inspection because that mode performs no
++    // payload-store observation. A false exact value means the namespace was
++    // observed and did not contain the exact digest/size pair.
++    std::optional<bool> payload_present;
++    std::optional<bool> restore_ready;
+ 
+     bool operator==(const SyncReplicaHistoricalVersionEntry&) const = default;
+ };
+@@ -152,11 +155,14 @@ struct SyncReplicaHistoricalVersionInventory final {
+     std::uint64_t source_replica_state_generation = 0U;
+     std::string source_operation_set_digest;
+     std::string source_visible_state_digest;
+-    std::string source_payload_snapshot_digest;
+-    std::uint64_t payload_scan_hashed_entry_count = 0U;
+-    std::uint64_t payload_scan_hashed_bytes = 0U;
+-    std::uint64_t payload_scan_reused_entry_count = 0U;
+-    std::uint64_t payload_scan_reused_bytes = 0U;
++    // Absent for causal-metadata-only inspection. Every payload-derived
++    // field below is likewise null so zero cannot be mistaken for an exact
++    // negative observation.
++    std::optional<std::string> source_payload_snapshot_digest;
++    std::optional<std::uint64_t> payload_scan_hashed_entry_count;
++    std::optional<std::uint64_t> payload_scan_hashed_bytes;
++    std::optional<std::uint64_t> payload_scan_reused_entry_count;
++    std::optional<std::uint64_t> payload_scan_reused_bytes;
+     // Total active superseded file operations in the selected path scope,
+     // including the cursor and entries that precede it.
+     std::uint64_t historical_file_operation_count = 0U;
+@@ -164,8 +170,8 @@ struct SyncReplicaHistoricalVersionInventory final {
+     // inspection order. Equal to historical_file_operation_count when no
+     // cursor was requested.
+     std::uint64_t historical_file_operation_count_after_cursor = 0U;
+-    std::uint64_t payload_present_count = 0U;
+-    std::uint64_t restore_ready_count = 0U;
++    std::optional<std::uint64_t> payload_present_count;
++    std::optional<std::uint64_t> restore_ready_count;
+     bool truncated = false;
+     std::optional<std::string> next_start_after_operation_id;
+     std::vector<SyncReplicaHistoricalVersionEntry> entries;
+@@ -176,6 +182,7 @@ struct SyncReplicaHistoricalVersionInventory final {
+     [[nodiscard]] SyncReplicaHistoricalVersionSourceCutpoint source_cutpoint()
+         const {
+         return {
++            .inspection_mode = query.inspection_mode,
+             .operation_set_digest = source_operation_set_digest,
+             .payload_snapshot_digest = source_payload_snapshot_digest,
+         };
+diff --git a/src/sync_replica_historical_version_query.hpp b/src/sync_replica_historical_version_query.hpp
+index 68c3941cb130ea0b0e8c524882da8fbdc225c4e0..ceae65b15ca905c9269ff0acfbbbf26a1f42a4e1 100644
+--- a/src/sync_replica_historical_version_query.hpp
++++ b/src/sync_replica_historical_version_query.hpp
+@@ -23,14 +23,57 @@ inline constexpr std::uint64_t
+ inline constexpr std::uint64_t
+     kSyncReplicaHistoricalVersionMaximumCanonicalPathBytes = 4096U;
+ 
+-// Exact immutable inputs that determine one historical-version page. The
+-// operation-set digest binds every active causal predecessor and its ordering;
+-// the payload snapshot digest binds exact retained-byte availability. This is
++// History inspection has two deliberately different authority contracts.
++// ExactPayloadAvailability preserves the existing complete payload-namespace
++// observation and can report whether each predecessor is immediately
++// restorable. CausalMetadataOnly reads only the immutable causal model; it is
++// suitable for cheap browsing but must report payload availability as unknown.
++enum class SyncReplicaHistoricalVersionInspectionMode : std::uint8_t {
++    ExactPayloadAvailability = 1U,
++    CausalMetadataOnly = 2U,
++};
++
++[[nodiscard]] constexpr std::string_view
++sync_replica_historical_version_inspection_mode_name(
++    SyncReplicaHistoricalVersionInspectionMode mode) noexcept {
++    switch (mode) {
++        case SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability:
++            return "exact_payload_availability";
++        case SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly:
++            return "causal_metadata_only";
++    }
++    return "unknown";
++}
++
++[[nodiscard]] inline SyncReplicaHistoricalVersionInspectionMode
++sync_replica_historical_version_inspection_mode_from_name_or_throw(
++    std::string_view name,
++    std::string_view label =
++        "sync replica historical-version inspection mode") {
++    if (name == "exact_payload_availability") {
++        return SyncReplicaHistoricalVersionInspectionMode::
++            ExactPayloadAvailability;
++    }
++    if (name == "causal_metadata_only") {
++        return SyncReplicaHistoricalVersionInspectionMode::
++            CausalMetadataOnly;
++    }
++    throw std::invalid_argument(
++        std::string(label) + " is invalid");
++}
++
++// Exact immutable inputs that determine one historical-version page. Every
++// cutpoint binds the complete active operation set. Exact-payload pages also
++// bind the retained payload snapshot; metadata-only pages intentionally carry
++// no payload digest because they perform no payload-store observation. This is
+ // browse consistency only. Restore still re-proves every mutable owner and the
+ // rooted destination from scratch.
+ struct SyncReplicaHistoricalVersionSourceCutpoint final {
++    SyncReplicaHistoricalVersionInspectionMode inspection_mode =
++        SyncReplicaHistoricalVersionInspectionMode::ExactPayloadAvailability;
+     std::string operation_set_digest;
+-    std::string payload_snapshot_digest;
++    std::optional<std::string> payload_snapshot_digest;
+ 
+     bool operator==(
+         const SyncReplicaHistoricalVersionSourceCutpoint&) const = default;
+@@ -44,15 +87,32 @@ inline void validate_sync_replica_historical_version_source_cutpoint_or_throw(
+         throw std::invalid_argument(
+             std::string(label) + " operation-set digest is invalid");
+     }
+-    if (!is_lowercase_sha256_hex(cutpoint.payload_snapshot_digest)) {
+-        throw std::invalid_argument(
+-            std::string(label) + " payload-snapshot digest is invalid");
++    switch (cutpoint.inspection_mode) {
++        case SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability:
++            if (!cutpoint.payload_snapshot_digest.has_value() ||
++                !is_lowercase_sha256_hex(
++                    *cutpoint.payload_snapshot_digest)) {
++                throw std::invalid_argument(
++                    std::string(label) +
++                    " payload-snapshot digest is invalid");
++            }
++            return;
++        case SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly:
++            if (cutpoint.payload_snapshot_digest.has_value()) {
++                throw std::invalid_argument(
++                    std::string(label) +
++                    " metadata-only cutpoint carries a payload digest");
++            }
++            return;
+     }
++    throw std::invalid_argument(
++        std::string(label) + " inspection mode is invalid");
+ }
+ 
+-// Canonical copy/paste token used by the CLI and owner-only local socket. The
+-// explicit version prefix prevents a future token shape from being interpreted
+-// permissively as this one.
++// Preserve the rev0968 v1 token byte-for-byte for exact-payload callers. The
++// shorter v2 metadata token is mode-tagged and cannot be confused with an
++// exact payload cutpoint by a newer parser.
+ [[nodiscard]] inline std::string
+ encode_sync_replica_historical_version_source_cutpoint_or_throw(
+     const SyncReplicaHistoricalVersionSourceCutpoint& cutpoint,
+@@ -60,8 +120,16 @@ encode_sync_replica_historical_version_source_cutpoint_or_throw(
+         "sync replica historical-version source cutpoint") {
+     validate_sync_replica_historical_version_source_cutpoint_or_throw(
+         cutpoint, label);
+-    return "v1:" + cutpoint.operation_set_digest + ':' +
+-        cutpoint.payload_snapshot_digest;
++    switch (cutpoint.inspection_mode) {
++        case SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability:
++            return "v1:" + cutpoint.operation_set_digest + ':' +
++                *cutpoint.payload_snapshot_digest;
++        case SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly:
++            return "v2:metadata:" + cutpoint.operation_set_digest;
++    }
++    throw std::invalid_argument(
++        std::string(label) + " inspection mode is invalid");
+ }
+ 
+ [[nodiscard]] inline SyncReplicaHistoricalVersionSourceCutpoint
+@@ -69,25 +137,44 @@ decode_sync_replica_historical_version_source_cutpoint_or_throw(
+     std::string_view token,
+     std::string_view label =
+         "sync replica historical-version source cutpoint") {
+-    constexpr std::string_view prefix = "v1:";
++    constexpr std::string_view exact_prefix = "v1:";
++    constexpr std::string_view metadata_prefix = "v2:metadata:";
+     constexpr std::size_t digest_size = 64U;
+-    constexpr std::size_t encoded_size =
+-        prefix.size() + digest_size + 1U + digest_size;
+-    if (token.size() != encoded_size || !token.starts_with(prefix) ||
+-        token[prefix.size() + digest_size] != ':') {
+-        throw std::invalid_argument(
+-            std::string(label) + " token framing is invalid");
++    if (token.starts_with(exact_prefix)) {
++        constexpr std::size_t encoded_size =
++            exact_prefix.size() + digest_size + 1U + digest_size;
++        if (token.size() != encoded_size ||
++            token[exact_prefix.size() + digest_size] != ':') {
++            throw std::invalid_argument(
++                std::string(label) + " token framing is invalid");
++        }
++        SyncReplicaHistoricalVersionSourceCutpoint cutpoint{
++            .inspection_mode = SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability,
++            .operation_set_digest = std::string(
++                token.substr(exact_prefix.size(), digest_size)),
++            .payload_snapshot_digest = std::string(token.substr(
++                exact_prefix.size() + digest_size + 1U, digest_size)),
++        };
++        validate_sync_replica_historical_version_source_cutpoint_or_throw(
++            cutpoint, label);
++        return cutpoint;
+     }
+-
+-    SyncReplicaHistoricalVersionSourceCutpoint cutpoint{
+-        .operation_set_digest = std::string(
+-            token.substr(prefix.size(), digest_size)),
+-        .payload_snapshot_digest = std::string(token.substr(
+-            prefix.size() + digest_size + 1U, digest_size)),
+-    };
+-    validate_sync_replica_historical_version_source_cutpoint_or_throw(
+-        cutpoint, label);
+-    return cutpoint;
++    if (token.starts_with(metadata_prefix) &&
++        token.size() == metadata_prefix.size() + digest_size) {
++        SyncReplicaHistoricalVersionSourceCutpoint cutpoint{
++            .inspection_mode = SyncReplicaHistoricalVersionInspectionMode::
++                CausalMetadataOnly,
++            .operation_set_digest =
++                std::string(token.substr(metadata_prefix.size())),
++            .payload_snapshot_digest = std::nullopt,
++        };
++        validate_sync_replica_historical_version_source_cutpoint_or_throw(
++            cutpoint, label);
++        return cutpoint;
++    }
++    throw std::invalid_argument(
++        std::string(label) + " token framing is invalid");
+ }
+ 
+ enum class SyncReplicaHistoricalVersionSourceChangeStage : std::uint8_t {
+@@ -140,13 +227,15 @@ private:
+ };
+ 
+ struct SyncReplicaHistoricalVersionQuery final {
++    SyncReplicaHistoricalVersionInspectionMode inspection_mode =
++        SyncReplicaHistoricalVersionInspectionMode::ExactPayloadAvailability;
+     std::uint64_t maximum_entries =
+         kSyncReplicaHistoricalVersionDefaultMaximumEntries;
+     std::optional<std::string> canonical_path;
+     std::optional<std::string> start_after_operation_id;
+     // Optional fail-closed browse pin. A later page can copy the exact source
+     // token returned by its first page and will either observe the same active
+-    // operation set and retained payload namespace or fail without omission.
++    // operation set plus mode-specific inputs or fail without silent omission.
+     std::optional<SyncReplicaHistoricalVersionSourceCutpoint>
+         expected_source_cutpoint;
+ 
+@@ -218,10 +307,25 @@ inline void validate_sync_replica_historical_version_query_or_throw(
+             std::string(label) +
+             " cursor is not one lowercase SHA-256 operation ID");
+     }
++    switch (query.inspection_mode) {
++        case SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability:
++        case SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly:
++            break;
++        default:
++            throw std::invalid_argument(
++                std::string(label) + " inspection mode is invalid");
++    }
+     if (query.expected_source_cutpoint.has_value()) {
+         validate_sync_replica_historical_version_source_cutpoint_or_throw(
+             *query.expected_source_cutpoint,
+             std::string(label) + " expected source cutpoint");
++        if (query.expected_source_cutpoint->inspection_mode !=
++            query.inspection_mode) {
++            throw std::invalid_argument(
++                std::string(label) +
++                " expected source cutpoint mode does not match the query");
++        }
+     }
+ }
+ 
+diff --git a/src/sync_replica_peer_service_status.cpp b/src/sync_replica_peer_service_status.cpp
+index c00cb157c1f7b49026055c9bc80f8b2187cd37cc..59245a2a215a8885a781a2ab9605ecadd0bb9ed6 100644
+--- a/src/sync_replica_peer_service_status.cpp
++++ b/src/sync_replica_peer_service_status.cpp
+@@ -72,6 +72,16 @@ void append_optional_uint64(
+     }
+ }
+ 
++void append_optional_bool(
++    std::ostream& output,
++    const std::optional<bool>& value) {
++    if (value.has_value()) {
++        output << json_bool(*value);
++    } else {
++        output << "null";
++    }
++}
++
+ void append_ingress_report(
+     std::ostream& output,
+     const std::optional<SyncReplicaStreamConnectReport>& report) {
+@@ -421,7 +431,11 @@ void append_payload_quarantine_status(
+ void append_historical_version_query(
+     std::ostream& output,
+     const SyncReplicaHistoricalVersionQuery& query) {
+-    output << "{\"maximum_entries\":" << query.maximum_entries
++    output << "{\"inspection_mode\":"
++           << json_quote(
++                  sync_replica_historical_version_inspection_mode_name(
++                      query.inspection_mode))
++           << ",\"maximum_entries\":" << query.maximum_entries
+            << ",\"canonical_path\":";
+     if (query.canonical_path.has_value()) {
+         output << json_quote(*query.canonical_path);
+@@ -479,29 +493,38 @@ void append_historical_version_inventory(
+         << json_quote(inventory->source_operation_set_digest)
+         << ",\"source_visible_state_digest\":"
+         << json_quote(inventory->source_visible_state_digest)
+-        << ",\"source_payload_snapshot_digest\":"
+-        << json_quote(inventory->source_payload_snapshot_digest)
++        << ",\"source_payload_snapshot_digest\":";
++    if (inventory->source_payload_snapshot_digest.has_value()) {
++        output << json_quote(*inventory->source_payload_snapshot_digest);
++    } else {
++        output << "null";
++    }
++    output
+         << ",\"source_cutpoint\":"
+         << json_quote(
+                encode_sync_replica_historical_version_source_cutpoint_or_throw(
+                    inventory->source_cutpoint(),
+                    "historical-version inventory source cutpoint"))
+-        << ",\"payload_scan_hashed_entries\":"
+-        << inventory->payload_scan_hashed_entry_count
+-        << ",\"payload_scan_hashed_bytes\":"
+-        << inventory->payload_scan_hashed_bytes
+-        << ",\"payload_scan_reused_entries\":"
+-        << inventory->payload_scan_reused_entry_count
+-        << ",\"payload_scan_reused_bytes\":"
+-        << inventory->payload_scan_reused_bytes
++        << ",\"payload_scan_hashed_entries\":";
++    append_optional_uint64(
++        output, inventory->payload_scan_hashed_entry_count);
++    output << ",\"payload_scan_hashed_bytes\":";
++    append_optional_uint64(output, inventory->payload_scan_hashed_bytes);
++    output << ",\"payload_scan_reused_entries\":";
++    append_optional_uint64(
++        output, inventory->payload_scan_reused_entry_count);
++    output << ",\"payload_scan_reused_bytes\":";
++    append_optional_uint64(output, inventory->payload_scan_reused_bytes);
++    output
+         << ",\"historical_file_operation_count\":"
+         << inventory->historical_file_operation_count
+         << ",\"historical_file_operation_count_after_cursor\":"
+         << inventory->historical_file_operation_count_after_cursor
+-        << ",\"payload_present_count\":"
+-        << inventory->payload_present_count
+-        << ",\"restore_ready_count\":"
+-        << inventory->restore_ready_count
++        << ",\"payload_present_count\":";
++    append_optional_uint64(output, inventory->payload_present_count);
++    output << ",\"restore_ready_count\":";
++    append_optional_uint64(output, inventory->restore_ready_count);
++    output
+         << ",\"truncated\":" << json_bool(inventory->truncated)
+         << ",\"next_start_after_operation_id\":";
+     if (inventory->next_start_after_operation_id.has_value()) {
+@@ -536,10 +559,11 @@ void append_historical_version_inventory(
+                    entry.current_primary_kind == SyncReplicaValueKind::File
+                        ? "file"
+                        : "tombstone")
+-            << ",\"payload_present\":"
+-            << json_bool(entry.payload_present)
+-            << ",\"restore_ready\":"
+-            << json_bool(entry.restore_ready) << '}';
++            << ",\"payload_present\":";
++        append_optional_bool(output, entry.payload_present);
++        output << ",\"restore_ready\":";
++        append_optional_bool(output, entry.restore_ready);
++        output << '}';
+     }
+     output << "]}";
+ }
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index b88a708cd3c62a1185e39b6a6caa2ddd690dfc8e..edcc5182a969936001167a5e8d79dde802e7d682 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v14";
++    "anonsync.peer-service.status.v15";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index 6562ebfbfe503c47fa15c642d84de78cfc677080..080d1231f47f685b54b2a8ee16d8cbed0dc6bc57 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -486,10 +486,10 @@ int main() {
+             versions_waiter.join();
+             require(
+                 first_versions ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"accepted\","
+-                    "\"request_generation\":1,\"maximum_entries\":64,"
++                    "\"request_generation\":1,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":64,"
+                     "\"canonical_path\":null,\"start_after_operation_id\":null,"
+                     "\"expected_source_cutpoint\":null,\"server_pid\":" +
+                         process_id + "}",
+@@ -517,10 +517,10 @@ int main() {
+                     socket_path);
+             require(
+                 versions_two ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"accepted\","
+-                    "\"request_generation\":2,\"maximum_entries\":64,"
++                    "\"request_generation\":2,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":64,"
+                     "\"canonical_path\":null,\"start_after_operation_id\":null,"
+                     "\"expected_source_cutpoint\":null,\"server_pid\":" +
+                         process_id + "}",
+@@ -576,11 +576,11 @@ int main() {
+                     socket_path, page_query);
+             require(
+                 changed_page_while_inspection ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"rejected\","
+                     "\"reason\":\"different_historical_version_pending\","
+-                    "\"request_generation\":2,\"maximum_entries\":7,"
++                    "\"request_generation\":2,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":7,"
+                     "\"canonical_path\":\"folder/name with space\","
+                     "\"start_after_operation_id\":\"" +
+                         historical_other +
+@@ -596,11 +596,11 @@ int main() {
+                         historical_other + "\n");
+             require(
+                 legacy_page_while_inspection ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"rejected\","
+                     "\"reason\":\"different_historical_version_pending\","
+-                    "\"request_generation\":2,\"maximum_entries\":7,"
++                    "\"request_generation\":2,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":7,"
+                     "\"canonical_path\":\"folder/name with space\","
+                     "\"start_after_operation_id\":\"" +
+                         historical_other +
+@@ -641,10 +641,10 @@ int main() {
+                     socket_path, page_query);
+             require(
+                 accepted_page ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"accepted\","
+-                    "\"request_generation\":3,\"maximum_entries\":7,"
++                    "\"request_generation\":3,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":7,"
+                     "\"canonical_path\":\"folder/name with space\","
+                     "\"start_after_operation_id\":\"" +
+                         historical_other +
+@@ -846,11 +846,11 @@ int main() {
+                     socket_path);
+             require(
+                 rejected_versions ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"rejected\","
+                     "\"reason\":\"drain_requested\","
+-                    "\"request_generation\":4,\"maximum_entries\":64,"
++                    "\"request_generation\":4,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":64,"
+                     "\"canonical_path\":null,\"start_after_operation_id\":null,"
+                     "\"expected_source_cutpoint\":null,\"server_pid\":" +
+                         process_id + "}",
+@@ -1015,6 +1015,69 @@ int main() {
+         }
+         require(!fs::exists(socket_path), "destruction must leave no socket path");
+ 
++        {
++            anonsync::SyncLocalStatusSocketServer metadata_server(
++                socket_path, initial, "metadata history status socket");
++            anonsync::SyncReplicaHistoricalVersionQuery metadata_query;
++            metadata_query.inspection_mode = anonsync::
++                SyncReplicaHistoricalVersionInspectionMode::
++                    CausalMetadataOnly;
++            metadata_query.maximum_entries = 3U;
++            metadata_query.canonical_path = "folder/name with space";
++            metadata_query.start_after_operation_id = historical_other;
++            metadata_query.expected_source_cutpoint =
++                anonsync::SyncReplicaHistoricalVersionSourceCutpoint{
++                    .inspection_mode = anonsync::
++                        SyncReplicaHistoricalVersionInspectionMode::
++                            CausalMetadataOnly,
++                    .operation_set_digest = historical_operation,
++                    .payload_snapshot_digest = std::nullopt,
++                };
++            const std::string metadata_token = anonsync::
++                encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                    *metadata_query.expected_source_cutpoint,
++                    "local status metadata source");
++            const std::string accepted_metadata = anonsync::
++                request_sync_local_status_historical_versions_query_or_throw(
++                    socket_path, metadata_query);
++            require(
++                accepted_metadata ==
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
++                    "\"command\":\"versions\","
++                    "\"terminal_class\":\"accepted\","
++                    "\"request_generation\":1,"
++                    "\"inspection_mode\":\"causal_metadata_only\","
++                    "\"maximum_entries\":3,"
++                    "\"canonical_path\":\"folder/name with space\","
++                    "\"start_after_operation_id\":\"" +
++                        historical_other +
++                        "\",\"expected_source_cutpoint\":\"" +
++                        metadata_token + "\",\"server_pid\":" +
++                        process_id + "}",
++                "metadata-only history query did not preserve its exact mode");
++            const auto metadata_action = metadata_server.action_snapshot();
++            require(
++                metadata_action.historical_version_request.has_value() &&
++                    metadata_action.historical_version_request->query ==
++                        metadata_query,
++                "metadata-only history query was not retained as one action identity");
++            metadata_server.complete_historical_version_request_or_throw(1U);
++
++            const std::string legacy_mode_mismatch = raw_local_request_or_throw(
++                socket_path,
++                "versions-query 3 "
++                "666f6c6465722f6e616d652077697468207370616365 " +
++                    historical_other + " " + metadata_token + "\n");
++            require(
++                legacy_mode_mismatch ==
++                    "{\"schema\":\"anonsync.local-status.response.v1\","
++                    "\"ok\":false,\"error\":\"unsupported_request\"}\n",
++                "legacy exact query frame accepted a metadata-only cutpoint");
++        }
++        require(
++            !fs::exists(socket_path),
++            "metadata history socket destruction left a pathname");
++
+         {
+             anonsync::SyncLocalStatusSocketServer sealed(
+                 socket_path, initial, "owner-sealed status socket");
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index b103874e93b33b2c6616c2d0425861b96d95535e..58f6c3dedd684b4cdefe0bcda9b4c879239bc9e8 100755
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -5148,10 +5148,13 @@ void test_historical_version_inspection_and_causal_restore() {
+             before_restore.source_operation_set_digest ==
+                 fixture.replica.snapshot_or_throw().operation_set_digest &&
+             before_restore.source_visible_state_digest.size() == 64U &&
+-            before_restore.source_payload_snapshot_digest.size() == 64U &&
++            before_restore.source_payload_snapshot_digest.has_value() &&
++            before_restore.source_payload_snapshot_digest->size() == 64U &&
+             before_restore.historical_file_operation_count == 1U &&
+-            before_restore.payload_present_count == 1U &&
+-            before_restore.restore_ready_count == 1U &&
++            before_restore.payload_present_count ==
++                std::optional<std::uint64_t>(1U) &&
++            before_restore.restore_ready_count ==
++                std::optional<std::uint64_t>(1U) &&
+             !before_restore.truncated &&
+             before_restore.entries.size() == 1U,
+         "historical-version inspection did not report one bounded retained predecessor");
+@@ -5168,7 +5171,8 @@ void test_historical_version_inspection_and_causal_restore() {
+                 second_operation->operation_id &&
+             candidate.current_primary_kind ==
+                 anonsync::SyncReplicaValueKind::File &&
+-            candidate.payload_present && candidate.restore_ready,
++            candidate.payload_present == std::optional<bool>(true) &&
++            candidate.restore_ready == std::optional<bool>(true),
+         "historical-version inspection changed the exact causal candidate or readiness proof");
+ 
+     const auto restored = scan->restore_historical_version_or_throw(
+@@ -5230,12 +5234,15 @@ void test_historical_version_inspection_and_causal_restore() {
+             .expected_source_cutpoint = std::nullopt} &&
+             bounded_after.historical_file_operation_count == 2U &&
+             bounded_after.historical_file_operation_count_after_cursor == 2U &&
+-            bounded_after.payload_present_count == 2U &&
+-            bounded_after.restore_ready_count == 1U &&
++            bounded_after.payload_present_count ==
++                std::optional<std::uint64_t>(2U) &&
++            bounded_after.restore_ready_count ==
++                std::optional<std::uint64_t>(1U) &&
+             bounded_after.truncated && bounded_after.entries.size() == 1U &&
+             bounded_after.entries.front().operation_id ==
+                 second_operation->operation_id &&
+-            bounded_after.entries.front().restore_ready &&
++            bounded_after.entries.front().restore_ready ==
++                std::optional<bool>(true) &&
+             bounded_after.next_start_after_operation_id ==
+                 std::optional<std::string>(second_operation->operation_id),
+         "historical-version inspection did not bound, order, or cursor superseded causal values deterministically");
+@@ -5271,14 +5278,17 @@ void test_historical_version_inspection_and_causal_restore() {
+         second_page.query == second_page_query &&
+             second_page.historical_file_operation_count == 2U &&
+             second_page.historical_file_operation_count_after_cursor == 1U &&
+-            second_page.payload_present_count == 2U &&
+-            second_page.restore_ready_count == 1U &&
++            second_page.payload_present_count ==
++                std::optional<std::uint64_t>(2U) &&
++            second_page.restore_ready_count ==
++                std::optional<std::uint64_t>(1U) &&
+             !second_page.truncated &&
+             !second_page.next_start_after_operation_id.has_value() &&
+             second_page.entries.size() == 1U &&
+             second_page.entries.front().operation_id ==
+                 first_operation->operation_id &&
+-            !second_page.entries.front().restore_ready,
++            second_page.entries.front().restore_ready ==
++                std::optional<bool>(false),
+         "historical-version cursor did not expose the exact deterministic second page");
+ 
+     (void)fixture.payload_store.put_payload_or_throw(
+@@ -5324,8 +5334,10 @@ void test_historical_version_inspection_and_causal_restore() {
+         empty_path_page.query == empty_path_query &&
+             empty_path_page.historical_file_operation_count == 0U &&
+             empty_path_page.historical_file_operation_count_after_cursor == 0U &&
+-            empty_path_page.payload_present_count == 0U &&
+-            empty_path_page.restore_ready_count == 0U &&
++            empty_path_page.payload_present_count ==
++                std::optional<std::uint64_t>(0U) &&
++            empty_path_page.restore_ready_count ==
++                std::optional<std::uint64_t>(0U) &&
+             empty_path_page.entries.empty() && !empty_path_page.truncated &&
+             !empty_path_page.next_start_after_operation_id.has_value(),
+         "path-scoped historical inspection invented entries for an absent path");
+@@ -5468,6 +5480,130 @@ void test_historical_version_inspection_and_causal_restore() {
+         "stale historical-version source pin did not fail closed before payload observation");
+ }
+ 
++
++void test_historical_version_metadata_only_is_payload_cold() {
++    Fixture fixture("anonsync-folder-historical-version-metadata-only");
++    constexpr std::string_view path = "history/metadata.txt";
++    const std::string first_bytes = "metadata predecessor\n";
++    const std::string second_bytes = "metadata current\n";
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "metadata-only history catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++
++    write_file(fixture.shared_root / path, first_bytes);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto first_entry = find_entry(scan->snapshot_or_throw(), path);
++    require(
++        first_entry.has_value(),
++        "metadata-only history fixture did not publish its predecessor");
++
++    write_file(fixture.shared_root / path, second_bytes);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto second_entry = find_entry(scan->snapshot_or_throw(), path);
++    require(
++        second_entry.has_value() &&
++            second_entry->operation_id != first_entry->operation_id,
++        "metadata-only history fixture did not publish its current value");
++
++    // A complete payload snapshot must reject this unrelated namespace entry.
++    // Metadata-only inspection is required to remain entirely payload-cold and
++    // therefore succeeds without converting the absence of a scan into false
++    // payload-negative evidence.
++    const fs::path unexpected =
++        fixture.payload_root / "unexpected-history-inspection-entry";
++    write_file(unexpected, "not payload authority");
++
++    anonsync::SyncReplicaHistoricalVersionQuery metadata_query;
++    metadata_query.inspection_mode = anonsync::
++        SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly;
++    metadata_query.canonical_path = std::string(path);
++    metadata_query.maximum_entries = 1U;
++    const auto metadata =
++        scan->inspect_historical_versions_or_throw(metadata_query);
++    require(
++        metadata.query == metadata_query &&
++            metadata.source_operation_set_digest.size() == 64U &&
++            !metadata.source_payload_snapshot_digest.has_value() &&
++            !metadata.payload_scan_hashed_entry_count.has_value() &&
++            !metadata.payload_scan_hashed_bytes.has_value() &&
++            !metadata.payload_scan_reused_entry_count.has_value() &&
++            !metadata.payload_scan_reused_bytes.has_value() &&
++            !metadata.payload_present_count.has_value() &&
++            !metadata.restore_ready_count.has_value() &&
++            metadata.historical_file_operation_count == 1U &&
++            metadata.historical_file_operation_count_after_cursor == 1U &&
++            !metadata.truncated && metadata.entries.size() == 1U,
++        "metadata-only history inspection fabricated payload authority");
++    const auto& entry = metadata.entries.front();
++    require(
++        entry.operation_id == first_entry->operation_id &&
++            entry.canonical_path == path &&
++            entry.size_bytes == first_bytes.size() &&
++            entry.content_sha256 == anonsync::sha256_hex(first_bytes) &&
++            entry.current_primary_operation_id == second_entry->operation_id &&
++            !entry.payload_present.has_value() &&
++            !entry.restore_ready.has_value(),
++        "metadata-only history inspection changed causal metadata or invented availability");
++
++    const auto metadata_cutpoint = metadata.source_cutpoint();
++    const std::string metadata_token = anonsync::
++        encode_sync_replica_historical_version_source_cutpoint_or_throw(
++            metadata_cutpoint,
++            "metadata-only historical-version source cutpoint");
++    require(
++        metadata_token.starts_with("v2:metadata:") &&
++            metadata_token.size() == 76U &&
++            anonsync::
++                decode_sync_replica_historical_version_source_cutpoint_or_throw(
++                    metadata_token,
++                    "metadata-only historical-version source cutpoint") ==
++                metadata_cutpoint,
++        "metadata-only source cutpoint was not mode-bound and canonical");
++
++    metadata_query.expected_source_cutpoint = metadata_cutpoint;
++    const auto pinned_metadata =
++        scan->inspect_historical_versions_or_throw(metadata_query);
++    require(
++        pinned_metadata.source_cutpoint() == metadata_cutpoint &&
++            pinned_metadata.entries == metadata.entries,
++        "metadata-only source cutpoint did not reproduce the causal page");
++
++    require_error(
++        [&] {
++            anonsync::SyncReplicaHistoricalVersionQuery exact_query;
++            exact_query.canonical_path = std::string(path);
++            (void)scan->inspect_historical_versions_or_throw(exact_query);
++        },
++        "unexpected payload-root entry",
++        "exact history inspection did not retain complete payload-namespace authority");
++
++    fs::remove(unexpected);
++    anonsync::SyncReplicaHistoricalVersionQuery exact_query;
++    exact_query.canonical_path = std::string(path);
++    const auto exact = scan->inspect_historical_versions_or_throw(exact_query);
++    require(
++        exact.source_payload_snapshot_digest.has_value() &&
++            exact.payload_present_count == std::optional<std::uint64_t>(1U) &&
++            exact.restore_ready_count == std::optional<std::uint64_t>(1U) &&
++            exact.entries.size() == 1U &&
++            exact.entries.front().payload_present ==
++                std::optional<bool>(true) &&
++            exact.entries.front().restore_ready ==
++                std::optional<bool>(true),
++        "exact history inspection did not recover payload availability after namespace repair");
++
++    anonsync::SyncReplicaHistoricalVersionQuery mismatched_mode = metadata_query;
++    mismatched_mode.expected_source_cutpoint = exact.source_cutpoint();
++    require_error(
++        [&] {
++            (void)scan->inspect_historical_versions_or_throw(
++                mismatched_mode);
++        },
++        "cutpoint mode does not match",
++        "metadata-only inspection accepted an exact-payload source cutpoint");
++}
++
+ void test_historical_version_restore_from_tombstone() {
+     Fixture fixture("anonsync-folder-historical-version-tombstone-restore");
+     constexpr std::string_view path = "deleted/report.txt";
+@@ -5518,8 +5654,9 @@ void test_historical_version_restore_from_tombstone() {
+             return entry.operation_id == historical->operation_id;
+         });
+     require(
+-        candidate != inventory.entries.end() && candidate->payload_present &&
+-            candidate->restore_ready &&
++        candidate != inventory.entries.end() &&
++            candidate->payload_present == std::optional<bool>(true) &&
++            candidate->restore_ready == std::optional<bool>(true) &&
+             candidate->current_primary_kind ==
+                 anonsync::SyncReplicaValueKind::Tombstone &&
+             candidate->current_primary_operation_id ==
+@@ -6268,6 +6405,7 @@ int main() {
+         test_remote_apply_rejects_local_mutation_and_multihead();
+         test_remote_apply_path_fence_and_crash_recovery();
+         test_historical_version_inspection_and_causal_restore();
++        test_historical_version_metadata_only_is_payload_cold();
+         test_historical_version_restore_from_tombstone();
+         test_rev0951_cyclic_catalog_migrates_cursor_and_resets_sweep();
+         test_rev0950_fair_scan_catalog_migrates_without_losing_journal();
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index af5aad26a2cd3af13512dd3bb699dfd751bbe3d4..6ad19d42b472f6db333ad6e0adfac5c710dac8be 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -139,6 +139,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0968.md"),
+     Path("EXACT_CURRENT_BOUND_HISTORICAL_RESTORE_AUDIT_rev0969.md"),
+     Path("REVISION_NOTES_rev0969.md"),
++    Path("CAUSAL_METADATA_HISTORY_INSPECTION_AUDIT_rev0970.md"),
++    Path("REVISION_NOTES_rev0970.md"),
+ )
+ 
+ 
+@@ -439,6 +441,10 @@ def main() -> int:
+         "EXACT_CURRENT_BOUND_HISTORICAL_RESTORE_AUDIT_rev0969.md"
+     ]
+     rev0969_notes = text["REVISION_NOTES_rev0969.md"]
++    metadata_history_design = text[
++        "CAUSAL_METADATA_HISTORY_INSPECTION_AUDIT_rev0970.md"
++    ]
++    rev0970_notes = text["REVISION_NOTES_rev0970.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -560,6 +566,17 @@ def main() -> int:
+         if rev0969_verifier_start >= 0 and rev0969_verifier_end >= 0
+         else ""
+     )
++    rev0970_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 970:"
++    )
++    rev0970_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0970_verifier_start
++    )
++    rev0970_verifier_block = (
++        verifier[rev0970_verifier_start:rev0970_verifier_end]
++        if rev0970_verifier_start >= 0 and rev0970_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -4450,7 +4467,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v14"' in peer_status_h
++        '"anonsync.peer-service.status.v15"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4864,12 +4881,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v14"' in peer_status_h
++        '"anonsync.peer-service.status.v15"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v14"'
++        and '"anonsync.peer-service.status.v15"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v14"'
++        and '"anonsync.peer-service.status.v15"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -6355,7 +6372,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v14"' in peer_status_h
++        '"anonsync.peer-service.status.v15"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6566,7 +6583,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v14"' in peer_status_h
++        and '"anonsync.peer-service.status.v15"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -6776,7 +6793,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v14"' in peer_status_h
++        '"anonsync.peer-service.status.v15"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -6792,8 +6809,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v14"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v14"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v15"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v15"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7370,7 +7387,7 @@ def main() -> int:
+             token in historical_version_inspection
+             for token in (
+                 "snapshot_or_throw()",
+-                "payload_snapshot.require_folder_or_throw",
++                "payload_snapshot->require_folder_or_throw",
+                 "SyncReplicaModel::restore_or_throw",
+                 "model.for_each_active_operation",
+                 "model.for_each_active_path",
+@@ -7486,7 +7503,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v14"' in peer_status_h
++        and '"anonsync.peer-service.status.v15"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7542,7 +7559,7 @@ def main() -> int:
+                 "historical-version predecessor was not exactly",
+                 "owner-only exact historical-version restore",
+                 "historical-version restore did not converge exact v1 bytes",
+-                '"historical_version_inspections": 3',
++                '"historical_version_inspections": 4',
+                 '"historical_version_restores": 1',
+                 '"historical_version_failures": 2',
+             )
+@@ -7700,10 +7717,11 @@ def main() -> int:
+         all(
+             token in local_status_h + local_status
+             for token in (
+-                "versions-query LIMIT PATH_HEX",
++                "MODE LIMIT PATH_HEX CURSOR SOURCE_CUTPOINT_OR_DASH",
+                 "kHistoricalVersionsQueryRequestPrefix",
+-                "anonsync.local-historical-versions.response.v3",
++                "anonsync.local-historical-versions.response.v4",
+                 "kMaximumRequestBytes = 16U * 1024U",
++                "field_count != 3U && field_count != 4U && field_count != 5U",
+                 "historical_version_pending->query != query",
+                 "request_sync_local_status_historical_versions_query_or_throw",
+             )
+@@ -7725,7 +7743,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v14"' in peer_status_h
++        '"anonsync.peer-service.status.v15"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7742,7 +7760,7 @@ def main() -> int:
+                 "owner-only historical-version second page",
+                 "historical-version first page omitted its exact tail cursor",
+                 "historical-version second page did not settle the exact",
+-                '"historical_version_inspections": 3',
++                '"historical_version_inspections": 4',
+                 '"historical_version_restores": 1',
+             )
+         ),
+@@ -7826,7 +7844,7 @@ def main() -> int:
+                 "payload_snapshot_digest",
+                 'return "v1:" + cutpoint.operation_set_digest',
+                 "constexpr std::size_t encoded_size",
+-                "token.starts_with(prefix)",
++                "token.starts_with(exact_prefix)",
+                 "enum class SyncReplicaHistoricalVersionSourceChangeStage",
+                 "OperationSetBeforePayloadObservation",
+                 "OperationSetDuringPayloadObservation",
+@@ -7853,7 +7871,7 @@ def main() -> int:
+             "state_->replica_owner->snapshot_or_throw()",
+             "OperationSetDuringPayloadObservation",
+             "expected_source_cutpoint->payload_snapshot_digest",
+-            "SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot",
++            "PayloadSnapshot",
+             "inventory.source_operation_set_digest",
+         )
+         and "replica_snapshot.state_generation !=" not in historical_version_inspection
+@@ -7873,7 +7891,7 @@ def main() -> int:
+                 r'\"expected_source_cutpoint\"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v14"' in peer_status_h
++        and '"anonsync.peer-service.status.v15"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7918,20 +7936,20 @@ def main() -> int:
+         all(
+             token in local_status
+             for token in (
+-                "anonsync.local-historical-versions.response.v3",
+-                "third_space",
++                "anonsync.local-historical-versions.response.v4",
++                "std::array<std::string_view, 5U> fields",
++                "field_count != 3U && field_count != 4U && field_count != 5U",
+                 "decode_sync_replica_historical_version_source_cutpoint_or_throw",
+                 'response << ",\\\"expected_source_cutpoint\\\":"',
+                 "source_cutpoint.size()",
+             )
+         )
+-        and 'third_space == std::string_view::npos' in local_status
+         and all(
+             token in sync_cli
+             for token in (
+                 '"source-cutpoint"',
+                 "decode_sync_replica_historical_version_source_cutpoint_or_throw",
+-                "--source-cutpoint v1:OPERATION_SET_SHA256:PAYLOAD_SHA256",
++                "v1:OPERATION_SET_SHA256:PAYLOAD_SHA256|",
+             )
+         ),
+         "rev0968_owner_socket_and_cli_carry_the_exact_token_with_rev0967_request_compatibility",
+@@ -7990,11 +8008,11 @@ def main() -> int:
+                 "historical_version_generation",
+                 "historical_version_failure_class",
+                 "historical_version_source_change_stage",
+-                '"schema": "anonsync.peer-service.status.v14"',
+-                '"schema": "anonsync.local-historical-versions.response.v3"',
++                '"schema": "anonsync.peer-service.status.v15"',
++                '"schema": "anonsync.local-historical-versions.response.v4"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v14"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v15"' in service_i2p_ingress_runtime,
+         "rev0968_regressions_bind_token_codec_payload_drift_causal_drift_and_real_service_continuation",
+         "focused C++ tests and real process oracles cover canonical framing, both externally inducible drift classes, exact page-token reuse, stable retained failure evidence, transient matching-step coherence, current schemas, and route status compatibility",
+     )
+@@ -8156,7 +8174,7 @@ def main() -> int:
+                 "status.restore_request.operation_id",
+             )
+         )
+-        and '"anonsync.peer-service.status.v14"' in peer_status_h,
++        and '"anonsync.peer-service.status.v15"' in peer_status_h,
+         "rev0969_full_restore_identity_controls_coalescing_execution_and_status",
+         "a different expected head cannot coalesce with pending work, and stable plus matching transient status retain the exact request and typed source-change stage",
+     )
+@@ -8189,12 +8207,12 @@ def main() -> int:
+                 "restore_current_operation",
+                 "stale exact-current historical restore",
+                 "stale exact-current restore terminated the service",
+-                '"schema": "anonsync.peer-service.status.v14"',
++                '"schema": "anonsync.peer-service.status.v15"',
+                 '"expected_current_operation_id"',
+                 '"historical_version_restore_request"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v14"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v15"' in service_i2p_ingress_runtime,
+         "rev0969_regressions_prove_no_payload_work_full_request_coalescing_and_same_pid_stale_failure",
+         "focused C++ and real-process oracles mechanically distinguish the early stale fence from lease access, cover strict framing, and prove the daemon survives a replayed stale operator intent",
+     )
+@@ -8310,6 +8328,262 @@ def main() -> int:
+         "the surviving source uses the shared source-changed taxonomy and explicitly excludes the discarded parallel target-changed branch from release authority",
+     )
+ 
++    require(
++        all(
++            token in historical_query_h
++            for token in (
++                "enum class SyncReplicaHistoricalVersionInspectionMode",
++                "ExactPayloadAvailability = 1U",
++                "CausalMetadataOnly = 2U",
++                'return "exact_payload_availability"',
++                'return "causal_metadata_only"',
++                "sync_replica_historical_version_inspection_mode_from_name_or_throw",
++                "inspection mode is invalid",
++            )
++        )
++        and historical_query_h.count(
++            "SyncReplicaHistoricalVersionInspectionMode inspection_mode"
++        ) >= 2,
++        "rev0970_one_shared_mode_type_defines_exact_and_causal_metadata_authority",
++        "the query and source cutpoint consume one canonical two-value authority type and one name/parser vocabulary instead of duplicating CLI, socket, service, and JSON mode strings",
++    )
++
++    require(
++        all(
++            token in historical_query_h
++            for token in (
++                'constexpr std::string_view exact_prefix = "v1:"',
++                'constexpr std::string_view metadata_prefix = "v2:metadata:"',
++                "std::optional<std::string> payload_snapshot_digest",
++                "metadata-only cutpoint carries a payload digest",
++                "expected source cutpoint mode does not match the query",
++                "token.starts_with(exact_prefix)",
++                "token.starts_with(metadata_prefix)",
++            )
++        )
++        and 'return "v1:" + cutpoint.operation_set_digest' in historical_query_h
++        and 'return "v2:metadata:" + cutpoint.operation_set_digest'
++        in historical_query_h,
++        "rev0970_source_cutpoints_preserve_exact_v1_and_mode_bind_metadata_v2",
++        "exact callers keep the rev0968 operation-plus-payload token byte-for-byte while metadata callers receive a payload-free tagged token that cannot cross inspection modes",
++    )
++
++    require(
++        historical_version_inspection.count(
++            "state_->payload_store->snapshot_or_throw()"
++        ) == 1
++        and ordered(
++            historical_version_inspection,
++            "state_->replica_owner->snapshot_or_throw()",
++            "SyncReplicaModel::restore_or_throw",
++            "if (query.inspection_mode ==",
++            "ExactPayloadAvailability",
++            "state_->payload_store->snapshot_or_throw()",
++            "payload_snapshot->require_folder_or_throw",
++            "inventory.source_payload_snapshot_digest",
++        )
++        and all(
++            token in historical_version_inspection
++            for token in (
++                "std::optional<SyncReplicaFilePayloadStoreSnapshot> payload_snapshot",
++                "if (payload_snapshot.has_value())",
++                "std::optional<bool> payload_present",
++                "std::optional<bool> restore_ready",
++            )
++        ),
++        "rev0970_metadata_projection_stops_before_the_only_payload_owner_call",
++        "the immutable replica snapshot and causal projection are shared, but the sole complete payload observation and every availability derivation remain inside the explicit exact-mode branch",
++    )
++
++    require(
++        folder_scan_h.count("std::optional<bool>") >= 2
++        and "std::optional<std::string> source_payload_snapshot_digest"
++        in folder_scan_h
++        and folder_scan_h.count("std::optional<std::uint64_t>") >= 6
++        and all(
++            token in peer_status
++            for token in (
++                "void append_optional_bool(",
++                "append_optional_uint64(output, inventory->payload_present_count)",
++                "append_optional_uint64(output, inventory->restore_ready_count)",
++                "append_optional_bool(output, entry.payload_present)",
++                "append_optional_bool(output, entry.restore_ready)",
++            )
++        ),
++        "rev0970_unknown_payload_evidence_is_optional_at_the_cpp_boundary",
++        "metadata browsing cannot collapse unobserved byte availability into false or zero because payload digests, scan counters, aggregate counts, and per-entry booleans are optional before JSON rendering",
++    )
++
++    require(
++        all(
++            token in local_status_h + local_status
++            for token in (
++                "MODE LIMIT PATH_HEX CURSOR SOURCE_CUTPOINT_OR_DASH",
++                "exact_payload_availability or causal_metadata_only",
++                "field_count != 3U && field_count != 4U && field_count != 5U",
++                "sync_replica_historical_version_inspection_mode_from_name_or_throw",
++                "anonsync.local-historical-versions.response.v4",
++                'response << ",\\\"inspection_mode\\\":"',
++            )
++        )
++        and all(
++            token in sync_cli
++            for token in (
++                '"inspection-mode"',
++                'options.one_or("inspection-mode", "exact")',
++                'inspection_mode == "metadata"',
++                "--inspection-mode must be exact or metadata",
++                "[--inspection-mode exact|metadata]",
++            )
++        )
++        and '"anonsync.peer-service.status.v15"' in peer_status_h,
++        "rev0970_cli_socket_and_status_share_one_mode_bearing_contract",
++        "the shipping default remains exact, new clients send one canonical five-field request, legacy three/four-field requests remain exact, and live plus terminal status advance together",
++    )
++
++    require(
++        "bool operator==(const SyncReplicaHistoricalVersionQuery&) const = default"
++        in historical_query_h
++        and "historical_version_pending->query != query" in local_status
++        and all(
++            token in peer_status
++            for token in (
++                "append_historical_version_query",
++                "sync_replica_historical_version_inspection_mode_name(",
++                'output << "{\\\"inspection_mode\\\":"',
++            )
++        ),
++        "rev0970_mode_participates_in_action_identity_and_canonical_status",
++        "an exact request cannot coalesce with a metadata request sharing path, limit, cursor, and token because mode is a first-class member of the defaulted query equality and retained status",
++    )
++
++    require(
++        all(
++            token in folder_scan_runtime
++            for token in (
++                "test_historical_version_metadata_only_is_payload_cold",
++                "unexpected-history-inspection-entry",
++                "metadata-only history inspection fabricated payload authority",
++                "metadata-only source cutpoint was not mode-bound and canonical",
++                "metadata-only source cutpoint did not reproduce the causal page",
++                "unexpected payload-root entry",
++                "metadata-only inspection accepted an exact-payload source cutpoint",
++            )
++        ),
++        "rev0970_folder_owner_regression_mechanically_separates_metadata_from_payload_authority",
++        "an unexpected private payload-root entry makes exact inspection fail while metadata inspection returns the same causal page with disengaged payload evidence and a round-tripped v2 cutpoint",
++    )
++
++    require(
++        "candidate->payload_present == std::optional<bool>(true)" in folder_scan_runtime
++        and "candidate->restore_ready == std::optional<bool>(true)" in folder_scan_runtime
++        and "boolean context on `std::optional<bool>` tests engagement" in metadata_history_design,
++        "rev0970_optional_boolean_test_oracle_checks_the_observed_value",
++        "the adjacent restore regression compares engaged exact booleans with true rather than accepting any engaged optional value",
++    )
++
++    require(
++        all(
++            token in local_status_runtime
++            for token in (
++                "metadata history status socket",
++                '\\"inspection_mode\\":\\"causal_metadata_only\\"',
++                "metadata-only history query did not preserve its exact mode",
++                "metadata-only history query was not retained as one action identity",
++                "legacy exact query frame accepted a metadata-only cutpoint",
++            )
++        ),
++        "rev0970_local_socket_regression_binds_mode_pid_token_and_legacy_rejection",
++        "the owner-only test exercises canonical metadata framing and response echo, retains the complete query as pending identity, and proves an implicit exact legacy frame cannot accept a v2 token",
++    )
++
++    require(
++        all(
++            token in service_configuration_runtime
++            for token in (
++                '"--inspection-mode", "metadata"',
++                "owner-only causal-metadata historical inspection",
++                '"inspection_mode": "causal_metadata_only"',
++                '"v2:metadata:"',
++                "causal-metadata historical inspection fabricated",
++                '"historical_version_inspections": 4',
++                '"schema": "anonsync.peer-service.status.v15"',
++                '"schema": "anonsync.local-historical-versions.response.v4"',
++            )
++        )
++        and '"anonsync.peer-service.status.v15"'
++        in service_i2p_ingress_runtime,
++        "rev0970_shipping_process_oracles_require_null_payload_evidence_and_schema_coherence",
++        "one real retained two-peer service executes the metadata CLI, publishes a v2 token and null payload facts, accounts the completed action, and keeps direct plus I2P status readers on v15",
++    )
++
++    require(
++        all(
++            token in normalized_prose(metadata_history_design)
++            for token in (
++                "Defect found",
++                "Two explicit inspection authorities",
++                "Unknown is not false",
++                "Mode-bound source cutpoints",
++                "Adjacent audit and refactor",
++                "Research context",
++                "What this does not prove",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0970_notes)
++            for token in (
++                "--inspection-mode metadata",
++                "anonsync.peer-service.status.v15",
++                "anonsync.local-historical-versions.response.v4",
++                "std::optional",
++                "Compatibility",
++                "Nonclaims",
++            )
++        )
++        and all(
++            token in normalized_prose(readme)
++            for token in (
++                "## Rev0970: payload-cold causal-metadata history browsing",
++                "v2:metadata:OPERATION_SET_SHA256",
++                "Unknown is",
++                "payload-cold",
++                "not selective sync",
++            )
++        ),
++        "rev0970_records_cost_authority_compatibility_research_and_nonclaims",
++        "the design audit, revision notes, and README explain the avoided namespace scan, the null-evidence boundary, exact-mode compatibility, external product precedent, and the unfinished retention/selective-sync edges",
++    )
++
++    require(
++        verifier.count(
++            "if revision_number is not None and revision_number >= 970:"
++        ) == 1
++        and all(
++            token in rev0970_verifier_block
++            for token in (
++                "CAUSAL_METADATA_HISTORY_INSPECTION_AUDIT_rev0970.md",
++                "REVISION_NOTES_rev0970.md",
++                "src/anonsync_sync.cpp",
++                "src/sync_local_status_socket.hpp",
++                "src/sync_local_status_socket.cpp",
++                "src/sync_replica_historical_version_query.hpp",
++                "src/sync_replica_folder_scan_owner.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_replica_peer_service_status.hpp",
++                "src/sync_replica_peer_service_status.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/test_anonsync_service_i2p_ingress.py",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0970_package_policy_binds_every_metadata_history_surface",
++        "the release verifier makes the shared types, owner branch, CLI/socket/status surfaces, focused and process regressions, records, structural audit, and package policy mandatory from rev0970 onward",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -8364,6 +8638,17 @@ def main() -> int:
+         "exact-current restore changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final rev0969 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0970" not in rev0970_notes
++        and "VALIDATION_PENDING_REV0970" not in metadata_history_design
++        and "VALIDATION_PENDING_REV0970" not in readme
++        and "ARCHIVE_PENDING_REV0970" not in bootstrap
++        and "CODENAME_PENDING_REV0970" not in bootstrap
++        and "VALIDATION_PENDING_REV0970" not in bootstrap,
++        "rev0970_final_validation_and_visible_release_cutpoint_are_sealed",
++        "metadata-only history changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final rev0970 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index 594533b360bde7560c16e6aa1efc3358448a18b7..2b31fb625dafab7b71e3b87bf898ad8014650c50 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -322,21 +322,32 @@ def is_canonical_sha256(value: Any) -> bool:
+ 
+ 
+ def is_canonical_historical_source_cutpoint(value: Any) -> bool:
+-    if not isinstance(value, str) or len(value) != 132 or not value.startswith("v1:"):
++    if not isinstance(value, str):
+         return False
++    if len(value) == 132 and value.startswith("v1:"):
++        return (
++            value[67] == ":"
++            and is_canonical_sha256(value[3:67])
++            and is_canonical_sha256(value[68:132])
++        )
+     return (
+-        value[67] == ":"
+-        and is_canonical_sha256(value[3:67])
+-        and is_canonical_sha256(value[68:132])
++        len(value) == 76
++        and value.startswith("v2:metadata:")
++        and is_canonical_sha256(value[12:76])
+     )
+ 
+ 
+ def require_historical_version_query(query: Any, label: str) -> None:
+     if not isinstance(query, dict) or set(query) != {
+-        "maximum_entries", "canonical_path", "start_after_operation_id",
+-        "expected_source_cutpoint",
++        "inspection_mode", "maximum_entries", "canonical_path",
++        "start_after_operation_id", "expected_source_cutpoint",
+     }:
+         fail(f"{label} historical query was not canonical")
++    inspection_mode = query.get("inspection_mode")
++    if inspection_mode not in {
++        "exact_payload_availability", "causal_metadata_only",
++    }:
++        fail(f"{label} historical query omitted its inspection mode")
+     maximum_entries = query.get("maximum_entries")
+     if not isinstance(maximum_entries, int) or not (1 <= maximum_entries <= 1024):
+         fail(f"{label} historical query omitted its bounded entry limit")
+@@ -349,10 +360,13 @@ def require_historical_version_query(query: Any, label: str) -> None:
+     if cursor is not None and not is_canonical_sha256(cursor):
+         fail(f"{label} historical query cursor was neither digest nor null")
+     source_cutpoint = query.get("expected_source_cutpoint")
+-    if source_cutpoint is not None and not is_canonical_historical_source_cutpoint(
+-        source_cutpoint
+-    ):
+-        fail(f"{label} historical query source cutpoint was not canonical")
++    if source_cutpoint is not None:
++        if not is_canonical_historical_source_cutpoint(source_cutpoint):
++            fail(f"{label} historical query source cutpoint was not canonical")
++        if inspection_mode == "exact_payload_availability" and not source_cutpoint.startswith("v1:"):
++            fail(f"{label} exact historical query carried a metadata cutpoint")
++        if inspection_mode == "causal_metadata_only" and not source_cutpoint.startswith("v2:metadata:"):
++            fail(f"{label} metadata historical query carried an exact cutpoint")
+ 
+ 
+ def require_historical_version_inventory(
+@@ -362,38 +376,62 @@ def require_historical_version_inventory(
+         fail(f"{label} historical inventory was not an object")
+     query = inventory.get("query")
+     require_historical_version_query(query, label)
++    mode = query["inspection_mode"]
+     for digest_field in (
+         "source_operation_set_digest",
+         "source_visible_state_digest",
+-        "source_payload_snapshot_digest",
+     ):
+         if not is_canonical_sha256(inventory.get(digest_field)):
+             fail(f"{label} historical inventory omitted {digest_field}")
++    payload_digest = inventory.get("source_payload_snapshot_digest")
++    if mode == "exact_payload_availability":
++        if not is_canonical_sha256(payload_digest):
++            fail(f"{label} exact historical inventory omitted payload digest")
++    elif payload_digest is not None:
++        fail(f"{label} metadata historical inventory invented a payload digest")
+     source_cutpoint = inventory.get("source_cutpoint")
+     if not is_canonical_historical_source_cutpoint(source_cutpoint):
+         fail(f"{label} historical inventory omitted canonical source_cutpoint")
+     expected_source_cutpoint = (
+-        "v1:" + inventory["source_operation_set_digest"] + ":" +
+-        inventory["source_payload_snapshot_digest"]
++        "v1:" + inventory["source_operation_set_digest"] + ":" + payload_digest
++        if mode == "exact_payload_availability"
++        else "v2:metadata:" + inventory["source_operation_set_digest"]
+     )
+     if source_cutpoint != expected_source_cutpoint:
+-        fail(f"{label} historical inventory source token disagreed with digests")
+-    for integer_field in (
++        fail(f"{label} historical inventory source token disagreed with its mode")
++
++    always_integer_fields = (
+         "source_replica_state_generation",
++        "historical_file_operation_count",
++        "historical_file_operation_count_after_cursor",
++        "entry_limit",
++    )
++    for integer_field in always_integer_fields:
++        value = inventory.get(integer_field)
++        if not isinstance(value, int) or value < 0:
++            fail(
++                f"{label} historical inventory omitted bounded "
++                f"{integer_field}"
++            )
++    payload_integer_fields = (
+         "payload_scan_hashed_entries",
+         "payload_scan_hashed_bytes",
+         "payload_scan_reused_entries",
+         "payload_scan_reused_bytes",
+-        "historical_file_operation_count",
+-        "historical_file_operation_count_after_cursor",
+         "payload_present_count",
+         "restore_ready_count",
+-        "entry_limit",
+-    ):
++    )
++    for integer_field in payload_integer_fields:
+         value = inventory.get(integer_field)
+-        if not isinstance(value, int) or value < 0:
++        if mode == "exact_payload_availability":
++            if not isinstance(value, int) or value < 0:
++                fail(
++                    f"{label} exact historical inventory omitted bounded "
++                    f"{integer_field}"
++                )
++        elif value is not None:
+             fail(
+-                f"{label} historical inventory omitted bounded "
++                f"{label} metadata historical inventory invented "
+                 f"{integer_field}"
+             )
+     if inventory.get("entry_limit") != query["maximum_entries"]:
+@@ -412,9 +450,10 @@ def require_historical_version_inventory(
+     ]
+     if total_count < after_cursor_count or after_cursor_count < len(entries):
+         fail(f"{label} historical inventory cursor counts were incoherent")
+-    if inventory["payload_present_count"] > total_count or inventory[
+-        "restore_ready_count"
+-    ] > inventory["payload_present_count"]:
++    if mode == "exact_payload_availability" and (
++        inventory["payload_present_count"] > total_count
++        or inventory["restore_ready_count"] > inventory["payload_present_count"]
++    ):
+         fail(f"{label} historical inventory aggregate counts were incoherent")
+     canonical_order: list[tuple[str, str, int, int, str]] = []
+     for index, entry in enumerate(entries):
+@@ -456,13 +495,22 @@ def require_historical_version_inventory(
+                 )
+         if entry.get("current_primary_kind") not in {"file", "tombstone"}:
+             fail(f"{label} historical entry {index} omitted primary kind")
+-        for boolean_field in ("payload_present", "restore_ready"):
+-            if not isinstance(entry.get(boolean_field), bool):
++        for availability_field in ("payload_present", "restore_ready"):
++            field = entry.get(availability_field)
++            if mode == "exact_payload_availability":
++                if not isinstance(field, bool):
++                    fail(
++                        f"{label} exact historical entry {index} omitted "
++                        f"{availability_field}"
++                    )
++            elif field is not None:
+                 fail(
+-                    f"{label} historical entry {index} omitted "
+-                    f"{boolean_field}"
++                    f"{label} metadata historical entry {index} invented "
++                    f"{availability_field}"
+                 )
+-        if entry["restore_ready"] and not entry["payload_present"]:
++        if mode == "exact_payload_availability" and entry[
++            "restore_ready"
++        ] and not entry["payload_present"]:
+             fail(f"{label} historical entry was restore-ready without bytes")
+         canonical_order.append(
+             (
+@@ -1366,7 +1414,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v14",
++                    "schema": "anonsync.peer-service.status.v15",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -2340,10 +2388,11 @@ def main() -> int:
+                 label="owner-only historical-version inspection",
+             )
+             expected_versions_response = {
+-                "schema": "anonsync.local-historical-versions.response.v3",
++                "schema": "anonsync.local-historical-versions.response.v4",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": history_inspection_generation,
++                "inspection_mode": "exact_payload_availability",
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": None,
+@@ -2366,6 +2415,7 @@ def main() -> int:
+                 inventory, "historical-version inspection"
+             )
+             expected_initial_history_query = {
++                "inspection_mode": "exact_payload_availability",
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": None,
+@@ -2546,10 +2596,11 @@ def main() -> int:
+                 label="owner-only historical-version first page",
+             )
+             expected_first_page_response = {
+-                "schema": "anonsync.local-historical-versions.response.v3",
++                "schema": "anonsync.local-historical-versions.response.v4",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": first_page_generation,
++                "inspection_mode": "exact_payload_availability",
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": None,
+@@ -2572,6 +2623,7 @@ def main() -> int:
+                 first_page, "historical-version first page"
+             )
+             expected_first_page_query = {
++                "inspection_mode": "exact_payload_availability",
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": None,
+@@ -2611,10 +2663,11 @@ def main() -> int:
+                 label="owner-only historical-version second page",
+             )
+             expected_second_page_response = {
+-                "schema": "anonsync.local-historical-versions.response.v3",
++                "schema": "anonsync.local-historical-versions.response.v4",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": second_page_generation,
++                "inspection_mode": "exact_payload_availability",
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": page_cursor,
+@@ -2637,6 +2690,7 @@ def main() -> int:
+                 second_page, "historical-version second page"
+             )
+             expected_second_page_query = {
++                "inspection_mode": "exact_payload_availability",
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": page_cursor,
+@@ -2703,10 +2757,11 @@ def main() -> int:
+                 label="owner-only stale historical source cutpoint",
+             )
+             expected_stale_source_response = {
+-                "schema": "anonsync.local-historical-versions.response.v3",
++                "schema": "anonsync.local-historical-versions.response.v4",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": stale_source_generation,
++                "inspection_mode": "exact_payload_availability",
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": page_cursor,
+@@ -2725,6 +2780,7 @@ def main() -> int:
+             )
+             stale_history = stale_source_status["historical_versions"]
+             expected_stale_query = {
++                "inspection_mode": "exact_payload_availability",
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": page_cursor,
+@@ -2741,14 +2797,99 @@ def main() -> int:
+             if source.poll() is not None:
+                 fail("typed historical source drift terminated the service")
+ 
+-            history_counters = stale_source_status.get("counters")
++            # Causal-metadata inspection is the cheap browsing authority. It
++            # uses the same owner action lane and immutable operation-set
++            # cutpoint, but it must not claim that retained payload bytes were
++            # observed. Every payload-derived field is therefore null rather
++            # than false or zero, and its source token is mode-bound.
++            metadata_generation = stale_source_generation + 1
++            metadata_response = run_json(
++                [
++                    str(sync), "versions", "--socket", str(source_status),
++                    "--inspection-mode", "metadata",
++                    "--path", historical_relative_path,
++                    "--limit", "1",
++                    "--timeout-milliseconds", "1000",
++                ],
++                label="owner-only causal-metadata historical inspection",
++            )
++            expected_metadata_response = {
++                "schema": "anonsync.local-historical-versions.response.v4",
++                "command": "versions",
++                "terminal_class": "accepted",
++                "request_generation": metadata_generation,
++                "inspection_mode": "causal_metadata_only",
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": None,
++                "expected_source_cutpoint": None,
++                "server_pid": source.pid,
++            }
++            if metadata_response != expected_metadata_response:
++                fail(
++                    "causal-metadata historical acceptance was not exact: "
++                    f"{json.dumps(metadata_response, sort_keys=True)}"
++                )
++            metadata_status = wait_for_historical_version_completion(
++                sync, source, source_status, metadata_generation, "inspect",
++                "causal-metadata historical inspection",
++            )
++            metadata_inventory = metadata_status["historical_versions"][
++                "last_inventory"
++            ]
++            require_historical_version_inventory(
++                metadata_inventory, "causal-metadata historical inspection"
++            )
++            expected_metadata_query = {
++                "inspection_mode": "causal_metadata_only",
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": None,
++                "expected_source_cutpoint": None,
++            }
++            if metadata_inventory.get("query") != expected_metadata_query:
++                fail(
++                    "causal-metadata historical inspection changed its query: "
++                    f"{json.dumps(metadata_inventory, sort_keys=True)}"
++                )
++            if not metadata_inventory["source_cutpoint"].startswith(
++                "v2:metadata:"
++            ) or metadata_inventory.get(
++                "source_payload_snapshot_digest"
++            ) is not None:
++                fail(
++                    "causal-metadata historical inspection invented payload "
++                    "authority or omitted its mode-bound token"
++                )
++            if len(metadata_inventory.get("entries", [])) != 1 or any(
++                metadata_inventory.get(field) is not None
++                for field in (
++                    "payload_scan_hashed_entries",
++                    "payload_scan_hashed_bytes",
++                    "payload_scan_reused_entries",
++                    "payload_scan_reused_bytes",
++                    "payload_present_count",
++                    "restore_ready_count",
++                )
++            ) or any(
++                entry.get(field) is not None
++                for entry in metadata_inventory["entries"]
++                for field in ("payload_present", "restore_ready")
++            ):
++                fail(
++                    "causal-metadata historical inspection fabricated "
++                    "payload-derived evidence: "
++                    f"{json.dumps(metadata_inventory, sort_keys=True)}"
++                )
++
++            history_counters = metadata_status.get("counters")
+             if not isinstance(history_counters, dict):
+                 fail("historical-version restore status omitted counters")
+             expected_history_counters = {
+-                "historical_version_requests_observed": 6,
+-                "historical_version_attempts": 6,
+-                "historical_version_completions": 6,
+-                "historical_version_inspections": 3,
++                "historical_version_requests_observed": 7,
++                "historical_version_attempts": 7,
++                "historical_version_completions": 7,
++                "historical_version_inspections": 4,
+                 "historical_version_restores": 1,
+                 "historical_version_failures": 2,
+             }
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index cebf9287f9307e5477d6f1231b4540d4b228faa1..dc72dace0c7a5680c7971dfafe2a43df42ccb041 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v14"
++                    value.get("schema") == "anonsync.peer-service.status.v15"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index a0f34011e075f4e53a3e46e58f398c76ef7cbeae..6412ceb7c6191e6254dcad49d2d284b97d72e9fc 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1434,6 +1434,26 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 970:
++        revision_scoped_required.update({
++            "CAUSAL_METADATA_HISTORY_INSPECTION_AUDIT_rev0970.md",
++            "REVISION_NOTES_rev0970.md",
++            "README.md",
++            "src/anonsync_sync.cpp",
++            "src/sync_local_status_socket.hpp",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_historical_version_query.hpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_peer_service_status.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

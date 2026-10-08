@@ -1,0 +1,1285 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -13,6 +13,10 @@
+ option(ANONSYNC_ENABLE_SANITIZERS "Build with AddressSanitizer and UndefinedBehaviorSanitizer when supported" OFF)
+ option(ANONSYNC_SANITIZE_BUNDLED_SQLITE
+   "Also instrument the pinned SQLite amalgamation (slow; intended for dedicated upstream-boundary jobs)" OFF)
++option(ANONSYNC_ENABLE_LIBFUZZER
++  "Build the Clang libFuzzer projection-decoder target" OFF)
++option(ANONSYNC_LIBFUZZER_WITH_ASAN
++  "Add AddressSanitizer to the libFuzzer target (toolchain/runtime dependent)" OFF)
+ 
+ if(ANONSYNC_USE_BUNDLED_SQLITE)
+   set(ANONSYNC_BUNDLED_SQLITE_DIR
+@@ -84,6 +88,47 @@
+   target_compile_definitions(anonsync_sqlite_runtime PRIVATE ANONSYNC_BUNDLED_SQLITE=1)
+ endif()
+ 
++# The peer-ingress durable-connection verifier is an invariant-owned boundary,
++# not an implementation detail of the monolithic domain archive.  Keep it as a
++# separately linkable library so its focused proof never has to compile the
++# 24k-line sync domain or unrelated transports, ledgers, codecs, and reports.
++set(ANONSYNC_PEER_INGRESS_CONNECTION_PROFILE_SOURCE
++  src/persistence/peer_ingress_connection_profile.cpp)
++add_library(anonsync_peer_ingress_connection_profile STATIC
++  ${ANONSYNC_PEER_INGRESS_CONNECTION_PROFILE_SOURCE})
++target_include_directories(anonsync_peer_ingress_connection_profile PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_peer_ingress_connection_profile PUBLIC
++  ${ANONSYNC_SQLITE_TARGET})
++target_compile_options(anonsync_peer_ingress_connection_profile PRIVATE
++  -Wall -Wextra -Wpedantic)
++
++# Canonical projection comparison is a pure evidence boundary.  The focused
++# proof should compile only this implementation, not the whole application.
++set(ANONSYNC_CANONICAL_PROJECTION_VERIFIER_SOURCE
++  src/persistence/canonical_projection_verifier.cpp)
++add_library(anonsync_canonical_projection_verifier STATIC
++  ${ANONSYNC_CANONICAL_PROJECTION_VERIFIER_SOURCE})
++target_include_directories(anonsync_canonical_projection_verifier PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
++target_compile_options(anonsync_canonical_projection_verifier PRIVATE
++  -Wall -Wextra -Wpedantic)
++
++# SQLite row decoding owns storage-class/range/null semantics and depends only
++# on the canonical projection types plus SQLite's C API.  Keeping this slice
++# independently linkable makes malformed-row testing cheap and exact.
++set(ANONSYNC_SQLITE_PROJECTION_DECODER_SOURCE
++  src/persistence/sqlite_projection_decoder.cpp)
++add_library(anonsync_sqlite_projection_decoder STATIC
++  ${ANONSYNC_SQLITE_PROJECTION_DECODER_SOURCE})
++target_include_directories(anonsync_sqlite_projection_decoder PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
++target_link_libraries(anonsync_sqlite_projection_decoder PUBLIC
++  anonsync_canonical_projection_verifier
++  ${ANONSYNC_SQLITE_TARGET})
++target_compile_options(anonsync_sqlite_projection_decoder PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ # One independently testable ownership and statement boundary is shared by
+ # the checkpoint and peer-ingress domains. Keeping it outside either large
+ # translation unit prevents another private helper copy from becoming an
+@@ -101,9 +146,6 @@
+ 
+ set(ANONSYNC_CORE_SOURCES
+   src/sync_domain.cpp
+-  src/persistence/peer_ingress_connection_profile.cpp
+-  src/persistence/canonical_projection_verifier.cpp
+-  src/persistence/sqlite_projection_decoder.cpp
+   src/sync_peer_ingress_projection.cpp
+   src/sync_peer_ingress_lifecycle.cpp
+   src/sync_peer_ingress_schema.cpp
+@@ -126,9 +168,25 @@
+   src/jwt_policy_decision.cpp
+   src/reporting_selftests.cpp
+   src/runner.cpp)
++foreach(ANONSYNC_INVARIANT_OWNED_SOURCE
++    "${ANONSYNC_PEER_INGRESS_CONNECTION_PROFILE_SOURCE}"
++    "${ANONSYNC_CANONICAL_PROJECTION_VERIFIER_SOURCE}"
++    "${ANONSYNC_SQLITE_PROJECTION_DECODER_SOURCE}")
++  list(FIND ANONSYNC_CORE_SOURCES "${ANONSYNC_INVARIANT_OWNED_SOURCE}"
++    ANONSYNC_INVARIANT_SOURCE_IN_CORE_INDEX)
++  if(NOT ANONSYNC_INVARIANT_SOURCE_IN_CORE_INDEX EQUAL -1)
++    message(FATAL_ERROR
++      "invariant-owned persistence boundary must remain outside anonsync_core_lib: ${ANONSYNC_INVARIANT_OWNED_SOURCE}")
++  endif()
++endforeach()
+ add_library(anonsync_core_lib STATIC ${ANONSYNC_CORE_SOURCES})
+ target_include_directories(anonsync_core_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+-target_link_libraries(anonsync_core_lib PUBLIC OpenSSL::Crypto anonsync_sqlite_support)
++target_link_libraries(anonsync_core_lib
++  PUBLIC OpenSSL::Crypto anonsync_sqlite_support
++  PRIVATE
++    anonsync_peer_ingress_connection_profile
++    anonsync_canonical_projection_verifier
++    anonsync_sqlite_projection_decoder)
+ if(ANONSYNC_USE_BUNDLED_SQLITE)
+   target_compile_definitions(anonsync_core_lib PRIVATE ANONSYNC_BUNDLED_SQLITE=1)
+ endif()
+@@ -142,6 +200,37 @@
+ target_link_libraries(anonsync_fuzz_jwt_codec PRIVATE anonsync_core_lib)
+ add_executable(anonsync_fuzz_route_event_ledger fuzz/fuzz_route_event_ledger.cpp)
+ target_link_libraries(anonsync_fuzz_route_event_ledger PRIVATE anonsync_core_lib)
++
++# The three legacy fuzz-named binaries above are deterministic corpus
++# selftests. This is the first actual coverage-guided fuzz target: it exercises
++# SQLite row state, storage classes, malformed/aliased column maps, embedded
++# bytes, and the value-free decoder error surface. Compile the two small
++# boundary implementations directly so the fuzz lane instruments them without
++# forcing sanitizer runtimes into every normal consumer of their static libs.
++if(ANONSYNC_ENABLE_LIBFUZZER)
++  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
++    message(FATAL_ERROR
++      "ANONSYNC_ENABLE_LIBFUZZER requires a matching Clang/libFuzzer toolchain")
++  endif()
++  add_executable(anonsync_fuzz_sqlite_projection_decoder
++    fuzz/fuzz_sqlite_projection_decoder.cpp
++    ${ANONSYNC_CANONICAL_PROJECTION_VERIFIER_SOURCE}
++    ${ANONSYNC_SQLITE_PROJECTION_DECODER_SOURCE})
++  target_include_directories(anonsync_fuzz_sqlite_projection_decoder PRIVATE
++    ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
++  target_link_libraries(anonsync_fuzz_sqlite_projection_decoder PRIVATE
++    ${ANONSYNC_SQLITE_TARGET})
++  set(ANONSYNC_LIBFUZZER_SANITIZERS "fuzzer,undefined")
++  if(ANONSYNC_LIBFUZZER_WITH_ASAN)
++    set(ANONSYNC_LIBFUZZER_SANITIZERS "fuzzer,address,undefined")
++  endif()
++  target_compile_options(anonsync_fuzz_sqlite_projection_decoder PRIVATE
++    -Wall -Wextra -Wpedantic -Werror
++    -fsanitize=${ANONSYNC_LIBFUZZER_SANITIZERS}
++    -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS)
++  target_link_options(anonsync_fuzz_sqlite_projection_decoder PRIVATE
++    -fsanitize=${ANONSYNC_LIBFUZZER_SANITIZERS})
++endif()
+ add_executable(anonsync_sqlite_runtime_policy_test tests/sqlite_runtime_policy_test.cpp)
+ target_link_libraries(anonsync_sqlite_runtime_policy_test PRIVATE anonsync_sqlite_runtime)
+ target_compile_options(anonsync_sqlite_runtime_policy_test PRIVATE -Wall -Wextra -Wpedantic)
+@@ -216,7 +305,7 @@
+   ${CMAKE_CURRENT_SOURCE_DIR}/src
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
+ target_link_libraries(anonsync_canonical_projection_verifier_test PRIVATE
+-  anonsync_core_lib)
++  anonsync_canonical_projection_verifier)
+ target_compile_options(anonsync_canonical_projection_verifier_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ add_executable(anonsync_sqlite_projection_decoder_test
+@@ -225,7 +314,7 @@
+   ${CMAKE_CURRENT_SOURCE_DIR}/src
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
+ target_link_libraries(anonsync_sqlite_projection_decoder_test PRIVATE
+-  anonsync_core_lib)
++  anonsync_sqlite_projection_decoder)
+ target_compile_options(anonsync_sqlite_projection_decoder_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ add_executable(anonsync_peer_ingress_projection_integrity_test
+@@ -254,19 +343,55 @@
+   anonsync_core_lib)
+ target_compile_options(anonsync_peer_ingress_schema_attestation_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+-# rev0788: independently executable proof for the durable, exact-VFS
+-# peer-ingress connection publication boundary.
++# rev0789: independently compiled and executable proof for the durable,
++# exact-VFS peer-ingress connection publication boundary.  Linking this test
++# back through anonsync_core_lib would silently restore the 26-translation-unit
++# dependency fan-out that this boundary exists to eliminate.
+ add_executable(anonsync_peer_ingress_connection_profile_test
+   tests/persistence/peer_ingress_connection_profile_test.cpp)
+ target_include_directories(anonsync_peer_ingress_connection_profile_test PRIVATE
+   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+ target_link_libraries(anonsync_peer_ingress_connection_profile_test PRIVATE
+-  anonsync_core_lib)
++  anonsync_peer_ingress_connection_profile)
+ target_compile_options(anonsync_peer_ingress_connection_profile_test PRIVATE
+   -Wall -Wextra -Wpedantic)
++get_target_property(ANONSYNC_PROFILE_TEST_LINK_LIBRARIES
++  anonsync_peer_ingress_connection_profile_test LINK_LIBRARIES)
++list(FIND ANONSYNC_PROFILE_TEST_LINK_LIBRARIES anonsync_core_lib
++  ANONSYNC_PROFILE_TEST_CORE_LINK_INDEX)
++if(NOT ANONSYNC_PROFILE_TEST_CORE_LINK_INDEX EQUAL -1)
++  message(FATAL_ERROR
++    "focused connection-profile proof must not link anonsync_core_lib")
++endif()
++get_target_property(ANONSYNC_PROFILE_LIBRARY_LINK_LIBRARIES
++  anonsync_peer_ingress_connection_profile LINK_LIBRARIES)
++list(FIND ANONSYNC_PROFILE_LIBRARY_LINK_LIBRARIES anonsync_core_lib
++  ANONSYNC_PROFILE_LIBRARY_CORE_LINK_INDEX)
++if(NOT ANONSYNC_PROFILE_LIBRARY_CORE_LINK_INDEX EQUAL -1)
++  message(FATAL_ERROR
++    "connection-profile library must not depend on anonsync_core_lib")
++endif()
++
++foreach(ANONSYNC_FOCUSED_BOUNDARY_TARGET
++    anonsync_canonical_projection_verifier
++    anonsync_sqlite_projection_decoder
++    anonsync_canonical_projection_verifier_test
++    anonsync_sqlite_projection_decoder_test)
++  get_target_property(ANONSYNC_FOCUSED_BOUNDARY_LINK_LIBRARIES
++    ${ANONSYNC_FOCUSED_BOUNDARY_TARGET} LINK_LIBRARIES)
++  list(FIND ANONSYNC_FOCUSED_BOUNDARY_LINK_LIBRARIES anonsync_core_lib
++    ANONSYNC_FOCUSED_BOUNDARY_CORE_LINK_INDEX)
++  if(NOT ANONSYNC_FOCUSED_BOUNDARY_CORE_LINK_INDEX EQUAL -1)
++    message(FATAL_ERROR
++      "focused persistence boundary must not depend on anonsync_core_lib: ${ANONSYNC_FOCUSED_BOUNDARY_TARGET}")
++  endif()
++endforeach()
+ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+   set(ANONSYNC_SANITIZER_COMPILE_TARGETS
+     anonsync_core_lib
++    anonsync_peer_ingress_connection_profile
++    anonsync_canonical_projection_verifier
++    anonsync_sqlite_projection_decoder
+     anonsync_sqlite_runtime
+     anonsync_sqlite_support
+     anonsync_sqlite_runtime_policy_test
+@@ -322,6 +447,12 @@
+   endforeach()
+ endif()
+ include(CTest)
++if(ANONSYNC_ENABLE_LIBFUZZER)
++  add_test(NAME anonsync_fuzz_sqlite_projection_decoder_smoke
++    COMMAND anonsync_fuzz_sqlite_projection_decoder
++      -runs=10000 -max_len=512 -seed=789
++      -print_funcs=0 -print_final_stats=1)
++endif()
+ add_test(NAME anonsync_core_help COMMAND anonsync_core --help)
+ add_test(NAME anonsync_core_sync_domain_model_selftest COMMAND anonsync_core --selftest-sync-domain-model)
+ add_test(NAME anonsync_core_sync_peer_ingress_lifecycle_selftest COMMAND anonsync_core --selftest-sync-peer-ingress-lifecycle)
+--- a/README.md
++++ b/README.md
+@@ -1,95 +1,136 @@
+-# AnonSync rev0785
++# AnonSync rev0789
+ 
+-AnonSync is an **evidence-authorized convergence engine**. Transport receipt,
+-callback success, a worker label, a database address, and a successful syscall
+-are observations, not authority. A transition is legitimate only when its
+-consumer verifies the exact content-, generation-, process-, thread-, and
+-lifetime-bound evidence required by that boundary. Durable authority must be
+-reconstructible after interruption; live C++ capabilities are intentionally
+-nondurable.
++AnonSync is an **evidence-authorized convergence engine**. A successful call,
++open, callback, receipt, pointer, worker label, transport delivery, or database
++row is an observation—not authority. A state transition is legitimate only
++when the boundary that owns the invariant verifies the exact content,
++generation, process, thread, lifetime, and durability evidence it needs.
++Process-local C++ capabilities are intentionally nondurable; restart authority
++must be reconstructed from durable, content-bound evidence.
+ 
+-## Current revision: exact owner-generation SQLite lifetime authority
++## Current revision: row-state truth and independently testable boundaries
+ 
+-Rev0785 integrates generation-bound borrowing into the common process-bound
+-SQLite owner slot. Every materialized state has immutable process provenance,
+-a monotonic generation, exact borrow accounting, and process-bound output
+-reservation. Owner moves preserve the generation; reset and close fail stopped
+-while a dependent borrow remains.
++Rev0789 corrects two severe defects in the SQLite projection decoder:
+ 
+-The lifecycle guard uses an always-lock-free atomic rather than a mutex that can
+-be inherited locked across `fork()`. Child use or cleanup fails stopped before
+-touching SQLite or copied owner storage. A strong compare-exchange prevents
+-spurious failure from being misclassified as foreign ownership.
++- it previously called `sqlite3_column_*` on prepared, exhausted, or reset
++  statements, where SQLite defines the result as undefined unless the most
++  recent `sqlite3_step()` returned `SQLITE_ROW`;
++- it accepted duplicate entries in the twelve-field column map, allowing one
++  stored value to stand in as evidence for two distinct fields. The preserved
++  pre-fix reproducer demonstrates a forged omitted column verifying when two
++  canonical values happened to be equal.
+ 
+-Managed connections reject close with an open transaction and use strict
+-`sqlite3_close()` rather than `sqlite3_close_v2()` zombie semantics. Typed
+-statements privately pin their exact database generation until finalization.
+-Their public `stmt` surface is a nonmovable read-only view, preventing callers
+-from detaching statement ownership from the database pin. Typed transactions
+-retain the same pin through the live transaction and retained mutex boundary.
++The decoder now requires a live result row, preflights every index before value
++access, requires a one-to-one field/column mapping, preserves empty SQLite TEXT,
++and extracts text before byte count. Errors remain bounded, value-free summaries.
+ 
+-## Refactor and audit
++Three persistence boundaries are now invariant-owned static libraries rather
++than private members of the monolithic core archive:
+ 
+-Peer-ingestion duplicate SQLite helper code now delegates to the common checked
+-support layer. Critical sidecar transaction-control paths use the typed
+-transaction guard, and selected prepares consume the owner slot directly.
++- durable peer-ingress connection publication;
++- canonical projection comparison; and
++- SQLite projection decoding.
+ 
+-Deterministic final audits pass:
++Their focused tests no longer compile `src/sync_domain.cpp` or the other 25 core
++translation units. Depending on the target, clean Ninja action count falls from
++40 to 4–8 and first-party C++ exposure falls by 98.4–99.2%. CMake configuration
++fails if these boundaries or their focused tests are coupled back to
++`anonsync_core_lib`.
+ 
+-- owner-generation authority: **14/14 required invariants**;
+-- process/owner authority: **56/56**;
+-- mutex/thread/process capability: **64/64**;
+-- transaction-stack authority: **45/45**;
+-- peer payload transaction authority: **38/38**;
+-- SQLite authorizer ownership: **0 violations**.
++Rev0789 also adds the first actual coverage-guided target,
++`anonsync_fuzz_sqlite_projection_decoder`. The three older fuzz-named binaries
++remain deterministic corpus selftests and are labeled as such in CMake. A
++100,000-run Clang libFuzzer/UBSan campaign completed without a finding.
++
++## Release truth
++
++The active implementation projection is now version 2 and includes `fuzz/`.
++The legacy projection omitted all fuzz sources. `tools/verify_release_package.py`
++now recomputes the active projection, its complete file inventory, byte count,
++and aggregate digest instead of trusting the release gate's Boolean claim.
++The full manifest still binds every packaged file.
+ 
+ ## Validation
+ 
+-The final source projection passes a fresh GCC Debug build and **42/42 CTest**,
+-ten owner-generation stress repetitions, focused GCC ASan/UBSan **5/5**, GCC
+-Release **5/5**, and Clang Debug with `-Werror` **5/5**. Exact commands, logs,
+-audits, source diff, lineage, and package verification live under
+-`REVISION_EVIDENCE/rev0785/`.
++The exact rev0789 implementation projection passes:
+ 
+-## Deliberate limits
++- full GCC Debug build and **44/44 CTest tests**;
++- all three focused boundaries repeated **20/20**: 139 canonical-verifier,
++  69 decoder, and 85 connection-profile checks per run;
++- focused GCC ASan/UBSan **5/5**;
++- Clang 17 C++20 `-Wall -Wextra -Wpedantic -Werror` **5/5**;
++- GCC 14 `-O3 -DNDEBUG -Werror` **5/5**;
++- Clang libFuzzer/UBSan **100,000 runs**; and
++- seven deterministic authority audits with no required violation.
+ 
+-Migration is not complete. The release audit enumerates 17 raw prepare sites,
+-70 raw transaction-control sites, and three legacy `sqlite3_close_v2()` sites.
+-Raw compatibility overloads can still launder an address beyond a borrow's
+-lifetime; they should be removed module-by-module after each invariant owner is
+-converted.
++Commands, logs, defect reproducers, graph measurements, research, lineage, and
++limitations are under `REVISION_EVIDENCE/rev0789/`.
+ 
+-Connection mutex mode is not yet encoded in the borrow type. Cross-thread
+-borrow accounting is safe, while cross-thread SQLite use still requires a
+-FULLMUTEX/serialized connection. The next typed boundary should carry that open
+-profile.
++## Deliberate limits and next work
+ 
+-The 24,528-line domain unit and 4,466-line legacy replay-ledger unit remain
+-review/build bottlenecks. Durable crash ordering also still needs a
+-fault-injecting VFS and executable state oracle.
++The project has strong authenticity, replay, generation, transaction, and
++restart-evidence machinery, but no explicit end-to-end content-confidentiality
++or metadata-privacy model was found. Transport possession material is exposed
++as ordinary `std::string shared_secret` values. Before calling AnonSync private,
++define the adversary, key lifecycle, secret-memory policy, payload encryption,
++metadata leakage, revocation, and recovery model.
++
++“Convergence” is extensively implemented as manifests, lineage, conflict copies,
++receipts, workorders, and restart checkpoints, but there is no formal algebra or
++executable reference model proving strong eventual consistency. Do not market
++AnonSync as a CRDT until operations are classified, merge laws are stated, and
++reordering/duplication/partition traces are model-checked or property-tested.
++
++Crash correctness remains the highest-value systems gap. Add a fault-injecting
++VFS and an executable post-crash oracle that cuts every write/sync boundary,
++reorders or corrupts unsynchronized writes, restarts, and proves that each
++operation is wholly committed or reconstructibly absent. Exact VFS identity is
++not media durability.
++
++The main engineering bottleneck is still structural: `src/sync_domain.cpp` is
++24,530 lines; `src/reporting_selftests.cpp` 4,498;
++`src/sqlite_replay_ledger.cpp` 4,466; and the public header 3,499. Continue
++extracting libraries by invariant ownership, then migrate the explicit debt of
++40 raw opens, 70 raw transaction-control sites, 17 raw prepares, four legacy
++`sqlite3_close_v2` calls, three raw-pointer compatibility declarations, and one
++generic owner-borrow mint.
+ 
+ ## Build
+ 
+ ```bash
+-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
++cmake -S . -B build -G Ninja \
++  -DCMAKE_BUILD_TYPE=Debug \
+   -DANONSYNC_USE_BUNDLED_SQLITE=ON
+-cmake --build build -j2
+-ctest --test-dir build --output-on-failure
++cmake --build build --parallel 2
++ctest --test-dir build --output-on-failure --parallel 2
+ ```
+ 
+-Sanitizer profile (AnonSync C++ instrumented; pinned SQLite amalgamation not
+-instrumented by default):
++Focused sanitizer lane (the pinned SQLite amalgamation is not instrumented by
++default):
+ 
+ ```bash
+ cmake -S . -B build-sanitize -G Ninja \
+   -DCMAKE_BUILD_TYPE=Debug \
+   -DANONSYNC_USE_BUNDLED_SQLITE=ON \
+   -DANONSYNC_ENABLE_SANITIZERS=ON
+-cmake --build build-sanitize -j2
+-ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+-UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+-ctest --test-dir build-sanitize --output-on-failure
++cmake --build build-sanitize --parallel 2 --target \
++  anonsync_canonical_projection_verifier_test \
++  anonsync_sqlite_projection_decoder_test \
++  anonsync_peer_ingress_connection_profile_test
++ctest --test-dir build-sanitize --output-on-failure \
++  -R 'canonical_projection|sqlite_projection_decoder|connection_profile'
+ ```
+ 
+-Set `-DANONSYNC_SANITIZE_BUNDLED_SQLITE=ON` for a dedicated, slower lane that
+-also instruments the reviewed SQLite amalgamation.
++Coverage-guided decoder fuzzing requires Clang:
++
++```bash
++cmake -S . -B build-fuzz -G Ninja \
++  -DCMAKE_BUILD_TYPE=Debug \
++  -DCMAKE_C_COMPILER=clang \
++  -DCMAKE_CXX_COMPILER=clang++ \
++  -DANONSYNC_USE_BUNDLED_SQLITE=ON \
++  -DANONSYNC_ENABLE_LIBFUZZER=ON
++cmake --build build-fuzz --target anonsync_fuzz_sqlite_projection_decoder
++./build-fuzz/anonsync_fuzz_sqlite_projection_decoder \
++  -runs=100000 -max_len=512 -seed=789 -print_funcs=0
++```
+--- a/RELEASE_GATE.json
++++ b/RELEASE_GATE.json
+@@ -1,32 +1,41 @@
+ {
+-  "audit": "REVISION_EVIDENCE/rev0788/AUDIT.md",
++  "audit": "REVISION_EVIDENCE/rev0789/AUDIT.md",
+   "format": "anonsync-release-gate-v1",
+-  "lineage": "REVISION_EVIDENCE/rev0788/LINEAGE.json",
++  "lineage": "REVISION_EVIDENCE/rev0789/LINEAGE.json",
+   "optional": {
+     "bundled_sqlite_amalgamation_sanitized": false,
++    "end_to_end_content_encryption_and_metadata_privacy_model": false,
+     "fault_injecting_vfs_crash_matrix": false,
+-    "native_file_descriptor_identity_attested": false
++    "formal_convergence_model_checked": false,
++    "libfuzzer_asan_combined_lane": false,
++    "native_file_descriptor_identity_attested": false,
++    "secret_memory_zeroization_and_locked_storage": false,
++    "storage_media_durability_proved": false
+   },
+   "project": "AnonSync",
+-  "publication_policy": "fail closed: publish only after exact manifest, safe directory, ZIP CRC, release-package verifier, and tested implementation-projection checks pass",
++  "publication_policy": "fail closed: publish only after exact manifest, active-projection recomputation, safe directory and ZIP paths, one AnonSync root, ZIP CRC, release-package verifier, and tested-source checks pass",
+   "required": {
+-    "exact_vfs_pointer_authority": true,
+-    "focused_debug_repeat20": true,
++    "active_projection_v2_binds_fuzz_sources": true,
++    "clang17_strict_werror_all_three_5_of_5": true,
++    "configure_time_reverse_dependency_guards": true,
++    "focused_debug_all_three_20_of_20": true,
++    "focused_targets_have_zero_core_translation_units": true,
+     "full_source_package_preflight": true,
+-    "gcc_asan_ubsan_focused_5_of_5": true,
++    "gcc14_o3_werror_all_three_5_of_5": true,
++    "gcc_asan_ubsan_all_three_5_of_5": true,
+     "gcc_debug_full_44_of_44": true,
+-    "implementation_projection_matches_tested_tree": true,
+-    "misleading_scoped_busy_handler_removed": true,
+-    "optimized_gcc_focused_5_of_5": true,
+-    "realized_access_and_mutex_observed": true,
+-    "rev0787_false_release_state_recorded": true,
++    "libfuzzer_ubsan_decoder_100000_runs": true,
++    "preserved_before_after_defect_reproducer": true,
++    "release_verifier_recomputes_active_projection": true,
+     "seven_deterministic_authority_audits": true,
+-    "source_diff_hygiene": true,
+-    "strict_clang17_werror_focused": true,
+-    "uri_control_plane_rejected": true,
+-    "verified_archived_parent_or_explicit_recovery_lineage": true
++    "source_diff_and_repository_hygiene_recorded": true,
++    "sqlite_decoder_rejects_duplicate_column_evidence": true,
++    "sqlite_decoder_requires_current_result_row": true,
++    "sqlite_text_extraction_order_and_empty_text_regression": true,
++    "three_invariant_owned_persistence_libraries": true,
++    "verified_immediate_rev0788_parent": true
+   },
+   "required_gate_passed": true,
+-  "revision": "rev0788",
+-  "validation_summary": "REVISION_EVIDENCE/rev0788/validation/VALIDATION_SUMMARY.json"
++  "revision": "rev0789",
++  "validation_summary": "REVISION_EVIDENCE/rev0789/validation/VALIDATION_SUMMARY.json"
+ }
+--- a/REVISION_NOTES_rev0789.md
++++ b/REVISION_NOTES_rev0789.md
+@@ -0,0 +1,113 @@
++# AnonSync rev0789 — row-state truth, alias-proof evidence, and focused build graph
++
++Prepared from the supplied, verified rev0788 archive. The immediate parent ZIP
++has SHA-256 `02b1d020667224fa167c4dab705f933d59c8770f194db322ad64e6698cfdee7d` and passes all 24 checks in the rev0789 release-package
++verifier, including a recomputation of rev0788's legacy active projection.
++
++## Mission
++
++AnonSync's heart is not “copy bytes until two folders look alike.” It is to make
++convergence explainable and reconstructible: each transition must be authorized
++by evidence specific to the boundary that owns it. Transport success is not
++acceptance, a database address is not lifetime authority, a row-shaped API is
++not a current row, and equal values are not independent evidence for two fields.
++
++## Severe defects corrected
++
++### Undefined SQLite row access
++
++`SqliteProjectionDecoder::decode()` accepted a non-null prepared statement and
++immediately invoked `sqlite3_column_count()`, `sqlite3_column_type()`, and other
++column APIs. It did not prove that the statement currently pointed at a result
++row. SQLite defines column access as undefined unless the most recent
++`sqlite3_step()` returned `SQLITE_ROW` and no reset/finalize followed.
++
++The decoder now requires a positive projection column count and
++`sqlite3_data_count(statement) == sqlite3_column_count(statement)` before any
++column-value API. Prepared-but-unstepped, exhausted, and reset statements fail
++closed as `statement_not_positioned`.
++
++### Evidence aliasing through duplicate column maps
++
++The twelve-field `ProjectionColumnMap` checked only range. A caller could map two
++fields to one result column. The preserved rev0788 reproducer maps
++`transport_key_id` to the `transport_instance_id` column, omits the actual key
++column, and still passes canonical verification when the two expected strings
++are equal. Pre-fix output records
++`forged_omitted_column_verified=true`.
++
++Rev0789 preflights the complete map and rejects the second repeated index as
++`duplicate_column_index`. One stored value may not be laundered into two pieces
++of evidence, even when their canonical values happen to match.
++
++### TEXT extraction and empty values
++
++The decoder now calls `sqlite3_column_text()` before `sqlite3_column_bytes()`,
++uses SQLite's documented safe extraction order, distinguishes an empty TEXT
++value from allocation failure, and has a direct empty-string regression test.
++
++## Architecture correction
++
++The rev0788 connection-profile “focused” test linked `anonsync_core_lib`, which
++forced 40 Ninja actions, 34 first-party C++ translation units, 26 core units, and
++52,607 first-party lines—including the 24,530-line domain—into an 85-check proof
++for a 267-line boundary.
++
++Rev0789 creates independently linkable libraries for the connection profile,
++canonical projection verifier, and SQLite projection decoder. Production core
++links them privately; focused tests link only their boundary. Configure-time
++assertions reject source reabsorption or reverse dependencies on the core.
++
++Measured from fresh Ninja graphs:
++
++| Focused target | Before actions | After | Before C++ lines | After | Core TUs after |
++|---|---:|---:|---:|---:|---:|
++| connection profile | 40 | 6 | 52,607 | 564 | 0 |
++| canonical verifier | 40 | 4 | 52,549 | 396 | 0 |
++| SQLite decoder | 40 | 8 | 52,615 | 850 | 0 |
++
++This is correctness infrastructure: cheap boundary proofs make sanitizer,
++strict-compiler, mutation, and fuzz lanes practical instead of ceremonial.
++
++## Real fuzzing
++
++`fuzz/fuzz_sqlite_projection_decoder.cpp` implements
++`LLVMFuzzerTestOneInput` and mutates statement state, twelve SQLite binding
++classes/values, valid and malformed permutations, duplicate/out-of-range maps,
++embedded bytes, and error-summary invariants. The target directly instruments
++the two small persistence implementations. A 100,000-run Clang libFuzzer/UBSan
++campaign completed with coverage 344, feature count 736, and no crash or
++sanitizer finding.
++
++The three pre-existing `anonsync_fuzz_*` executables are deterministic selftests,
++not coverage-guided engines; CMake now says so explicitly.
++
++## Release-truth correction
++
++The legacy active implementation projection excluded `fuzz/`. The manifest did
++bind those files, but the named “tested active projection” did not. Rev0789
++introduces `anonsync-active-implementation-projection-v2`, includes all fuzz
++sources, and changes `tools/verify_release_package.py` to recompute the exact
++file list, per-file hashes, byte count, and aggregate digest. The current v2
++digest is `c6128ec0f2156922a56badc6170122de6957eb0132581a6b045e460103d78882`.
++
++## Validation
++
++- full GCC Debug build and 44/44 CTest;
++- focused Debug 20/20 for all three boundaries;
++- GCC ASan/UBSan 5/5;
++- Clang 17 strict C++20/Werror 5/5;
++- GCC 14 `-O3 -DNDEBUG -Werror` 5/5;
++- libFuzzer/UBSan 100,000 runs;
++- all seven deterministic authority audits pass;
++- parent rev0788 package verification 24/24 with the revised verifier.
++
++## Explicitly unresolved
++
++No fault-injecting VFS crash matrix, native descriptor identity attestation,
++media-durability proof, formal convergence model, end-to-end content encryption,
++metadata-privacy model, or secret-memory lifecycle is claimed. The default
++sanitizer lane instruments AnonSync C++ but not the pinned SQLite amalgamation.
++This cloudtainer's Swift Clang 17 libFuzzer runtime runs with UBSan and
++`-print_funcs=0`; its function-symbolization path and ASan-combined startup are
++recorded as toolchain limitations rather than passed gates.
+--- a/fuzz/fuzz_sqlite_projection_decoder.cpp
++++ b/fuzz/fuzz_sqlite_projection_decoder.cpp
+@@ -0,0 +1,320 @@
++#include "canonical_projection_verifier.hpp"
++#include "sqlite_projection_decoder.hpp"
++
++#include <sqlite3.h>
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++#include <string_view>
++#include <utility>
++
++using namespace anonsync::persistence;
++
++namespace {
++
++[[noreturn]] void invariant_failure(int line) noexcept {
++    std::fprintf(stderr, "projection decoder fuzz invariant failed at line %d\n", line);
++    std::abort();
++}
++
++void fuzz_require_at(bool condition, int line) noexcept {
++    if (!condition) invariant_failure(line);
++}
++
++#define fuzz_require(condition) fuzz_require_at((condition), __LINE__)
++
++class ByteCursor final {
++public:
++    ByteCursor(const std::uint8_t* data, std::size_t size) noexcept
++        : data_(data), size_(size) {}
++
++    std::uint8_t byte() noexcept {
++        if (offset_ >= size_) return 0;
++        return data_[offset_++];
++    }
++
++    std::uint64_t u64() noexcept {
++        std::uint64_t value = 0;
++        for (unsigned shift = 0; shift < 64; shift += 8) {
++            value |= static_cast<std::uint64_t>(byte()) << shift;
++        }
++        return value;
++    }
++
++    std::string bytes(std::size_t maximum) {
++        const std::size_t requested = static_cast<std::size_t>(byte()) %
++            (maximum + 1);
++        const std::size_t available = size_ - offset_;
++        const std::size_t count = requested < available ? requested : available;
++        std::string value(
++            reinterpret_cast<const char*>(data_ + offset_), count);
++        offset_ += count;
++        return value;
++    }
++
++private:
++    const std::uint8_t* data_;
++    std::size_t size_;
++    std::size_t offset_{};
++};
++
++class ProjectionFixture final {
++public:
++    ProjectionFixture() {
++        const int open_result = sqlite3_open_v2(
++            ":memory:",
++            &database_,
++            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
++                SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_PRIVATECACHE,
++            nullptr);
++        fuzz_require(open_result == SQLITE_OK && database_ != nullptr);
++
++        constexpr const char* kSql =
++            "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12;";
++        fuzz_require(sqlite3_prepare_v2(
++                         database_, kSql, -1, &statement_, nullptr) == SQLITE_OK);
++        fuzz_require(statement_ != nullptr);
++    }
++
++    ~ProjectionFixture() {
++        if (statement_ != nullptr) {
++            fuzz_require(sqlite3_finalize(statement_) == SQLITE_OK);
++        }
++        if (database_ != nullptr) {
++            fuzz_require(sqlite3_close(database_) == SQLITE_OK);
++        }
++    }
++
++    ProjectionFixture(const ProjectionFixture&) = delete;
++    ProjectionFixture& operator=(const ProjectionFixture&) = delete;
++
++    sqlite3_stmt* statement() noexcept { return statement_; }
++
++    void clear() noexcept {
++        fuzz_require(sqlite3_reset(statement_) == SQLITE_OK);
++        fuzz_require(sqlite3_clear_bindings(statement_) == SQLITE_OK);
++    }
++
++private:
++    sqlite3* database_{};
++    sqlite3_stmt* statement_{};
++};
++
++ProjectionFixture& fixture() {
++    static ProjectionFixture value;
++    return value;
++}
++
++void bind_random_value(sqlite3_stmt* statement,
++                       int parameter,
++                       ByteCursor& cursor) {
++    const std::uint8_t kind = cursor.byte() % 6;
++    int result = SQLITE_ERROR;
++    switch (kind) {
++        case 0:
++            result = sqlite3_bind_null(statement, parameter);
++            break;
++        case 1: {
++            const std::string value = cursor.bytes(48);
++            result = sqlite3_bind_text(
++                statement,
++                parameter,
++                value.data(),
++                static_cast<int>(value.size()),
++                SQLITE_TRANSIENT);
++            break;
++        }
++        case 2:
++            result = sqlite3_bind_int64(
++                statement,
++                parameter,
++                static_cast<sqlite3_int64>(cursor.u64()));
++            break;
++        case 3: {
++            const std::string value = cursor.bytes(48);
++            result = sqlite3_bind_blob(
++                statement,
++                parameter,
++                value.data(),
++                static_cast<int>(value.size()),
++                SQLITE_TRANSIENT);
++            break;
++        }
++        case 4: {
++            const std::uint64_t bits = cursor.u64();
++            double value = 0.0;
++            static_assert(sizeof(value) == sizeof(bits));
++            std::memcpy(&value, &bits, sizeof(value));
++            result = sqlite3_bind_double(statement, parameter, value);
++            break;
++        }
++        case 5: {
++            // Regularly seed the one structured text class accepted by the
++            // decoder so coverage does not depend on discovering 64 hex bytes.
++            std::string digest(64, '0');
++            for (char& character : digest) {
++                const std::uint8_t nibble = cursor.byte() & 0x0f;
++                character = nibble < 10
++                    ? static_cast<char>('0' + nibble)
++                    : static_cast<char>('a' + (nibble - 10));
++            }
++            result = sqlite3_bind_text(
++                statement,
++                parameter,
++                digest.data(),
++                static_cast<int>(digest.size()),
++                SQLITE_TRANSIENT);
++            break;
++        }
++    }
++    fuzz_require(result == SQLITE_OK);
++}
++
++ProjectionColumnMap random_columns(ByteCursor& cursor) noexcept {
++    const std::uint8_t mode = cursor.byte() % 4;
++    if (mode == 0) {
++        return {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
++    }
++    if (mode == 1) {
++        std::array<int, 12> permutation{
++            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
++        for (std::size_t index = permutation.size(); index > 1; --index) {
++            const std::size_t swap_with =
++                static_cast<std::size_t>(cursor.byte()) % index;
++            std::swap(permutation[index - 1], permutation[swap_with]);
++        }
++        return {
++            permutation[0], permutation[1], permutation[2], permutation[3],
++            permutation[4], permutation[5], permutation[6], permutation[7],
++            permutation[8], permutation[9], permutation[10], permutation[11],
++        };
++    }
++    const auto index = [&cursor]() noexcept {
++        return static_cast<int>(cursor.byte() % 18) - 3;
++    };
++    return {
++        index(), index(), index(), index(), index(), index(),
++        index(), index(), index(), index(), index(), index(),
++    };
++}
++
++std::array<std::pair<ProjectionField, int>, 12> mapped_columns(
++    const ProjectionColumnMap& columns) noexcept {
++    return {{
++        {ProjectionField::transport_envelope_idempotency_key,
++         columns.transport_envelope_idempotency_key},
++        {ProjectionField::transport_instance_id, columns.transport_instance_id},
++        {ProjectionField::transport_key_id, columns.transport_key_id},
++        {ProjectionField::peer_id, columns.peer_id},
++        {ProjectionField::peer_session_id, columns.peer_session_id},
++        {ProjectionField::peer_response_batch_idempotency_key,
++         columns.peer_response_batch_idempotency_key},
++        {ProjectionField::logical_path, columns.logical_path},
++        {ProjectionField::payload_digest_sha256, columns.payload_digest_sha256},
++        {ProjectionField::response_count, columns.response_count},
++        {ProjectionField::total_bytes, columns.total_bytes},
++        {ProjectionField::issued_at_epoch, columns.issued_at_epoch},
++        {ProjectionField::expires_at_epoch, columns.expires_at_epoch},
++    }};
++}
++
++void verify_map_preflight(const ProjectionDecodeResult& decoded,
++                          const ProjectionColumnMap& columns) {
++    const auto mapped = mapped_columns(columns);
++    for (std::size_t current = 0; current < mapped.size(); ++current) {
++        if (mapped[current].second < 0 || mapped[current].second >= 12) {
++            fuzz_require(!decoded);
++            fuzz_require(decoded.error().field == mapped[current].first);
++            fuzz_require(decoded.error().failure ==
++                         ProjectionDecodeFailure::invalid_column_index);
++            return;
++        }
++        for (std::size_t prior = 0; prior < current; ++prior) {
++            if (mapped[current].second == mapped[prior].second) {
++                fuzz_require(!decoded);
++                fuzz_require(decoded.error().field == mapped[current].first);
++                fuzz_require(decoded.error().failure ==
++                             ProjectionDecodeFailure::duplicate_column_index);
++                return;
++            }
++        }
++    }
++
++    if (!decoded) {
++        const ProjectionDecodeFailure failure = decoded.error().failure;
++        fuzz_require(failure != ProjectionDecodeFailure::invalid_statement);
++        fuzz_require(failure != ProjectionDecodeFailure::statement_not_positioned);
++        fuzz_require(failure != ProjectionDecodeFailure::invalid_column_index);
++        fuzz_require(failure != ProjectionDecodeFailure::duplicate_column_index);
++    }
++}
++
++void verify_safe_error(const ProjectionDecodeResult& decoded) {
++    if (decoded) return;
++    const std::string summary = decoded.error().safe_summary();
++    fuzz_require(summary.starts_with("sqlite_projection_decode["));
++    fuzz_require(summary.size() <= 128);
++    fuzz_require(!summary.empty() && summary.back() == ']');
++}
++
++}  // namespace
++
++extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
++                                      std::size_t size) {
++    if (size > 4096) return 0;
++
++    ProjectionFixture& database = fixture();
++    database.clear();
++    sqlite3_stmt* const statement = database.statement();
++    ByteCursor cursor(data, size);
++
++    for (int parameter = 1; parameter <= 12; ++parameter) {
++        bind_random_value(statement, parameter, cursor);
++    }
++    const ProjectionColumnMap columns = random_columns(cursor);
++    const std::uint8_t state = cursor.byte() % 5;
++
++    sqlite3_stmt* decode_statement = statement;
++    switch (state) {
++        case 0:
++            decode_statement = nullptr;
++            break;
++        case 1:
++            // Prepared and bound, but no current row.
++            break;
++        case 2:
++            fuzz_require(sqlite3_step(statement) == SQLITE_ROW);
++            break;
++        case 3:
++            fuzz_require(sqlite3_step(statement) == SQLITE_ROW);
++            fuzz_require(sqlite3_step(statement) == SQLITE_DONE);
++            break;
++        case 4:
++            fuzz_require(sqlite3_step(statement) == SQLITE_ROW);
++            fuzz_require(sqlite3_reset(statement) == SQLITE_OK);
++            break;
++    }
++
++    const ProjectionDecodeResult decoded =
++        SqliteProjectionDecoder::decode(decode_statement, columns);
++    verify_safe_error(decoded);
++
++    if (state == 0) {
++        fuzz_require(!decoded);
++        fuzz_require(decoded.error().failure ==
++                     ProjectionDecodeFailure::invalid_statement);
++    } else if (state != 2) {
++        fuzz_require(!decoded);
++        fuzz_require(decoded.error().failure ==
++                     ProjectionDecodeFailure::statement_not_positioned);
++    } else {
++        verify_map_preflight(decoded, columns);
++    }
++
++    return 0;
++}
+--- a/src/persistence/sqlite_projection_decoder.cpp
++++ b/src/persistence/sqlite_projection_decoder.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include <sqlite3.h>
+ 
++#include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <new>
+@@ -10,6 +11,72 @@
+ 
+ namespace anonsync::persistence {
+ namespace {
++
++struct MappedProjectionColumn final {
++    ProjectionField field;
++    int index;
++};
++
++constexpr std::size_t kProjectionColumnCount = 12;
++
++std::array<MappedProjectionColumn, kProjectionColumnCount> mapped_columns(
++    const ProjectionColumnMap& columns) noexcept {
++    return {{
++        {ProjectionField::transport_envelope_idempotency_key,
++         columns.transport_envelope_idempotency_key},
++        {ProjectionField::transport_instance_id, columns.transport_instance_id},
++        {ProjectionField::transport_key_id, columns.transport_key_id},
++        {ProjectionField::peer_id, columns.peer_id},
++        {ProjectionField::peer_session_id, columns.peer_session_id},
++        {ProjectionField::peer_response_batch_idempotency_key,
++         columns.peer_response_batch_idempotency_key},
++        {ProjectionField::logical_path, columns.logical_path},
++        {ProjectionField::payload_digest_sha256, columns.payload_digest_sha256},
++        {ProjectionField::response_count, columns.response_count},
++        {ProjectionField::total_bytes, columns.total_bytes},
++        {ProjectionField::issued_at_epoch, columns.issued_at_epoch},
++        {ProjectionField::expires_at_epoch, columns.expires_at_epoch},
++    }};
++}
++
++std::optional<ProjectionDecodeError> validate_current_projection_row(
++    sqlite3_stmt* statement,
++    const ProjectionColumnMap& columns) noexcept {
++    if (statement == nullptr) {
++        return ProjectionDecodeError{
++            ProjectionField::transport_envelope_idempotency_key,
++            ProjectionDecodeFailure::invalid_statement};
++    }
++
++    const int column_count = sqlite3_column_count(statement);
++    // sqlite3_column_* is defined only while the most recent step returned
++    // SQLITE_ROW. sqlite3_data_count() is the public observation that a current
++    // row is available. For a projection SELECT it must equal column_count.
++    if (column_count <= 0 || sqlite3_data_count(statement) != column_count) {
++        return ProjectionDecodeError{
++            ProjectionField::transport_envelope_idempotency_key,
++            ProjectionDecodeFailure::statement_not_positioned};
++    }
++
++    const auto mapped = mapped_columns(columns);
++    for (std::size_t current = 0; current < mapped.size(); ++current) {
++        if (mapped[current].index < 0 || mapped[current].index >= column_count) {
++            return ProjectionDecodeError{
++                mapped[current].field,
++                ProjectionDecodeFailure::invalid_column_index};
++        }
++        for (std::size_t prior = 0; prior < current; ++prior) {
++            if (mapped[current].index == mapped[prior].index) {
++                // One stored value is not independent evidence for two fields,
++                // even when the canonical values happen to be equal.
++                return ProjectionDecodeError{
++                    mapped[current].field,
++                    ProjectionDecodeFailure::duplicate_column_index};
++            }
++        }
++    }
++    return std::nullopt;
++}
+ 
+ bool valid_index(sqlite3_stmt* statement, int index) noexcept {
+     return statement != nullptr && index >= 0 && index < sqlite3_column_count(statement);
+@@ -39,9 +106,15 @@
+     if (type != SQLITE_TEXT) {
+         return ProjectionDecodeError{field, ProjectionDecodeFailure::wrong_storage_class};
+     }
++    // SQLite's documented safe order is text first, then byte count. For a
++    // non-NULL SQLITE_TEXT value the returned pointer is non-null even when the
++    // string is empty; null here therefore represents an allocation failure.
++    const auto* bytes = sqlite3_column_text(statement, index);
++    if (bytes == nullptr) {
++        return ProjectionDecodeError{field, ProjectionDecodeFailure::allocation_failure};
++    }
+     const int byte_count = sqlite3_column_bytes(statement, index);
+-    const auto* bytes = sqlite3_column_text(statement, index);
+-    if (byte_count < 0 || (byte_count != 0 && bytes == nullptr)) {
++    if (byte_count < 0) {
+         return ProjectionDecodeError{field, ProjectionDecodeFailure::allocation_failure};
+     }
+     output.emplace(reinterpret_cast<const char*>(bytes), static_cast<std::size_t>(byte_count));
+@@ -97,7 +170,11 @@
+ std::string_view failure_name(ProjectionDecodeFailure failure) noexcept {
+     switch (failure) {
+         case ProjectionDecodeFailure::invalid_statement: return "invalid_statement";
++        case ProjectionDecodeFailure::statement_not_positioned:
++            return "statement_not_positioned";
+         case ProjectionDecodeFailure::invalid_column_index: return "invalid_column_index";
++        case ProjectionDecodeFailure::duplicate_column_index:
++            return "duplicate_column_index";
+         case ProjectionDecodeFailure::wrong_storage_class: return "wrong_storage_class";
+         case ProjectionDecodeFailure::negative_unsigned: return "negative_unsigned";
+         case ProjectionDecodeFailure::invalid_digest_encoding: return "invalid_digest_encoding";
+@@ -147,6 +224,9 @@
+     sqlite3_stmt* statement,
+     const ProjectionColumnMap& columns) noexcept {
+     try {
++        if (auto error = validate_current_projection_row(statement, columns)) {
++            return ProjectionDecodeResult::failure(*error);
++        }
+         PersistedIngressProjection projection;
+         if (auto error = read_text(statement,
+                                    columns.transport_envelope_idempotency_key,
+--- a/src/persistence/sqlite_projection_decoder.hpp
++++ b/src/persistence/sqlite_projection_decoder.hpp
+@@ -30,7 +30,9 @@
+ 
+ enum class ProjectionDecodeFailure : std::uint8_t {
+     invalid_statement,
++    statement_not_positioned,
+     invalid_column_index,
++    duplicate_column_index,
+     wrong_storage_class,
+     negative_unsigned,
+     invalid_digest_encoding,
+@@ -64,9 +66,11 @@
+     std::optional<ProjectionDecodeError> error_;
+ };
+ 
+-// Centralized SQLite conversion boundary. NULL remains std::nullopt so the
+-// canonical verifier can classify it as missing evidence. Non-NULL storage
+-// class and unsigned-range failures are rejected before C++ conversion.
++// Centralized SQLite conversion boundary. The statement must be positioned on
++// a current SQLITE_ROW, and every projection field must own a distinct valid
++// column. NULL remains std::nullopt so the canonical verifier can classify it
++// as missing evidence. Non-NULL storage class and unsigned-range failures are
++// rejected before C++ conversion.
+ class SqliteProjectionDecoder final {
+ public:
+     [[nodiscard]] static ProjectionDecodeResult decode(
+--- a/tests/persistence/sqlite_projection_decoder_tests.cpp
++++ b/tests/persistence/sqlite_projection_decoder_tests.cpp
+@@ -85,7 +85,7 @@
+     return {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+ }
+ 
+-Statement select_row(Database& database, const Expressions& expressions = {}) {
++Statement prepare_row(Database& database, const Expressions& expressions = {}) {
+     const std::vector<std::string> ordered{
+         expressions.transport_envelope_idempotency_key,
+         expressions.transport_instance_id,
+@@ -110,6 +110,11 @@
+                        database.db, sql.c_str(), -1, &statement.stmt, nullptr),
+                    database.db,
+                    "prepare projection row");
++    return statement;
++}
++
++Statement select_row(Database& database, const Expressions& expressions = {}) {
++    Statement statement = prepare_row(database, expressions);
+     if (sqlite3_step(statement.stmt) != SQLITE_ROW) {
+         fail("projection SELECT did not return one row");
+     }
+@@ -183,6 +188,72 @@
+         }
+         {
+             Expressions expressions;
++            expressions.peer_id = "''";
++            Statement statement = select_row(database, expressions);
++            const ProjectionDecodeResult decoded =
++                SqliteProjectionDecoder::decode(statement.stmt, columns());
++            require(decoded.has_value(),
++                    "empty SQLite TEXT was confused with allocation failure",
++                    checks);
++            require(decoded.value().peer_id.has_value() &&
++                        decoded.value().peer_id->empty(),
++                    "empty SQLite TEXT was not preserved exactly",
++                    checks);
++        }
++        {
++            Statement statement = prepare_row(database);
++            require_decode_failure(
++                SqliteProjectionDecoder::decode(statement.stmt, columns()),
++                ProjectionField::transport_envelope_idempotency_key,
++                ProjectionDecodeFailure::statement_not_positioned,
++                "prepared but unstepped statement",
++                checks);
++        }
++        {
++            Statement statement = select_row(database);
++            require(sqlite3_step(statement.stmt) == SQLITE_DONE,
++                    "projection statement did not reach SQLITE_DONE",
++                    checks);
++            require_decode_failure(
++                SqliteProjectionDecoder::decode(statement.stmt, columns()),
++                ProjectionField::transport_envelope_idempotency_key,
++                ProjectionDecodeFailure::statement_not_positioned,
++                "exhausted statement",
++                checks);
++        }
++        {
++            Statement statement = select_row(database);
++            require(sqlite3_reset(statement.stmt) == SQLITE_OK,
++                    "projection statement reset failed",
++                    checks);
++            require_decode_failure(
++                SqliteProjectionDecoder::decode(statement.stmt, columns()),
++                ProjectionField::transport_envelope_idempotency_key,
++                ProjectionDecodeFailure::statement_not_positioned,
++                "reset statement",
++                checks);
++        }
++        {
++            // An incorrect query map could otherwise reuse transport_instance_id
++            // as the evidence for transport_key_id. When the canonical values
++            // happen to be equal, the omitted forged key column would verify.
++            Expressions expressions;
++            expressions.transport_instance_id = "'shared-id'";
++            expressions.transport_key_id = "'forged-key-not-selected'";
++            Statement statement = select_row(database, expressions);
++            ProjectionColumnMap aliased_columns = columns();
++            aliased_columns.transport_key_id =
++                aliased_columns.transport_instance_id;
++            require_decode_failure(
++                SqliteProjectionDecoder::decode(
++                    statement.stmt, aliased_columns),
++                ProjectionField::transport_key_id,
++                ProjectionDecodeFailure::duplicate_column_index,
++                "duplicate projection column alias",
++                checks);
++        }
++        {
++            Expressions expressions;
+             expressions.peer_id = "NULL";
+             Statement statement = select_row(database, expressions);
+             const ProjectionDecodeResult decoded =
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -15,6 +15,9 @@
+ 
+ MANIFEST_RE = re.compile(r"^([0-9a-f]{64})  (.+)$")
+ REVISION_RE = re.compile(r"^rev[0-9]{4}$")
++ACTIVE_PROJECTION_V1_PREFIXES = ("include/", "src/", "tests/", "tools/", "third_party/")
++ACTIVE_PROJECTION_V2_PREFIXES = (*ACTIVE_PROJECTION_V1_PREFIXES, "fuzz/")
++ACTIVE_PROJECTION_FIXED_FILES = {".gitignore", "CMakeLists.txt"}
+ FORBIDDEN_SUFFIXES = {
+     ".a", ".o", ".obj", ".so", ".dylib", ".dll", ".exe", ".pdb", ".pyc",
+     ".profraw", ".gcda", ".gcno", ".class",
+@@ -26,6 +29,34 @@
+ 
+ def sha256_bytes(data: bytes) -> str:
+     return hashlib.sha256(data).hexdigest()
++
++
++def compute_active_projection(
++    names: set[str],
++    read: Callable[[str], bytes],
++    *,
++    include_fuzz: bool,
++) -> dict[str, object]:
++    prefixes = ACTIVE_PROJECTION_V2_PREFIXES if include_fuzz else ACTIVE_PROJECTION_V1_PREFIXES
++    active_names = sorted(
++        name for name in names
++        if name in ACTIVE_PROJECTION_FIXED_FILES or name.startswith(prefixes)
++    )
++    files: list[dict[str, object]] = []
++    material = bytearray()
++    total_bytes = 0
++    for name in active_names:
++        data = read(name)
++        digest = sha256_bytes(data)
++        total_bytes += len(data)
++        files.append({"bytes": len(data), "path": name, "sha256": digest})
++        material.extend(f"{digest}  {name}\n".encode("utf-8"))
++    return {
++        "bytes": total_bytes,
++        "file_count": len(files),
++        "files": files,
++        "sha256": sha256_bytes(bytes(material)),
++    }
+ 
+ 
+ def normalized_member(name: str) -> PurePosixPath:
+@@ -117,13 +148,60 @@
+     if REVISION_RE.fullmatch(revision):
+         revision_files = {
+             f"REVISION_NOTES_{revision}.md",
++            f"REVISION_EVIDENCE/{revision}/ACTIVE_IMPLEMENTATION_PROJECTION.json",
+             f"REVISION_EVIDENCE/{revision}/AUDIT.md",
+             f"REVISION_EVIDENCE/{revision}/LINEAGE.md",
+             f"REVISION_EVIDENCE/{revision}/LINEAGE.json",
+             f"REVISION_EVIDENCE/{revision}/validation/VALIDATION_SUMMARY.json",
+         }
+         missing_revision = sorted(revision_files - names)
+-        require(not missing_revision, "revision_handoff_evidence_present", "missing: " + ", ".join(missing_revision) if missing_revision else "revision notes, lineage, audit, and validation summary are present")
++        require(not missing_revision, "revision_handoff_evidence_present", "missing: " + ", ".join(missing_revision) if missing_revision else "revision notes, lineage, active projection, audit, and validation summary are present")
++
++        projection_path = f"REVISION_EVIDENCE/{revision}/ACTIVE_IMPLEMENTATION_PROJECTION.json"
++        try:
++            projection = json.loads(read(projection_path))
++            projection_format = projection.get("format")
++            include_fuzz = projection_format == "anonsync-active-implementation-projection-v2"
++            require(
++                projection_format in {None, "anonsync-active-projection-v1",
++                                      "anonsync-active-implementation-projection-v1",
++                                      "anonsync-active-implementation-projection-v2"},
++                "active_projection_format_supported",
++                f"format={projection_format!r}; absent format is the legacy v1 representation",
++            )
++            actual_projection = compute_active_projection(
++                names, read, include_fuzz=include_fuzz)
++            declared_digest = projection.get("sha256", projection.get("expected_sha256"))
++            require(
++                declared_digest == actual_projection["sha256"],
++                "active_projection_digest_matches",
++                f"declared={declared_digest} actual={actual_projection['sha256']}",
++            )
++            require(
++                projection.get("file_count") == actual_projection["file_count"],
++                "active_projection_file_count_matches",
++                f"declared={projection.get('file_count')} actual={actual_projection['file_count']}",
++            )
++            require(
++                projection.get("bytes") == actual_projection["bytes"],
++                "active_projection_byte_count_matches",
++                f"declared={projection.get('bytes')} actual={actual_projection['bytes']}",
++            )
++            require(
++                projection.get("files") == actual_projection["files"],
++                "active_projection_file_inventory_matches",
++                "every active path, byte count, and file digest matches the recomputed projection",
++            )
++            if projection_format == "anonsync-active-implementation-projection-v2":
++                fuzz_sources = [entry for entry in actual_projection["files"]
++                                if str(entry["path"]).startswith("fuzz/")]
++                require(
++                    bool(fuzz_sources),
++                    "active_projection_v2_binds_fuzz_sources",
++                    f"fuzz source files={len(fuzz_sources)}",
++                )
++        except Exception as error:
++            require(False, "active_projection_parses_and_recomputes", str(error))
+ 
+     manifest: dict[str, str] = {}
+     try:

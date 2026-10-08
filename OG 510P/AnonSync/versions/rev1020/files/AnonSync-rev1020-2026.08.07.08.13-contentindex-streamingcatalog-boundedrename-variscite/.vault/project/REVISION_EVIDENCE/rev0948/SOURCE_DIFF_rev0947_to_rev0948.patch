@@ -1,0 +1,760 @@
+--- a/src/sync_replica_folder_observer.cpp
++++ b/src/sync_replica_folder_observer.cpp
+@@ -245,7 +245,7 @@
+ 
+ enum class WalkDisposition : std::uint8_t {
+     Continue = 1,
+-    StoppedAtAggregateFrontier = 2,
++    StoppedAtSegmentFrontier = 2,
+ };
+ 
+ struct WalkContext final {
+@@ -258,6 +258,7 @@
+     SyncReplicaFolderObservation* observation = nullptr;
+     const SyncReplicaFolderRegularFilePathVisitor* visitor = nullptr;
+     SyncReplicaFolderTraversalSegment* segment = nullptr;
++    const SyncReplicaFolderTraversalSegmentLimits* segment_limits = nullptr;
+     bool segment_delivered_path = false;
+ };
+ 
+@@ -440,6 +441,15 @@
+         return WalkDisposition::Continue;
+     }
+ 
++    if (context.segment_limits == nullptr) {
++        throw std::logic_error(
++            context.label + " resumable traversal has no segment limits");
++    }
++    if (context.summary.regular_file_count >=
++        context.segment_limits->maximum_regular_files) {
++        return WalkDisposition::StoppedAtSegmentFrontier;
++    }
++
+     const std::uint64_t initial_size =
+         classified_regular_file_size_or_throw(
+             context, canonical_path, initial_status);
+@@ -450,8 +460,7 @@
+                 " cannot fit the next eligible file in an empty traversal "
+                 "segment: " + canonical_path);
+         }
+-        segment.completed = false;
+-        return WalkDisposition::StoppedAtAggregateFrontier;
++        return WalkDisposition::StoppedAtSegmentFrontier;
+     }
+ 
+     // The visitor owns all exact-file and durable effects. Advance the in-memory
+@@ -632,12 +641,29 @@
+     }
+ }
+ 
++void validate_sync_replica_folder_traversal_segment_limits_or_throw(
++    const SyncReplicaFolderTraversalSegmentLimits& limits,
++    std::string label) {
++    if (label.empty()) {
++        label = "sync replica folder traversal segment limits";
++    }
++    if (limits.maximum_regular_files == 0U ||
++        limits.maximum_regular_files >
++            kSyncReplicaFolderObservationMaximumEntries) {
++        throw std::invalid_argument(
++            label + " maximum regular files must be in [1," +
++            std::to_string(kSyncReplicaFolderObservationMaximumEntries) +
++            "]");
++    }
++}
++
+ SyncReplicaFolderTraversalSegment
+ visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
+     const SyncDirectoryAuthority& root_authority,
+     std::string resume_after_path,
+     const SyncReplicaFolderRegularFilePathVisitor& visitor,
+     const SyncReplicaFolderObservationLimits& limits,
++    const SyncReplicaFolderTraversalSegmentLimits& segment_limits,
+     std::string label) {
+     if (label.empty()) {
+         label = "sync replica folder resumable path traversal";
+@@ -647,6 +673,8 @@
+             label + " regular-file visitor must not be empty");
+     }
+     validate_sync_replica_folder_observation_limits_or_throw(limits, label);
++    validate_sync_replica_folder_traversal_segment_limits_or_throw(
++        segment_limits, label + " segment limits");
+     if (!resume_after_path.empty()) {
+         require_canonical_path_or_throw(resume_after_path, limits, label);
+     }
+@@ -664,6 +692,7 @@
+         nullptr,
+         &visitor,
+         &segment,
++        &segment_limits,
+         false};
+     ScopedFd root = open_independent_root_or_throw(
+         root_authority, context.label + " mount capture");
+@@ -674,13 +703,27 @@
+     const WalkDisposition disposition =
+         walk_directory_or_throw(context, root.release(), {}, 0U);
+     root_authority.verify_or_throw(context.label + " root after traversal");
+-    if (disposition == WalkDisposition::StoppedAtAggregateFrontier) {
++    if (disposition == WalkDisposition::StoppedAtSegmentFrontier) {
+         segment.completed = false;
+     }
+     segment.traversal = context.summary;
+     return segment;
+ }
+ 
++SyncReplicaFolderTraversalSegment
++visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++    const SyncDirectoryAuthority& root_authority,
++    std::string resume_after_path,
++    const SyncReplicaFolderRegularFilePathVisitor& visitor,
++    const SyncReplicaFolderObservationLimits& limits,
++    std::string label) {
++    SyncReplicaFolderTraversalSegmentLimits segment_limits;
++    segment_limits.maximum_regular_files = limits.maximum_entries;
++    return visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++        root_authority, std::move(resume_after_path), visitor, limits,
++        segment_limits, std::move(label));
++}
++
+ SyncReplicaFolderTraversalSummary
+ visit_sync_replica_folder_regular_file_paths_or_throw(
+     const SyncDirectoryAuthority& root_authority,
+@@ -705,6 +748,7 @@
+         nullptr,
+         &visitor,
+         nullptr,
++        nullptr,
+         false};
+     ScopedFd root = open_independent_root_or_throw(
+         root_authority, context.label + " mount capture");
+@@ -741,6 +785,7 @@
+         &result,
+         nullptr,
+         nullptr,
++        nullptr,
+         false};
+     ScopedFd root = open_independent_root_or_throw(
+         root_authority, context.label + " mount capture");
+--- a/src/sync_replica_folder_observer.hpp
++++ b/src/sync_replica_folder_observer.hpp
+@@ -32,6 +32,23 @@
+     bool operator==(const SyncReplicaFolderObservationLimits&) const = default;
+ };
+ 
++// A resumable walk can be bounded independently by both classified bytes and
++// delivered regular-file count. The count frontier prevents a namespace of
++// zero-byte or very small files from turning one scheduling segment into an
++// effectively whole-tree callback batch. It does not weaken maximum_entries:
++// every directory entry, including ignored objects and the skipped prefix,
++// continues to spend that whole-walk safety budget.
++inline constexpr std::uint64_t
++    kSyncReplicaFolderTraversalDefaultMaximumRegularFiles = 4096U;
++
++struct SyncReplicaFolderTraversalSegmentLimits final {
++    std::uint64_t maximum_regular_files =
++        kSyncReplicaFolderTraversalDefaultMaximumRegularFiles;
++
++    bool operator==(const SyncReplicaFolderTraversalSegmentLimits&) const =
++        default;
++};
++
+ // Shared fail-fast boundary for both full observations and streaming walks.
+ // Keeping one validator prevents a composed folder owner from silently
+ // accepting limits that the traversal later interprets differently.
+@@ -39,6 +56,10 @@
+     const SyncReplicaFolderObservationLimits& limits,
+     std::string label = "sync replica folder observation limits");
+ 
++void validate_sync_replica_folder_traversal_segment_limits_or_throw(
++    const SyncReplicaFolderTraversalSegmentLimits& limits,
++    std::string label = "sync replica folder traversal segment limits");
++
+ // Namespace-only traversal report. classified_regular_file_bytes is charged
+ // from the no-follow status observed before the visitor is invoked. A visitor
+ // that later opens the path must impose its own exact byte limit because the
+@@ -71,7 +92,8 @@
+     SyncReplicaFolderTraversalSummary traversal;
+     // True only when the walk reached the end of the namespace. A false value
+     // means the next eligible regular file would have crossed the aggregate
+-    // byte frontier and was deliberately left for a later segment.
++    // byte or delivered-file-count frontier and was deliberately left for a
++    // later segment.
+     bool completed = false;
+     std::uint64_t skipped_regular_file_count = 0;
+     // Last path successfully delivered to the visitor. When no new path was
+@@ -84,12 +106,25 @@
+ // Restartable counterpart to the full traversal below. Regular paths at or
+ // before resume_after_path in component-wise traversal order are classified but
+ // not charged to the aggregate file-byte budget and are not delivered again.
+-// When the next eligible file would cross that budget, a non-complete segment
+-// is returned after all opened directory identities and the retained root have
+-// been re-proved. At least one eligible file must fit an empty segment; callers
+-// should require maximum_file_bytes <= maximum_total_file_bytes. Visitor effects
+-// must be idempotent and restart-safe, and the cursor should be persisted only
+-// after the visitor's complete path effect succeeds.
++// When the next eligible file would cross either segment frontier, a
++// non-complete segment is returned after all opened directory identities and
++// the retained root have been re-proved. At least one eligible file must fit an
++// empty byte segment; callers should require maximum_file_bytes <=
++// maximum_total_file_bytes. Visitor effects must be idempotent and restart-safe,
++// and the cursor should be persisted only after the visitor's complete path
++// effect succeeds. The explicit segment-limits overload is the production
++// scheduling boundary. The compatibility overload below preserves the earlier
++// aggregate-byte-only behavior by allowing as many delivered regular files as
++// the whole traversal can classify.
++[[nodiscard]] SyncReplicaFolderTraversalSegment
++visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++    const SyncDirectoryAuthority& root_authority,
++    std::string resume_after_path,
++    const SyncReplicaFolderRegularFilePathVisitor& visitor,
++    const SyncReplicaFolderObservationLimits& limits,
++    const SyncReplicaFolderTraversalSegmentLimits& segment_limits,
++    std::string label);
++
+ [[nodiscard]] SyncReplicaFolderTraversalSegment
+ visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
+     const SyncDirectoryAuthority& root_authority,
+--- a/src/sync_replica_folder_process.cpp
++++ b/src/sync_replica_folder_process.cpp
+@@ -29,6 +29,13 @@
+ static_assert(
+     SyncReplicaFolderConvergencePassLimits{}.maximum_remote_paths ==
+     kSyncReplicaFilePayloadStoreProductionMaxEntries);
++static_assert(
++    SyncReplicaFolderConvergencePassLimits{}
++            .maximum_local_scan_segment_regular_files > 0U);
++static_assert(
++    SyncReplicaFolderConvergencePassLimits{}
++            .maximum_local_scan_segment_regular_files <=
++    SyncReplicaFolderConvergencePassLimits{}.maximum_entries);
+ 
+ [[nodiscard]] fs::path append_ascii_suffix(
+     const fs::path& path,
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -2545,6 +2545,11 @@
+         throw std::invalid_argument(
+             label + " pass remote-path limit is invalid");
+     }
++    SyncReplicaFolderTraversalSegmentLimits segment_limits;
++    segment_limits.maximum_regular_files =
++        limits.maximum_local_scan_segment_regular_files;
++    validate_sync_replica_folder_traversal_segment_limits_or_throw(
++        segment_limits, label + " pass local scan segment limits");
+     if (limits.maximum_payload_batch_puts == 0U ||
+         limits.maximum_payload_batch_puts >
+             kSyncReplicaFolderObservationMaximumEntries) {
+@@ -3875,6 +3880,9 @@
+         limits.maximum_relative_path_bytes;
+     traversal_limits.maximum_directory_depth =
+         limits.maximum_directory_depth;
++    SyncReplicaFolderTraversalSegmentLimits local_scan_segment_limits;
++    local_scan_segment_limits.maximum_regular_files =
++        limits.maximum_local_scan_segment_regular_files;
+ 
+     // The ordinary path-local owner is intentionally conservative: each file
+     // reloads and reattests the complete reference catalog, replica, and
+@@ -3925,11 +3933,6 @@
+         // does not gain a new payload-store dependency. A payload already
+         // missing at observation falls back so the local file can repair it
+         // through the ordinary put owner.
+-        std::vector<std::string> seen_regular_paths;
+-        seen_regular_paths.reserve(std::min<std::size_t>(
+-            catalog_hints.entries.size(),
+-            static_cast<std::size_t>(limits.maximum_entries)));
+-
+         const auto find_remote_path =
+             [&](std::string_view canonical_path)
+             -> const SyncReplicaPathView* {
+@@ -3946,6 +3949,7 @@
+             return &*found;
+         };
+ 
++        std::uint64_t idle_regular_file_count = 0U;
+         try {
+             const SyncReplicaFolderTraversalSegment idle_segment =
+                 visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
+@@ -3960,8 +3964,6 @@
+                         classified_size_bytes != prior->size_bytes) {
+                         throw IdleFastPathMiss{};
+                     }
+-                    seen_regular_paths.push_back(canonical_path);
+-
+                     const SyncReplicaOperation prior_operation =
+                         require_catalog_operation_or_throw(
+                             replica_model, *prior,
+@@ -4026,22 +4028,29 @@
+                     },
+                     traversal_limits, state_->label + " idle traversal");
+             idle.traversal = idle_segment.traversal;
++            idle_regular_file_count =
++                idle_segment.traversal.regular_file_count;
+             if (!idle_segment.completed) return std::nullopt;
+         } catch (const IdleFastPathMiss&) {
+             return std::nullopt;
+         }
+ 
+-        std::sort(seen_regular_paths.begin(), seen_regular_paths.end());
++        const std::uint64_t catalog_regular_file_count =
++            static_cast<std::uint64_t>(std::count_if(
++                catalog_hints.entries.begin(), catalog_hints.entries.end(),
++                [](const SyncReplicaFolderCatalogEntry& entry) {
++                    return entry.kind == SyncReplicaValueKind::File;
++                }));
++        // Every delivered regular path already proved a distinct File catalog
++        // mapping in the callback. Equality of the two counts therefore proves
++        // that no cataloged file was omitted, without retaining and re-sorting
++        // a whole-tree duplicate path vector merely to perform set equality.
++        if (idle_regular_file_count != catalog_regular_file_count) {
++            return std::nullopt;
++        }
+         for (const SyncReplicaFolderCatalogEntry& entry :
+              catalog_hints.entries) {
+-            const bool seen = std::binary_search(
+-                seen_regular_paths.begin(), seen_regular_paths.end(),
+-                entry.canonical_path);
+-            if (entry.kind == SyncReplicaValueKind::File) {
+-                if (!seen) return std::nullopt;
+-                continue;
+-            }
+-            if (seen) return std::nullopt;
++            if (entry.kind == SyncReplicaValueKind::File) continue;
+             // An ignored symlink or special object at a tombstoned pathname is
+             // not absence. The no-follow inspector throws in that case, making
+             // the unsupported substitution visible rather than a false idle.
+@@ -4151,11 +4160,15 @@
+     }
+ 
+     std::vector<std::string> blocked_absent_paths;
++    // The traversal's delivered-file frontier bounds both this in-memory
++    // acknowledgement set and the subsequent immediate journal transaction.
++    // The whole-tree entry ceiling remains independent and still accounts for
++    // directories and ignored namespace objects encountered by the walk.
+     std::vector<std::string> segment_seen_paths;
+     segment_seen_paths.reserve(static_cast<std::size_t>(
+-        std::min<std::uint64_t>(
++        std::min(
+             limits.maximum_entries,
+-            static_cast<std::uint64_t>(catalog_hints.entries.size()))));
++            limits.maximum_local_scan_segment_regular_files)));
+ 
+     // A fallback pass can visit thousands of unchanged files after one path
+     // invalidates the idle proof. Reuse one verified payload index across a
+@@ -4467,7 +4480,8 @@
+                 // of one SQLite transaction per file.
+                 segment_seen_paths.push_back(canonical_path);
+             },
+-            traversal_limits, state_->label + " pass traversal");
++            traversal_limits, local_scan_segment_limits,
++            state_->label + " pass traversal");
+     report.traversal = local_segment.traversal;
+ 
+     release_payload_batch();
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -110,6 +110,13 @@
+     std::uint64_t maximum_relative_path_bytes = 4096U;
+     std::uint64_t maximum_directory_depth = 64U;
+     std::uint64_t maximum_remote_paths = 100000U;
++    // Bounds the number of local regular paths whose independently committed
++    // effects can be staged for one authenticated scan-journal publication.
++    // The byte frontier still applies independently. Keeping this scheduling
++    // field internal avoids exposing an unmeasured product knob while ensuring
++    // zero-byte trees cannot create a 100,000-row pass transaction by default.
++    std::uint64_t maximum_local_scan_segment_regular_files =
++        kSyncReplicaFolderTraversalDefaultMaximumRegularFiles;
+     // One cooperative exclusive payload-store lease is segmented before it can
+     // cover more than this many source puts or this much measured exact byte
+     // work. Work counts cold bytes hashed by batch construction/recovery, bytes
+--- a/tests/sync_replica_folder_observer_test.cpp
++++ b/tests/sync_replica_folder_observer_test.cpp
+@@ -408,6 +408,119 @@
+         "folder-resumable authority after continuation segments");
+ }
+ 
++void test_resumable_count_frontier_and_rooted_reproof(TestState& test) {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.path();
++    for (const std::string_view path :
++         {"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"}) {
++        write_bytes(root / std::string(path), {});
++    }
++
++    anonsync::SyncDirectoryAuthority authority =
++        anonsync::SyncDirectoryAuthority::open_or_throw(
++            fs::absolute(root), "folder-count-frontier test root");
++    anonsync::SyncReplicaFolderObservationLimits limits;
++    limits.maximum_entries = 16U;
++    limits.maximum_file_bytes = 1U;
++    limits.maximum_total_file_bytes = 1U;
++    anonsync::SyncReplicaFolderTraversalSegmentLimits segment_limits;
++    segment_limits.maximum_regular_files = 2U;
++
++    std::string cursor;
++    std::vector<std::string> all_delivered;
++    const std::vector<std::size_t> expected_counts{2U, 2U, 1U};
++    const std::vector<std::uint64_t> expected_skipped{0U, 2U, 4U};
++    const std::vector<std::string> expected_cursors{
++        "b.txt", "d.txt", "e.txt"};
++    for (std::size_t invocation = 0U;
++         invocation < expected_counts.size(); ++invocation) {
++        std::vector<std::string> delivered;
++        const auto segment =
++            anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++                authority, cursor,
++                [&](const std::string& path, std::uint64_t size_bytes) {
++                    test.require(
++                        size_bytes == 0U,
++                        "count-bounded traversal retains zero-byte classification");
++                    delivered.push_back(path);
++                },
++                limits, segment_limits,
++                "folder-count-frontier segment");
++        test.require(
++            delivered.size() == expected_counts[invocation] &&
++                segment.traversal.regular_file_count ==
++                    expected_counts[invocation] &&
++                segment.traversal.classified_regular_file_bytes == 0U,
++            "delivered-file frontier bounds a zero-byte namespace segment");
++        test.require(
++            segment.completed ==
++                    (invocation + 1U == expected_counts.size()) &&
++                segment.skipped_regular_file_count ==
++                    expected_skipped[invocation] &&
++                segment.resume_after_path == expected_cursors[invocation],
++            "count-bounded continuation reports exact completion, prefix, and cursor state");
++        all_delivered.insert(
++            all_delivered.end(), delivered.begin(), delivered.end());
++        cursor = segment.resume_after_path;
++    }
++    test.require(
++        all_delivered == std::vector<std::string>{
++            "a.txt", "b.txt", "c.txt", "d.txt", "e.txt"},
++        "count-bounded continuation reaches every zero-byte path exactly once");
++
++    auto invalid_segment_limits = segment_limits;
++    invalid_segment_limits.maximum_regular_files = 0U;
++    test.require(
++        throws_with(
++            [&] {
++                (void)anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++                    authority, {},
++                    [](const std::string&, std::uint64_t) {}, limits,
++                    invalid_segment_limits,
++                    "folder-count-frontier invalid segment");
++            },
++            "maximum regular files must be in"),
++        "resumable traversal rejects a zero delivered-file frontier");
++    authority.verify_or_throw(
++        "folder-count-frontier authority after continuation segments");
++
++    TemporaryDirectory race_temporary;
++    const fs::path race_root = race_temporary.path();
++    fs::create_directory(race_root / "nested");
++    write_bytes(race_root / "nested" / "a.txt", {});
++    write_bytes(race_root / "nested" / "b.txt", {});
++    anonsync::SyncDirectoryAuthority race_authority =
++        anonsync::SyncDirectoryAuthority::open_or_throw(
++            fs::absolute(race_root),
++            "folder-count-frontier reproof root");
++    auto one_file = segment_limits;
++    one_file.maximum_regular_files = 1U;
++    bool substituted = false;
++    test.require(
++        throws_with(
++            [&] {
++                (void)anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++                    race_authority, {},
++                    [&](const std::string& path, std::uint64_t) {
++                        if (path != "nested/a.txt" || substituted) return;
++                        fs::rename(
++                            race_root / "nested",
++                            race_root / "displaced-nested");
++                        fs::create_directory(race_root / "nested");
++                        substituted = true;
++                    },
++                    limits, one_file,
++                    "folder-count-frontier rooted reproof");
++            },
++            "directory path changed while being observed: nested"),
++        "count frontier refuses success after a visited directory binding is substituted");
++    test.require(
++        substituted,
++        "count-frontier reproof fixture crossed the callback mutation cutpoint");
++    race_authority.verify_or_throw(
++        "folder-count-frontier authority after rejected substitution");
++}
++
+ void test_limits_and_portable_paths(TestState& test) {
+     TemporaryDirectory temporary;
+     const fs::path root = temporary.path();
+@@ -531,6 +644,7 @@
+         test_internal_publication_artifacts_are_reserved(test);
+         test_streaming_path_visitor(test);
+         test_resumable_component_order_and_progress(test);
++        test_resumable_count_frontier_and_rooted_reproof(test);
+         test_limits_and_portable_paths(test);
+         std::cout << "sync replica folder observer checks: " << test.passed
+                   << "/" << (test.passed + test.failed) << "\n";
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -905,6 +905,72 @@
+         "one bounded segment did not batch its scan-progress head into one publication transaction");
+ }
+ 
++void test_zero_byte_scan_segment_has_bounded_journal_publication() {
++    Fixture fixture("anonsync-folder-pass-zero-byte-segment");
++    for (const std::string_view path :
++         {"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"}) {
++        write_file(fixture.shared_root / std::string(path), {});
++    }
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "zero-byte segment catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    auto two_files = Fixture::pass_limits();
++    two_files.maximum_file_bytes = 1U;
++    two_files.maximum_total_file_bytes = 1U;
++    two_files.maximum_local_scan_segment_regular_files = 2U;
++
++    ScanJournalTrace trace;
++    require(
++        sqlite3_trace_v2(
++            catalog_db.db.get(), SQLITE_TRACE_STMT,
++            count_scan_journal_statements, &trace) == SQLITE_OK,
++        "zero-byte segment fixture could not install its SQLite trace");
++    const auto first = scan->run_convergence_pass_or_throw(two_files);
++    require(
++        sqlite3_trace_v2(
++            catalog_db.db.get(), 0U, nullptr, nullptr) == SQLITE_OK,
++        "zero-byte segment fixture could not remove its SQLite trace");
++    require(
++        !first.completed_local_scan_epoch &&
++            first.traversal.regular_file_count == 2U &&
++            first.traversal.classified_regular_file_bytes == 0U &&
++            first.local_scan_seen_path_count == 2U &&
++            first.local_scan_resume_after_path == "b.txt" &&
++            first.local_published_count == 2U &&
++            trace.insert_count == 2U &&
++            trace.progress_update_count == 1U,
++        "zero-byte first segment exceeded its delivered-file or journal publication frontier");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto second = scan->run_convergence_pass_or_throw(two_files);
++    require(
++        !second.completed_local_scan_epoch &&
++            second.traversal.regular_file_count == 2U &&
++            second.local_scan_seen_path_count == 4U &&
++            second.local_scan_resume_after_path == "d.txt" &&
++            second.local_published_count == 2U,
++        "durable count-bounded scan did not resume at the exact zero-byte suffix");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto completed = scan->run_convergence_pass_or_throw(two_files);
++    const auto catalog = scan->snapshot_or_throw();
++    const auto replica = fixture.replica.snapshot_or_throw();
++    const auto payloads = fixture.payload_store.snapshot_or_throw();
++    require(
++        completed.completed_local_scan_epoch &&
++            completed.traversal.regular_file_count == 1U &&
++            completed.local_scan_seen_path_count == 0U &&
++            completed.local_scan_resume_after_path.empty() &&
++            completed.local_published_count == 1U &&
++            catalog.entries.size() == 5U &&
++            replica.durable.operations.size() == 5U &&
++            payloads.entry_count() == 1U,
++        "count-bounded zero-byte epoch did not complete every path exactly once while deduplicating payload bytes");
++}
++
+ void test_payload_batch_segments_bound_exclusive_lease_horizon() {
+     {
+         constexpr std::size_t kFileCount = 7U;
+@@ -2167,6 +2233,18 @@
+     pass_limits = Fixture::pass_limits();
+     pass_limits.maximum_relative_path_bytes =
+         owner_limits.max_catalog_path_bytes;
++    pass_limits.maximum_local_scan_segment_regular_files = 0U;
++    require_error(
++        [&] { (void)scan.run_convergence_pass_or_throw(pass_limits); },
++        "maximum regular files must be in",
++        "composed pass accepted a zero local scan path frontier");
++    require(
++        scan.snapshot_or_throw() == catalog_cutpoint,
++        "invalid local scan segment limit touched the catalog");
++
++    pass_limits = Fixture::pass_limits();
++    pass_limits.maximum_relative_path_bytes =
++        owner_limits.max_catalog_path_bytes;
+     pass_limits.maximum_payload_batch_puts = 0U;
+     require_error(
+         [&] { (void)scan.run_convergence_pass_or_throw(pass_limits); },
+@@ -3575,6 +3653,7 @@
+         test_bounded_whole_folder_pass_local_tree_and_noop();
+         test_many_file_pass_amortizes_payload_store_mutation_authority();
+         test_scan_journal_batches_one_progress_publication_per_segment();
++        test_zero_byte_scan_segment_has_bounded_journal_publication();
+         test_payload_batch_segments_bound_exclusive_lease_horizon();
+         test_local_batch_releases_for_remote_apply_and_reacquires();
+         test_bounded_whole_folder_pass_remote_catchup_and_divergence();
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -34,9 +34,11 @@
+     Path("src/sync_replica_reconciliation_service.cpp"),
+     Path("src/sync_replica_peer_server_owner.cpp"),
+     Path("src/anonsync_replica.cpp"),
++    Path("src/sync_replica_folder_observer.hpp"),
+     Path("src/sync_replica_folder_observer.cpp"),
+     Path("src/sync_replica_folder_scan_owner.hpp"),
+     Path("src/sync_replica_folder_scan_owner.cpp"),
++    Path("src/sync_replica_folder_process.cpp"),
+     Path("src/sync_replica_deployment_manifest.hpp"),
+     Path("src/sync_replica_reconciliation_protocol.hpp"),
+     Path("src/sync_replica_file_payload_snapshot.hpp"),
+@@ -50,6 +52,7 @@
+     Path("tests/sync_replica_file_payload_store_test.cpp"),
+     Path("tests/sync_replica_file_delivery_protocol_test.cpp"),
+     Path("tests/sync_replica_reconciliation_service_test.cpp"),
++    Path("tests/sync_replica_folder_observer_test.cpp"),
+     Path("tests/sync_replica_folder_scan_owner_test.cpp"),
+     Path("tests/sync_replica_file_delivery_service_test.cpp"),
+     Path("tools/audit_sync_file_payload_store.py"),
+@@ -167,9 +170,11 @@
+     reconciliation_service = text["src/sync_replica_reconciliation_service.cpp"]
+     peer_server = text["src/sync_replica_peer_server_owner.cpp"]
+     replica_cli = text["src/anonsync_replica.cpp"]
++    folder_observer_h = text["src/sync_replica_folder_observer.hpp"]
+     folder_observer = text["src/sync_replica_folder_observer.cpp"]
+     folder_scan_h = text["src/sync_replica_folder_scan_owner.hpp"]
+     folder_scan = text["src/sync_replica_folder_scan_owner.cpp"]
++    folder_process = text["src/sync_replica_folder_process.cpp"]
+     deployment_manifest_h = text["src/sync_replica_deployment_manifest.hpp"]
+     reconciliation_h = text["src/sync_replica_reconciliation_protocol.hpp"]
+     service_h = text["src/sync_replica_file_delivery_service.hpp"]
+@@ -182,6 +187,9 @@
+     runtime = text["tests/sync_replica_file_payload_store_test.cpp"]
+     file_delivery_runtime = text["tests/sync_replica_file_delivery_protocol_test.cpp"]
+     reconciliation_runtime = text["tests/sync_replica_reconciliation_service_test.cpp"]
++    folder_observer_runtime = text[
++        "tests/sync_replica_folder_observer_test.cpp"
++    ]
+     folder_scan_runtime = text["tests/sync_replica_folder_scan_owner_test.cpp"]
+     service_runtime = text["tests/sync_replica_file_delivery_service_test.cpp"]
+     verifier = text["tools/verify_release_package.py"]
+@@ -1168,6 +1176,115 @@
+         "folder_pass_segments_payload_store_lease_by_puts_and_exact_work",
+         "one exact append-only payload cutpoint proves unchanged local payloads, while genuinely new digests reuse a warm verified index only inside explicit put and exact-work segments; resumable traversal records successful path effects in one durable journal segment after directory reproof, and no-op, conflict, and remote paths release the exclusive lease before unrelated work",
+     )
++    resumable_walk = function_body(
++        folder_observer,
++        "visit_sync_replica_folder_regular_file_paths_resumable_or_throw(",
++    )
++    require(
++        all(
++            token in folder_observer_h
++            for token in (
++                "kSyncReplicaFolderTraversalDefaultMaximumRegularFiles = 4096U",
++                "struct SyncReplicaFolderTraversalSegmentLimits final",
++                "std::uint64_t maximum_regular_files",
++                "const SyncReplicaFolderTraversalSegmentLimits& segment_limits",
++                "validate_sync_replica_folder_traversal_segment_limits_or_throw",
++            )
++        )
++        and ordered(
++            resumable_walk,
++            "validate_sync_replica_folder_observation_limits_or_throw",
++            "validate_sync_replica_folder_traversal_segment_limits_or_throw",
++            "walk_directory_or_throw",
++            "root after traversal",
++        )
++        and ordered(
++            folder_observer,
++            "context.summary.regular_file_count >=",
++            "context.segment_limits->maximum_regular_files",
++            "classified_regular_file_size_or_throw",
++            "(*context.visitor)(canonical_path, initial_size)",
++            "segment.resume_after_path = canonical_path",
++        )
++        and ordered(
++            folder_observer,
++            "segment_limits.maximum_regular_files = limits.maximum_entries",
++            "return visit_sync_replica_folder_regular_file_paths_resumable_or_throw",
++        ),
++        "resumable_observer_has_compatible_delivered_file_frontier",
++        "the explicit production overload bounds delivered regular paths before the next callback, while the compatibility overload retains the prior aggregate-byte-only behavior",
++    )
++    require(
++        "maximum_local_scan_segment_regular_files" in folder_scan_h
++        and "kSyncReplicaFolderTraversalDefaultMaximumRegularFiles"
++        in folder_scan_h
++        and ordered(
++            folder_scan,
++            "limits.maximum_local_scan_segment_regular_files",
++            "validate_sync_replica_folder_traversal_segment_limits_or_throw",
++            "local_scan_segment_limits.maximum_regular_files =",
++            "limits.maximum_local_scan_segment_regular_files",
++            "std::min(\n            limits.maximum_entries,\n            limits.maximum_local_scan_segment_regular_files)",
++            "traversal_limits, local_scan_segment_limits",
++        )
++        and "catalog_hints.entries.size()" not in folder_scan[
++            folder_scan.find("std::vector<std::string> segment_seen_paths;") :
++            folder_scan.find("std::optional<SyncReplicaFilePayloadStoreMutationBatch>")
++        ]
++        and all(
++            token in folder_process
++            for token in (
++                ".maximum_local_scan_segment_regular_files > 0U",
++                ".maximum_local_scan_segment_regular_files <=",
++                "SyncReplicaFolderConvergencePassLimits{}.maximum_entries",
++            )
++        ),
++        "folder_owner_bounds_scan_journal_staging_by_path_count",
++        "the production fallback reserves and publishes at most one explicit delivered-file segment instead of inheriting the whole catalog cardinality",
++    )
++    idle_fast_path = folder_scan[
++        folder_scan.find("const auto try_idle_fast_path") :
++        folder_scan.find("// An early idle miss")
++    ]
++    require(
++        "seen_regular_paths" not in idle_fast_path
++        and ordered(
++            idle_fast_path,
++            "idle_regular_file_count =",
++            "std::count_if(",
++            "idle_regular_file_count != catalog_regular_file_count",
++            "idle tombstone inspection",
++        )
++        and "Every delivered regular path already proved a distinct File catalog"
++        in idle_fast_path,
++        "idle_fast_path_uses_membership_plus_cardinality_not_path_copy",
++        "every observed regular path proves one unique File mapping, cardinality proves no File mapping was omitted, and tombstones remain explicitly inspected without a duplicate whole-tree vector",
++    )
++    require(
++        all(
++            token in folder_observer_runtime
++            for token in (
++                "count-bounded continuation reaches every zero-byte path exactly once",
++                "maximum_regular_files = 2U",
++                "directory path changed while being observed: nested",
++                "count frontier refuses success after a visited directory binding is substituted",
++            )
++        )
++        and all(
++            token in folder_scan_runtime
++            for token in (
++                "test_zero_byte_scan_segment_has_bounded_journal_publication",
++                "maximum_local_scan_segment_regular_files = 2U",
++                "trace.insert_count == 2U",
++                "trace.progress_update_count == 1U",
++                "completed.local_published_count == 1U",
++                "composed pass accepted a zero local scan path frontier",
++            )
++        ),
++        "compiled_tests_cover_zero_byte_progress_restart_and_reproof",
++        "focused runtime checks prove 2+2+1 durable progress, one bounded journal transaction, invalid-limit fail-fast behavior, compatibility, and directory-identity rejection at the count cutpoint",
++    )
++
+     lease = function_body(store, "acquire_store_lease_or_throw(")
+     require(
+         ordered(

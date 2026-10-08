@@ -1,0 +1,1962 @@
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index 7d33d44245b189abf78342790800660d5fb6215a..cccb4e121c40f56fb7a995bedf3058a564f62f93 100755
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -3587,7 +3587,9 @@ void print_usage(std::ostream& output) {
+            "[--path CANONICAL_RELATIVE_PATH] "
+            "[--after LOWERCASE_SHA256] [--limit 1..1024] "
+            "[--inspection-mode exact|metadata] "
+-           "[--source-cutpoint v1:OPERATION_SET_SHA256:PAYLOAD_SHA256|"
++           "[--source-cutpoint "
++           "v3:exact:OPERATION_SET_SHA256:EVIDENCE_SET_SHA256:PAYLOAD_SHA256|"
++           "v1:OPERATION_SET_SHA256:PAYLOAD_SHA256|"
+            "v2:metadata:OPERATION_SET_SHA256] "
+            "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync restore --socket ABSOLUTE_SOCKET "
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index 83b997dcfdbb10e0855fdb7582ee65aba67c0fc4..75fd72065fd6d4e1eb0073451dac16534820d415 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -61,7 +61,7 @@ constexpr std::string_view kQuarantineResponseSchema =
+ constexpr std::string_view kQuarantineReleaseResponseSchema =
+     "anonsync.local-quarantine-release.response.v1";
+ constexpr std::string_view kHistoricalVersionsResponseSchema =
+-    "anonsync.local-historical-versions.response.v4";
++    "anonsync.local-historical-versions.response.v5";
+ constexpr std::string_view kHistoricalVersionRestoreResponseSchema =
+     "anonsync.local-historical-version-restore.response.v1";
+ constexpr std::string_view kHistoricalVersionRestoreExactResponseSchema =
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index ad414a79f0064182555e3b3235332c4038bfa2d1..406a823c360d5ac8761ff0943ad5113a9da85d38 100755
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -18,6 +18,7 @@
+ #include <cstring>
+ #include <filesystem>
+ #include <limits>
++#include <map>
+ #include <memory>
+ #include <optional>
+ #include <set>
+@@ -4765,6 +4766,17 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+                 " historical-version operation set changed before payload "
+                 "observation; restart pagination");
+     }
++    if (query.expected_source_cutpoint.has_value() &&
++        query.expected_source_cutpoint->evidence_set_digest.has_value() &&
++        *query.expected_source_cutpoint->evidence_set_digest !=
++            replica_snapshot.evidence_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                EvidenceSetBeforePayloadObservation,
++            state_->label +
++                " historical-version retained evidence set changed before "
++                "payload observation; restart pagination");
++    }
+     const SyncReplicaModel model = SyncReplicaModel::restore_or_throw(
+         replica_snapshot.durable, replica_snapshot.limits.model);
+ 
+@@ -4851,6 +4863,15 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+                     " historical-version operation set changed during payload "
+                     "observation; restart pagination");
+         }
++        if (replica_snapshot.evidence_set_digest !=
++            replica_after_payload.evidence_set_digest) {
++            throw SyncReplicaHistoricalVersionSourceChangedError(
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    EvidenceSetDuringPayloadObservation,
++                state_->label +
++                    " historical-version retained evidence set changed during "
++                    "payload observation; restart pagination");
++        }
+         if (query.expected_source_cutpoint.has_value() &&
+             query.expected_source_cutpoint->payload_snapshot_digest !=
+                 std::optional<std::string>(
+@@ -4873,6 +4894,8 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+     inventory.source_visible_state_digest =
+         replica_snapshot.visible_state_digest;
+     if (payload_snapshot.has_value()) {
++        inventory.source_evidence_set_digest =
++            replica_snapshot.evidence_set_digest;
+         inventory.source_payload_snapshot_digest =
+             payload_snapshot->snapshot_digest();
+         inventory.payload_scan_hashed_entry_count =
+@@ -4899,9 +4922,81 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+         ++value;
+     };
+ 
++    struct PayloadReferenceKey final {
++        std::string_view content_sha256;
++        std::uint64_t size_bytes = 0U;
++    };
++    struct PayloadReferenceKeyLess final {
++        [[nodiscard]] bool operator()(
++            const PayloadReferenceKey& left,
++            const PayloadReferenceKey& right) const noexcept {
++            if (left.content_sha256 != right.content_sha256) {
++                return left.content_sha256 < right.content_sha256;
++            }
++            return left.size_bytes < right.size_bytes;
++        }
++    };
++    constexpr std::uint8_t kCurrentVisibleMask = 1U;
++    constexpr std::uint8_t kSupersededActiveMask = 2U;
++    constexpr std::uint8_t kInactiveEvidenceMask = 4U;
++    std::map<PayloadReferenceKey, std::uint8_t, PayloadReferenceKeyLess>
++        payload_references;
++
++    const auto add_or_throw = [&](std::uint64_t& destination,
++                                  std::uint64_t amount,
++                                  std::string_view field) {
++        if (amount >
++            std::numeric_limits<std::uint64_t>::max() - destination) {
++            throw std::overflow_error(
++                state_->label + " historical-version " +
++                std::string(field) + " overflows");
++        }
++        destination += amount;
++    };
++
++    if (payload_snapshot.has_value()) {
++        inventory.retained_payload_reachability.emplace();
++        inventory.retained_payload_reachability->payload_entry_count =
++            payload_snapshot->entry_count();
++        inventory.retained_payload_reachability->payload_indexed_bytes =
++            payload_snapshot->indexed_bytes();
++    }
++
++    const auto mark_payload_reference = [&]
++        (const SyncReplicaOperation& operation,
++         std::uint8_t class_mask,
++         SyncReplicaHistoricalVersionPayloadReachabilityClass& classification) {
++        if (!inventory.retained_payload_reachability.has_value()) return;
++        increment_or_throw(classification.file_operation_count,
++                           "reachability file-operation");
++        increment_or_throw(
++            inventory.retained_payload_reachability->retained_union.
++                file_operation_count,
++            "retained-union file-operation");
++        const PayloadReferenceKey key{
++            .content_sha256 = operation.content_sha256,
++            .size_bytes = operation.size_bytes,
++        };
++        const auto [position, inserted] =
++            payload_references.try_emplace(key, 0U);
++        if ((position->second & class_mask) == 0U) {
++            increment_or_throw(classification.distinct_content_count,
++                               "reachability distinct-content");
++        }
++        if (inserted) {
++            increment_or_throw(
++                inventory.retained_payload_reachability->retained_union.
++                    distinct_content_count,
++                "retained-union distinct-content");
++        }
++        position->second = static_cast<std::uint8_t>(
++            position->second | class_mask);
++    };
++
+     const auto consider_operation = [&]
+         (const SyncReplicaOperation& operation,
+-         const SyncReplicaPathView& view) {
++         const SyncReplicaPathView& view,
++         bool operation_is_visible) {
+         if (operation.kind != SyncReplicaValueKind::File) return;
+         if (query.canonical_path.has_value() &&
+             operation.canonical_path != *query.canonical_path) {
+@@ -4911,12 +5006,7 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+         // membership test prevents a path with many concurrent visible heads
+         // from reintroducing the all-pairs cost removed by the grouped causal
+         // projection.
+-        if (std::binary_search(
+-                view.visible_operation_ids.begin(),
+-                view.visible_operation_ids.end(),
+-                operation.operation_id)) {
+-            return;
+-        }
++        if (operation_is_visible) return;
+         increment_or_throw(
+             inventory.historical_file_operation_count,
+             "operation");
+@@ -5000,36 +5090,213 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+             entry_precedes);
+     };
+ 
+-    if (query.canonical_path.has_value()) {
++    const auto visit_active_path = [&]
++        (const SyncReplicaPathView& view,
++         std::span<const SyncReplicaOperation* const> operations) {
++        for (const SyncReplicaOperation* operation : operations) {
++            if (operation == nullptr) {
++                throw std::logic_error(
++                    state_->label +
++                    " historical-version path group contains a null operation");
++            }
++            const bool operation_is_visible = std::binary_search(
++                view.visible_operation_ids.begin(),
++                view.visible_operation_ids.end(),
++                operation->operation_id);
++            if (operation->kind == SyncReplicaValueKind::File &&
++                inventory.retained_payload_reachability.has_value()) {
++                if (operation_is_visible) {
++                    mark_payload_reference(
++                        *operation, kCurrentVisibleMask,
++                        inventory.retained_payload_reachability->
++                            current_visible);
++                } else {
++                    mark_payload_reference(
++                        *operation, kSupersededActiveMask,
++                        inventory.retained_payload_reachability->
++                            superseded_active);
++                }
++            }
++            consider_operation(*operation, view, operation_is_visible);
++        }
++    };
++
++    if (inventory.retained_payload_reachability.has_value() ||
++        !query.canonical_path.has_value()) {
++        // Exact inspection is share-global because its reachability result must
++        // not hide references outside a path-filtered page. This grouped
++        // borrowed traversal simultaneously feeds the bounded page and active
++        // reachability classes, avoiding a second active-model pass.
++        model.for_each_active_path(visit_active_path);
++    } else {
+         const std::optional<SyncReplicaPathView> selected_view =
+             model.visible_path(*query.canonical_path);
+         if (selected_view.has_value()) {
+             model.for_each_active_operation(
+                 [&](const SyncReplicaOperation& operation) {
+-                    if (operation.canonical_path == *query.canonical_path) {
+-                        consider_operation(operation, *selected_view);
++                    if (operation.canonical_path != *query.canonical_path) {
++                        return;
+                     }
++                    const bool operation_is_visible = std::binary_search(
++                        selected_view->visible_operation_ids.begin(),
++                        selected_view->visible_operation_ids.end(),
++                        operation.operation_id);
++                    consider_operation(
++                        operation, *selected_view, operation_is_visible);
+                 });
+         }
+-    } else {
+-        // Rev0966 called visible_path() once for every active operation. Since
+-        // visible_path() itself scans every active operation, a long history
+-        // made one bounded 64-entry projection quadratic. Grouping borrowed
+-        // operations once keeps the complete semantic scan linearithmic while
+-        // retaining only O(active operations) pointers and O(requested entries)
+-        // response objects.
+-        model.for_each_active_path(
+-            [&](const SyncReplicaPathView& view,
+-                std::span<const SyncReplicaOperation* const> operations) {
+-                for (const SyncReplicaOperation* operation : operations) {
+-                    if (operation == nullptr) {
+-                        throw std::logic_error(
+-                            state_->label +
+-                            " historical-version path group contains a null operation");
+-                    }
+-                    consider_operation(*operation, view);
++    }
++
++    if (inventory.retained_payload_reachability.has_value()) {
++        // Inactive pending/quarantined evidence is still retained evidence. It
++        // participates in the diagnostic mark even though it cannot appear in
++        // the active history page. The compile-time borrowed visitor keeps this
++        // pass linear and avoids one lookup/copy per retained operation.
++        model.for_each_evidence_operation(
++            [&](const SyncReplicaOperation& operation,
++                SyncReplicaEvidenceState evidence_state) {
++                if (evidence_state == SyncReplicaEvidenceState::Active ||
++                    operation.kind != SyncReplicaValueKind::File) {
++                    return;
+                 }
++                mark_payload_reference(
++                    operation, kInactiveEvidenceMask,
++                    inventory.retained_payload_reachability->
++                        inactive_evidence);
+             });
++
++        auto& reachability = *inventory.retained_payload_reachability;
++        const auto account_present = [&]
++            (SyncReplicaHistoricalVersionPayloadReachabilityClass& value,
++             std::uint64_t size_bytes,
++             std::string_view field) {
++            increment_or_throw(value.present_content_count, field);
++            add_or_throw(value.present_content_bytes, size_bytes, field);
++        };
++        const SyncReplicaFileContentInventory content_inventory =
++            payload_snapshot->content_inventory();
++        const std::span<const std::string> payload_digests =
++            content_inventory.content_sha256s();
++        if (payload_digests.size() !=
++            static_cast<std::size_t>(reachability.payload_entry_count)) {
++            throw std::logic_error(
++                state_->label +
++                " historical-version payload inventory cardinality drifted");
++        }
++        for (const std::string& digest : payload_digests) {
++            const std::optional<std::uint64_t> payload_size =
++                payload_snapshot->payload_size_or_none(digest);
++            if (!payload_size.has_value()) {
++                throw std::logic_error(
++                    state_->label +
++                    " historical-version payload inventory lost one digest");
++            }
++            const auto found = payload_references.find(PayloadReferenceKey{
++                .content_sha256 = digest,
++                .size_bytes = *payload_size,
++            });
++            if (found == payload_references.end()) {
++                increment_or_throw(
++                    reachability.unreferenced_payload_count,
++                    "unreferenced payload");
++                add_or_throw(
++                    reachability.unreferenced_payload_bytes, *payload_size,
++                    "unreferenced payload bytes");
++                continue;
++            }
++            const std::uint8_t mask = found->second;
++            if ((mask & kCurrentVisibleMask) != 0U) {
++                account_present(
++                    reachability.current_visible, *payload_size,
++                    "current-visible present content");
++            }
++            if ((mask & kSupersededActiveMask) != 0U) {
++                account_present(
++                    reachability.superseded_active, *payload_size,
++                    "superseded-active present content");
++            }
++            if ((mask & kInactiveEvidenceMask) != 0U) {
++                account_present(
++                    reachability.inactive_evidence, *payload_size,
++                    "inactive-evidence present content");
++            }
++            account_present(
++                reachability.retained_union, *payload_size,
++                "retained-union present content");
++            payload_references.erase(found);
++        }
++
++        for (const auto& [reference, mask] : payload_references) {
++            (void)reference;
++            if ((mask & kCurrentVisibleMask) != 0U) {
++                increment_or_throw(
++                    reachability.current_visible.missing_content_count,
++                    "current-visible missing content");
++            }
++            if ((mask & kSupersededActiveMask) != 0U) {
++                increment_or_throw(
++                    reachability.superseded_active.missing_content_count,
++                    "superseded-active missing content");
++            }
++            if ((mask & kInactiveEvidenceMask) != 0U) {
++                increment_or_throw(
++                    reachability.inactive_evidence.missing_content_count,
++                    "inactive-evidence missing content");
++            }
++            increment_or_throw(
++                reachability.retained_union.missing_content_count,
++                "retained-union missing content");
++        }
++
++        const auto validate_class = [&]
++            (const SyncReplicaHistoricalVersionPayloadReachabilityClass& value,
++             std::string_view label) {
++            if (value.present_content_count >
++                    value.distinct_content_count ||
++                value.missing_content_count !=
++                    value.distinct_content_count -
++                        value.present_content_count) {
++                throw std::logic_error(
++                    state_->label + " historical-version " +
++                    std::string(label) +
++                    " reachability partition is inconsistent");
++            }
++        };
++        validate_class(reachability.current_visible, "current-visible");
++        validate_class(reachability.superseded_active, "superseded-active");
++        validate_class(reachability.inactive_evidence, "inactive-evidence");
++        validate_class(reachability.retained_union, "retained-union");
++
++        std::uint64_t physical_entry_partition =
++            reachability.retained_union.present_content_count;
++        add_or_throw(
++            physical_entry_partition,
++            reachability.unreferenced_payload_count,
++            "physical payload entry partition");
++        std::uint64_t physical_byte_partition =
++            reachability.retained_union.present_content_bytes;
++        add_or_throw(
++            physical_byte_partition,
++            reachability.unreferenced_payload_bytes,
++            "physical payload byte partition");
++        std::uint64_t operation_partition =
++            reachability.current_visible.file_operation_count;
++        add_or_throw(
++            operation_partition,
++            reachability.superseded_active.file_operation_count,
++            "retained file-operation partition");
++        add_or_throw(
++            operation_partition,
++            reachability.inactive_evidence.file_operation_count,
++            "retained file-operation partition");
++        if (physical_entry_partition != reachability.payload_entry_count ||
++            physical_byte_partition != reachability.payload_indexed_bytes ||
++            operation_partition !=
++                reachability.retained_union.file_operation_count) {
++            throw std::logic_error(
++                state_->label +
++                " historical-version retained payload reachability is inconsistent");
++        }
+     }
+ 
+     std::sort_heap(
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index 2457806a545d1f4694032e8b418d1578d8ddd686..156cc588886bf60242b7bee191d0b2b0a1549b6b 100755
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -125,6 +125,47 @@ struct SyncReplicaFolderApplyResult final {
+     bool operator==(const SyncReplicaFolderApplyResult&) const = default;
+ };
+ 
++// One independently counted reachability class. File-operation counts are
++// reference counts. Distinct content is exact (SHA-256, declared-size)
++// identity. The same immutable content may appear in more than one class, so
++// class distinct/present/missing totals deliberately overlap; retained_union
++// deduplicates them across all retained file evidence.
++struct SyncReplicaHistoricalVersionPayloadReachabilityClass final {
++    std::uint64_t file_operation_count = 0U;
++    std::uint64_t distinct_content_count = 0U;
++    std::uint64_t present_content_count = 0U;
++    std::uint64_t present_content_bytes = 0U;
++    std::uint64_t missing_content_count = 0U;
++
++    bool operator==(
++        const SyncReplicaHistoricalVersionPayloadReachabilityClass&) const =
++        default;
++};
++
++// Share-global diagnostic accounting over every retained file operation and
++// the exact complete payload snapshot already paid for by exact history
++// inspection. current_visible and superseded_active partition active file
++// operations; inactive_evidence contains pending/quarantined file operations.
++// Unreferenced means only "not named by any retained file operation at this
++// bracketed cutpoint." It is not reclaimable authority: catalogs, in-flight
++// transfers, pass snapshots, range/mutation pins, explicit user pins, retention
++// policy, grace, writer fencing, and a crash-safe collector are outside this
++// object and no payload is deleted by history inspection.
++struct SyncReplicaHistoricalVersionPayloadReachability final {
++    std::uint64_t payload_entry_count = 0U;
++    std::uint64_t payload_indexed_bytes = 0U;
++    SyncReplicaHistoricalVersionPayloadReachabilityClass current_visible;
++    SyncReplicaHistoricalVersionPayloadReachabilityClass superseded_active;
++    SyncReplicaHistoricalVersionPayloadReachabilityClass inactive_evidence;
++    SyncReplicaHistoricalVersionPayloadReachabilityClass retained_union;
++    std::uint64_t unreferenced_payload_count = 0U;
++    std::uint64_t unreferenced_payload_bytes = 0U;
++
++    bool operator==(
++        const SyncReplicaHistoricalVersionPayloadReachability&) const =
++        default;
++};
++
+ // One immutable active file operation that is no longer a visible head at its
+ // path. Dotted counters are causal identities, not wall-clock timestamps. A
+ // candidate is immediately restorable only when its exact payload is present,
+@@ -154,6 +195,10 @@ struct SyncReplicaHistoricalVersionInventory final {
+     SyncReplicaHistoricalVersionQuery query;
+     std::uint64_t source_replica_state_generation = 0U;
+     std::string source_operation_set_digest;
++    // Present for exact inspection and absent in metadata-only mode. New exact
++    // source tokens bind this digest because inactive retained evidence
++    // participates in the reachability result.
++    std::optional<std::string> source_evidence_set_digest;
+     std::string source_visible_state_digest;
+     // Absent for causal-metadata-only inspection. Every payload-derived
+     // field below is likewise null so zero cannot be mistaken for an exact
+@@ -163,6 +208,8 @@ struct SyncReplicaHistoricalVersionInventory final {
+     std::optional<std::uint64_t> payload_scan_hashed_bytes;
+     std::optional<std::uint64_t> payload_scan_reused_entry_count;
+     std::optional<std::uint64_t> payload_scan_reused_bytes;
++    std::optional<SyncReplicaHistoricalVersionPayloadReachability>
++        retained_payload_reachability;
+     // Total active superseded file operations in the selected path scope,
+     // including the cursor and entries that precede it.
+     std::uint64_t historical_file_operation_count = 0U;
+@@ -191,6 +238,7 @@ struct SyncReplicaHistoricalVersionInventory final {
+         return {
+             .inspection_mode = query.inspection_mode,
+             .operation_set_digest = source_operation_set_digest,
++            .evidence_set_digest = source_evidence_set_digest,
+             .payload_snapshot_digest = source_payload_snapshot_digest,
+         };
+     }
+diff --git a/src/sync_replica_historical_version_inventory_json.cpp b/src/sync_replica_historical_version_inventory_json.cpp
+index e4135deef2c396b1ad2aa96fe94f44676f92feb0..24da88ebd5f2bd161f6e3f7c0721d6b2552b2af9 100644
+--- a/src/sync_replica_historical_version_inventory_json.cpp
++++ b/src/sync_replica_historical_version_inventory_json.cpp
+@@ -63,6 +63,50 @@ void append_optional_bool(
+     }
+ }
+ 
++void append_payload_reachability_class(
++    std::ostream& output,
++    const SyncReplicaHistoricalVersionPayloadReachabilityClass& value) {
++    output
++        << "{\"file_operation_count\":" << value.file_operation_count
++        << ",\"distinct_content_count\":" << value.distinct_content_count
++        << ",\"present_content_count\":" << value.present_content_count
++        << ",\"present_content_bytes\":" << value.present_content_bytes
++        << ",\"missing_content_count\":" << value.missing_content_count
++        << '}';
++}
++
++void append_payload_reachability(
++    std::ostream& output,
++    const std::optional<SyncReplicaHistoricalVersionPayloadReachability>&
++        reachability) {
++    if (!reachability.has_value()) {
++        output << "null";
++        return;
++    }
++    output
++        << "{\"scope\":\"share_retained_file_operations\""
++        << ",\"reclaimable_authority\":false"
++        << ",\"class_totals_overlap\":true"
++        << ",\"payload_entry_count\":"
++        << reachability->payload_entry_count
++        << ",\"payload_indexed_bytes\":"
++        << reachability->payload_indexed_bytes
++        << ",\"current_visible\":";
++    append_payload_reachability_class(output, reachability->current_visible);
++    output << ",\"superseded_active\":";
++    append_payload_reachability_class(output, reachability->superseded_active);
++    output << ",\"inactive_evidence\":";
++    append_payload_reachability_class(output, reachability->inactive_evidence);
++    output << ",\"retained_union\":";
++    append_payload_reachability_class(output, reachability->retained_union);
++    output
++        << ",\"unreferenced_by_retained_file_operations_count\":"
++        << reachability->unreferenced_payload_count
++        << ",\"unreferenced_by_retained_file_operations_bytes\":"
++        << reachability->unreferenced_payload_bytes
++        << '}';
++}
++
+ void append_query(
+     std::ostream& output,
+     const SyncReplicaHistoricalVersionQuery& query) {
+@@ -120,6 +164,12 @@ void append_inventory(
+         << inventory.source_replica_state_generation
+         << ",\"source_operation_set_digest\":";
+     append_json_quoted(output, inventory.source_operation_set_digest);
++    output << ",\"source_evidence_set_digest\":";
++    if (inventory.source_evidence_set_digest.has_value()) {
++        append_json_quoted(output, *inventory.source_evidence_set_digest);
++    } else {
++        output << "null";
++    }
+     output << ",\"source_visible_state_digest\":";
+     append_json_quoted(output, inventory.source_visible_state_digest);
+     output << ",\"source_payload_snapshot_digest\":";
+@@ -145,6 +195,9 @@ void append_inventory(
+         output, inventory.payload_scan_reused_entry_count);
+     output << ",\"payload_scan_reused_bytes\":";
+     append_optional_uint64(output, inventory.payload_scan_reused_bytes);
++    output << ",\"retained_payload_reachability\":";
++    append_payload_reachability(
++        output, inventory.retained_payload_reachability);
+     output
+         << ",\"historical_file_operation_count\":"
+         << inventory.historical_file_operation_count
+diff --git a/src/sync_replica_historical_version_query.hpp b/src/sync_replica_historical_version_query.hpp
+index ceae65b15ca905c9269ff0acfbbbf26a1f42a4e1..1f15ec673745d93ab61bbd67fec5eaa759ef74ec 100644
+--- a/src/sync_replica_historical_version_query.hpp
++++ b/src/sync_replica_historical_version_query.hpp
+@@ -64,15 +64,21 @@ sync_replica_historical_version_inspection_mode_from_name_or_throw(
+ }
+ 
+ // Exact immutable inputs that determine one historical-version page. Every
+-// cutpoint binds the complete active operation set. Exact-payload pages also
+-// bind the retained payload snapshot; metadata-only pages intentionally carry
+-// no payload digest because they perform no payload-store observation. This is
+-// browse consistency only. Restore still re-proves every mutable owner and the
+-// rooted destination from scratch.
++// cutpoint binds the complete active operation set. New exact-payload pages
++// also bind the complete retained evidence set because rev0972 reachability
++// accounts for inactive pending/quarantined file evidence. Exact pages finally
++// bind the retained payload snapshot. Metadata-only pages intentionally carry
++// neither evidence nor payload digests because they perform no payload-store
++// observation and return no reachability classification. This is browse
++// consistency only. Restore still re-proves every mutable owner and the rooted
++// destination from scratch.
+ struct SyncReplicaHistoricalVersionSourceCutpoint final {
+     SyncReplicaHistoricalVersionInspectionMode inspection_mode =
+         SyncReplicaHistoricalVersionInspectionMode::ExactPayloadAvailability;
+     std::string operation_set_digest;
++    // Present in rev0972 exact v3 cutpoints. Absent only when decoding the
++    // compatible rev0968 v1 exact token or in metadata-only v2 tokens.
++    std::optional<std::string> evidence_set_digest;
+     std::optional<std::string> payload_snapshot_digest;
+ 
+     bool operator==(
+@@ -90,6 +96,13 @@ inline void validate_sync_replica_historical_version_source_cutpoint_or_throw(
+     switch (cutpoint.inspection_mode) {
+         case SyncReplicaHistoricalVersionInspectionMode::
+                 ExactPayloadAvailability:
++            if (cutpoint.evidence_set_digest.has_value() &&
++                !is_lowercase_sha256_hex(
++                    *cutpoint.evidence_set_digest)) {
++                throw std::invalid_argument(
++                    std::string(label) +
++                    " evidence-set digest is invalid");
++            }
+             if (!cutpoint.payload_snapshot_digest.has_value() ||
+                 !is_lowercase_sha256_hex(
+                     *cutpoint.payload_snapshot_digest)) {
+@@ -99,10 +112,11 @@ inline void validate_sync_replica_historical_version_source_cutpoint_or_throw(
+             }
+             return;
+         case SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly:
+-            if (cutpoint.payload_snapshot_digest.has_value()) {
++            if (cutpoint.evidence_set_digest.has_value() ||
++                cutpoint.payload_snapshot_digest.has_value()) {
+                 throw std::invalid_argument(
+                     std::string(label) +
+-                    " metadata-only cutpoint carries a payload digest");
++                    " metadata-only cutpoint carries an exact-mode digest");
+             }
+             return;
+     }
+@@ -110,9 +124,10 @@ inline void validate_sync_replica_historical_version_source_cutpoint_or_throw(
+         std::string(label) + " inspection mode is invalid");
+ }
+ 
+-// Preserve the rev0968 v1 token byte-for-byte for exact-payload callers. The
+-// shorter v2 metadata token is mode-tagged and cannot be confused with an
+-// exact payload cutpoint by a newer parser.
++// Preserve decoding of the rev0968 v1 exact token byte-for-byte. New exact
++// pages emit v3 and bind operation, complete retained evidence, and payload
++// snapshot digests. The shorter v2 metadata token remains unchanged and cannot
++// be confused with an exact payload cutpoint by a newer parser.
+ [[nodiscard]] inline std::string
+ encode_sync_replica_historical_version_source_cutpoint_or_throw(
+     const SyncReplicaHistoricalVersionSourceCutpoint& cutpoint,
+@@ -123,6 +138,11 @@ encode_sync_replica_historical_version_source_cutpoint_or_throw(
+     switch (cutpoint.inspection_mode) {
+         case SyncReplicaHistoricalVersionInspectionMode::
+                 ExactPayloadAvailability:
++            if (cutpoint.evidence_set_digest.has_value()) {
++                return "v3:exact:" + cutpoint.operation_set_digest + ':' +
++                    *cutpoint.evidence_set_digest + ':' +
++                    *cutpoint.payload_snapshot_digest;
++            }
+             return "v1:" + cutpoint.operation_set_digest + ':' +
+                 *cutpoint.payload_snapshot_digest;
+         case SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly:
+@@ -137,14 +157,43 @@ decode_sync_replica_historical_version_source_cutpoint_or_throw(
+     std::string_view token,
+     std::string_view label =
+         "sync replica historical-version source cutpoint") {
+-    constexpr std::string_view exact_prefix = "v1:";
++    constexpr std::string_view exact_v3_prefix = "v3:exact:";
++    constexpr std::string_view exact_v1_prefix = "v1:";
+     constexpr std::string_view metadata_prefix = "v2:metadata:";
+     constexpr std::size_t digest_size = 64U;
+-    if (token.starts_with(exact_prefix)) {
++    if (token.starts_with(exact_v3_prefix)) {
++        constexpr std::size_t encoded_size =
++            exact_v3_prefix.size() + digest_size + 1U + digest_size + 1U +
++            digest_size;
++        const std::size_t operation_separator =
++            exact_v3_prefix.size() + digest_size;
++        const std::size_t evidence_separator =
++            operation_separator + 1U + digest_size;
++        if (token.size() != encoded_size ||
++            token[operation_separator] != ':' ||
++            token[evidence_separator] != ':') {
++            throw std::invalid_argument(
++                std::string(label) + " token framing is invalid");
++        }
++        SyncReplicaHistoricalVersionSourceCutpoint cutpoint{
++            .inspection_mode = SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability,
++            .operation_set_digest = std::string(
++                token.substr(exact_v3_prefix.size(), digest_size)),
++            .evidence_set_digest = std::string(token.substr(
++                operation_separator + 1U, digest_size)),
++            .payload_snapshot_digest = std::string(token.substr(
++                evidence_separator + 1U, digest_size)),
++        };
++        validate_sync_replica_historical_version_source_cutpoint_or_throw(
++            cutpoint, label);
++        return cutpoint;
++    }
++    if (token.starts_with(exact_v1_prefix)) {
+         constexpr std::size_t encoded_size =
+-            exact_prefix.size() + digest_size + 1U + digest_size;
++            exact_v1_prefix.size() + digest_size + 1U + digest_size;
+         if (token.size() != encoded_size ||
+-            token[exact_prefix.size() + digest_size] != ':') {
++            token[exact_v1_prefix.size() + digest_size] != ':') {
+             throw std::invalid_argument(
+                 std::string(label) + " token framing is invalid");
+         }
+@@ -152,9 +201,10 @@ decode_sync_replica_historical_version_source_cutpoint_or_throw(
+             .inspection_mode = SyncReplicaHistoricalVersionInspectionMode::
+                 ExactPayloadAvailability,
+             .operation_set_digest = std::string(
+-                token.substr(exact_prefix.size(), digest_size)),
++                token.substr(exact_v1_prefix.size(), digest_size)),
++            .evidence_set_digest = std::nullopt,
+             .payload_snapshot_digest = std::string(token.substr(
+-                exact_prefix.size() + digest_size + 1U, digest_size)),
++                exact_v1_prefix.size() + digest_size + 1U, digest_size)),
+         };
+         validate_sync_replica_historical_version_source_cutpoint_or_throw(
+             cutpoint, label);
+@@ -167,6 +217,7 @@ decode_sync_replica_historical_version_source_cutpoint_or_throw(
+                 CausalMetadataOnly,
+             .operation_set_digest =
+                 std::string(token.substr(metadata_prefix.size())),
++            .evidence_set_digest = std::nullopt,
+             .payload_snapshot_digest = std::nullopt,
+         };
+         validate_sync_replica_historical_version_source_cutpoint_or_throw(
+@@ -185,6 +236,10 @@ enum class SyncReplicaHistoricalVersionSourceChangeStage : std::uint8_t {
+     // but that path no longer has that sole current operation. This check is
+     // performed before catalog, rooted-path, or payload-store work.
+     RestoreCurrentOperation = 4U,
++    // A v3 exact page also binds inactive retained evidence because that
++    // evidence participates in its payload-reachability result.
++    EvidenceSetBeforePayloadObservation = 5U,
++    EvidenceSetDuringPayloadObservation = 6U,
+ };
+ 
+ [[nodiscard]] constexpr std::string_view
+@@ -202,6 +257,12 @@ sync_replica_historical_version_source_change_stage_name(
+         case SyncReplicaHistoricalVersionSourceChangeStage::
+                 RestoreCurrentOperation:
+             return "restore_current_operation";
++        case SyncReplicaHistoricalVersionSourceChangeStage::
++                EvidenceSetBeforePayloadObservation:
++            return "evidence_set_before_payload_observation";
++        case SyncReplicaHistoricalVersionSourceChangeStage::
++                EvidenceSetDuringPayloadObservation:
++            return "evidence_set_during_payload_observation";
+     }
+     return "unknown";
+ }
+diff --git a/src/sync_replica_model.hpp b/src/sync_replica_model.hpp
+index 394053c0cfada3e85b485d7598a8e115b3df3ed7..d121c0da0656566e7206750c47506df1a802527a 100644
+--- a/src/sync_replica_model.hpp
++++ b/src/sync_replica_model.hpp
+@@ -379,6 +379,29 @@ public:
+         }
+     }
+ 
++    // Visits every borrowed retained operation together with its exact current
++    // evidence state in operation-ID order. The two durable maps are required
++    // to remain in lockstep; divergence fails closed. The compile-time visitor
++    // is neither copied nor type-erased and must not mutate this model or retain
++    // references beyond the call.
++    template <typename Visitor>
++    void for_each_evidence_operation(const Visitor& visitor) const {
++        auto state = evidence_state_by_id_.begin();
++        for (const auto& [operation_id, operation] : evidence_by_id_) {
++            if (state == evidence_state_by_id_.end() ||
++                state->first != operation_id) {
++                throw std::logic_error(
++                    "sync replica evidence operation/state maps diverged");
++            }
++            visitor(operation, state->second);
++            ++state;
++        }
++        if (state != evidence_state_by_id_.end()) {
++            throw std::logic_error(
++                "sync replica evidence state map has an extra operation");
++        }
++    }
++
+     [[nodiscard]] std::optional<SyncReplicaOperation> evidence_operation_by_id(
+         const std::string& operation_id) const;
+ 
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index 52fd9087ef0958d8a4d6835cc250b660223da4ec..f7b7a808bc6daab1d174c7b87b82b0759c607c56 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v16";
++    "anonsync.peer-service.status.v17";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index a7a965771d11a4a128dcc3a9d14b9b9f075b123a..ef2900744ed363fccc4d69e389a47ccc0d6b8052 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -195,12 +195,31 @@ void require_socket_mode(const fs::path& path, mode_t mode) {
+ void test_historical_inventory_status_byte_frontier() {
+     anonsync::SyncReplicaHistoricalVersionInventory inventory;
+     inventory.query.inspection_mode = anonsync::
+-        SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly;
++        SyncReplicaHistoricalVersionInspectionMode::ExactPayloadAvailability;
+     inventory.query.maximum_entries = anonsync::
+         kSyncReplicaHistoricalVersionMaximumEntries;
+     inventory.source_replica_state_generation = 17U;
+     inventory.source_operation_set_digest = std::string(64U, 'a');
++    inventory.source_evidence_set_digest = std::string(64U, 'f');
+     inventory.source_visible_state_digest = std::string(64U, 'b');
++    inventory.source_payload_snapshot_digest = std::string(64U, '0');
++    inventory.payload_scan_hashed_entry_count = 3U;
++    inventory.payload_scan_hashed_bytes = 30U;
++    inventory.payload_scan_reused_entry_count = 4U;
++    inventory.payload_scan_reused_bytes = 40U;
++    inventory.payload_present_count = 7U;
++    inventory.restore_ready_count = 5U;
++    inventory.retained_payload_reachability =
++        anonsync::SyncReplicaHistoricalVersionPayloadReachability{
++            .payload_entry_count = 7U,
++            .payload_indexed_bytes = 70U,
++            .current_visible = {3U, 2U, 2U, 20U, 0U},
++            .superseded_active = {5U, 4U, 3U, 30U, 1U},
++            .inactive_evidence = {2U, 2U, 1U, 10U, 1U},
++            .retained_union = {10U, 6U, 5U, 50U, 1U},
++            .unreferenced_payload_count = 2U,
++            .unreferenced_payload_bytes = 20U,
++        };
+     inventory.historical_file_operation_count = anonsync::
+         kSyncReplicaHistoricalVersionMaximumEntries;
+     inventory.historical_file_operation_count_after_cursor = anonsync::
+@@ -237,8 +256,12 @@ void test_historical_inventory_status_byte_frontier() {
+         render_sync_replica_historical_version_inventory_json(inventory);
+     require(
+         unbounded.size() > anonsync::
+-            kSyncReplicaHistoricalVersionMaximumStatusInventoryBytes,
+-        "maximum accepted history page must demonstrate the status overflow boundary");
++            kSyncReplicaHistoricalVersionMaximumStatusInventoryBytes &&
++            unbounded.find("\"source_cutpoint\":\"v3:exact:") !=
++                std::string::npos &&
++            unbounded.find("\"retained_payload_reachability\":{\"scope\":\"share_retained_file_operations\"") !=
++                std::string::npos,
++        "maximum exact history page must compose evidence-bound reachability with the status overflow boundary");
+ 
+     const std::vector<anonsync::SyncReplicaHistoricalVersionEntry>
+         original_entries = inventory.entries;
+@@ -274,8 +297,13 @@ void test_historical_inventory_status_byte_frontier() {
+             bounded.find("\"status_byte_frontier_reached\":true") !=
+                 std::string::npos &&
+             bounded.find("\"entry_limit_frontier_reached\":false") !=
++                std::string::npos &&
++            bounded.find("\"source_evidence_set_digest\":\"" +
++                         std::string(64U, 'f') + "\"") !=
++                std::string::npos &&
++            bounded.find("\"retained_payload_reachability\":{\"scope\":\"share_retained_file_operations\"") !=
+                 std::string::npos,
+-        "canonical history renderer exceeded or concealed its byte frontier");
++        "canonical exact-history renderer exceeded, concealed, or dropped its composed reachability frontier");
+     require(
+         anonsync::kSyncReplicaHistoricalVersionMaximumStatusInventoryBytes <
+             anonsync::kSyncLocalStatusSocketMaximumResponseBytes,
+@@ -341,6 +369,7 @@ int main() {
+         const anonsync::SyncReplicaHistoricalVersionSourceCutpoint
+             historical_source{
+                 .operation_set_digest = historical_operation,
++                .evidence_set_digest = historical_current,
+                 .payload_snapshot_digest = historical_other,
+             };
+         const std::string historical_source_token = anonsync::
+@@ -622,7 +651,7 @@ int main() {
+             versions_waiter.join();
+             require(
+                 first_versions ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v5\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":1,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":64,"
+@@ -653,7 +682,7 @@ int main() {
+                     socket_path);
+             require(
+                 versions_two ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v5\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":2,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":64,"
+@@ -698,6 +727,7 @@ int main() {
+             invalid_page.expected_source_cutpoint =
+                 anonsync::SyncReplicaHistoricalVersionSourceCutpoint{
+                     .operation_set_digest = "not-a-digest",
++                    .evidence_set_digest = historical_current,
+                     .payload_snapshot_digest = historical_other,
+                 };
+             require_throws(
+@@ -712,7 +742,7 @@ int main() {
+                     socket_path, page_query);
+             require(
+                 changed_page_while_inspection ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v5\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"rejected\","
+                     "\"reason\":\"different_historical_version_pending\","
+@@ -732,7 +762,7 @@ int main() {
+                         historical_other + "\n");
+             require(
+                 legacy_page_while_inspection ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v5\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"rejected\","
+                     "\"reason\":\"different_historical_version_pending\","
+@@ -777,7 +807,7 @@ int main() {
+                     socket_path, page_query);
+             require(
+                 accepted_page ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v5\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":3,\"inspection_mode\":\"exact_payload_availability\",\"maximum_entries\":7,"
+@@ -982,7 +1012,7 @@ int main() {
+                     socket_path);
+             require(
+                 rejected_versions ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v5\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"rejected\","
+                     "\"reason\":\"drain_requested\","
+@@ -1167,6 +1197,7 @@ int main() {
+                         SyncReplicaHistoricalVersionInspectionMode::
+                             CausalMetadataOnly,
+                     .operation_set_digest = historical_operation,
++                    .evidence_set_digest = std::nullopt,
+                     .payload_snapshot_digest = std::nullopt,
+                 };
+             const std::string metadata_token = anonsync::
+@@ -1178,7 +1209,7 @@ int main() {
+                     socket_path, metadata_query);
+             require(
+                 accepted_metadata ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v4\","
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v5\","
+                     "\"command\":\"versions\","
+                     "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":1,"
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index 58f6c3dedd684b4cdefe0bcda9b4c879239bc9e8..e30241e616338f41805ffd3791057d9e06fb7e09 100755
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -5148,6 +5148,8 @@ void test_historical_version_inspection_and_causal_restore() {
+             before_restore.source_operation_set_digest ==
+                 fixture.replica.snapshot_or_throw().operation_set_digest &&
+             before_restore.source_visible_state_digest.size() == 64U &&
++            before_restore.source_evidence_set_digest.has_value() &&
++            before_restore.source_evidence_set_digest->size() == 64U &&
+             before_restore.source_payload_snapshot_digest.has_value() &&
+             before_restore.source_payload_snapshot_digest->size() == 64U &&
+             before_restore.historical_file_operation_count == 1U &&
+@@ -5155,6 +5157,7 @@ void test_historical_version_inspection_and_causal_restore() {
+                 std::optional<std::uint64_t>(1U) &&
+             before_restore.restore_ready_count ==
+                 std::optional<std::uint64_t>(1U) &&
++            before_restore.retained_payload_reachability.has_value() &&
+             !before_restore.truncated &&
+             before_restore.entries.size() == 1U,
+         "historical-version inspection did not report one bounded retained predecessor");
+@@ -5256,8 +5259,24 @@ void test_historical_version_inspection_and_causal_restore() {
+             decode_sync_replica_historical_version_source_cutpoint_or_throw(
+                 bounded_source_token,
+                 "historical-version test source cutpoint") == bounded_source &&
+-            bounded_source_token.size() == 132U,
++            bounded_source_token.starts_with("v3:exact:") &&
++            bounded_source_token.size() == 203U,
+         "historical-version source cutpoint did not round-trip canonically");
++    auto legacy_exact_source = bounded_source;
++    legacy_exact_source.evidence_set_digest.reset();
++    const std::string legacy_exact_token = anonsync::
++        encode_sync_replica_historical_version_source_cutpoint_or_throw(
++            legacy_exact_source,
++            "historical-version legacy exact source cutpoint");
++    require(
++        legacy_exact_token.starts_with("v1:") &&
++            legacy_exact_token.size() == 132U &&
++            anonsync::
++                decode_sync_replica_historical_version_source_cutpoint_or_throw(
++                    legacy_exact_token,
++                    "historical-version legacy exact source cutpoint") ==
++                legacy_exact_source,
++        "rev0968 exact source cutpoint compatibility was not retained");
+     require_error(
+         [&] {
+             (void)anonsync::
+@@ -5524,11 +5543,13 @@ void test_historical_version_metadata_only_is_payload_cold() {
+     require(
+         metadata.query == metadata_query &&
+             metadata.source_operation_set_digest.size() == 64U &&
++            !metadata.source_evidence_set_digest.has_value() &&
+             !metadata.source_payload_snapshot_digest.has_value() &&
+             !metadata.payload_scan_hashed_entry_count.has_value() &&
+             !metadata.payload_scan_hashed_bytes.has_value() &&
+             !metadata.payload_scan_reused_entry_count.has_value() &&
+             !metadata.payload_scan_reused_bytes.has_value() &&
++            !metadata.retained_payload_reachability.has_value() &&
+             !metadata.payload_present_count.has_value() &&
+             !metadata.restore_ready_count.has_value() &&
+             metadata.historical_file_operation_count == 1U &&
+@@ -5583,7 +5604,9 @@ void test_historical_version_metadata_only_is_payload_cold() {
+     exact_query.canonical_path = std::string(path);
+     const auto exact = scan->inspect_historical_versions_or_throw(exact_query);
+     require(
+-        exact.source_payload_snapshot_digest.has_value() &&
++        exact.source_evidence_set_digest.has_value() &&
++            exact.source_payload_snapshot_digest.has_value() &&
++            exact.retained_payload_reachability.has_value() &&
+             exact.payload_present_count == std::optional<std::uint64_t>(1U) &&
+             exact.restore_ready_count == std::optional<std::uint64_t>(1U) &&
+             exact.entries.size() == 1U &&
+@@ -5604,6 +5627,194 @@ void test_historical_version_metadata_only_is_payload_cold() {
+         "metadata-only inspection accepted an exact-payload source cutpoint");
+ }
+ 
++
++void test_historical_version_payload_reachability_and_evidence_cutpoint() {
++    Fixture fixture("anonsync-folder-historical-version-retained-reachability");
++    constexpr std::string_view path = "reachability/file.txt";
++    const std::string predecessor_bytes = "retained predecessor bytes\n";
++    const std::string current_bytes = "current visible bytes\n";
++    const std::string orphan_bytes = "orphan diagnostic bytes\n";
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "historical reachability catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++
++    write_file(fixture.shared_root / path, predecessor_bytes);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto predecessor_entry = find_entry(scan->snapshot_or_throw(), path);
++    require(
++        predecessor_entry.has_value(),
++        "retained-reachability fixture lost its predecessor");
++
++    write_file(fixture.shared_root / path, current_bytes);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto current_entry = find_entry(scan->snapshot_or_throw(), path);
++    require(
++        current_entry.has_value() &&
++            current_entry->operation_id != predecessor_entry->operation_id,
++        "retained-reachability fixture did not publish its successor");
++
++    std::error_code remove_error;
++    require(
++        fs::remove(
++            fixture.payload_root / predecessor_entry->content_sha256,
++            remove_error) && !remove_error,
++        "retained-reachability fixture could not remove its predecessor payload");
++    const auto orphan = fixture.payload_store.put_payload_or_throw(orphan_bytes);
++    require(
++        orphan.content_sha256 == anonsync::sha256_hex(orphan_bytes),
++        "retained-reachability fixture did not retain its unreferenced object");
++
++    const anonsync::SyncReplicaActor parent_actor{
++        "device-reachability-missing-parent", 81U};
++    const anonsync::SyncReplicaActor child_actor{
++        "device-reachability-pending-child", 82U};
++    anonsync::SyncReplicaOperation missing_parent;
++    missing_parent.folder_id = Fixture::folder_id;
++    missing_parent.canonical_path = "reachability/pending.txt";
++    missing_parent.kind = anonsync::SyncReplicaValueKind::File;
++    missing_parent.size_bytes = 7U;
++    missing_parent.content_sha256 = anonsync::sha256_hex("missing");
++    missing_parent.dot = {parent_actor, 1U};
++    missing_parent.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(missing_parent);
++
++    anonsync::SyncReplicaOperation pending_child;
++    pending_child.folder_id = Fixture::folder_id;
++    pending_child.canonical_path = missing_parent.canonical_path;
++    pending_child.kind = anonsync::SyncReplicaValueKind::File;
++    pending_child.size_bytes = current_bytes.size();
++    pending_child.content_sha256 = anonsync::sha256_hex(current_bytes);
++    pending_child.dot = {child_actor, 1U};
++    pending_child.causal_context = {
++        {missing_parent.dot.actor, missing_parent.dot.counter}};
++    pending_child.predecessor_operation_ids = {
++        missing_parent.operation_id};
++    pending_child.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(pending_child);
++    require(
++        fixture.replica.accept_remote_or_throw(pending_child) ==
++                anonsync::SyncReplicaAdmission::InsertedPending &&
++            restore_model(fixture.replica.snapshot_or_throw()).evidence_state(
++                pending_child.operation_id) ==
++                anonsync::SyncReplicaEvidenceState::PendingMissingDependency,
++        "retained-reachability fixture did not preserve inactive file evidence");
++    const auto retained_model = restore_model(fixture.replica.snapshot_or_throw());
++    std::uint64_t visited_evidence = 0U;
++    const auto noncopyable_visitor = [proof = std::make_unique<int>(17),
++                                      &visited_evidence](
++                                         const anonsync::SyncReplicaOperation&,
++                                         anonsync::SyncReplicaEvidenceState) {
++        if (*proof == 17) ++visited_evidence;
++    };
++    retained_model.for_each_evidence_operation(noncopyable_visitor);
++    require(
++        visited_evidence == 3U,
++        "borrowed retained-evidence traversal copied, erased, or omitted its non-copyable visitor");
++
++    anonsync::SyncReplicaHistoricalVersionQuery exact_query;
++    exact_query.canonical_path = std::string(path);
++    const auto exact = scan->inspect_historical_versions_or_throw(exact_query);
++    require(
++        exact.source_evidence_set_digest.has_value() &&
++            exact.source_evidence_set_digest->size() == 64U &&
++            exact.retained_payload_reachability.has_value() &&
++            exact.entries.size() == 1U &&
++            exact.entries.front().operation_id ==
++                predecessor_entry->operation_id &&
++            exact.entries.front().payload_present ==
++                std::optional<bool>(false),
++        "exact reachability inspection lost its evidence cutpoint or path page");
++
++    const auto& reachability = *exact.retained_payload_reachability;
++    require(
++        reachability.payload_entry_count == 2U &&
++            reachability.payload_indexed_bytes ==
++                current_bytes.size() + orphan_bytes.size() &&
++            reachability.current_visible.file_operation_count == 1U &&
++            reachability.current_visible.distinct_content_count == 1U &&
++            reachability.current_visible.present_content_count == 1U &&
++            reachability.current_visible.present_content_bytes ==
++                current_bytes.size() &&
++            reachability.current_visible.missing_content_count == 0U &&
++            reachability.superseded_active.file_operation_count == 1U &&
++            reachability.superseded_active.distinct_content_count == 1U &&
++            reachability.superseded_active.present_content_count == 0U &&
++            reachability.superseded_active.present_content_bytes == 0U &&
++            reachability.superseded_active.missing_content_count == 1U &&
++            reachability.inactive_evidence.file_operation_count == 1U &&
++            reachability.inactive_evidence.distinct_content_count == 1U &&
++            reachability.inactive_evidence.present_content_count == 1U &&
++            reachability.inactive_evidence.present_content_bytes ==
++                current_bytes.size() &&
++            reachability.inactive_evidence.missing_content_count == 0U &&
++            reachability.retained_union.file_operation_count == 3U &&
++            reachability.retained_union.distinct_content_count == 2U &&
++            reachability.retained_union.present_content_count == 1U &&
++            reachability.retained_union.present_content_bytes ==
++                current_bytes.size() &&
++            reachability.retained_union.missing_content_count == 1U &&
++            reachability.unreferenced_payload_count == 1U &&
++            reachability.unreferenced_payload_bytes == orphan_bytes.size(),
++        "retained reachability did not distinguish overlapping classes, missing history, and unreferenced objects");
++
++    anonsync::SyncReplicaHistoricalVersionQuery metadata_query = exact_query;
++    metadata_query.inspection_mode = anonsync::
++        SyncReplicaHistoricalVersionInspectionMode::CausalMetadataOnly;
++    const auto metadata =
++        scan->inspect_historical_versions_or_throw(metadata_query);
++    require(
++        !metadata.source_evidence_set_digest.has_value() &&
++            !metadata.source_payload_snapshot_digest.has_value() &&
++            !metadata.retained_payload_reachability.has_value(),
++        "metadata history browsing fabricated retained-payload authority");
++
++    const auto exact_cutpoint = exact.source_cutpoint();
++    require(
++        exact_cutpoint.evidence_set_digest.has_value() &&
++            anonsync::
++                encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                    exact_cutpoint,
++                    "retained reachability exact cutpoint").starts_with(
++                        "v3:exact:"),
++        "retained reachability did not emit an evidence-bound exact token");
++
++    anonsync::SyncReplicaOperation second_pending = pending_child;
++    second_pending.canonical_path = "reachability/second-pending.txt";
++    second_pending.dot = {
++        anonsync::SyncReplicaActor{"device-reachability-second-child", 83U},
++        1U};
++    second_pending.operation_id =
++        anonsync::make_sync_replica_operation_id_or_throw(second_pending);
++    require(
++        fixture.replica.accept_remote_or_throw(second_pending) ==
++            anonsync::SyncReplicaAdmission::InsertedPending,
++        "retained-reachability fixture did not advance inactive evidence only");
++
++    const fs::path unexpected =
++        fixture.payload_root / "unexpected-reachability-entry";
++    write_file(unexpected, "not a payload object");
++    exact_query.expected_source_cutpoint = exact_cutpoint;
++    bool caught_evidence_change = false;
++    try {
++        (void)scan->inspect_historical_versions_or_throw(exact_query);
++    } catch (const anonsync::
++                 SyncReplicaHistoricalVersionSourceChangedError& error) {
++        caught_evidence_change = true;
++        require(
++            error.stage() == anonsync::
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    EvidenceSetBeforePayloadObservation,
++            "inactive-evidence drift reported the wrong exact source stage");
++    }
++    require(
++        caught_evidence_change,
++        "inactive-evidence drift reached the payload namespace instead of failing at the evidence cutpoint");
++    require(
++        fs::remove(unexpected),
++        "retained-reachability fixture could not remove its negative-control entry");
++}
++
+ void test_historical_version_restore_from_tombstone() {
+     Fixture fixture("anonsync-folder-historical-version-tombstone-restore");
+     constexpr std::string_view path = "deleted/report.txt";
+@@ -6406,6 +6617,7 @@ int main() {
+         test_remote_apply_path_fence_and_crash_recovery();
+         test_historical_version_inspection_and_causal_restore();
+         test_historical_version_metadata_only_is_payload_cold();
++        test_historical_version_payload_reachability_and_evidence_cutpoint();
+         test_historical_version_restore_from_tombstone();
+         test_rev0951_cyclic_catalog_migrates_cursor_and_resets_sweep();
+         test_rev0950_fair_scan_catalog_migrates_without_losing_journal();
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 85a26b72f4d0e79b3ddbbd3d7048282abedfd7ce..54f9e6cf48f58cb3aed6ea95fb3af0b51d285208 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -145,6 +145,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0970.md"),
+     Path("BOUNDED_HISTORICAL_STATUS_PAGE_AND_SINGLE_RESULT_AUDIT_rev0971.md"),
+     Path("REVISION_NOTES_rev0971.md"),
++    Path("RETAINED_PAYLOAD_REACHABILITY_AND_CANONICAL_STATUS_FRONTIER_AUDIT_rev0972.md"),
++    Path("REVISION_NOTES_rev0972.md"),
+ )
+ 
+ 
+@@ -459,6 +461,10 @@ def main() -> int:
+         "BOUNDED_HISTORICAL_STATUS_PAGE_AND_SINGLE_RESULT_AUDIT_rev0971.md"
+     ]
+     rev0971_notes = text["REVISION_NOTES_rev0971.md"]
++    retained_reachability_frontier_design = text[
++        "RETAINED_PAYLOAD_REACHABILITY_AND_CANONICAL_STATUS_FRONTIER_AUDIT_rev0972.md"
++    ]
++    rev0972_notes = text["REVISION_NOTES_rev0972.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -602,6 +608,17 @@ def main() -> int:
+         if rev0971_verifier_start >= 0 and rev0971_verifier_end >= 0
+         else ""
+     )
++    rev0972_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 972:"
++    )
++    rev0972_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0972_verifier_start
++    )
++    rev0972_verifier_block = (
++        verifier[rev0972_verifier_start:rev0972_verifier_end]
++        if rev0972_verifier_start >= 0 and rev0972_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -4492,7 +4509,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v16"' in peer_status_h
++        '"anonsync.peer-service.status.v17"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4906,12 +4923,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v16"' in peer_status_h
++        '"anonsync.peer-service.status.v17"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v16"'
++        and '"anonsync.peer-service.status.v17"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v16"'
++        and '"anonsync.peer-service.status.v17"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -6397,7 +6414,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v16"' in peer_status_h
++        '"anonsync.peer-service.status.v17"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6608,7 +6625,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"' in peer_status_h
++        and '"anonsync.peer-service.status.v17"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -6818,7 +6835,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v16"' in peer_status_h
++        '"anonsync.peer-service.status.v17"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -6834,8 +6851,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v16"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v16"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v17"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v17"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7528,7 +7545,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"' in peer_status_h
++        and '"anonsync.peer-service.status.v17"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7744,7 +7761,7 @@ def main() -> int:
+             for token in (
+                 "MODE LIMIT PATH_HEX CURSOR SOURCE_CUTPOINT_OR_DASH",
+                 "kHistoricalVersionsQueryRequestPrefix",
+-                "anonsync.local-historical-versions.response.v4",
++                "anonsync.local-historical-versions.response.v5",
+                 "kMaximumRequestBytes = 16U * 1024U",
+                 "field_count != 3U && field_count != 4U && field_count != 5U",
+                 "historical_version_pending->query != query",
+@@ -7768,7 +7785,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v16"' in peer_status_h
++        '"anonsync.peer-service.status.v17"' in peer_status_h
+         and all(
+             token in peer_status + historical_inventory_json
+             for token in (
+@@ -7869,7 +7886,7 @@ def main() -> int:
+                 "payload_snapshot_digest",
+                 'return "v1:" + cutpoint.operation_set_digest',
+                 "constexpr std::size_t encoded_size",
+-                "token.starts_with(exact_prefix)",
++                "token.starts_with(exact_v1_prefix)",
+                 "enum class SyncReplicaHistoricalVersionSourceChangeStage",
+                 "OperationSetBeforePayloadObservation",
+                 "OperationSetDuringPayloadObservation",
+@@ -7916,7 +7933,7 @@ def main() -> int:
+                 r'\"expected_source_cutpoint\"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"' in peer_status_h
++        and '"anonsync.peer-service.status.v17"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7961,7 +7978,7 @@ def main() -> int:
+         all(
+             token in local_status
+             for token in (
+-                "anonsync.local-historical-versions.response.v4",
++                "anonsync.local-historical-versions.response.v5",
+                 "std::array<std::string_view, 5U> fields",
+                 "field_count != 3U && field_count != 4U && field_count != 5U",
+                 "decode_sync_replica_historical_version_source_cutpoint_or_throw",
+@@ -8033,11 +8050,11 @@ def main() -> int:
+                 "historical_version_generation",
+                 "historical_version_failure_class",
+                 "historical_version_source_change_stage",
+-                '"schema": "anonsync.peer-service.status.v16"',
+-                '"schema": "anonsync.local-historical-versions.response.v4"',
++                '"schema": "anonsync.peer-service.status.v17"',
++                '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v17"' in service_i2p_ingress_runtime,
+         "rev0968_regressions_bind_token_codec_payload_drift_causal_drift_and_real_service_continuation",
+         "focused C++ tests and real process oracles cover canonical framing, both externally inducible drift classes, exact page-token reuse, stable retained failure evidence, transient matching-step coherence, current schemas, and route status compatibility",
+     )
+@@ -8199,7 +8216,7 @@ def main() -> int:
+                 "status.restore_request.operation_id",
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"' in peer_status_h,
++        and '"anonsync.peer-service.status.v17"' in peer_status_h,
+         "rev0969_full_restore_identity_controls_coalescing_execution_and_status",
+         "a different expected head cannot coalesce with pending work, and stable plus matching transient status retain the exact request and typed source-change stage",
+     )
+@@ -8232,12 +8249,12 @@ def main() -> int:
+                 "restore_current_operation",
+                 "stale exact-current historical restore",
+                 "stale exact-current restore terminated the service",
+-                '"schema": "anonsync.peer-service.status.v16"',
++                '"schema": "anonsync.peer-service.status.v17"',
+                 '"expected_current_operation_id"',
+                 '"historical_version_restore_request"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v17"' in service_i2p_ingress_runtime,
+         "rev0969_regressions_prove_no_payload_work_full_request_coalescing_and_same_pid_stale_failure",
+         "focused C++ and real-process oracles mechanically distinguish the early stale fence from lease access, cover strict framing, and prove the daemon survives a replayed stale operator intent",
+     )
+@@ -8377,12 +8394,12 @@ def main() -> int:
+         all(
+             token in historical_query_h
+             for token in (
+-                'constexpr std::string_view exact_prefix = "v1:"',
++                'constexpr std::string_view exact_v1_prefix = "v1:"',
+                 'constexpr std::string_view metadata_prefix = "v2:metadata:"',
+                 "std::optional<std::string> payload_snapshot_digest",
+-                "metadata-only cutpoint carries a payload digest",
++                "metadata-only cutpoint carries an exact-mode digest",
+                 "expected source cutpoint mode does not match the query",
+-                "token.starts_with(exact_prefix)",
++                "token.starts_with(exact_v1_prefix)",
+                 "token.starts_with(metadata_prefix)",
+             )
+         )
+@@ -8447,7 +8464,7 @@ def main() -> int:
+                 "exact_payload_availability or causal_metadata_only",
+                 "field_count != 3U && field_count != 4U && field_count != 5U",
+                 "sync_replica_historical_version_inspection_mode_from_name_or_throw",
+-                "anonsync.local-historical-versions.response.v4",
++                "anonsync.local-historical-versions.response.v5",
+                 'response << ",\\\"inspection_mode\\\":"',
+             )
+         )
+@@ -8461,7 +8478,7 @@ def main() -> int:
+                 "[--inspection-mode exact|metadata]",
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"' in peer_status_h,
++        and '"anonsync.peer-service.status.v17"' in peer_status_h,
+         "rev0970_cli_socket_and_status_share_one_mode_bearing_contract",
+         "the shipping default remains exact, new clients send one canonical five-field request, legacy three/four-field requests remain exact, and live plus terminal status advance together",
+     )
+@@ -8532,11 +8549,11 @@ def main() -> int:
+                 '"v2:metadata:"',
+                 "causal-metadata historical inspection fabricated",
+                 '"historical_version_inspections": 4',
+-                '"schema": "anonsync.peer-service.status.v16"',
+-                '"schema": "anonsync.local-historical-versions.response.v4"',
++                '"schema": "anonsync.peer-service.status.v17"',
++                '"schema": "anonsync.local-historical-versions.response.v5"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"'
++        and '"anonsync.peer-service.status.v17"'
+         in service_i2p_ingress_runtime,
+         "rev0970_shipping_process_oracles_require_null_payload_evidence_and_schema_coherence",
+         "one real retained two-peer service executes the metadata CLI, publishes a v2 token and null payload facts, accounts the completed action, and keeps direct plus I2P status readers on v15",
+@@ -8656,7 +8673,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v16"' in peer_status_h
++        '"anonsync.peer-service.status.v17"' in peer_status_h
+         and "append_sync_replica_historical_version_inventory_json" in peer_status
+         and "summary.last_step->historical_version_inventory.reset();" in peer_status,
+         "rev0971_status_uses_the_canonical_encoder_and_retains_one_completed_inventory",
+@@ -8668,7 +8685,7 @@ def main() -> int:
+             token in local_status_runtime
+             for token in (
+                 "test_historical_inventory_status_byte_frontier",
+-                "maximum accepted history page must demonstrate the status overflow boundary",
++                "maximum exact history page must compose evidence-bound reachability with the status overflow boundary",
+                 "generic last_step retained a duplicate completed history page",
+             )
+         )
+@@ -8677,10 +8694,10 @@ def main() -> int:
+             for token in (
+                 "historical inventory omitted its status byte limit",
+                 "duplicated the stable history inventory",
+-                '"schema": "anonsync.peer-service.status.v16"',
++                '"schema": "anonsync.peer-service.status.v17"',
+             )
+         )
+-        and '"anonsync.peer-service.status.v16"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v17"' in service_i2p_ingress_runtime,
+         "rev0971_regressions_prove_the_large_page_frontier_and_single_copy_shipping_status",
+         "the focused C++ oracle constructs the accepted 1,024-entry worst-shape page, while real configured-service and I2P readers require v16, coherent stop reasons, and no duplicate stable inventory in last_step",
+     )
+@@ -8750,6 +8767,204 @@ def main() -> int:
+         "the release verifier makes the canonical encoder, owner/service/status integration, focused and process regressions, records, structural audit, and package policy mandatory from rev0971 onward",
+     )
+ 
++    require(
++        all(
++            token in folder_scan_h
++            for token in (
++                "SyncReplicaHistoricalVersionPayloadReachabilityClass",
++                "current_visible",
++                "superseded_active",
++                "inactive_evidence",
++                "retained_union",
++                "unreferenced_payload_count",
++                "It is not reclaimable authority",
++            )
++        ),
++        "rev0972_header_models_all_retained_file_evidence_without_collection_authority",
++        "the public exact-history result separates current, superseded, inactive, union, missing, and unreferenced facts while disclaiming unlink authority",
++    )
++
++    require(
++        all(
++            token in historical_query_h
++            for token in (
++                "v3:exact:",
++                "evidence_set_digest",
++                "EvidenceSetBeforePayloadObservation",
++                "EvidenceSetDuringPayloadObservation",
++                "v1:",
++                "v2:metadata:",
++            )
++        )
++        and ordered(
++            historical_version_inspection,
++            "EvidenceSetBeforePayloadObservation",
++            "state_->payload_store->snapshot_or_throw()",
++            "EvidenceSetDuringPayloadObservation",
++        ),
++        "rev0972_exact_cutpoint_binds_operations_evidence_and_payload_before_and_across_scan",
++        "new exact pages bind the complete retained evidence set, reject known drift before payload work, and bracket evidence across the complete payload observation while preserving v1/v2 decoding",
++    )
++
++    evidence_visitor = function_body(model_h, "void for_each_evidence_operation(")
++    require(
++        "template <typename Visitor>" in model_h
++        and "const Visitor& visitor" in evidence_visitor
++        and "std::function" not in evidence_visitor
++        and "visitor(operation, state->second)" in evidence_visitor
++        and "maps diverged" in evidence_visitor,
++        "rev0972_retained_evidence_traversal_is_linear_borrowed_and_fail_closed",
++        "inactive evidence is visited in map lockstep without callback copying, type erasure, or per-operation lookup",
++    )
++
++    require(
++        all(
++            token in historical_version_inspection
++            for token in (
++                "kCurrentVisibleMask",
++                "kSupersededActiveMask",
++                "kInactiveEvidenceMask",
++                "for_each_active_path",
++                "for_each_evidence_operation",
++                "content_inventory()",
++                "physical payload entry partition",
++                "physical payload byte partition",
++                "retained file-operation partition",
++            )
++        )
++        and "inventory.retained_payload_reachability.emplace()" in historical_version_inspection
++        and "!metadata.retained_payload_reachability.has_value()" in folder_scan_runtime,
++        "rev0972_one_grouped_active_walk_one_inactive_walk_and_one_payload_pass_partition_reachability",
++        "exact history avoids an operation-by-payload cross product, checks entry/byte/reference equations before publication, and leaves metadata mode authority-null",
++    )
++
++    require(
++        all(
++            token in historical_inventory_json
++            for token in (
++                "source_evidence_set_digest",
++                "retained_payload_reachability",
++                "share_retained_file_operations",
++                "reclaimable_authority",
++                "class_totals_overlap",
++                "append_payload_reachability",
++                "append_inventory(output, inventory, projection)",
++                "class CountingStreamBuffer final",
++            )
++        )
++        and "append_sync_replica_historical_version_inventory_json" in peer_status
++        and "share_retained_file_operations" not in peer_status
++        and "reclaimable_authority" not in peer_status,
++        "rev0972_reachability_is_inside_the_same_counted_canonical_status_stream",
++        "source evidence and reachability are counted and emitted by rev0971's one canonical encoder; service status delegates instead of carrying a second serializer that could bypass the byte frontier",
++    )
++
++    require(
++        '"anonsync.peer-service.status.v17"' in peer_status_h
++        and '"anonsync.local-historical-versions.response.v5"' in local_status
++        and "anonsync.peer-service.status.v17" in service_configuration_runtime
++        and "anonsync.peer-service.status.v17" in service_i2p_ingress_runtime
++        and "anonsync.peer-service.status.v16" not in peer_status_h
++        and "anonsync.peer-service.status.v16" not in service_configuration_runtime
++        and "anonsync.peer-service.status.v16" not in service_i2p_ingress_runtime,
++        "rev0972_resolves_the_incompatible_sibling_v16_contract_with_one_v17_shape",
++        "live, terminal, direct-process, and I2P-process readers require the merged v17 schema while the owner-only acceptance response remains v5",
++    )
++
++    require(
++        all(
++            token in folder_scan_runtime
++            for token in (
++                "test_historical_version_payload_reachability_and_evidence_cutpoint",
++                "PendingMissingDependency",
++                "noncopyable_visitor",
++                "unreferenced_payload_count == 1U",
++                "EvidenceSetBeforePayloadObservation",
++                "metadata history browsing fabricated",
++            )
++        ),
++        "rev0972_owner_regression_covers_overlap_missing_orphan_metadata_and_prescan_drift",
++        "the focused owner oracle exercises current/inactive sharing, missing history, an orphan object, non-copyable visitation, metadata coldness, and exact evidence fencing",
++    )
++
++    require(
++        all(
++            token in local_status_runtime
++            for token in (
++                "test_historical_inventory_status_byte_frontier",
++                "maximum exact history page must compose evidence-bound reachability with the status overflow boundary",
++                "canonical exact-history renderer exceeded, concealed, or dropped its composed reachability frontier",
++                "generic last_step retained a duplicate completed history page",
++                "v3:exact:",
++                "retained_payload_reachability",
++            )
++        ),
++        "rev0972_maximum_page_regression_binds_v3_reachability_frontier_and_single_copy",
++        "the focused local-status oracle proves the combined exact inventory exceeds the unbounded transport budget, is reduced to the exact 256-KiB frontier, retains its v3 cutpoint and reachability object, and is stored once",
++    )
++
++    require(
++        "len(value) == 203" in service_configuration_runtime
++        and "v3:exact:" in service_configuration_runtime
++        and "require_historical_payload_reachability" in service_configuration_runtime
++        and "reclaimable_authority" in service_configuration_runtime
++        and "anonsync.local-historical-versions.response.v5" in service_configuration_runtime,
++        "rev0972_shipping_process_oracle_validates_v3_v17_v5_and_partition_equations",
++        "the retained two-peer service rejects malformed source tokens, fabricated metadata authority, inconsistent object/byte partitions, and schema drift",
++    )
++
++    require(
++        all(
++            token in normalized_prose(retained_reachability_frontier_design)
++            for token in (
++                "Inactive evidence is load-bearing",
++                "reclaimable_authority:false",
++                "Canonical frontier integration and schema collision",
++                "Git makes object reclamation reachability-driven",
++                "Syncthing",
++                "Why this is not collection authority",
++                "v3:exact",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0972_notes)
++            for token in (
++                "share-level retained-payload reachability",
++                "incompatible sibling-schema collision",
++                "compatible v1",
++                "unchanged v2",
++                "does not add garbage collection",
++            )
++        )
++        and "## Rev0972: retained-payload reachability inside the canonical frontier" in readme,
++        "rev0972_records_authority_cost_schema_collision_research_compatibility_and_nonclaims",
++        "the design record, revision notes, and README explain inactive evidence, v3, canonical byte accounting, the v16 collision, and why unreferenced is not safe-to-delete",
++    )
++
++    require(
++        rev0972_verifier_block.count(
++            "if revision_number is not None and revision_number >= 972:"
++        ) == 1
++        and all(
++            token in rev0972_verifier_block
++            for token in (
++                "RETAINED_PAYLOAD_REACHABILITY_AND_CANONICAL_STATUS_FRONTIER_AUDIT_rev0972.md",
++                "REVISION_NOTES_rev0972.md",
++                "src/sync_replica_model.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_replica_historical_version_query.hpp",
++                "src/sync_replica_historical_version_inventory_json.cpp",
++                "src/sync_replica_peer_service_status.hpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/test_anonsync_service_i2p_ingress.py",
++            )
++        ),
++        "rev0972_package_policy_binds_every_reachability_cutpoint_and_frontier_surface",
++        "the release verifier requires the model, owner, token, canonical serializer, schemas, focused/process tests, records, structural audit, and package policy from rev0972 onward",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -8826,6 +9041,17 @@ def main() -> int:
+         "bounded history-status changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final rev0971 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0972" not in rev0972_notes
++        and "VALIDATION_PENDING_REV0972" not in retained_reachability_frontier_design
++        and "VALIDATION_PENDING_REV0972" not in readme
++        and "ARCHIVE_PENDING_REV0972" not in bootstrap
++        and "CODENAME_PENDING_REV0972" not in bootstrap
++        and "VALIDATION_PENDING_REV0972" not in bootstrap,
++        "rev0972_final_validation_and_visible_release_cutpoint_are_sealed",
++        "retained-reachability and canonical-frontier changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final rev0972 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index a27c2a27245b32245544a1ff27f02f8d8a6906b4..65da9404b4ec15372d94cf8ea24b5488d0c09d5e 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -324,6 +324,14 @@ def is_canonical_sha256(value: Any) -> bool:
+ def is_canonical_historical_source_cutpoint(value: Any) -> bool:
+     if not isinstance(value, str):
+         return False
++    if len(value) == 203 and value.startswith("v3:exact:"):
++        return (
++            value[73] == ":"
++            and value[138] == ":"
++            and is_canonical_sha256(value[9:73])
++            and is_canonical_sha256(value[74:138])
++            and is_canonical_sha256(value[139:203])
++        )
+     if len(value) == 132 and value.startswith("v1:"):
+         return (
+             value[67] == ":"
+@@ -363,12 +371,75 @@ def require_historical_version_query(query: Any, label: str) -> None:
+     if source_cutpoint is not None:
+         if not is_canonical_historical_source_cutpoint(source_cutpoint):
+             fail(f"{label} historical query source cutpoint was not canonical")
+-        if inspection_mode == "exact_payload_availability" and not source_cutpoint.startswith("v1:"):
++        if inspection_mode == "exact_payload_availability" and not (
++            source_cutpoint.startswith("v3:exact:")
++            or source_cutpoint.startswith("v1:")
++        ):
+             fail(f"{label} exact historical query carried a metadata cutpoint")
+         if inspection_mode == "causal_metadata_only" and not source_cutpoint.startswith("v2:metadata:"):
+             fail(f"{label} metadata historical query carried an exact cutpoint")
+ 
+ 
++def require_historical_payload_reachability(value: Any, label: str) -> None:
++    if not isinstance(value, dict) or set(value) != {
++        "scope", "reclaimable_authority", "class_totals_overlap",
++        "payload_entry_count", "payload_indexed_bytes", "current_visible",
++        "superseded_active", "inactive_evidence", "retained_union",
++        "unreferenced_by_retained_file_operations_count",
++        "unreferenced_by_retained_file_operations_bytes",
++    }:
++        fail(f"{label} retained-payload reachability was not canonical")
++    if value["scope"] != "share_retained_file_operations":
++        fail(f"{label} retained-payload reachability changed scope")
++    if value["reclaimable_authority"] is not False:
++        fail(f"{label} retained-payload reachability claimed collection authority")
++    if value["class_totals_overlap"] is not True:
++        fail(f"{label} retained-payload reachability hid overlapping classes")
++    for field in (
++        "payload_entry_count", "payload_indexed_bytes",
++        "unreferenced_by_retained_file_operations_count",
++        "unreferenced_by_retained_file_operations_bytes",
++    ):
++        if not isinstance(value[field], int) or value[field] < 0:
++            fail(f"{label} retained-payload reachability omitted bounded {field}")
++
++    classes: dict[str, dict[str, int]] = {}
++    class_fields = {
++        "file_operation_count", "distinct_content_count",
++        "present_content_count", "present_content_bytes",
++        "missing_content_count",
++    }
++    for name in (
++        "current_visible", "superseded_active", "inactive_evidence",
++        "retained_union",
++    ):
++        item = value[name]
++        if not isinstance(item, dict) or set(item) != class_fields:
++            fail(f"{label} retained-payload class {name} was not canonical")
++        for field in class_fields:
++            if not isinstance(item[field], int) or item[field] < 0:
++                fail(f"{label} retained-payload class {name} omitted {field}")
++        if item["present_content_count"] + item["missing_content_count"] != item[
++            "distinct_content_count"
++        ]:
++            fail(f"{label} retained-payload class {name} did not partition content")
++        classes[name] = item
++
++    if classes["retained_union"]["file_operation_count"] != sum(
++        classes[name]["file_operation_count"]
++        for name in ("current_visible", "superseded_active", "inactive_evidence")
++    ):
++        fail(f"{label} retained-payload operation classes did not partition evidence")
++    if classes["retained_union"]["present_content_count"] + value[
++        "unreferenced_by_retained_file_operations_count"
++    ] != value["payload_entry_count"]:
++        fail(f"{label} retained-payload objects did not partition the snapshot")
++    if classes["retained_union"]["present_content_bytes"] + value[
++        "unreferenced_by_retained_file_operations_bytes"
++    ] != value["payload_indexed_bytes"]:
++        fail(f"{label} retained-payload bytes did not partition the snapshot")
++
++
+ def require_historical_version_inventory(
+     inventory: Any, label: str
+ ) -> None:
+@@ -383,17 +454,21 @@ def require_historical_version_inventory(
+     ):
+         if not is_canonical_sha256(inventory.get(digest_field)):
+             fail(f"{label} historical inventory omitted {digest_field}")
++    evidence_digest = inventory.get("source_evidence_set_digest")
+     payload_digest = inventory.get("source_payload_snapshot_digest")
+     if mode == "exact_payload_availability":
++        if not is_canonical_sha256(evidence_digest):
++            fail(f"{label} exact historical inventory omitted evidence digest")
+         if not is_canonical_sha256(payload_digest):
+             fail(f"{label} exact historical inventory omitted payload digest")
+-    elif payload_digest is not None:
+-        fail(f"{label} metadata historical inventory invented a payload digest")
++    elif evidence_digest is not None or payload_digest is not None:
++        fail(f"{label} metadata historical inventory invented an exact digest")
+     source_cutpoint = inventory.get("source_cutpoint")
+     if not is_canonical_historical_source_cutpoint(source_cutpoint):
+         fail(f"{label} historical inventory omitted canonical source_cutpoint")
+     expected_source_cutpoint = (
+-        "v1:" + inventory["source_operation_set_digest"] + ":" + payload_digest
++        "v3:exact:" + inventory["source_operation_set_digest"] + ":" +
++        evidence_digest + ":" + payload_digest
+         if mode == "exact_payload_availability"
+         else "v2:metadata:" + inventory["source_operation_set_digest"]
+     )
+@@ -434,6 +509,12 @@ def require_historical_version_inventory(
+                 f"{label} metadata historical inventory invented "
+                 f"{integer_field}"
+             )
++    reachability = inventory.get("retained_payload_reachability")
++    if mode == "exact_payload_availability":
++        require_historical_payload_reachability(reachability, label)
++    elif reachability is not None:
++        fail(f"{label} metadata historical inventory invented reachability")
++
+     if inventory.get("entry_limit") != query["maximum_entries"]:
+         fail(f"{label} historical inventory disagreed with its query limit")
+     if not isinstance(inventory.get("entry_limit_frontier_reached"), bool):
+@@ -1442,7 +1523,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v16",
++                    "schema": "anonsync.peer-service.status.v17",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -2416,7 +2497,7 @@ def main() -> int:
+                 label="owner-only historical-version inspection",
+             )
+             expected_versions_response = {
+-                "schema": "anonsync.local-historical-versions.response.v4",
++                "schema": "anonsync.local-historical-versions.response.v5",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": history_inspection_generation,
+@@ -2624,7 +2705,7 @@ def main() -> int:
+                 label="owner-only historical-version first page",
+             )
+             expected_first_page_response = {
+-                "schema": "anonsync.local-historical-versions.response.v4",
++                "schema": "anonsync.local-historical-versions.response.v5",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": first_page_generation,
+@@ -2691,7 +2772,7 @@ def main() -> int:
+                 label="owner-only historical-version second page",
+             )
+             expected_second_page_response = {
+-                "schema": "anonsync.local-historical-versions.response.v4",
++                "schema": "anonsync.local-historical-versions.response.v5",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": second_page_generation,
+@@ -2785,7 +2866,7 @@ def main() -> int:
+                 label="owner-only stale historical source cutpoint",
+             )
+             expected_stale_source_response = {
+-                "schema": "anonsync.local-historical-versions.response.v4",
++                "schema": "anonsync.local-historical-versions.response.v5",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": stale_source_generation,
+@@ -2842,7 +2923,7 @@ def main() -> int:
+                 label="owner-only causal-metadata historical inspection",
+             )
+             expected_metadata_response = {
+-                "schema": "anonsync.local-historical-versions.response.v4",
++                "schema": "anonsync.local-historical-versions.response.v5",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": metadata_generation,
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index f2654906d1a3398a3d7dfe160679ef3b41cd9d61..24b79ae21eb21999338f7c3e22db159087407252 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v16"
++                    value.get("schema") == "anonsync.peer-service.status.v17"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 1a8a79800a8ed74c303613fc8a27f3494981c130..2d074be9be22c2cddf9e57638218bc3c50837b4c 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1473,6 +1473,29 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 972:
++        revision_scoped_required.update({
++            "RETAINED_PAYLOAD_REACHABILITY_AND_CANONICAL_STATUS_FRONTIER_AUDIT_rev0972.md",
++            "REVISION_NOTES_rev0972.md",
++            "README.md",
++            "src/anonsync_sync.cpp",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_model.hpp",
++            "src/sync_replica_historical_version_query.hpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_historical_version_inventory_json.hpp",
++            "src/sync_replica_historical_version_inventory_json.cpp",
++            "src/sync_replica_peer_service.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_peer_service_status.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

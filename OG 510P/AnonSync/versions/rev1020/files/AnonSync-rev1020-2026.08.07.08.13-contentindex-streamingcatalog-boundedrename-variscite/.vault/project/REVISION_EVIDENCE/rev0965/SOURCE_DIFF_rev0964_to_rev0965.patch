@@ -1,0 +1,1084 @@
+diff --git a/src/sync_replica_folder_observer.cpp b/src/sync_replica_folder_observer.cpp
+index 114a8c1..e94fc15 100644
+--- a/src/sync_replica_folder_observer.cpp
++++ b/src/sync_replica_folder_observer.cpp
+@@ -14,6 +14,7 @@
+ #include <cstring>
+ #include <dirent.h>
+ #include <filesystem>
++#include <exception>
+ #include <limits>
+ #include <stdexcept>
+ #include <string>
+@@ -266,6 +267,10 @@ struct WalkContext final {
+     // would cross a scheduling frontier. It is deliberately separate from the
+     // public delivered-file count in summary and from skipped_regular_file_count.
+     std::uint64_t encountered_regular_file_count = 0U;
++    // Resumable-only diagnostic accounting for selected basename strings whose
++    // storage is currently live. Parent batches are explicitly released before
++    // recursive descent, so this should never exceed one bounded batch.
++    std::uint64_t currently_buffered_directory_component_count = 0U;
+ };
+ 
+ struct SortedComponentBatch final {
+@@ -517,19 +522,65 @@ void note_directory_enumeration_pass_or_throw(WalkContext& context) {
+     ++context.segment->directory_enumeration_pass_count;
+ }
+ 
+-void note_buffered_component_count_or_throw(
+-    WalkContext& context,
+-    std::size_t count) {
+-    if (context.segment == nullptr) return;
+-    const std::uint64_t count_u64 = static_cast<std::uint64_t>(count);
+-    if (static_cast<std::size_t>(count_u64) != count) {
+-        throw std::runtime_error(
+-            context.label + " buffered component count exceeds uint64 range");
++class ScopedBufferedDirectoryComponentBatch final {
++public:
++    ScopedBufferedDirectoryComponentBatch(
++        WalkContext& context,
++        std::size_t count)
++        : context_(&context) {
++        if (context.segment == nullptr || count == 0U) {
++            context_ = nullptr;
++            return;
++        }
++        count_ = static_cast<std::uint64_t>(count);
++        if (static_cast<std::size_t>(count_) != count) {
++            throw std::runtime_error(
++                context.label +
++                " buffered directory component count exceeds uint64 range");
++        }
++        if (context.currently_buffered_directory_component_count != 0U) {
++            throw std::logic_error(
++                context.label +
++                " attempted to overlap resumable directory component batches");
++        }
++        if (context.currently_buffered_directory_component_count >
++            std::numeric_limits<std::uint64_t>::max() - count_) {
++            throw std::runtime_error(
++                context.label +
++                " simultaneous buffered directory component count exceeds uint64 range");
++        }
++        context.currently_buffered_directory_component_count += count_;
++        context.segment->peak_buffered_directory_component_batch_count =
++            std::max(
++                context.segment->peak_buffered_directory_component_batch_count,
++                count_);
++        context.segment->
++            peak_simultaneously_buffered_directory_component_count = std::max(
++                context.segment->
++                    peak_simultaneously_buffered_directory_component_count,
++                context.currently_buffered_directory_component_count);
++    }
++
++    ~ScopedBufferedDirectoryComponentBatch() noexcept { release(); }
++    ScopedBufferedDirectoryComponentBatch(
++        const ScopedBufferedDirectoryComponentBatch&) = delete;
++    ScopedBufferedDirectoryComponentBatch& operator=(
++        const ScopedBufferedDirectoryComponentBatch&) = delete;
++
++    void release() noexcept {
++        if (context_ == nullptr) return;
++        if (context_->currently_buffered_directory_component_count < count_) {
++            std::terminate();
++        }
++        context_->currently_buffered_directory_component_count -= count_;
++        context_ = nullptr;
++        count_ = 0U;
+     }
+-    context.segment->peak_buffered_directory_component_batch_count = std::max(
+-        context.segment->peak_buffered_directory_component_batch_count,
+-        count_u64);
+-}
++
++private:
++    WalkContext* context_ = nullptr;
++    std::uint64_t count_ = 0U;
++};
+ 
+ [[nodiscard]] SortedComponentBatch
+ read_next_sorted_component_batch_or_throw(
+@@ -595,7 +646,6 @@ read_next_sorted_component_batch_or_throw(
+     batch.eligible_component_count = eligible_count;
+     batch.has_more = eligible_count >
+                      static_cast<std::uint64_t>(batch.components.size());
+-    note_buffered_component_count_or_throw(context, batch.components.size());
+     return batch;
+ }
+ 
+@@ -628,13 +678,38 @@ read_next_sorted_component_batch_or_throw(
+     return components;
+ }
+ 
+-[[nodiscard]] WalkDisposition walk_component_batch_or_throw(
++struct PendingDirectoryDescent final {
++    bool present = false;
++    std::string component;
++    std::string canonical_path;
++    ScopedFd descriptor;
++    struct stat opened_status {};
++};
++
++struct ComponentBatchWalkResult final {
++    WalkDisposition disposition = WalkDisposition::Continue;
++    std::size_t next_component_index = 0U;
++    PendingDirectoryDescent directory;
++};
++
++[[nodiscard]] ComponentBatchWalkResult
++walk_component_batch_until_directory_or_throw(
+     WalkContext& context,
+     int parent_descriptor,
+     const std::string& parent_path,
+     std::uint64_t depth,
+-    const std::vector<std::string>& components) {
+-    for (const std::string& component : components) {
++    const std::vector<std::string>& components,
++    std::size_t begin_index) {
++    if (begin_index > components.size()) {
++        throw std::logic_error(
++            context.label + " component batch resume index is out of range");
++    }
++
++    ComponentBatchWalkResult result;
++    result.next_component_index = begin_index;
++    for (std::size_t index = begin_index; index < components.size(); ++index) {
++        const std::string& component = components[index];
++        result.next_component_index = index + 1U;
+         const std::string canonical_path = child_path(parent_path, component);
+         const struct stat initial_status = lstat_child_or_throw(
+             parent_descriptor, component, canonical_path,
+@@ -662,10 +737,10 @@ read_next_sorted_component_batch_or_throw(
+             canonical_path, context.limits, context.label);
+         if (S_ISREG(initial_status.st_mode)) {
+             increment_regular_file_count_or_throw(context, canonical_path);
+-            const WalkDisposition disposition = handle_regular_file_or_throw(
++            result.disposition = handle_regular_file_or_throw(
+                 context, parent_descriptor, component, canonical_path,
+                 initial_status);
+-            if (disposition != WalkDisposition::Continue) return disposition;
++            if (result.disposition != WalkDisposition::Continue) return result;
+             continue;
+         }
+ 
+@@ -674,6 +749,13 @@ read_next_sorted_component_batch_or_throw(
+                 context.label + " exceeds configured directory depth at " +
+                 canonical_path);
+         }
++
++        // Copy the stable component/path state before opening the child. If an
++        // allocation fails, no descriptor has been acquired. Once opened, the
++        // aggregate contains no throwing members, so ownership can be handed to
++        // the caller without leaking the descriptor.
++        result.directory.component = component;
++        result.directory.canonical_path = canonical_path;
+         const fs::path display_path = context.authority.path() / canonical_path;
+         SyncPosixOpenedDirectory opened =
+             sync_posix_open_directory_component_or_throw(
+@@ -682,25 +764,69 @@ read_next_sorted_component_batch_or_throw(
+                 SyncPosixDirectoryMountPolicy::RequireRetainedRootMount,
+                 context.resolution_capability, context.root_mount,
+                 context.label + " directory");
+-        const struct stat opened_status = opened.status;
++        result.directory.opened_status = opened.status;
++        result.directory.descriptor = ScopedFd(opened.descriptor);
++        result.directory.present = true;
+         ++context.summary.visited_directory_count;
+-        const WalkDisposition child_disposition = walk_directory_or_throw(
+-            context, opened.descriptor, canonical_path, depth + 1U);
++        return result;
++    }
++    return result;
++}
+ 
+-        SyncPosixOpenedDirectory rebound =
+-            sync_posix_open_directory_component_or_throw(
+-                parent_descriptor, component, display_path,
+-                SyncPosixDirectoryComponentRole::RootedDescendant,
+-                SyncPosixDirectoryMountPolicy::RequireRetainedRootMount,
+-                context.resolution_capability, context.root_mount,
+-                context.label + " post-walk directory binding");
+-        ScopedFd rebound_descriptor(rebound.descriptor);
+-        if (!same_directory_identity(opened_status, rebound.status)) {
+-            throw std::runtime_error(
+-                context.label +
+-                " directory path changed while being observed: " +
+-                canonical_path);
++[[nodiscard]] WalkDisposition walk_pending_directory_or_throw(
++    WalkContext& context,
++    int parent_descriptor,
++    std::uint64_t depth,
++    PendingDirectoryDescent& pending) {
++    if (!pending.present || pending.descriptor.get() < 0) {
++        throw std::logic_error(
++            context.label + " pending directory descent is incomplete");
++    }
++
++    const struct stat opened_status = pending.opened_status;
++    const fs::path display_path =
++        context.authority.path() / pending.canonical_path;
++    const WalkDisposition child_disposition = walk_directory_or_throw(
++        context, pending.descriptor.release(), pending.canonical_path,
++        depth + 1U);
++
++    SyncPosixOpenedDirectory rebound =
++        sync_posix_open_directory_component_or_throw(
++            parent_descriptor, pending.component, display_path,
++            SyncPosixDirectoryComponentRole::RootedDescendant,
++            SyncPosixDirectoryMountPolicy::RequireRetainedRootMount,
++            context.resolution_capability, context.root_mount,
++            context.label + " post-walk directory binding");
++    ScopedFd rebound_descriptor(rebound.descriptor);
++    if (!same_directory_identity(opened_status, rebound.status)) {
++        throw std::runtime_error(
++            context.label +
++            " directory path changed while being observed: " +
++            pending.canonical_path);
++    }
++    return child_disposition;
++}
++
++[[nodiscard]] WalkDisposition walk_complete_component_batch_or_throw(
++    WalkContext& context,
++    int parent_descriptor,
++    const std::string& parent_path,
++    std::uint64_t depth,
++    const std::vector<std::string>& components) {
++    std::size_t next_component_index = 0U;
++    while (next_component_index < components.size()) {
++        ComponentBatchWalkResult result =
++            walk_component_batch_until_directory_or_throw(
++                context, parent_descriptor, parent_path, depth, components,
++                next_component_index);
++        next_component_index = result.next_component_index;
++        if (result.disposition != WalkDisposition::Continue) {
++            return result.disposition;
+         }
++        if (!result.directory.present) continue;
++        const WalkDisposition child_disposition =
++            walk_pending_directory_or_throw(
++                context, parent_descriptor, depth, result.directory);
+         if (child_disposition != WalkDisposition::Continue) {
+             return child_disposition;
+         }
+@@ -727,7 +853,7 @@ read_next_sorted_component_batch_or_throw(
+     if (context.segment == nullptr) {
+         const std::vector<std::string> components =
+             read_sorted_components_or_throw(context, directory, parent_path);
+-        return walk_component_batch_or_throw(
++        return walk_complete_component_batch_or_throw(
+             context, parent_descriptor, parent_path, depth, components);
+     }
+ 
+@@ -741,6 +867,14 @@ read_next_sorted_component_batch_or_throw(
+             ? kBatchLimit
+             : std::min(kBatchLimit, remaining_first_census_components);
+         if (requested_components == 0U) return WalkDisposition::Continue;
++        // This check precedes the selector's vector reservation. The lifetime
++        // fence therefore bounds actual selected-name storage rather than only
++        // diagnosing overlap after a second batch has already been allocated.
++        if (context.currently_buffered_directory_component_count != 0U) {
++            throw std::logic_error(
++                context.label +
++                " retained a resumable directory component batch before selection");
++        }
+         SortedComponentBatch batch =
+             read_next_sorted_component_batch_or_throw(
+                 context, directory, parent_path, after_component,
+@@ -750,20 +884,67 @@ read_next_sorted_component_batch_or_throw(
+             remaining_first_census_components =
+                 batch.eligible_component_count;
+             first_census = false;
++        } else if (batch.eligible_component_count !=
++                   remaining_first_census_components) {
++            // The first charged census is the finite membership frontier for
++            // this directory invocation. Growth, shrinkage, or a rename across
++            // the processed component boundary changes the exact suffix
++            // cardinality. Do not process that inconsistent rescan and, above
++            // all, do not turn it into end-of-namespace or deletion authority.
++            return WalkDisposition::StoppedAtDirectoryCensusFrontier;
+         }
+         if (batch.components.empty()) return WalkDisposition::Continue;
++        ScopedBufferedDirectoryComponentBatch buffered_batch(
++            context, batch.components.size());
++        ComponentBatchWalkResult result =
++            walk_component_batch_until_directory_or_throw(
++                context, parent_descriptor, parent_path, depth,
++                batch.components, 0U);
+         const std::uint64_t consumed_components =
+-            static_cast<std::uint64_t>(batch.components.size());
+-        if (consumed_components > remaining_first_census_components) {
++            static_cast<std::uint64_t>(result.next_component_index);
++        if (static_cast<std::size_t>(consumed_components) !=
++                result.next_component_index ||
++            consumed_components > remaining_first_census_components) {
+             throw std::logic_error(
+                 context.label + " component batch exceeded first census");
+         }
++        if (result.disposition != WalkDisposition::Continue) {
++            return result.disposition;
++        }
+ 
+-        const WalkDisposition disposition = walk_component_batch_or_throw(
+-            context, parent_descriptor, parent_path, depth,
+-            batch.components);
+-        if (disposition != WalkDisposition::Continue) return disposition;
+         remaining_first_census_components -= consumed_components;
++        const bool selected_batch_has_more = batch.has_more;
++        if (result.directory.present) {
++            // The pending directory owns independent component/path strings and
++            // an opened descriptor. Release every selected basename (including
++            // vector capacity) before recursive descent. On return, resume this
++            // same open parent directory strictly after the processed component.
++            std::vector<std::string>().swap(batch.components);
++            buffered_batch.release();
++            const WalkDisposition child_disposition =
++                walk_pending_directory_or_throw(
++                    context, parent_descriptor, depth, result.directory);
++            if (child_disposition != WalkDisposition::Continue) {
++                return child_disposition;
++            }
++            if (remaining_first_census_components == 0U) {
++                return selected_batch_has_more
++                    ? WalkDisposition::StoppedAtDirectoryCensusFrontier
++                    : WalkDisposition::Continue;
++            }
++            if (context.segment_limits == nullptr) {
++                throw std::logic_error(
++                    context.label +
++                    " resumable traversal has no segment limits");
++            }
++            if (context.summary.regular_file_count >=
++                context.segment_limits->maximum_regular_files) {
++                return WalkDisposition::StoppedAtRegularFileCountFrontier;
++            }
++            after_component = std::move(result.directory.component);
++            continue;
++        }
++
+         if (remaining_first_census_components == 0U) {
+             // Names observed beyond the first census are bounded work, not
+             // end-of-namespace authority. They may also have displaced an
+@@ -771,11 +952,11 @@ read_next_sorted_component_batch_or_throw(
+             // the last delivered regular-file cursor and require another
+             // segment instead of allowing deletion inference from a moving
+             // namespace.
+-            return batch.has_more
++            return selected_batch_has_more
+                 ? WalkDisposition::StoppedAtDirectoryCensusFrontier
+                 : WalkDisposition::Continue;
+         }
+-        if (!batch.has_more) return WalkDisposition::Continue;
++        if (!selected_batch_has_more) return WalkDisposition::Continue;
+ 
+         if (context.segment_limits == nullptr) {
+             throw std::logic_error(
+@@ -905,6 +1086,11 @@ visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
+     root_authority.verify_or_throw(context.label + " root before traversal");
+     const WalkDisposition disposition =
+         walk_directory_or_throw(context, root.release(), {}, 0U);
++    if (context.currently_buffered_directory_component_count != 0U) {
++        throw std::logic_error(
++            context.label +
++            " retained buffered directory components after traversal");
++    }
+     root_authority.verify_or_throw(context.label + " root after traversal");
+     switch (disposition) {
+         case WalkDisposition::Continue:
+diff --git a/src/sync_replica_folder_observer.hpp b/src/sync_replica_folder_observer.hpp
+index e8e5028..68eb89c 100644
+--- a/src/sync_replica_folder_observer.hpp
++++ b/src/sync_replica_folder_observer.hpp
+@@ -152,11 +152,17 @@ struct SyncReplicaFolderTraversalSegment final {
+     // Diagnostic proof of the bounded sorted-name implementation. The first
+     // value counts complete readdir passes (a large mixed directory can require
+     // another pass after one component batch); the second is the largest
+-    // individual sorted basename batch. Recursive descent can retain one such
+-    // batch per active directory depth. Neither value authorizes deletion,
+-    // cursor publication, or filesystem effects.
++    // individual sorted basename batch. The third is the largest aggregate
++    // number of selected basenames retained simultaneously by the resumable
++    // walk. Parent batch storage is released before recursive descent, so the
++    // aggregate remains bounded by one batch. Recursive descriptors and one
++    // component/path observation per active depth remain depth-indexed state;
++    // aggregate string bytes also depend on growing canonical-path lengths.
++    // These diagnostics
++    // authorize no deletion, cursor publication, or filesystem effects.
+     std::uint64_t directory_enumeration_pass_count = 0;
+     std::uint64_t peak_buffered_directory_component_batch_count = 0;
++    std::uint64_t peak_simultaneously_buffered_directory_component_count = 0;
+     // Last path successfully delivered to the visitor. When no new path was
+     // delivered, this retains the input continuation cursor.
+     std::string resume_after_path;
+@@ -196,9 +202,12 @@ visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
+ 
+ // Walks one retained root without retaining file payloads or a whole-tree path
+ // list. Names within each open directory are processed in bytewise order, so a
+-// stable namespace produces a stable callback order. Recursive descent retains
+-// unprocessed ancestor names, but total name storage remains bounded by the
+-// global entry ceiling and the configured depth ceiling. The callback runs
++// stable namespace produces a stable callback order. The production resumable
++// overload releases an ancestor's selected-name batch before recursive descent
++// and resumes that directory from the exact component boundary, bounding its
++// simultaneous selected-basename storage to one batch plus O(depth) path state.
++// The non-resumable overload still retains unprocessed ancestor vectors, bounded
++// only by the global entry ceiling and configured depth ceiling. The callback runs
+ // synchronously and may make durable progress. A later traversal error does not
+ // roll back earlier callback effects;
+ // callers must make each callback idempotent and restart-safe.
+diff --git a/tests/sync_replica_folder_observer_test.cpp b/tests/sync_replica_folder_observer_test.cpp
+index 8967fc0..0b39505 100644
+--- a/tests/sync_replica_folder_observer_test.cpp
++++ b/tests/sync_replica_folder_observer_test.cpp
+@@ -640,8 +640,14 @@ void test_resumable_flat_directory_component_buffer(TestState& test) {
+             segments[1].peak_buffered_directory_component_batch_count ==
+                 anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch &&
+             segments[2].peak_buffered_directory_component_batch_count ==
++                anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch &&
++            segments[0].peak_simultaneously_buffered_directory_component_count ==
++                anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch &&
++            segments[1].peak_simultaneously_buffered_directory_component_count ==
++                anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch &&
++            segments[2].peak_simultaneously_buffered_directory_component_count ==
+                 anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch,
+-        "every resumable flat-directory pass obeys the fixed basename-buffer ceiling");
++        "every resumable flat-directory pass obeys both the individual and simultaneous basename-buffer ceiling");
+     test.require(
+         segments[0].directory_enumeration_pass_count == 1U &&
+             segments[1].directory_enumeration_pass_count == 2U &&
+@@ -657,6 +663,160 @@ void test_resumable_flat_directory_component_buffer(TestState& test) {
+         "folder-flat-buffer authority after bounded continuation");
+ }
+ 
++void test_resumable_recursive_walk_releases_ancestor_component_batches(
++    TestState& test) {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.path();
++    const fs::path first_child = root / "000-child";
++    const fs::path second_child = first_child / "000-child";
++    fs::create_directories(second_child);
++
++    const std::uint64_t batch_limit =
++        anonsync::kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch;
++    const std::uint64_t sibling_file_count = batch_limit - 1U;
++    for (std::uint64_t index = 0U; index < sibling_file_count; ++index) {
++        const std::string name = flat_file_name(index);
++        write_bytes(root / name, {});
++        write_bytes(first_child / name, {});
++    }
++    write_bytes(second_child / "leaf.dat", {});
++
++    const std::uint64_t regular_file_count = sibling_file_count * 2U + 1U;
++    const std::uint64_t entry_count = regular_file_count + 2U;
++    anonsync::SyncDirectoryAuthority authority =
++        anonsync::SyncDirectoryAuthority::open_or_throw(
++            fs::absolute(root), "folder-recursive-buffer root");
++    anonsync::SyncReplicaFolderObservationLimits limits;
++    limits.maximum_entries = entry_count;
++    limits.maximum_regular_files = regular_file_count;
++    limits.maximum_file_bytes = 1U;
++    limits.maximum_total_file_bytes = 1U;
++    limits.maximum_directory_depth = 4U;
++    anonsync::SyncReplicaFolderTraversalSegmentLimits segment_limits;
++    segment_limits.maximum_regular_files = regular_file_count;
++
++    std::uint64_t delivered_count = 0U;
++    bool strict_component_order = true;
++    std::string first_path;
++    std::string previous_path;
++    std::string last_path;
++    const auto segment =
++        anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++            authority, {},
++            [&](const std::string& path, std::uint64_t size_bytes) {
++                strict_component_order = strict_component_order &&
++                    size_bytes == 0U &&
++                    (previous_path.empty() ||
++                     anonsync::sync_replica_folder_traversal_path_less(
++                         previous_path, path));
++                if (first_path.empty()) first_path = path;
++                previous_path = path;
++                last_path = path;
++                ++delivered_count;
++            },
++            limits, segment_limits,
++            "folder-recursive-buffer traversal");
++
++    test.require(
++        segment.completed &&
++            segment.stop_reason ==
++                anonsync::SyncReplicaFolderTraversalStopReason::EndOfNamespace &&
++            delivered_count == regular_file_count && strict_component_order &&
++            first_path == "000-child/000-child/leaf.dat" &&
++            last_path == flat_file_name(sibling_file_count - 1U),
++        "recursive component batches preserve exact preorder while delivering every regular file once");
++    test.require(
++        segment.traversal.visited_entry_count == entry_count &&
++            segment.traversal.visited_directory_count == 2U &&
++            segment.traversal.regular_file_count == regular_file_count,
++        "release-before-descent rescans do not double-charge namespace or file capacity");
++    test.require(
++        segment.peak_buffered_directory_component_batch_count == batch_limit &&
++            segment.peak_simultaneously_buffered_directory_component_count ==
++                batch_limit,
++        "full ancestor batches are released before child selection so simultaneous selected basenames never multiply by depth");
++    test.require(
++        segment.directory_enumeration_pass_count == 5U,
++        "release-before-descent resumes each full ancestor from its exact directory component boundary");
++    authority.verify_or_throw(
++        "folder-recursive-buffer authority after bounded traversal");
++}
++
++void test_resumable_parent_census_rejects_cross_boundary_rename(
++    TestState& test) {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.path();
++    const fs::path child = root / "m-child";
++    fs::create_directory(child);
++    write_bytes(child / "leaf.dat", {});
++    write_bytes(root / "z-later.dat", {});
++
++    anonsync::SyncDirectoryAuthority authority =
++        anonsync::SyncDirectoryAuthority::open_or_throw(
++            fs::absolute(root), "folder-parent-census-drift root");
++    anonsync::SyncReplicaFolderObservationLimits limits;
++    limits.maximum_entries = 3U;
++    limits.maximum_regular_files = 2U;
++    limits.maximum_file_bytes = 1U;
++    limits.maximum_total_file_bytes = 1U;
++    limits.maximum_directory_depth = 2U;
++    anonsync::SyncReplicaFolderTraversalSegmentLimits segment_limits;
++    segment_limits.maximum_regular_files = 2U;
++
++    std::vector<std::string> first_delivered;
++    bool renamed = false;
++    const auto first =
++        anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++            authority, {},
++            [&](const std::string& path, std::uint64_t size_bytes) {
++                first_delivered.push_back(path);
++                if (!renamed && path == "m-child/leaf.dat") {
++                    fs::rename(root / "z-later.dat", root / "a-moved.dat");
++                    renamed = true;
++                }
++                test.require(
++                    size_bytes == 0U,
++                    "parent-census drift fixture retains zero-byte files");
++            },
++            limits, segment_limits,
++            "folder-parent-census-drift traversal");
++
++    test.require(
++        renamed && !first.completed &&
++            first.stop_reason ==
++                anonsync::SyncReplicaFolderTraversalStopReason::
++                    DirectoryCensusFrontier &&
++            first_delivered ==
++                std::vector<std::string>{"m-child/leaf.dat"},
++        "a rename across the released parent boundary cannot manufacture namespace completion");
++    test.require(
++        first.directory_enumeration_pass_count == 3U &&
++            first.peak_simultaneously_buffered_directory_component_count == 2U,
++        "parent resumption detects exact suffix-cardinality drift without retaining the ancestor batch");
++
++    std::vector<std::string> fresh_delivered;
++    const auto fresh =
++        anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++            authority, {},
++            [&](const std::string& path, std::uint64_t size_bytes) {
++                fresh_delivered.push_back(path);
++                test.require(
++                    size_bytes == 0U,
++                    "fresh parent-census traversal retains zero-byte files");
++            },
++            limits, segment_limits,
++            "folder-parent-census-drift fresh traversal");
++    test.require(
++        fresh.completed &&
++            fresh.stop_reason ==
++                anonsync::SyncReplicaFolderTraversalStopReason::EndOfNamespace &&
++            fresh_delivered == std::vector<std::string>{
++                "a-moved.dat", "m-child/leaf.dat"},
++        "a fresh epoch discovers the cross-boundary rename in exact preorder");
++    authority.verify_or_throw(
++        "folder-parent-census-drift authority after traversals");
++}
++
+ void test_resumable_directory_does_not_chase_post_census_insertions(
+     TestState& test) {
+     TemporaryDirectory temporary;
+@@ -711,13 +871,16 @@ void test_resumable_directory_does_not_chase_post_census_insertions(
+             first.stop_reason ==
+                 anonsync::SyncReplicaFolderTraversalStopReason::
+                     DirectoryCensusFrontier &&
+-            first_delivered.size() == initial_file_count &&
++            first_delivered.size() == batch_limit &&
+             first_delivered.front() == flat_file_name(0U, 'a') &&
+-            first_delivered.back() == interleaved_name &&
++            first_delivered.back() == boundary_name &&
++            std::find(
++                first_delivered.begin(), first_delivered.end(),
++                interleaved_name) == first_delivered.end() &&
+             std::find(
+                 first_delivered.begin(), first_delivered.end(),
+                 displaced_initial_name) == first_delivered.end() &&
+-            first.resume_after_path == interleaved_name &&
++            first.resume_after_path == boundary_name &&
+             first.traversal.visited_entry_count == initial_file_count &&
+             first.directory_enumeration_pass_count == 2U,
+         "post-census growth stops without end-of-namespace authority even "
+@@ -739,11 +902,12 @@ void test_resumable_directory_does_not_chase_post_census_insertions(
+         second.completed &&
+             second.stop_reason ==
+                 anonsync::SyncReplicaFolderTraversalStopReason::EndOfNamespace &&
+-            second_delivered.size() == inserted_file_count &&
+-            second_delivered.front() == displaced_initial_name &&
++            second_delivered.size() == inserted_file_count + 1U &&
++            second_delivered.front() == interleaved_name &&
++            second_delivered[1] == displaced_initial_name &&
+             second_delivered.back() ==
+                 flat_file_name(inserted_file_count - 2U, 'z') &&
+-            second.skipped_regular_file_count == initial_file_count &&
++            second.skipped_regular_file_count == batch_limit &&
+             second.traversal.visited_entry_count ==
+                 initial_file_count + inserted_file_count &&
+             combined.size() == initial_file_count + inserted_file_count &&
+@@ -926,6 +1090,8 @@ int main() {
+         test_resumable_component_order_and_progress(test);
+         test_resumable_count_frontier_and_rooted_reproof(test);
+         test_resumable_flat_directory_component_buffer(test);
++        test_resumable_recursive_walk_releases_ancestor_component_batches(test);
++        test_resumable_parent_census_rejects_cross_boundary_rename(test);
+         test_resumable_directory_does_not_chase_post_census_insertions(test);
+         test_limits_and_portable_paths(test);
+         std::cout << "sync replica folder observer checks: " << test.passed
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index d21ae28..c57ce34 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -125,6 +125,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0963.md"),
+     Path("BOUNDED_RESUMABLE_DIRECTORY_COMPONENT_BATCH_AUDIT_rev0964.md"),
+     Path("REVISION_NOTES_rev0964.md"),
++    Path("GLOBAL_RESUMABLE_DIRECTORY_BATCH_LIFETIME_AUDIT_rev0965.md"),
++    Path("REVISION_NOTES_rev0965.md"),
+ )
+ 
+ 
+@@ -393,6 +395,10 @@ def main() -> int:
+         "BOUNDED_RESUMABLE_DIRECTORY_COMPONENT_BATCH_AUDIT_rev0964.md"
+     ]
+     rev0964_notes = text["REVISION_NOTES_rev0964.md"]
++    global_directory_batch_design = text[
++        "GLOBAL_RESUMABLE_DIRECTORY_BATCH_LIFETIME_AUDIT_rev0965.md"
++    ]
++    rev0965_notes = text["REVISION_NOTES_rev0965.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -459,6 +465,17 @@ def main() -> int:
+         if rev0964_verifier_start >= 0 and rev0964_verifier_end >= 0
+         else ""
+     )
++    rev0965_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 965:"
++    )
++    rev0965_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0965_verifier_start
++    )
++    rev0965_verifier_block = (
++        verifier[rev0965_verifier_start:rev0965_verifier_end]
++        if rev0965_verifier_start >= 0 and rev0965_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     store_sources = cmake_call(
+@@ -5063,7 +5080,7 @@ def main() -> int:
+             )
+         )
+         and all(
+-            token in readme
++            token in normalized_prose(readme)
+             for token in (
+                 "Setting both scrub work limits to zero",
+                 "metadata-only canonical settlement",
+@@ -6839,9 +6856,21 @@ def main() -> int:
+         "    WalkContext& context,\n"
+         "    int owned_descriptor,",
+     )
+-    component_batch_walk = function_body(
++    component_classifier = function_body(
++        folder_observer,
++        "walk_component_batch_until_directory_or_throw(",
++    )
++    complete_component_walk = function_body(
++        folder_observer,
++        "walk_complete_component_batch_or_throw(",
++    )
++    pending_directory_walk = function_body(
++        folder_observer,
++        "walk_pending_directory_or_throw(",
++    )
++    buffered_batch_owner = function_body(
+         folder_observer,
+-        "[[nodiscard]] WalkDisposition walk_component_batch_or_throw(",
++        "class ScopedBufferedDirectoryComponentBatch final",
+     )
+     require(
+         "kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch = 4096U"
+@@ -6869,7 +6898,6 @@ def main() -> int:
+         "the shipping restartable observer scans every candidate but allocates basename strings only for the exact smallest 4096-name component prefix after its current in-directory boundary",
+     )
+ 
+-
+     require(
+         "#include <queue>" not in folder_observer
+         and "std::priority_queue" not in folder_observer
+@@ -6883,27 +6911,100 @@ def main() -> int:
+     )
+ 
+     require(
+-        folder_observer.count("read_sorted_components_or_throw(context, directory, parent_path)") == 1
+-        and ordered(
+-            resumable_directory_walk,
+-            "if (context.segment == nullptr)",
+-            "read_sorted_components_or_throw(context, directory, parent_path)",
+-            "read_next_sorted_component_batch_or_throw",
+-            "walk_component_batch_or_throw",
+-        )
++        folder_observer.count(
++            "read_sorted_components_or_throw(context, directory, parent_path)"
++        ) == 1
+         and all(
+-            token in component_batch_walk
++            token in component_classifier
+             for token in (
+                 "lstat_child_or_throw",
+                 "increment_regular_file_count_or_throw",
+                 "handle_regular_file_or_throw",
++                "result.directory.component = component",
++                "result.directory.canonical_path = canonical_path",
++                "sync_posix_open_directory_component_or_throw",
++                "result.directory.descriptor = ScopedFd(opened.descriptor)",
++            )
++        )
++        and all(
++            token in pending_directory_walk
++            for token in (
++                "pending.descriptor.release()",
+                 "walk_directory_or_throw",
+                 "post-walk directory binding",
+                 "same_directory_identity",
+             )
++        )
++        and "walk_component_batch_until_directory_or_throw" in complete_component_walk
++        and "walk_pending_directory_or_throw" in complete_component_walk
++        and "walk_complete_component_batch_or_throw" in resumable_directory_walk
++        and "walk_component_batch_until_directory_or_throw" in resumable_directory_walk,
++        "full_and_batched_walks_share_rooted_classification_and_rebinding",
++        "the complete and resumable paths share one no-follow classifier and one descriptor-rooted recursive/rebinding boundary even though only the resumable path releases selected parent storage",
++    )
++
++    require(
++        all(
++            token in folder_observer
++            for token in (
++                "struct PendingDirectoryDescent final",
++                "ScopedFd descriptor",
++                "struct stat opened_status",
++                "#include <exception>",
++            )
++        )
++        and ordered(
++            component_classifier,
++            "result.directory.component = component",
++            "result.directory.canonical_path = canonical_path",
++            "sync_posix_open_directory_component_or_throw",
++            "result.directory.descriptor = ScopedFd(opened.descriptor)",
++            "result.directory.present = true",
++        )
++        and ordered(
++            pending_directory_walk,
++            "const struct stat opened_status = pending.opened_status",
++            "pending.descriptor.release()",
++            "post-walk directory binding",
++            "same_directory_identity",
+         ),
+-        "full_and_batched_walks_share_one_rooted_component_processor",
+-        "the old whole-directory vector remains only in the explicit non-resumable branch while classification, recursion, callbacks, and directory rebinding cannot diverge between traversal modes",
++        "pending_directory_descent_owns_descriptor_across_all_throwing_boundaries",
++        "component/path allocation precedes child acquisition and ScopedFd owns the opened child until recursive transfer, so allocation, recursion, or rebinding failure cannot leak a descriptor",
++    )
++
++    require(
++        all(
++            token in buffered_batch_owner
++            for token in (
++                "currently_buffered_directory_component_count",
++                "peak_buffered_directory_component_batch_count",
++                "peak_simultaneously_buffered_directory_component_count",
++                "~ScopedBufferedDirectoryComponentBatch() noexcept",
++                "std::terminate()",
++            )
++        )
++        and ordered(
++            resumable_directory_walk,
++            "retained a resumable directory component batch before selection",
++            "read_next_sorted_component_batch_or_throw",
++            "ScopedBufferedDirectoryComponentBatch buffered_batch",
++            "walk_component_batch_until_directory_or_throw",
++            "std::vector<std::string>().swap(batch.components)",
++            "buffered_batch.release()",
++            "walk_pending_directory_or_throw",
++            "after_component = std::move(result.directory.component)",
++        )
++        and "attempted to overlap resumable directory component batches"
++            in buffered_batch_owner
++        and ordered(
++            folder_observer,
++            "walk_directory_or_throw(context, root.release(), {}, 0U)",
++            "context.currently_buffered_directory_component_count != 0U",
++            "retained buffered directory components after traversal",
++        )
++        and "peak_simultaneously_buffered_directory_component_count" in folder_observer_h,
++        "resumable_recursion_releases_parent_batch_before_child_selection",
++        "the selected parent vector and its capacity are destroyed and retired from exact live accounting before recursion; the public boundary rejects any leaked accounting state",
+     )
+ 
+     require(
+@@ -6916,25 +7017,23 @@ def main() -> int:
+             resumable_directory_walk,
+             "std::uint64_t remaining_first_census_components = 0U",
+             "bool first_census = true",
+-            "requested_components = first_census",
+             "batch.eligible_component_count",
+             "first_census = false",
++            "batch.eligible_component_count !=",
++            "remaining_first_census_components",
++            "StoppedAtDirectoryCensusFrontier",
+             "consumed_components > remaining_first_census_components",
+             "remaining_first_census_components -= consumed_components",
+-            "if (remaining_first_census_components == 0U)",
+-            "StoppedAtDirectoryCensusFrontier",
+-            "if (!batch.has_more) return WalkDisposition::Continue",
+             "context.summary.regular_file_count >=",
+             "StoppedAtRegularFileCountFrontier",
+-            "after_component = std::move(batch.components.back())",
+         )
+         and ordered(
+-            component_batch_walk,
++            component_classifier,
+             "increment_regular_file_count_or_throw(context, canonical_path)",
+             "handle_regular_file_or_throw",
+         ),
+-        "batch_rescans_preserve_namespace_capacity_and_completion_semantics",
+-        "each directory visit charges its first complete non-dot census once, avoids double charging later selection passes, stops before a useless rescan at the delivered-file frontier, refuses end-of-namespace authority when later enumeration sees extra names, and still classifies skipped regular files against whole-folder capacity",
++        "batch_rescans_preserve_capacity_and_exact_suffix_census_fence",
++        "each directory charges its first complete non-dot census once, later rescans must match the exact remaining suffix cardinality before processing, and skipped regular files still count against whole-folder capacity",
+     )
+ 
+     require(
+@@ -6943,35 +7042,35 @@ def main() -> int:
+             for token in (
+                 "directory_enumeration_pass_count",
+                 "peak_buffered_directory_component_batch_count",
+-                "Recursive descent can retain one such",
+-                "batch per active directory depth",
+-                "Neither value authorizes deletion",
++                "peak_simultaneously_buffered_directory_component_count",
++                "Parent batch storage is released before recursive descent",
++                "aggregate remains bounded by one batch",
++                "O(depth) path state",
++                "These diagnostics",
++                "authorize no deletion",
+             )
+         )
+         and all(
+             token in folder_observer_runtime
+             for token in (
+                 "test_resumable_flat_directory_component_buffer",
+-                "kSyncReplicaFolderTraversalMaximumBufferedDirectoryComponentsPerBatch +",
+-                "delivered.size() == file_count",
+-                "std::adjacent_find(delivered.begin(), delivered.end())",
+-                "segments[0].directory_enumeration_pass_count == 1U",
+-                "segments[1].directory_enumeration_pass_count == 2U",
+-                "segments[2].directory_enumeration_pass_count == 2U",
+-                "segments[0].traversal.visited_entry_count == file_count",
+-                "peak_buffered_directory_component_batch_count",
+-                "test_resumable_directory_does_not_chase_post_census_insertions",
++                "test_resumable_recursive_walk_releases_ancestor_component_batches",
++                "regular_file_count = sibling_file_count * 2U + 1U",
++                "segment.directory_enumeration_pass_count == 5U",
++                "peak_simultaneously_buffered_directory_component_count",
++                "batch_limit",
++                "test_resumable_parent_census_rejects_cross_boundary_rename",
++                "fs::rename(root / \"z-later.dat\", root / \"a-moved.dat\")",
+                 "DirectoryCensusFrontier",
+-                "displaced_initial_name",
+-                "first.resume_after_path == interleaved_name",
+-                "first.traversal.visited_entry_count == initial_file_count",
+-                "authority, first.resume_after_path",
+-                "second.skipped_regular_file_count == initial_file_count",
+-                "combined.size() == initial_file_count + inserted_file_count",
++                "fresh_delivered == std::vector<std::string>",
++                "test_resumable_directory_does_not_chase_post_census_insertions",
++                "first.resume_after_path == boundary_name",
++                "second_delivered.size() == inserted_file_count + 1U",
++                "second.skipped_regular_file_count == batch_limit",
+             )
+         ),
+-        "compiled_regression_binds_order_batch_ceiling_growth_fence_cursor_and_entry_charge",
+-        "the stable 4113-file test binds order and the batch boundary, while the 4097+17 mutation test proves a new interleaved name cannot displace an original census member and still manufacture completion; the persisted cursor resumes at the displaced member and discovers every new name exactly once",
++        "compiled_regressions_bind_global_batch_peak_preorder_and_census_drift",
++        "the 8191-file recursive fixture proves one simultaneous 4096-name peak and exact preorder, while cross-boundary rename and 4097+17 growth fixtures deny completion and resume from the last coherent cursor",
+     )
+ 
+     require(
+@@ -7010,8 +7109,8 @@ def main() -> int:
+                 "Nonclaims",
+             )
+         ),
+-        "rev0964_records_the_exact_memory_tradeoff_and_remaining_scale_boundaries",
+-        "the audit and revision record claim bounded per-batch name retention only, preserve moving-namespace and recursive-depth truth, and do not substitute this slice for an indexed huge-tree architecture",
++        "rev0964_record_remains_an_honest_parent_boundary",
++        "the sealed parent record preserves the per-batch claim and explicitly names the recursive-depth limitation corrected by rev0965",
+     )
+ 
+     require(
+@@ -7032,16 +7131,106 @@ def main() -> int:
+                 "tools/verify_release_package.py",
+             )
+         ),
+-        "rev0964_final_validation_and_package_surface_are_mandatory",
+-        "the source audit remains deliberately gated until final evidence replaces the revision placeholders and the release verifier binds every changed implementation, test, audit, and package-policy surface",
++        "rev0964_final_validation_and_package_surface_remain_mandatory",
++        "the parent source audit and package policy remain sealed while the child revision extends the same mandatory implementation surface",
+     )
+ 
+     require(
+-        "ARCHIVE_PENDING_REV0964" not in (root.parent.parent / "BOOTSTRAPROSE.md").read_text(encoding="utf-8")
+-        and "CODENAME_PENDING_REV0964" not in (root.parent.parent / "BOOTSTRAPROSE.md").read_text(encoding="utf-8")
+-        and "VALIDATION_PENDING_REV0964" not in (root.parent.parent / "BOOTSTRAPROSE.md").read_text(encoding="utf-8"),
+-        "visible_restart_page_is_finalized_for_rev0964",
+-        "the release-root bootstrap must name the exact archive/codename and carry final validation before the structural audit can close",
++        all(
++            token in normalized_prose(global_directory_batch_design)
++            for token in (
++                "Heart of the mission",
++                "The defect",
++                "Corrected C++ ownership shape",
++                "Traversal-wide selected-name bound",
++                "Exact parent resumption and preorder",
++                "Census drift correction",
++                "Mechanical regressions",
++                "Adjacent audit and contamination correction",
++                "Complexity and remaining waste",
++                "What this proves",
++                "What this does not prove",
++                "one 4,096-name batch",
++                "O(depth)",
++                "O(N log K)",
++                "directory_census_frontier",
++                "point-in-time filesystem snapshot",
++            )
++        )
++        and all(
++            token in rev0965_notes
++            for token in (
++                "traversal-wide selected-basename limit",
++                "descriptor-owning pending descent state",
++                "peak_simultaneously_buffered_directory_component_count",
++                "exact suffix-cardinality fence",
++                "8,191 regular files",
++                "4,096 rather than 8,192",
++                "Adjacent contamination audit",
++                "Nonclaims",
++            )
++        )
++        and all(
++            token in normalized_prose(readme)
++            for token in (
++                "## Rev0965: one traversal-wide selected-name batch",
++                "destroys the selected parent vector",
++                "unconsumed first-census suffix count",
++                "asynchronous filesystem sweep, not snapshot isolation",
++            )
++        ),
++        "rev0965_records_global_name_bound_census_fence_cost_and_nonclaims",
++        "the audit, revision record, and README bind the exact ownership change, moving-namespace fence, additional enumeration cost, contamination correction, and remaining product boundaries",
++    )
++
++    require(
++        all(
++            token not in replica_cli
++            for token in (
++                "int command_history(const Options& options)",
++                "anonsync_replica history --manifest",
++                "\"restorable\"",
++            )
++        )
++        and "restore_retained_regular_file_or_throw" not in folder_scan
++        and "restore_retained_regular_file_or_throw" not in folder_scan_h
++        and "test_retained_version_restore_reuses_payload_and_resurrects_delete"
++            not in folder_scan_runtime,
++        "discarded_retained_version_prototype_is_absent_from_rev0965",
++        "the unrelated folder-owner and replica-CLI prototype is excluded so this revision cannot silently ship an unreviewed history/restore surface",
++    )
++
++    require(
++        verifier.count(
++            "if revision_number is not None and revision_number >= 965:"
++        ) == 1
++        and all(
++            token in rev0965_verifier_block
++            for token in (
++                "GLOBAL_RESUMABLE_DIRECTORY_BATCH_LIFETIME_AUDIT_rev0965.md",
++                "REVISION_NOTES_rev0965.md",
++                "src/sync_replica_folder_observer.hpp",
++                "src/sync_replica_folder_observer.cpp",
++                "tests/sync_replica_folder_observer_test.cpp",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0965_package_policy_binds_every_changed_product_surface",
++        "the release verifier makes the implementation, regression, audit, revision record, structural audit, and package-policy change mandatory from rev0965 onward",
++    )
++
++    bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
++        encoding="utf-8"
++    )
++    require(
++        "VALIDATION_PENDING_REV0965" not in rev0965_notes
++        and "VALIDATION_PENDING_REV0965" not in readme
++        and "ARCHIVE_PENDING_REV0965" not in bootstrap
++        and "CODENAME_PENDING_REV0965" not in bootstrap
++        and "VALIDATION_PENDING_REV0965" not in bootstrap,
++        "rev0965_final_validation_and_visible_release_cutpoint_are_sealed",
++        "the structural audit remains deliberately gated until final validation replaces every revision and visible-bootstrap release placeholder",
+     )
+ 
+     require(
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index d329fa5..7ac6ba9 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1331,6 +1331,16 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 965:
++        revision_scoped_required.update({
++            "GLOBAL_RESUMABLE_DIRECTORY_BATCH_LIFETIME_AUDIT_rev0965.md",
++            "REVISION_NOTES_rev0965.md",
++            "src/sync_replica_folder_observer.hpp",
++            "src/sync_replica_folder_observer.cpp",
++            "tests/sync_replica_folder_observer_test.cpp",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

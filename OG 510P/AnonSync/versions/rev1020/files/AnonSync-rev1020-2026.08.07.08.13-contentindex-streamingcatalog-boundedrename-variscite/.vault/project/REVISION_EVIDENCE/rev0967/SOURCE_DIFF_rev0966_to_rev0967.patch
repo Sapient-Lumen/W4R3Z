@@ -1,0 +1,2862 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 78f321120e2e4085da1a8ac196dfd4ce4de6054b..5d78803d7af3825b6854f24a1ae188ca730794f0 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1853,6 +1853,8 @@ add_library(anonsync_sync_local_status_socket STATIC
+ target_include_directories(anonsync_sync_local_status_socket PUBLIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+ target_link_libraries(anonsync_sync_local_status_socket
++  PUBLIC
++    anonsync_sync_manifest_validation
+   PRIVATE
+     anonsync_json_parser
+     anonsync_sync_directory_authority
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index 9ac4f9e7679812e03be55e141fd95ed5fb31f58c..3710820d714f56839245ea2f3155c16b5a11eaa1 100755
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -1592,7 +1592,7 @@ int command_run(const Options& options) {
+                           SyncReplicaPeerServiceHistoricalVersionAction::Inspect
+                     : anonsync::
+                           SyncReplicaPeerServiceHistoricalVersionAction::Restore,
+-                request.operation_id);
++                request.operation_id, request.query);
+         }
+         return observed_local_actions;
+     };
+@@ -1792,7 +1792,7 @@ int command_run(const Options& options) {
+                           SyncReplicaPeerServiceHistoricalVersionAction::Inspect
+                     : anonsync::
+                           SyncReplicaPeerServiceHistoricalVersionAction::Restore,
+-                request.operation_id);
++                request.operation_id, request.query);
+         }
+     }
+     service_manager.announce_stopping(
+@@ -3403,16 +3403,30 @@ int command_recheck(const Options& options) {
+ }
+ 
+ int command_versions(const Options& options) {
+-    options.require_only({"socket", "timeout-milliseconds"});
++    options.require_only(
++        {"socket", "path", "after", "limit", "timeout-milliseconds"});
+     const fs::path socket_path = require_absolute_path(
+         options.one("socket"), "--socket");
++    anonsync::SyncReplicaHistoricalVersionQuery query;
++    query.maximum_entries = option_uint64_or(
++        options, "limit",
++        anonsync::kSyncReplicaHistoricalVersionDefaultMaximumEntries);
++    if (options.has("path")) {
++        query.canonical_path = options.one("path");
++    }
++    if (options.has("after")) {
++        query.start_after_operation_id = options.one("after");
++    }
++    anonsync::validate_sync_replica_historical_version_query_or_throw(
++        query, "anonsync_sync versions");
+     const std::uint64_t timeout_milliseconds = option_uint64_or(
+         options, "timeout-milliseconds",
+         anonsync::kSyncLocalStatusSocketDefaultTimeoutMilliseconds);
+     std::cout
+-        << anonsync::request_sync_local_status_historical_versions_or_throw(
+-               socket_path, timeout_milliseconds,
+-               "anonsync_sync versions")
++        << anonsync::
++               request_sync_local_status_historical_versions_query_or_throw(
++                   socket_path, std::move(query), timeout_milliseconds,
++                   "anonsync_sync versions")
+         << '\n';
+     return 0;
+ }
+@@ -3545,6 +3559,8 @@ void print_usage(std::ostream& output) {
+         << "  anonsync_sync recheck --socket ABSOLUTE_SOCKET "
+            "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync versions --socket ABSOLUTE_SOCKET "
++           "[--path CANONICAL_RELATIVE_PATH] "
++           "[--after LOWERCASE_SHA256] [--limit 1..1024] "
+            "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync restore --socket ABSOLUTE_SOCKET "
+            "--operation LOWERCASE_SHA256 [--timeout-milliseconds N]\n"
+@@ -3569,8 +3585,10 @@ void print_usage(std::ostream& output) {
+            "payload byte and moves the exact resulting snapshot into ordinary "
+            "convergence; acceptance is not completion, so status reports the "
+            "requested and completed generations. versions accepts one bounded "
+-           "inspection of active causal file predecessors whose immutable payload "
+-           "bytes are still retained; status reports the deterministic inventory. "
++           "inspection page of active causal file predecessors whose immutable "
++           "payload bytes are still retained; an exact path, page limit, and "
++           "active superseded operation cursor may select later pages, while "
++           "status reports the query, source cutpoint, and next cursor. "
+            "restore accepts one exact operation ID from that inventory, re-proves "
+            "current catalog, replica, rooted-path, and payload authority, atomically "
+            "publishes those bytes, and mints a new causal successor through the "
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index ecfef01479b84b7cd26076b689b061841886794b..836170e914a187ae4f5743f331b4aaa7ed873094 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -7,6 +7,7 @@
+ #include "sync_directory_authority.hpp"
+ 
+ #include <array>
++#include <charconv>
+ #include <cerrno>
+ #include <chrono>
+ #include <cstddef>
+@@ -45,6 +46,8 @@ constexpr std::string_view kQuarantineRequestPrefix = "quarantine ";
+ constexpr std::string_view kQuarantineReleaseRequestPrefix =
+     "quarantine-release ";
+ constexpr std::string_view kHistoricalVersionsRequest = "versions\n";
++constexpr std::string_view kHistoricalVersionsQueryRequestPrefix =
++    "versions-query ";
+ constexpr std::string_view kHistoricalVersionRestoreRequestPrefix =
+     "restore ";
+ constexpr std::string_view kStopResponseSchema =
+@@ -56,13 +59,16 @@ constexpr std::string_view kQuarantineResponseSchema =
+ constexpr std::string_view kQuarantineReleaseResponseSchema =
+     "anonsync.local-quarantine-release.response.v1";
+ constexpr std::string_view kHistoricalVersionsResponseSchema =
+-    "anonsync.local-historical-versions.response.v1";
++    "anonsync.local-historical-versions.response.v2";
+ constexpr std::string_view kHistoricalVersionRestoreResponseSchema =
+     "anonsync.local-historical-version-restore.response.v1";
+ constexpr std::string_view kUnsupportedResponse =
+     "{\"schema\":\"anonsync.local-status.response.v1\","
+     "\"ok\":false,\"error\":\"unsupported_request\"}";
+-constexpr std::size_t kMaximumRequestBytes = 192U;
++// A canonical 4,096-byte relative path expands to 8,192 lowercase hex bytes
++// in the strict line protocol. Keep the total request independently bounded
++// while preserving arbitrary non-NUL POSIX pathname bytes.
++constexpr std::size_t kMaximumRequestBytes = 16U * 1024U;
+ constexpr std::uint64_t kServerClientTimeoutMilliseconds = 1000U;
+ 
+ struct SocketPathIdentity final {
+@@ -90,6 +96,81 @@ struct LocalSocketResponse final {
+     return std::string(label) + " " + std::string(child);
+ }
+ 
++[[nodiscard]] std::string json_quote(std::string_view value) {
++    std::ostringstream output;
++    output << '"';
++    constexpr char hex[] = "0123456789abcdef";
++    for (const unsigned char byte : value) {
++        switch (byte) {
++            case '"': output << "\\\""; break;
++            case '\\': output << "\\\\"; break;
++            case '\b': output << "\\b"; break;
++            case '\f': output << "\\f"; break;
++            case '\n': output << "\\n"; break;
++            case '\r': output << "\\r"; break;
++            case '\t': output << "\\t"; break;
++            default:
++                if (byte < 0x20U) {
++                    output << "\\u00" << hex[byte >> 4U]
++                           << hex[byte & 0x0fU];
++                } else {
++                    output << static_cast<char>(byte);
++                }
++        }
++    }
++    output << '"';
++    return output.str();
++}
++
++[[nodiscard]] std::string lowercase_hex_encode(std::string_view bytes) {
++    constexpr std::string_view hex = "0123456789abcdef";
++    std::string encoded;
++    encoded.reserve(bytes.size() * 2U);
++    for (const unsigned char byte : bytes) {
++        encoded.push_back(hex[byte >> 4U]);
++        encoded.push_back(hex[byte & 0x0fU]);
++    }
++    return encoded;
++}
++
++[[nodiscard]] std::optional<std::string> lowercase_hex_decode(
++    std::string_view encoded) {
++    if (encoded.empty() || (encoded.size() & 1U) != 0U) {
++        return std::nullopt;
++    }
++    const auto nibble = [](char value) -> std::optional<unsigned char> {
++        if (value >= '0' && value <= '9') {
++            return static_cast<unsigned char>(value - '0');
++        }
++        if (value >= 'a' && value <= 'f') {
++            return static_cast<unsigned char>(value - 'a' + 10);
++        }
++        return std::nullopt;
++    };
++    std::string decoded;
++    decoded.reserve(encoded.size() / 2U);
++    for (std::size_t offset = 0U; offset < encoded.size(); offset += 2U) {
++        const std::optional<unsigned char> high = nibble(encoded[offset]);
++        const std::optional<unsigned char> low = nibble(encoded[offset + 1U]);
++        if (!high.has_value() || !low.has_value()) return std::nullopt;
++        decoded.push_back(static_cast<char>((*high << 4U) | *low));
++    }
++    return decoded;
++}
++
++[[nodiscard]] std::optional<std::uint64_t> parse_decimal_uint64(
++    std::string_view text) {
++    if (text.empty()) return std::nullopt;
++    std::uint64_t value = 0U;
++    const char* const begin = text.data();
++    const char* const end = begin + text.size();
++    const auto parsed = std::from_chars(begin, end, value, 10);
++    if (parsed.ec != std::errc{} || parsed.ptr != end) {
++        return std::nullopt;
++    }
++    return value;
++}
++
+ [[nodiscard]] std::optional<SyncLocalStatusSocketPayloadQuarantineRequest>
+ parse_payload_quarantine_request(std::string_view request) {
+     constexpr std::size_t kDigestCharacters = 64U;
+@@ -136,6 +217,49 @@ parse_historical_version_request(std::string_view request) {
+             SyncLocalStatusSocketHistoricalVersionOperation::Inspect;
+         return parsed;
+     }
++    if (request.starts_with(kHistoricalVersionsQueryRequestPrefix)) {
++        if (request.back() != '\n') return std::nullopt;
++        request.remove_prefix(kHistoricalVersionsQueryRequestPrefix.size());
++        request.remove_suffix(1U);
++        const std::size_t first_space = request.find(' ');
++        if (first_space == std::string_view::npos) return std::nullopt;
++        const std::size_t second_space = request.find(' ', first_space + 1U);
++        if (second_space == std::string_view::npos ||
++            request.find(' ', second_space + 1U) != std::string_view::npos) {
++            return std::nullopt;
++        }
++        const std::string_view maximum_text = request.substr(0U, first_space);
++        const std::string_view path_hex = request.substr(
++            first_space + 1U, second_space - first_space - 1U);
++        const std::string_view cursor = request.substr(second_space + 1U);
++        const std::optional<std::uint64_t> maximum =
++            parse_decimal_uint64(maximum_text);
++        if (!maximum.has_value() ||
++            std::to_string(*maximum) != maximum_text) {
++            return std::nullopt;
++        }
++
++        parsed.operation =
++            SyncLocalStatusSocketHistoricalVersionOperation::Inspect;
++        parsed.query.maximum_entries = *maximum;
++        if (path_hex != "-") {
++            const std::optional<std::string> decoded =
++                lowercase_hex_decode(path_hex);
++            if (!decoded.has_value()) return std::nullopt;
++            parsed.query.canonical_path = std::move(*decoded);
++        }
++        if (cursor != "-") {
++            if (!is_lowercase_sha256_hex(cursor)) return std::nullopt;
++            parsed.query.start_after_operation_id = std::string(cursor);
++        }
++        try {
++            validate_sync_replica_historical_version_query_or_throw(
++                parsed.query, "local historical-version query");
++        } catch (const std::invalid_argument&) {
++            return std::nullopt;
++        }
++        return parsed;
++    }
+     if (!request.starts_with(kHistoricalVersionRestoreRequestPrefix) ||
+         request.size() !=
+             kHistoricalVersionRestoreRequestPrefix.size() + 64U + 1U ||
+@@ -834,6 +958,7 @@ void validate_historical_version_response_or_throw(
+     std::string_view response,
+     const LocalPeerCredentials& peer,
+     SyncLocalStatusSocketHistoricalVersionOperation operation,
++    const SyncReplicaHistoricalVersionQuery& query,
+     std::string_view operation_id,
+     std::string_view label) {
+     const Json parsed = parse_json_object_or_throw(response, label);
+@@ -842,8 +967,9 @@ void validate_historical_version_response_or_throw(
+     const bool rejected = terminal_class == "rejected";
+     const bool restoring =
+         operation == SyncLocalStatusSocketHistoricalVersionOperation::Restore;
+-    const std::size_t expected_fields =
+-        (restoring ? 6U : 5U) + (rejected ? 1U : 0U);
++    const std::size_t expected_fields = restoring
++        ? 6U + (rejected ? 1U : 0U)
++        : 8U + (rejected ? 1U : 0U);
+     const std::string_view expected_schema = restoring
+         ? kHistoricalVersionRestoreResponseSchema
+         : kHistoricalVersionsResponseSchema;
+@@ -856,10 +982,47 @@ void validate_historical_version_response_or_throw(
+             std::string(label) +
+             " has an invalid historical-version response shape");
+     }
+-    if (restoring && parsed.at("operation_id").str() != operation_id) {
+-        throw std::runtime_error(
+-            std::string(label) +
+-            " changed the requested historical operation ID");
++    if (restoring) {
++        if (parsed.at("operation_id").str() != operation_id) {
++            throw std::runtime_error(
++                std::string(label) +
++                " changed the requested historical operation ID");
++        }
++    } else {
++        const std::uint64_t returned_limit = exact_nonnegative_uint64_or_throw(
++            parsed.at("maximum_entries"), label);
++        if (returned_limit != query.maximum_entries) {
++            throw std::runtime_error(
++                std::string(label) +
++                " changed the requested historical entry limit");
++        }
++        const Json& returned_path = parsed.at("canonical_path");
++        if (query.canonical_path.has_value()) {
++            if (returned_path.is_null() ||
++                returned_path.str() != *query.canonical_path) {
++                throw std::runtime_error(
++                    std::string(label) +
++                    " changed the requested historical path");
++            }
++        } else if (!returned_path.is_null()) {
++            throw std::runtime_error(
++                std::string(label) +
++                " invented a requested historical path");
++        }
++        const Json& returned_cursor =
++            parsed.at("start_after_operation_id");
++        if (query.start_after_operation_id.has_value()) {
++            if (returned_cursor.is_null() ||
++                returned_cursor.str() != *query.start_after_operation_id) {
++                throw std::runtime_error(
++                    std::string(label) +
++                    " changed the requested historical cursor");
++            }
++        } else if (!returned_cursor.is_null()) {
++            throw std::runtime_error(
++                std::string(label) +
++                " invented a requested historical cursor");
++        }
+     }
+     const std::uint64_t generation = exact_nonnegative_uint64_or_throw(
+         parsed.at("request_generation"), label);
+@@ -1141,12 +1304,30 @@ struct SyncLocalStatusSocketServer::State final {
+ 
+     [[nodiscard]] std::string request_historical_version_response(
+         SyncLocalStatusSocketHistoricalVersionOperation operation,
++        SyncReplicaHistoricalVersionQuery query,
+         std::string operation_id) {
++        const bool restoring =
++            operation == SyncLocalStatusSocketHistoricalVersionOperation::Restore;
++        if (restoring) {
++            if (!is_lowercase_sha256_hex(operation_id) ||
++                query != SyncReplicaHistoricalVersionQuery{}) {
++                throw std::invalid_argument(
++                    label + " restore admission is not canonical");
++            }
++        } else {
++            if (!operation_id.empty()) {
++                throw std::invalid_argument(
++                    label + " inspection admission carried an operation ID");
++            }
++            validate_sync_replica_historical_version_query_or_throw(
++                query, label + " historical-version query");
++        }
++
+         bool accepted = false;
+         std::string rejection_reason;
+         std::uint64_t generation = 0U;
+         SyncLocalStatusSocketHistoricalVersionRequest new_request{
+-            0U, operation, operation_id};
++            0U, operation, query, operation_id};
+         {
+             std::lock_guard lock(mutex);
+             generation = historical_version_generation;
+@@ -1155,6 +1336,7 @@ struct SyncLocalStatusSocketServer::State final {
+             } else if (
+                 historical_version_pending.has_value() &&
+                 (historical_version_pending->operation != operation ||
++                 historical_version_pending->query != query ||
+                  historical_version_pending->operation_id != operation_id)) {
+                 rejection_reason = "different_historical_version_pending";
+             } else {
+@@ -1176,8 +1358,6 @@ struct SyncLocalStatusSocketServer::State final {
+             }
+         }
+         if (accepted) action_condition.notify_all();
+-        const bool restoring =
+-            operation == SyncLocalStatusSocketHistoricalVersionOperation::Restore;
+         std::ostringstream response;
+         response
+             << "{\"schema\":\""
+@@ -1192,6 +1372,20 @@ struct SyncLocalStatusSocketServer::State final {
+         response << ",\"request_generation\":" << generation;
+         if (restoring) {
+             response << ",\"operation_id\":\"" << operation_id << "\"";
++        } else {
++            response << ",\"maximum_entries\":" << query.maximum_entries
++                     << ",\"canonical_path\":";
++            if (query.canonical_path.has_value()) {
++                response << json_quote(*query.canonical_path);
++            } else {
++                response << "null";
++            }
++            response << ",\"start_after_operation_id\":";
++            if (query.start_after_operation_id.has_value()) {
++                response << json_quote(*query.start_after_operation_id);
++            } else {
++                response << "null";
++            }
+         }
+         response << ",\"server_pid\":"
+                  << static_cast<long long>(::getpid()) << '}';
+@@ -1227,7 +1421,8 @@ struct SyncLocalStatusSocketServer::State final {
+                         quarantine->observed_content_sha256);
+                 } else if (historical.has_value()) {
+                     response = request_historical_version_response(
+-                        historical->operation, historical->operation_id);
++                        historical->operation, historical->query,
++                        historical->operation_id);
+                 } else {
+                     response = std::string(kUnsupportedResponse);
+                 }
+@@ -1502,6 +1697,7 @@ bool SyncLocalStatusSocketServer::wait_for_action_request_or_timeout(
+                 observed.request_generation &&
+             (state_->historical_version_pending->operation !=
+                  observed.operation ||
++             state_->historical_version_pending->query != observed.query ||
+              state_->historical_version_pending->operation_id !=
+                  observed.operation_id)) {
+             throw std::invalid_argument(
+@@ -1638,7 +1834,9 @@ namespace {
+ [[nodiscard]] std::string request_historical_version_operation_or_throw(
+     const fs::path& absolute_socket_path,
+     SyncLocalStatusSocketHistoricalVersionOperation operation,
++    SyncReplicaHistoricalVersionQuery query,
+     std::string operation_id,
++    bool use_legacy_default_inspection_request,
+     std::uint64_t timeout_milliseconds,
+     std::string_view label) {
+     const bool restoring =
+@@ -1649,6 +1847,22 @@ namespace {
+             std::string(label) +
+             " requires one canonical operation ID only for restore");
+     }
++    if (restoring) {
++        if (query != SyncReplicaHistoricalVersionQuery{} ||
++            use_legacy_default_inspection_request) {
++            throw std::invalid_argument(
++                std::string(label) + " restore query is not canonical");
++        }
++    } else {
++        validate_sync_replica_historical_version_query_or_throw(query, label);
++        if (use_legacy_default_inspection_request &&
++            query != SyncReplicaHistoricalVersionQuery{}) {
++            throw std::invalid_argument(
++                std::string(label) +
++                " legacy inspection request requires the default query");
++        }
++    }
++
+     std::string request;
+     if (restoring) {
+         request.reserve(
+@@ -1656,13 +1870,30 @@ namespace {
+         request.append(kHistoricalVersionRestoreRequestPrefix);
+         request.append(operation_id);
+         request.push_back('\n');
+-    } else {
++    } else if (use_legacy_default_inspection_request) {
+         request = std::string(kHistoricalVersionsRequest);
++    } else {
++        const std::string path_hex = query.canonical_path.has_value()
++            ? lowercase_hex_encode(*query.canonical_path)
++            : "-";
++        const std::string cursor = query.start_after_operation_id.has_value()
++            ? *query.start_after_operation_id
++            : "-";
++        request.reserve(
++            kHistoricalVersionsQueryRequestPrefix.size() + 24U + 1U +
++            path_hex.size() + 1U + cursor.size() + 1U);
++        request.append(kHistoricalVersionsQueryRequestPrefix);
++        request.append(std::to_string(query.maximum_entries));
++        request.push_back(' ');
++        request.append(path_hex);
++        request.push_back(' ');
++        request.append(cursor);
++        request.push_back('\n');
+     }
+     LocalSocketResponse response = request_local_socket_or_throw(
+         absolute_socket_path, request, timeout_milliseconds, label);
+     validate_historical_version_response_or_throw(
+-        response.json, response.peer, operation, operation_id, label);
++        response.json, response.peer, operation, query, operation_id, label);
+     return std::move(response.json);
+ }
+ 
+@@ -1674,10 +1905,22 @@ std::string request_sync_local_status_historical_versions_or_throw(
+     std::string_view label) {
+     return request_historical_version_operation_or_throw(
+         absolute_socket_path,
+-        SyncLocalStatusSocketHistoricalVersionOperation::Inspect, {},
++        SyncLocalStatusSocketHistoricalVersionOperation::Inspect,
++        SyncReplicaHistoricalVersionQuery{}, {}, true,
+         timeout_milliseconds, label);
+ }
+ 
++std::string request_sync_local_status_historical_versions_query_or_throw(
++    const fs::path& absolute_socket_path,
++    SyncReplicaHistoricalVersionQuery query,
++    std::uint64_t timeout_milliseconds,
++    std::string_view label) {
++    return request_historical_version_operation_or_throw(
++        absolute_socket_path,
++        SyncLocalStatusSocketHistoricalVersionOperation::Inspect,
++        std::move(query), {}, false, timeout_milliseconds, label);
++}
++
+ std::string request_sync_local_status_historical_version_restore_or_throw(
+     const fs::path& absolute_socket_path,
+     std::string operation_id,
+@@ -1686,9 +1929,9 @@ std::string request_sync_local_status_historical_version_restore_or_throw(
+     return request_historical_version_operation_or_throw(
+         absolute_socket_path,
+         SyncLocalStatusSocketHistoricalVersionOperation::Restore,
+-        std::move(operation_id), timeout_milliseconds, label);
++        SyncReplicaHistoricalVersionQuery{}, std::move(operation_id), false,
++        timeout_milliseconds, label);
+ }
+-
+ }  // namespace anonsync
+ 
+ #endif
+diff --git a/src/sync_local_status_socket.hpp b/src/sync_local_status_socket.hpp
+index 21d217def376803b50328f3f038e9d79e13c3233..bb540d3e0d63b9ef7dd0cc587644fcd893d49c73 100644
+--- a/src/sync_local_status_socket.hpp
++++ b/src/sync_local_status_socket.hpp
+@@ -2,6 +2,8 @@
+ 
+ #if !defined(_WIN32)
+ 
++#include "sync_replica_historical_version_query.hpp"
++
+ #include <cstdint>
+ #include <filesystem>
+ #include <memory>
+@@ -55,6 +57,10 @@ struct SyncLocalStatusSocketHistoricalVersionRequest final {
+     std::uint64_t request_generation = 0U;
+     SyncLocalStatusSocketHistoricalVersionOperation operation =
+         SyncLocalStatusSocketHistoricalVersionOperation::Inspect;
++    // Used only for inspection. A path scope and exact active predecessor
++    // cursor make the bounded result fully browsable without making status
++    // polling perform causal or filesystem work.
++    SyncReplicaHistoricalVersionQuery query;
+     // Empty for inspection and one canonical active operation ID for restore.
+     std::string operation_id;
+ 
+@@ -85,9 +91,10 @@ struct SyncLocalStatusSocketActionSnapshot final {
+ // roots, or mutable service state. "stop\n" begins drain; "recheck\n" accepts
+ // a current-byte proof obligation; "quarantine EXPECTED OBSERVED\n" preserves
+ // one exact corrupt image; "quarantine-release EXPECTED OBSERVED\n"
+-// releases one exact recovered diagnostic image; "versions\n" requests one
+-// bounded causal-history projection; and "restore OPERATION_ID\n" requests
+-// one exact historical value through ordinary rooted publication. Quarantine
++// releases one exact recovered diagnostic image; "versions\n" requests the
++// default bounded causal-history projection; "versions-query LIMIT PATH_HEX
++// CURSOR\n" requests one exact page; and "restore OPERATION_ID\n" requests one
++// exact historical value through ordinary rooted publication. Quarantine
+ // operations share one lane and history operations share another. This is not
+ // a generic command dispatcher.
+ class SyncLocalStatusSocketServer final {
+@@ -206,6 +213,17 @@ request_sync_local_status_historical_versions_or_throw(
+         kSyncLocalStatusSocketDefaultTimeoutMilliseconds,
+     std::string_view label = "sync local historical versions request");
+ 
++// Path-scoped/cursor-paginated form. The exact query participates in request
++// coalescing, so a different page cannot overwrite one already accepted. The
++// legacy no-query helper above remains the default 64-entry global request.
++[[nodiscard]] std::string
++request_sync_local_status_historical_versions_query_or_throw(
++    const std::filesystem::path& absolute_socket_path,
++    SyncReplicaHistoricalVersionQuery query,
++    std::uint64_t timeout_milliseconds =
++        kSyncLocalStatusSocketDefaultTimeoutMilliseconds,
++    std::string_view label = "sync local historical versions query");
++
+ // Requests restoration of one exact active non-visible file operation. The
+ // owner re-proves all mutable authority and publishes a new causal successor;
+ // the response acknowledges admission only.
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index f58fb7c84f12f22f17bc0efe304eeef1720000db..1045dccac772842acc8f0b3cfbd81776af725b96 100755
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -4731,16 +4731,20 @@ SyncReplicaFolderScanOwner::
+ SyncReplicaHistoricalVersionInventory
+ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+     std::uint64_t maximum_entries) {
++    SyncReplicaHistoricalVersionQuery query;
++    query.maximum_entries = maximum_entries;
++    return inspect_historical_versions_or_throw(std::move(query));
++}
++
++SyncReplicaHistoricalVersionInventory
++SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
++    SyncReplicaHistoricalVersionQuery query) {
+     if (!state_) {
+         throw std::logic_error(
+             "sync replica folder scan owner is inactive");
+     }
+-    if (maximum_entries == 0U ||
+-        maximum_entries > kSyncReplicaHistoricalVersionMaximumEntries) {
+-        throw std::invalid_argument(
+-            state_->label +
+-            " historical-version inspection entry limit is invalid");
+-    }
++    validate_sync_replica_historical_version_query_or_throw(
++        query, state_->label + " historical-version inspection");
+ 
+     // This explicit operator action pays for one complete payload observation.
+     // It remains independent of ordinary service status polling and therefore
+@@ -4773,7 +4777,48 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+         return left.operation_id < right.operation_id;
+     };
+ 
++    // A cursor is advisory browse state, not authority. It must still name an
++    // exact active superseded file operation in the selected current scope;
++    // otherwise a changed replica cannot silently turn stale pagination into
++    // omission. The source generation/digests in every result let callers
++    // recognize that separately requested pages came from different cutpoints.
++    std::optional<SyncReplicaHistoricalVersionEntry> cursor_entry;
++    if (query.start_after_operation_id.has_value()) {
++        const std::optional<SyncReplicaOperation> cursor_operation =
++            model.operation_by_id(*query.start_after_operation_id);
++        if (!cursor_operation.has_value() ||
++            cursor_operation->kind != SyncReplicaValueKind::File) {
++            throw std::runtime_error(
++                state_->label +
++                " historical-version cursor is not one active file operation");
++        }
++        if (query.canonical_path.has_value() &&
++            cursor_operation->canonical_path != *query.canonical_path) {
++            throw std::runtime_error(
++                state_->label +
++                " historical-version cursor is outside the selected path");
++        }
++        const std::optional<SyncReplicaPathView> cursor_view =
++            model.visible_path(cursor_operation->canonical_path);
++        if (!cursor_view.has_value() ||
++            cursor_view->visible_operation_ids.empty() ||
++            std::binary_search(
++                cursor_view->visible_operation_ids.begin(),
++                cursor_view->visible_operation_ids.end(),
++                cursor_operation->operation_id)) {
++            throw std::runtime_error(
++                state_->label +
++                " historical-version cursor is no longer superseded");
++        }
++        cursor_entry.emplace();
++        cursor_entry->operation_id = cursor_operation->operation_id;
++        cursor_entry->canonical_path = cursor_operation->canonical_path;
++        cursor_entry->actor = cursor_operation->dot.actor;
++        cursor_entry->counter = cursor_operation->dot.counter;
++    }
++
+     SyncReplicaHistoricalVersionInventory inventory;
++    inventory.query = query;
+     inventory.source_replica_state_generation =
+         replica_snapshot.state_generation;
+     inventory.source_visible_state_digest =
+@@ -4788,119 +4833,162 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+         payload_snapshot.scan_reused_entry_count();
+     inventory.payload_scan_reused_bytes =
+         payload_snapshot.scan_reused_bytes();
+-    inventory.entries.reserve(static_cast<std::size_t>(maximum_entries));
+-
+-    // Iterate borrowed active evidence and retain only the deterministic first
+-    // maximum_entries candidates. This avoids both visible_paths() and
+-    // all_operations() whole-model clones for a projection whose output is
+-    // explicitly bounded. The max-heap root is the worst retained candidate;
+-    // replacing it preserves the same ordering as a complete sort.
+-    model.for_each_active_operation(
+-        [&](const SyncReplicaOperation& operation) {
+-            if (operation.kind != SyncReplicaValueKind::File) return;
+-
+-            const std::optional<SyncReplicaPathView> view =
+-                model.visible_path(operation.canonical_path);
+-            if (!view.has_value() || view->visible_operation_ids.empty()) {
+-                throw std::logic_error(
+-                    state_->label +
+-                    " historical active operation has no visible path head");
+-            }
+-            if (std::find(
+-                    view->visible_operation_ids.begin(),
+-                    view->visible_operation_ids.end(),
+-                    operation.operation_id) !=
+-                view->visible_operation_ids.end()) {
+-                return;
+-            }
+-            if (inventory.historical_file_operation_count ==
+-                std::numeric_limits<std::uint64_t>::max()) {
+-                throw std::overflow_error(
+-                    state_->label +
+-                    " historical-version operation count overflows");
+-            }
+-            ++inventory.historical_file_operation_count;
++    inventory.entries.reserve(
++        static_cast<std::size_t>(query.maximum_entries));
++
++    const auto increment_or_throw = [&](std::uint64_t& value,
++                                        std::string_view field) {
++        if (value == std::numeric_limits<std::uint64_t>::max()) {
++            throw std::overflow_error(
++                state_->label + " historical-version " +
++                std::string(field) + " count overflows");
++        }
++        ++value;
++    };
+ 
+-            const SyncReplicaOperation* current =
+-                model.active_operation_by_id_or_none(
+-                    view->primary_operation_id);
+-            if (current == nullptr) {
+-                throw std::logic_error(
+-                    state_->label +
+-                    " historical-version primary operation is inactive");
+-            }
++    const auto consider_operation = [&]
++        (const SyncReplicaOperation& operation,
++         const SyncReplicaPathView& view) {
++        if (operation.kind != SyncReplicaValueKind::File) return;
++        if (query.canonical_path.has_value() &&
++            operation.canonical_path != *query.canonical_path) {
++            return;
++        }
++        // visible_operation_ids is canonical operation-ID order. A binary
++        // membership test prevents a path with many concurrent visible heads
++        // from reintroducing the all-pairs cost removed by the grouped causal
++        // projection.
++        if (std::binary_search(
++                view.visible_operation_ids.begin(),
++                view.visible_operation_ids.end(),
++                operation.operation_id)) {
++            return;
++        }
++        increment_or_throw(
++            inventory.historical_file_operation_count,
++            "operation");
++
++        const SyncReplicaOperation* current =
++            model.active_operation_by_id_or_none(
++                view.primary_operation_id);
++        if (current == nullptr) {
++            throw std::logic_error(
++                state_->label +
++                " historical-version primary operation is inactive");
++        }
+ 
+-            const bool payload_present =
+-                payload_snapshot.payload_size_or_none(
+-                    operation.content_sha256) ==
+-                std::optional<std::uint64_t>(operation.size_bytes);
+-            if (payload_present) {
+-                if (inventory.payload_present_count ==
+-                    std::numeric_limits<std::uint64_t>::max()) {
+-                    throw std::overflow_error(
+-                        state_->label +
+-                        " historical-version payload-present count overflows");
+-                }
+-                ++inventory.payload_present_count;
+-            }
+-            const bool changes_current_value =
+-                current->kind == SyncReplicaValueKind::Tombstone ||
+-                current->size_bytes != operation.size_bytes ||
+-                current->content_sha256 != operation.content_sha256;
+-            const bool restore_ready =
+-                payload_present &&
+-                view->visible_operation_ids.size() == 1U &&
+-                changes_current_value;
+-            if (restore_ready) {
+-                if (inventory.restore_ready_count ==
+-                    std::numeric_limits<std::uint64_t>::max()) {
+-                    throw std::overflow_error(
+-                        state_->label +
+-                        " historical-version restore-ready count overflows");
+-                }
+-                ++inventory.restore_ready_count;
+-            }
++        const bool payload_present =
++            payload_snapshot.payload_size_or_none(
++                operation.content_sha256) ==
++            std::optional<std::uint64_t>(operation.size_bytes);
++        if (payload_present) {
++            increment_or_throw(
++                inventory.payload_present_count,
++                "payload-present");
++        }
++        const bool changes_current_value =
++            current->kind == SyncReplicaValueKind::Tombstone ||
++            current->size_bytes != operation.size_bytes ||
++            current->content_sha256 != operation.content_sha256;
++        const bool restore_ready =
++            payload_present && view.visible_operation_ids.size() == 1U &&
++            changes_current_value;
++        if (restore_ready) {
++            increment_or_throw(
++                inventory.restore_ready_count,
++                "restore-ready");
++        }
+ 
+-            SyncReplicaHistoricalVersionEntry candidate{
+-                .operation_id = operation.operation_id,
+-                .canonical_path = operation.canonical_path,
+-                .size_bytes = operation.size_bytes,
+-                .content_sha256 = operation.content_sha256,
+-                .actor = operation.dot.actor,
+-                .counter = operation.dot.counter,
+-                .visible_head_count = static_cast<std::uint64_t>(
+-                    view->visible_operation_ids.size()),
+-                .current_primary_operation_id =
+-                    view->primary_operation_id,
+-                .current_primary_kind = view->primary_kind,
+-                .payload_present = payload_present,
+-                .restore_ready = restore_ready,
+-            };
+-            if (inventory.entries.size() <
+-                static_cast<std::size_t>(maximum_entries)) {
+-                inventory.entries.push_back(std::move(candidate));
+-                std::push_heap(
+-                    inventory.entries.begin(), inventory.entries.end(),
+-                    entry_precedes);
+-                return;
+-            }
+-            if (!entry_precedes(candidate, inventory.entries.front())) {
+-                return;
+-            }
+-            std::pop_heap(
+-                inventory.entries.begin(), inventory.entries.end(),
+-                entry_precedes);
+-            inventory.entries.back() = std::move(candidate);
++        SyncReplicaHistoricalVersionEntry candidate{
++            .operation_id = operation.operation_id,
++            .canonical_path = operation.canonical_path,
++            .size_bytes = operation.size_bytes,
++            .content_sha256 = operation.content_sha256,
++            .actor = operation.dot.actor,
++            .counter = operation.dot.counter,
++            .visible_head_count = static_cast<std::uint64_t>(
++                view.visible_operation_ids.size()),
++            .current_primary_operation_id =
++                view.primary_operation_id,
++            .current_primary_kind = view.primary_kind,
++            .payload_present = payload_present,
++            .restore_ready = restore_ready,
++        };
++        if (cursor_entry.has_value() &&
++            !entry_precedes(*cursor_entry, candidate)) {
++            return;
++        }
++        increment_or_throw(
++            inventory.historical_file_operation_count_after_cursor,
++            "operation-after-cursor");
++
++        if (inventory.entries.size() <
++            static_cast<std::size_t>(query.maximum_entries)) {
++            inventory.entries.push_back(std::move(candidate));
+             std::push_heap(
+                 inventory.entries.begin(), inventory.entries.end(),
+                 entry_precedes);
+-        });
++            return;
++        }
++        if (!entry_precedes(candidate, inventory.entries.front())) {
++            return;
++        }
++        std::pop_heap(
++            inventory.entries.begin(), inventory.entries.end(),
++            entry_precedes);
++        inventory.entries.back() = std::move(candidate);
++        std::push_heap(
++            inventory.entries.begin(), inventory.entries.end(),
++            entry_precedes);
++    };
++
++    if (query.canonical_path.has_value()) {
++        const std::optional<SyncReplicaPathView> selected_view =
++            model.visible_path(*query.canonical_path);
++        if (selected_view.has_value()) {
++            model.for_each_active_operation(
++                [&](const SyncReplicaOperation& operation) {
++                    if (operation.canonical_path == *query.canonical_path) {
++                        consider_operation(operation, *selected_view);
++                    }
++                });
++        }
++    } else {
++        // Rev0966 called visible_path() once for every active operation. Since
++        // visible_path() itself scans every active operation, a long history
++        // made one bounded 64-entry projection quadratic. Grouping borrowed
++        // operations once keeps the complete semantic scan linearithmic while
++        // retaining only O(active operations) pointers and O(requested entries)
++        // response objects.
++        model.for_each_active_path(
++            [&](const SyncReplicaPathView& view,
++                std::span<const SyncReplicaOperation* const> operations) {
++                for (const SyncReplicaOperation* operation : operations) {
++                    if (operation == nullptr) {
++                        throw std::logic_error(
++                            state_->label +
++                            " historical-version path group contains a null operation");
++                    }
++                    consider_operation(*operation, view);
++                }
++            });
++    }
++
+     std::sort_heap(
+         inventory.entries.begin(), inventory.entries.end(),
+         entry_precedes);
+     inventory.truncated =
+-        inventory.historical_file_operation_count >
++        inventory.historical_file_operation_count_after_cursor >
+         static_cast<std::uint64_t>(inventory.entries.size());
++    if (inventory.truncated) {
++        if (inventory.entries.empty()) {
++            throw std::logic_error(
++                state_->label +
++                " historical-version truncated page retained no cursor");
++        }
++        inventory.next_start_after_operation_id =
++            inventory.entries.back().operation_id;
++    }
+     return inventory;
+ }
+ 
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index 11428f67ade8a14385b6d5a1800a4d56ad2d6f90..d51450fc99736fb06c86d85ca80e02539936bc03 100755
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -6,6 +6,7 @@
+ #include "sync_replica_deployment_manifest.hpp"
+ #include "sync_replica_file_payload_store.hpp"
+ #include "sync_replica_folder_observer.hpp"
++#include "sync_replica_historical_version_query.hpp"
+ #include "sync_replica_model.hpp"
+ #include "sync_replica_sqlite_owner.hpp"
+ #include "sync_sqlite_handle_slot.hpp"
+@@ -124,14 +125,6 @@ struct SyncReplicaFolderApplyResult final {
+     bool operator==(const SyncReplicaFolderApplyResult&) const = default;
+ };
+ 
+-// Explicit operator inspection is intentionally bounded independently of the
+-// retained causal graph. The complete graph remains durable replica evidence;
+-// this ceiling only limits one human-facing projection and its JSON response.
+-inline constexpr std::uint64_t
+-    kSyncReplicaHistoricalVersionDefaultMaximumEntries = 64U;
+-inline constexpr std::uint64_t
+-    kSyncReplicaHistoricalVersionMaximumEntries = 1024U;
+-
+ // One immutable active file operation that is no longer a visible head at its
+ // path. Dotted counters are causal identities, not wall-clock timestamps. A
+ // candidate is immediately restorable only when its exact payload is present,
+@@ -155,6 +148,7 @@ struct SyncReplicaHistoricalVersionEntry final {
+ };
+ 
+ struct SyncReplicaHistoricalVersionInventory final {
++    SyncReplicaHistoricalVersionQuery query;
+     std::uint64_t source_replica_state_generation = 0U;
+     std::string source_visible_state_digest;
+     std::string source_payload_snapshot_digest;
+@@ -162,10 +156,17 @@ struct SyncReplicaHistoricalVersionInventory final {
+     std::uint64_t payload_scan_hashed_bytes = 0U;
+     std::uint64_t payload_scan_reused_entry_count = 0U;
+     std::uint64_t payload_scan_reused_bytes = 0U;
++    // Total active superseded file operations in the selected path scope,
++    // including the cursor and entries that precede it.
+     std::uint64_t historical_file_operation_count = 0U;
++    // Operations strictly after the exact cursor under the deterministic
++    // inspection order. Equal to historical_file_operation_count when no
++    // cursor was requested.
++    std::uint64_t historical_file_operation_count_after_cursor = 0U;
+     std::uint64_t payload_present_count = 0U;
+     std::uint64_t restore_ready_count = 0U;
+     bool truncated = false;
++    std::optional<std::string> next_start_after_operation_id;
+     std::vector<SyncReplicaHistoricalVersionEntry> entries;
+ 
+     bool operator==(const SyncReplicaHistoricalVersionInventory&) const =
+@@ -602,6 +603,14 @@ public:
+         std::uint64_t maximum_entries =
+             kSyncReplicaHistoricalVersionDefaultMaximumEntries);
+ 
++    // Path-scoped and cursor-paginated inspection. The cursor is one exact
++    // currently active superseded file operation; it is not durable paging
++    // authority across replica changes. The returned source digests let an
++    // operator detect that each page came from a different current cutpoint.
++    [[nodiscard]] SyncReplicaHistoricalVersionInventory
++    inspect_historical_versions_or_throw(
++        SyncReplicaHistoricalVersionQuery query);
++
+     // Restores one exact non-visible active file operation by copying its
+     // retained immutable payload through the ordinary rooted atomic publisher,
+     // then minting a new local causal successor through the existing scanner.
+diff --git a/src/sync_replica_historical_version_query.hpp b/src/sync_replica_historical_version_query.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..09cc6ae2e1b661f51c7af577d2806ff8575a2514
+--- /dev/null
++++ b/src/sync_replica_historical_version_query.hpp
+@@ -0,0 +1,65 @@
++#pragma once
++
++#include "sha256_digest.hpp"
++#include "sync_manifest_validation.hpp"
++
++#include <cstdint>
++#include <optional>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++
++namespace anonsync {
++
++// Explicit history inspection is independently bounded from retained causal
++// evidence. The path and cursor are advisory browsing selectors only: every
++// restore still re-proves current replica, payload, catalog, and rooted-path
++// authority from scratch.
++inline constexpr std::uint64_t
++    kSyncReplicaHistoricalVersionDefaultMaximumEntries = 64U;
++inline constexpr std::uint64_t
++    kSyncReplicaHistoricalVersionMaximumEntries = 1024U;
++inline constexpr std::uint64_t
++    kSyncReplicaHistoricalVersionMaximumCanonicalPathBytes = 4096U;
++
++struct SyncReplicaHistoricalVersionQuery final {
++    std::uint64_t maximum_entries =
++        kSyncReplicaHistoricalVersionDefaultMaximumEntries;
++    std::optional<std::string> canonical_path;
++    std::optional<std::string> start_after_operation_id;
++
++    bool operator==(const SyncReplicaHistoricalVersionQuery&) const = default;
++};
++
++inline void validate_sync_replica_historical_version_query_or_throw(
++    const SyncReplicaHistoricalVersionQuery& query,
++    std::string_view label = "sync replica historical-version query") {
++    if (query.maximum_entries == 0U ||
++        query.maximum_entries > kSyncReplicaHistoricalVersionMaximumEntries) {
++        throw std::invalid_argument(
++            std::string(label) + " entry limit is invalid");
++    }
++    if (query.canonical_path.has_value()) {
++        if (query.canonical_path->empty() ||
++            query.canonical_path->size() >
++                kSyncReplicaHistoricalVersionMaximumCanonicalPathBytes) {
++            throw std::invalid_argument(
++                std::string(label) + " path size is invalid");
++        }
++        const SyncValidationResult validated =
++            validate_sync_relative_path(*query.canonical_path);
++        if (!validated.ok) {
++            throw std::invalid_argument(
++                std::string(label) + " path is not canonical: " +
++                validated.reason);
++        }
++    }
++    if (query.start_after_operation_id.has_value() &&
++        !is_lowercase_sha256_hex(*query.start_after_operation_id)) {
++        throw std::invalid_argument(
++            std::string(label) +
++            " cursor is not one lowercase SHA-256 operation ID");
++    }
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_replica_model.cpp b/src/sync_replica_model.cpp
+index 4c1307283e8095e36cd0d2d7f5a66803688afc42..e8dd3da98299935572289791fbb15c5737a5e47d 100644
+--- a/src/sync_replica_model.cpp
++++ b/src/sync_replica_model.cpp
+@@ -219,22 +219,44 @@ primary_visible_operation_or_throw(
+ 
+ [[nodiscard]] SyncReplicaPathView visible_path_view_or_throw(
+     std::string_view canonical_path,
+-    const std::vector<const SyncReplicaOperation*>& candidates) {
++    std::span<const SyncReplicaOperation* const> candidates) {
+     if (candidates.empty()) {
+         throw std::logic_error(
+             "sync replica indexed path unexpectedly has no operations");
+     }
+ 
++    // For one candidate to supersede another, its same-path causal context
++    // must cover the older operation's exact actor dot. Aggregate the greatest
++    // covered counter per actor once. The canonical own-context invariant is
++    // dot.counter - 1, so an operation cannot make itself disappear. This is
++    // exactly equivalent to the former all-pairs predicate while reducing one
++    // long path history from quadratic comparisons to a single context scan.
++    std::map<SyncReplicaActor, std::uint64_t> maximum_covered_counter;
++    for (const SyncReplicaOperation* candidate : candidates) {
++        if (candidate == nullptr ||
++            candidate->canonical_path != canonical_path) {
++            throw std::logic_error(
++                "sync replica indexed path contains an invalid candidate");
++        }
++        for (const SyncReplicaClockEntry& observed :
++             candidate->causal_context) {
++            auto [position, inserted] = maximum_covered_counter.emplace(
++                observed.actor, observed.counter);
++            if (!inserted && position->second < observed.counter) {
++                position->second = observed.counter;
++            }
++        }
++    }
++
+     std::vector<const SyncReplicaOperation*> visible;
+     visible.reserve(candidates.size());
+     for (const SyncReplicaOperation* candidate : candidates) {
+-        const bool superseded = std::any_of(
+-            candidates.begin(), candidates.end(),
+-            [&](const SyncReplicaOperation* other) {
+-                return sync_replica_operation_supersedes(
+-                    *other, *candidate);
+-            });
+-        if (!superseded) visible.push_back(candidate);
++        const auto covered = maximum_covered_counter.find(
++            candidate->dot.actor);
++        if (covered == maximum_covered_counter.end() ||
++            covered->second < candidate->dot.counter) {
++            visible.push_back(candidate);
++        }
+     }
+     if (visible.empty()) {
+         throw std::logic_error(
+@@ -975,29 +997,53 @@ std::optional<SyncReplicaPathView> SyncReplicaModel::visible_path(
+         }
+     }
+     if (candidates.empty()) return std::nullopt;
+-    return visible_path_view_or_throw(canonical_path, candidates);
++    return visible_path_view_from_active_candidates_or_throw(
++        std::span<const SyncReplicaOperation* const>(
++            candidates.data(), candidates.size()));
+ }
+ 
+-std::vector<SyncReplicaPathView> SyncReplicaModel::visible_paths() const {
+-    // Group once by borrowed canonical-path views. The former implementation
+-    // first copied every distinct path into a set and then called visible_path()
+-    // for each path; visible_path() rescanned every active operation, making a
+-    // large one-operation-per-path projection quadratic. evidence_by_id_ is
+-    // immutable for this const call, so both path views and operation pointers
+-    // remain valid until the grouped projection has been materialized.
+-    std::map<
+-        std::string_view,
+-        std::vector<const SyncReplicaOperation*>> candidates_by_path;
++std::vector<const SyncReplicaOperation*>
++SyncReplicaModel::ordered_active_operations_by_path() const {
++    // One sorted pointer vector avoids a map node and a separately allocated
++    // vector for every distinct path. Equal-path pointers are operation-ID
++    // ordered, matching active_operation_ids_ while making each borrowed span
++    // deterministic. Callers consume one visible projection at a time without
++    // cloning every path view or repeatedly rescanning the complete model.
++    std::vector<const SyncReplicaOperation*> ordered;
++    ordered.reserve(active_operation_ids_.size());
+     for (const std::string& operation_id : active_operation_ids_) {
+-        const SyncReplicaOperation& operation =
+-            evidence_by_id_.at(operation_id);
+-        candidates_by_path[operation.canonical_path].push_back(&operation);
++        ordered.push_back(&evidence_by_id_.at(operation_id));
+     }
+-    std::vector<SyncReplicaPathView> views;
+-    views.reserve(candidates_by_path.size());
+-    for (const auto& [path, candidates] : candidates_by_path) {
+-        views.push_back(visible_path_view_or_throw(path, candidates));
++    std::sort(
++        ordered.begin(), ordered.end(),
++        [](const SyncReplicaOperation* left,
++           const SyncReplicaOperation* right) {
++            if (left->canonical_path != right->canonical_path) {
++                return left->canonical_path < right->canonical_path;
++            }
++            return left->operation_id < right->operation_id;
++        });
++    return ordered;
++}
++
++SyncReplicaPathView
++SyncReplicaModel::visible_path_view_from_active_candidates_or_throw(
++    std::span<const SyncReplicaOperation* const> candidates) const {
++    if (candidates.empty() || candidates.front() == nullptr) {
++        throw std::logic_error(
++            "sync replica active-path projection has no first operation");
+     }
++    return visible_path_view_or_throw(
++        candidates.front()->canonical_path, candidates);
++}
++
++std::vector<SyncReplicaPathView> SyncReplicaModel::visible_paths() const {
++    std::vector<SyncReplicaPathView> views;
++    for_each_active_path(
++        [&](const SyncReplicaPathView& view,
++            std::span<const SyncReplicaOperation* const>) {
++            views.push_back(view);
++        });
+     return views;
+ }
+ 
+diff --git a/src/sync_replica_model.hpp b/src/sync_replica_model.hpp
+index 354385a95fd22e14209dc9edc1a3ec5cbc163a5c..394053c0cfada3e85b485d7598a8e115b3df3ed7 100644
+--- a/src/sync_replica_model.hpp
++++ b/src/sync_replica_model.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <algorithm>
+ #include <compare>
+ #include <cstddef>
+ #include <cstdint>
+@@ -397,6 +398,32 @@ public:
+     [[nodiscard]] std::optional<SyncReplicaPathView> visible_path(
+         const std::string& canonical_path) const;
+ 
++    // Groups active operations by borrowed canonical-path views exactly once,
++    // computes each visible projection once, and invokes the compile-time
++    // visitor in bytewise path order. The visitor must not mutate this model or
++    // retain any pointer/reference beyond the call. Keeping this a template
++    // avoids adding a type-erased executable boundary to the model API.
++    template <typename Visitor>
++    void for_each_active_path(const Visitor& visitor) const {
++        std::vector<const SyncReplicaOperation*> ordered =
++            ordered_active_operations_by_path();
++        std::size_t first = 0U;
++        while (first < ordered.size()) {
++            std::size_t after = first + 1U;
++            while (after < ordered.size() &&
++                   ordered[after]->canonical_path ==
++                       ordered[first]->canonical_path) {
++                ++after;
++            }
++            const std::span<const SyncReplicaOperation* const> candidates(
++                ordered.data() + first, after - first);
++            const SyncReplicaPathView view =
++                visible_path_view_from_active_candidates_or_throw(candidates);
++            visitor(view, candidates);
++            first = after;
++        }
++    }
++
+     [[nodiscard]] std::vector<SyncReplicaPathView> visible_paths() const;
+ 
+     // Active-operation digest. Independently named replicas converge on this
+@@ -418,6 +445,13 @@ private:
+         ConflictResolution,
+     };
+ 
++    [[nodiscard]] std::vector<const SyncReplicaOperation*>
++    ordered_active_operations_by_path() const;
++
++    [[nodiscard]] SyncReplicaPathView
++    visible_path_view_from_active_candidates_or_throw(
++        std::span<const SyncReplicaOperation* const> candidates) const;
++
+     [[nodiscard]] SyncReplicaOperation create_local_operation_or_throw(
+         std::string canonical_path,
+         SyncReplicaValueKind kind,
+diff --git a/src/sync_replica_peer_service.cpp b/src/sync_replica_peer_service.cpp
+index d501eecc5c046748feb894b930e764ff6bfdfd23..ccd890afe7eead6f30623dd48fe9a63bc37f3396 100644
+--- a/src/sync_replica_peer_service.cpp
++++ b/src/sync_replica_peer_service.cpp
+@@ -545,6 +545,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+     std::uint64_t historical_version_completed_generation = 0U;
+     std::optional<SyncReplicaPeerServiceHistoricalVersionAction>
+         historical_version_action;
++    SyncReplicaHistoricalVersionQuery historical_version_query;
+     std::string historical_version_operation_id;
+     std::optional<SyncReplicaHistoricalVersionInventory>
+         historical_version_last_inventory;
+@@ -976,6 +977,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+         status.completed_generation = historical_version_completed_generation;
+         status.pending = historical_version_pending();
+         status.action = historical_version_action;
++        status.query = historical_version_query;
+         status.operation_id = historical_version_operation_id;
+         status.retry_delay_milliseconds = remaining_milliseconds(
+             Clock::now(), next_payload_store_lease_retry_at);
+@@ -988,17 +990,23 @@ struct SyncReplicaPeerServiceOwner::State final {
+     void observe_historical_version_request_or_throw(
+         std::uint64_t generation,
+         SyncReplicaPeerServiceHistoricalVersionAction action,
+-        std::string operation_id) {
++        std::string operation_id,
++        SyncReplicaHistoricalVersionQuery query) {
+         const bool inspecting =
+             action == SyncReplicaPeerServiceHistoricalVersionAction::Inspect;
+         const bool restoring =
+             action == SyncReplicaPeerServiceHistoricalVersionAction::Restore;
+         if ((!inspecting && !restoring) || generation == 0U ||
+             (inspecting && !operation_id.empty()) ||
+-            (restoring && !is_lowercase_sha256_hex(operation_id))) {
++            (restoring && !is_lowercase_sha256_hex(operation_id)) ||
++            (restoring && query != SyncReplicaHistoricalVersionQuery{})) {
+             throw std::invalid_argument(
+                 label + " historical-version request is not canonical");
+         }
++        if (inspecting) {
++            validate_sync_replica_historical_version_query_or_throw(
++                query, label + " historical-version request");
++        }
+         if (generation < historical_version_requested_generation) {
+             throw std::invalid_argument(
+                 label +
+@@ -1009,6 +1017,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+         if (generation == historical_version_requested_generation) {
+             if (!historical_version_action.has_value() ||
+                 *historical_version_action != action ||
++                historical_version_query != query ||
+                 historical_version_operation_id != operation_id) {
+                 throw std::invalid_argument(
+                     label +
+@@ -1021,6 +1030,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+         if (pending_before &&
+             (!historical_version_action.has_value() ||
+              *historical_version_action != action ||
++             historical_version_query != query ||
+              historical_version_operation_id != operation_id)) {
+             throw std::invalid_argument(
+                 label +
+@@ -1034,6 +1044,7 @@ struct SyncReplicaPeerServiceOwner::State final {
+             counters.historical_version_requests_coalesced, coalesced);
+         historical_version_requested_generation = generation;
+         historical_version_action = action;
++        historical_version_query = std::move(query);
+         historical_version_operation_id = std::move(operation_id);
+         if (!pending_before) {
+             next_payload_store_lease_retry_at = Clock::time_point::min();
+@@ -1437,7 +1448,8 @@ struct SyncReplicaPeerServiceOwner::State final {
+                 SyncReplicaPeerServiceHistoricalVersionAction::Inspect) {
+                 SyncReplicaHistoricalVersionInventory inventory =
+                     folder_process.folder_owner_or_throw()
+-                        .inspect_historical_versions_or_throw();
++                        .inspect_historical_versions_or_throw(
++                            historical_version_query);
+                 historical_version_last_inventory = inventory;
+                 historical_version_last_restore.reset();
+                 result.historical_version_inventory = std::move(inventory);
+@@ -2030,9 +2042,10 @@ void SyncReplicaPeerServiceOwner::
+ observe_historical_version_request_or_throw(
+     std::uint64_t generation,
+     SyncReplicaPeerServiceHistoricalVersionAction action,
+-    std::string operation_id) {
++    std::string operation_id,
++    SyncReplicaHistoricalVersionQuery query) {
+     state_->observe_historical_version_request_or_throw(
+-        generation, action, std::move(operation_id));
++        generation, action, std::move(operation_id), std::move(query));
+ }
+ 
+ SyncReplicaPeerServiceStepResult
+diff --git a/src/sync_replica_peer_service.hpp b/src/sync_replica_peer_service.hpp
+index 004e7a15293c70222c2defc2a92b5753261efa5b..5d5d092f9e984c12d0bc8a51c0396e3c6d0882bb 100644
+--- a/src/sync_replica_peer_service.hpp
++++ b/src/sync_replica_peer_service.hpp
+@@ -279,6 +279,9 @@ struct SyncReplicaPeerServiceHistoricalVersionStatus final {
+     std::uint64_t completed_generation = 0U;
+     bool pending = false;
+     std::optional<SyncReplicaPeerServiceHistoricalVersionAction> action;
++    // Meaningful only for inspection. It is retained while pending and after
++    // completion so an operator can bind the result/failure to the exact page.
++    SyncReplicaHistoricalVersionQuery query;
+     std::string operation_id;
+     std::uint64_t retry_delay_milliseconds = 0U;
+     std::optional<SyncReplicaHistoricalVersionInventory> last_inventory;
+@@ -506,7 +509,8 @@ public:
+     void observe_historical_version_request_or_throw(
+         std::uint64_t generation,
+         SyncReplicaPeerServiceHistoricalVersionAction action,
+-        std::string operation_id = {});
++        std::string operation_id = {},
++        SyncReplicaHistoricalVersionQuery query = {});
+ 
+     [[nodiscard]] SyncReplicaPeerServiceStepResult run_next_or_throw();
+ 
+diff --git a/src/sync_replica_peer_service_status.cpp b/src/sync_replica_peer_service_status.cpp
+index e549a3b74f10b8dcb4a9241048c2005bebd00daa..08b4bb43ddfedcaaebb7ac05004c93c1609a94e0 100644
+--- a/src/sync_replica_peer_service_status.cpp
++++ b/src/sync_replica_peer_service_status.cpp
+@@ -418,6 +418,25 @@ void append_payload_quarantine_status(
+     output << '}';
+ }
+ 
++void append_historical_version_query(
++    std::ostream& output,
++    const SyncReplicaHistoricalVersionQuery& query) {
++    output << "{\"maximum_entries\":" << query.maximum_entries
++           << ",\"canonical_path\":";
++    if (query.canonical_path.has_value()) {
++        output << json_quote(*query.canonical_path);
++    } else {
++        output << "null";
++    }
++    output << ",\"start_after_operation_id\":";
++    if (query.start_after_operation_id.has_value()) {
++        output << json_quote(*query.start_after_operation_id);
++    } else {
++        output << "null";
++    }
++    output << '}';
++}
++
+ void append_historical_version_inventory(
+     std::ostream& output,
+     const std::optional<SyncReplicaHistoricalVersionInventory>& inventory) {
+@@ -425,8 +444,10 @@ void append_historical_version_inventory(
+         output << "null";
+         return;
+     }
++    output << "{\"query\":";
++    append_historical_version_query(output, inventory->query);
+     output
+-        << "{\"source_replica_state_generation\":"
++        << ",\"source_replica_state_generation\":"
+         << inventory->source_replica_state_generation
+         << ",\"source_visible_state_digest\":"
+         << json_quote(inventory->source_visible_state_digest)
+@@ -442,14 +463,22 @@ void append_historical_version_inventory(
+         << inventory->payload_scan_reused_bytes
+         << ",\"historical_file_operation_count\":"
+         << inventory->historical_file_operation_count
++        << ",\"historical_file_operation_count_after_cursor\":"
++        << inventory->historical_file_operation_count_after_cursor
+         << ",\"payload_present_count\":"
+         << inventory->payload_present_count
+         << ",\"restore_ready_count\":"
+         << inventory->restore_ready_count
+         << ",\"truncated\":" << json_bool(inventory->truncated)
+-        << ",\"entry_limit\":"
+-        << kSyncReplicaHistoricalVersionDefaultMaximumEntries
+-        << ",\"entries\":[";
++        << ",\"next_start_after_operation_id\":";
++    if (inventory->next_start_after_operation_id.has_value()) {
++        output << json_quote(*inventory->next_start_after_operation_id);
++    } else {
++        output << "null";
++    }
++    output << ",\"entry_limit\":"
++           << inventory->query.maximum_entries
++           << ",\"entries\":[";
+     for (std::size_t index = 0U; index < inventory->entries.size(); ++index) {
+         if (index != 0U) output << ',';
+         const SyncReplicaHistoricalVersionEntry& entry =
+@@ -526,6 +555,14 @@ void append_historical_version_status(
+     } else {
+         output << "null";
+     }
++    output << ",\"query\":";
++    if (status.action.has_value() &&
++        *status.action ==
++            SyncReplicaPeerServiceHistoricalVersionAction::Inspect) {
++        append_historical_version_query(output, status.query);
++    } else {
++        output << "null";
++    }
+     output << ",\"operation_id\":";
+     if (status.operation_id.empty()) {
+         output << "null";
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index 4c413bbe00d45e61fb74fc4c57f146d47b21c831..df16b90cfa58ff8853ed60cabf4fa2351f343e2c 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v11";
++    "anonsync.peer-service.status.v12";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index 050ebd9512fbbdf6e83e3afeceb9d8e1c536a2bb..232d57a79539b25a7609a3a038b5caae76bf1040 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -408,10 +408,12 @@ int main() {
+             versions_waiter.join();
+             require(
+                 first_versions ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v1\"," 
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
+                     "\"command\":\"versions\"," 
+                     "\"terminal_class\":\"accepted\"," 
+-                    "\"request_generation\":1,\"server_pid\":" +
++                    "\"request_generation\":1,\"maximum_entries\":64,"
++                    "\"canonical_path\":null,\"start_after_operation_id\":null,"
++                    "\"server_pid\":" +
+                         process_id + "}",
+                 "historical-version inspection must return exact acceptance");
+             require(
+@@ -426,6 +428,8 @@ int main() {
+                         anonsync::
+                             SyncLocalStatusSocketHistoricalVersionOperation::
+                                 Inspect &&
++                    versions_one.historical_version_request->query ==
++                        anonsync::SyncReplicaHistoricalVersionQuery{} &&
+                     versions_one.historical_version_request->operation_id
+                         .empty(),
+                 "combined action snapshot lost the inspection request");
+@@ -435,12 +439,61 @@ int main() {
+                     socket_path);
+             require(
+                 versions_two ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v1\"," 
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
+                     "\"command\":\"versions\"," 
+                     "\"terminal_class\":\"accepted\"," 
+-                    "\"request_generation\":2,\"server_pid\":" +
++                    "\"request_generation\":2,\"maximum_entries\":64,"
++                    "\"canonical_path\":null,\"start_after_operation_id\":null,"
++                    "\"server_pid\":" +
+                         process_id + "}",
+                 "same historical inspection must coalesce by generation");
++            anonsync::SyncReplicaHistoricalVersionQuery page_query;
++            page_query.maximum_entries = 7U;
++            page_query.canonical_path = "folder/name with space";
++            page_query.start_after_operation_id = historical_other;
++            anonsync::SyncReplicaHistoricalVersionQuery invalid_page =
++                page_query;
++            invalid_page.maximum_entries = 0U;
++            require_throws(
++                [&] {
++                    (void)anonsync::
++                        request_sync_local_status_historical_versions_query_or_throw(
++                            socket_path, invalid_page);
++                },
++                "historical query client accepted a zero entry limit");
++            invalid_page = page_query;
++            invalid_page.canonical_path = "../escape";
++            require_throws(
++                [&] {
++                    (void)anonsync::
++                        request_sync_local_status_historical_versions_query_or_throw(
++                            socket_path, invalid_page);
++                },
++                "historical query client accepted a non-canonical path");
++            invalid_page = page_query;
++            invalid_page.start_after_operation_id = "not-a-digest";
++            require_throws(
++                [&] {
++                    (void)anonsync::
++                        request_sync_local_status_historical_versions_query_or_throw(
++                            socket_path, invalid_page);
++                },
++                "historical query client accepted a malformed cursor");
++            const std::string changed_page_while_inspection = anonsync::
++                request_sync_local_status_historical_versions_query_or_throw(
++                    socket_path, page_query);
++            require(
++                changed_page_while_inspection ==
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
++                    "\"command\":\"versions\"," 
++                    "\"terminal_class\":\"rejected\"," 
++                    "\"reason\":\"different_historical_version_pending\"," 
++                    "\"request_generation\":2,\"maximum_entries\":7,"
++                    "\"canonical_path\":\"folder/name with space\","
++                    "\"start_after_operation_id\":\"" +
++                        historical_other + "\",\"server_pid\":" +
++                        process_id + "}",
++                "a different history page must not overwrite pending work");
+             const std::string restore_while_inspection = anonsync::
+                 request_sync_local_status_historical_version_restore_or_throw(
+                     socket_path, historical_operation);
+@@ -467,6 +520,30 @@ int main() {
+                      .has_value(),
+                 "historical inspection completion did not free its lane");
+ 
++            const std::string accepted_page = anonsync::
++                request_sync_local_status_historical_versions_query_or_throw(
++                    socket_path, page_query);
++            require(
++                accepted_page ==
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
++                    "\"command\":\"versions\"," 
++                    "\"terminal_class\":\"accepted\"," 
++                    "\"request_generation\":3,\"maximum_entries\":7,"
++                    "\"canonical_path\":\"folder/name with space\","
++                    "\"start_after_operation_id\":\"" +
++                        historical_other + "\",\"server_pid\":" +
++                        process_id + "}",
++                "path-scoped cursor page must return exact acceptance");
++            const auto accepted_page_snapshot = server.action_snapshot();
++            require(
++                accepted_page_snapshot.historical_version_request.has_value() &&
++                    accepted_page_snapshot.historical_version_request
++                            ->request_generation == 3U &&
++                    accepted_page_snapshot.historical_version_request->query ==
++                        page_query,
++                "history page query was not retained in the action snapshot");
++            server.complete_historical_version_request_or_throw(3U);
++
+             const std::string first_restore = anonsync::
+                 request_sync_local_status_historical_version_restore_or_throw(
+                     socket_path, historical_operation);
+@@ -475,7 +552,7 @@ int main() {
+                     "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\"," 
+                     "\"command\":\"restore\"," 
+                     "\"terminal_class\":\"accepted\"," 
+-                    "\"request_generation\":3,\"operation_id\":\"" +
++                    "\"request_generation\":4,\"operation_id\":\"" +
+                         historical_operation + "\",\"server_pid\":" +
+                         process_id + "}",
+                 "historical restore must return exact acceptance");
+@@ -488,7 +565,7 @@ int main() {
+                     "\"command\":\"restore\"," 
+                     "\"terminal_class\":\"rejected\"," 
+                     "\"reason\":\"different_historical_version_pending\"," 
+-                    "\"request_generation\":3,\"operation_id\":\"" +
++                    "\"request_generation\":4,\"operation_id\":\"" +
+                         historical_other + "\",\"server_pid\":" +
+                         process_id + "}",
+                 "a different restore must not replace pending authority");
+@@ -499,10 +576,10 @@ int main() {
+                             socket_path, "not-a-digest");
+                 },
+                 "historical restore client accepted a malformed operation ID");
+-            server.complete_historical_version_request_or_throw(3U);
++            server.complete_historical_version_request_or_throw(4U);
+             require_throws(
+                 [&] {
+-                    server.complete_historical_version_request_or_throw(4U);
++                    server.complete_historical_version_request_or_throw(5U);
+                 },
+                 "historical completion accepted a future generation");
+ 
+@@ -608,11 +685,13 @@ int main() {
+                     socket_path);
+             require(
+                 rejected_versions ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v1\"," 
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
+                     "\"command\":\"versions\"," 
+                     "\"terminal_class\":\"rejected\"," 
+                     "\"reason\":\"drain_requested\"," 
+-                    "\"request_generation\":3,\"server_pid\":" +
++                    "\"request_generation\":4,\"maximum_entries\":64,"
++                    "\"canonical_path\":null,\"start_after_operation_id\":null,"
++                    "\"server_pid\":" +
+                         process_id + "}",
+                 "historical inspection serialized after drain must be rejected");
+             const std::string rejected_restore = anonsync::
+@@ -624,7 +703,7 @@ int main() {
+                     "\"command\":\"restore\"," 
+                     "\"terminal_class\":\"rejected\"," 
+                     "\"reason\":\"drain_requested\"," 
+-                    "\"request_generation\":3,\"operation_id\":\"" +
++                    "\"request_generation\":4,\"operation_id\":\"" +
+                         historical_operation + "\",\"server_pid\":" +
+                         process_id + "}",
+                 "historical restore serialized after drain must be rejected");
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index a59a63d96ccf489e0643cb8c78cd73b3857b4456..281b3aaefd218d6f400ed9d471c704c3f4851972 100755
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -5218,14 +5218,112 @@ void test_historical_version_inspection_and_causal_restore() {
+     const auto bounded_after =
+         scan->inspect_historical_versions_or_throw(1U);
+     require(
+-        bounded_after.historical_file_operation_count == 2U &&
++        bounded_after.query == anonsync::SyncReplicaHistoricalVersionQuery{
++            .maximum_entries = 1U,
++            .canonical_path = std::nullopt,
++            .start_after_operation_id = std::nullopt} &&
++            bounded_after.historical_file_operation_count == 2U &&
++            bounded_after.historical_file_operation_count_after_cursor == 2U &&
+             bounded_after.payload_present_count == 2U &&
+             bounded_after.restore_ready_count == 1U &&
+             bounded_after.truncated && bounded_after.entries.size() == 1U &&
+             bounded_after.entries.front().operation_id ==
+                 second_operation->operation_id &&
+-            bounded_after.entries.front().restore_ready,
+-        "historical-version inspection did not bound and order superseded causal values deterministically");
++            bounded_after.entries.front().restore_ready &&
++            bounded_after.next_start_after_operation_id ==
++                std::optional<std::string>(second_operation->operation_id),
++        "historical-version inspection did not bound, order, or cursor superseded causal values deterministically");
++
++    anonsync::SyncReplicaHistoricalVersionQuery second_page_query;
++    second_page_query.maximum_entries = 1U;
++    second_page_query.start_after_operation_id =
++        *bounded_after.next_start_after_operation_id;
++    const auto second_page =
++        scan->inspect_historical_versions_or_throw(second_page_query);
++    require(
++        second_page.query == second_page_query &&
++            second_page.historical_file_operation_count == 2U &&
++            second_page.historical_file_operation_count_after_cursor == 1U &&
++            second_page.payload_present_count == 2U &&
++            second_page.restore_ready_count == 1U &&
++            !second_page.truncated &&
++            !second_page.next_start_after_operation_id.has_value() &&
++            second_page.entries.size() == 1U &&
++            second_page.entries.front().operation_id ==
++                first_operation->operation_id &&
++            !second_page.entries.front().restore_ready,
++        "historical-version cursor did not expose the exact deterministic second page");
++
++    anonsync::SyncReplicaHistoricalVersionQuery path_query;
++    path_query.maximum_entries = 2U;
++    path_query.canonical_path = std::string(path);
++    const auto path_page =
++        scan->inspect_historical_versions_or_throw(path_query);
++    require(
++        path_page.query == path_query &&
++            path_page.historical_file_operation_count == 2U &&
++            path_page.historical_file_operation_count_after_cursor == 2U &&
++            path_page.entries.size() == 2U && !path_page.truncated &&
++            path_page.entries[0].operation_id ==
++                second_operation->operation_id &&
++            path_page.entries[1].operation_id ==
++                first_operation->operation_id,
++        "path-scoped historical inspection did not expose the complete selected history");
++
++    anonsync::SyncReplicaHistoricalVersionQuery empty_path_query;
++    empty_path_query.maximum_entries = 3U;
++    empty_path_query.canonical_path = "missing/path.txt";
++    const auto empty_path_page =
++        scan->inspect_historical_versions_or_throw(empty_path_query);
++    require(
++        empty_path_page.query == empty_path_query &&
++            empty_path_page.historical_file_operation_count == 0U &&
++            empty_path_page.historical_file_operation_count_after_cursor == 0U &&
++            empty_path_page.payload_present_count == 0U &&
++            empty_path_page.restore_ready_count == 0U &&
++            empty_path_page.entries.empty() && !empty_path_page.truncated &&
++            !empty_path_page.next_start_after_operation_id.has_value(),
++        "path-scoped historical inspection invented entries for an absent path");
++
++    anonsync::SyncReplicaHistoricalVersionQuery outside_path_cursor;
++    outside_path_cursor.canonical_path = "other/path.txt";
++    outside_path_cursor.start_after_operation_id =
++        second_operation->operation_id;
++    require_error(
++        [&] {
++            (void)scan->inspect_historical_versions_or_throw(
++                outside_path_cursor);
++        },
++        "outside the selected path",
++        "historical-version inspection accepted a cursor from another path scope");
++
++    anonsync::SyncReplicaHistoricalVersionQuery visible_cursor;
++    visible_cursor.start_after_operation_id =
++        restored.restored_operation.operation_id;
++    require_error(
++        [&] {
++            (void)scan->inspect_historical_versions_or_throw(visible_cursor);
++        },
++        "no longer superseded",
++        "historical-version inspection accepted a now-visible cursor");
++
++    anonsync::SyncReplicaHistoricalVersionQuery malformed_path;
++    malformed_path.canonical_path = "../escape";
++    require_error(
++        [&] {
++            (void)scan->inspect_historical_versions_or_throw(malformed_path);
++        },
++        "path is not canonical",
++        "historical-version inspection accepted a non-canonical path filter");
++
++    anonsync::SyncReplicaHistoricalVersionQuery malformed_cursor;
++    malformed_cursor.start_after_operation_id = "not-a-digest";
++    require_error(
++        [&] {
++            (void)scan->inspect_historical_versions_or_throw(malformed_cursor);
++        },
++        "cursor is not one lowercase SHA-256 operation ID",
++        "historical-version inspection accepted a malformed cursor");
+ 
+     require_error(
+         [&] {
+diff --git a/tests/sync_replica_network_model_test.cpp b/tests/sync_replica_network_model_test.cpp
+index 829c741cf6ec601a9b48fe8f87a58b952d1f7cb9..c5f4a82c585d0d3994d0040ceafee0271030e984 100644
+--- a/tests/sync_replica_network_model_test.cpp
++++ b/tests/sync_replica_network_model_test.cpp
+@@ -372,6 +372,148 @@ int main() {
+             "one-pass grouped visible projection changed canonical ordering or primary evidence",
+             checks);
+ 
++        std::size_t borrowed_path_index = 0U;
++        bool borrowed_groups_match = true;
++        grouped_projection_model.for_each_active_path(
++            [&](const SyncReplicaPathView& view,
++                std::span<const SyncReplicaOperation* const> operations) {
++                if (borrowed_path_index >=
++                        expected_grouped_projection.size() ||
++                    view.canonical_path !=
++                        expected_grouped_projection[borrowed_path_index].first ||
++                    operations.size() != 1U || operations.front() == nullptr ||
++                    operations.front()->operation_id !=
++                        expected_grouped_projection[borrowed_path_index].second ||
++                    operations.front() !=
++                        grouped_projection_model.active_operation_by_id_or_none(
++                            operations.front()->operation_id)) {
++                    borrowed_groups_match = false;
++                }
++                ++borrowed_path_index;
++            });
++        require(
++            borrowed_groups_match &&
++                borrowed_path_index == expected_grouped_projection.size(),
++            "borrowed active-path visitor changed ordering, grouping, or model-owned operation identity",
++            checks);
++        struct MoveOnlyActivePathVisitor final {
++            explicit MoveOnlyActivePathVisitor(std::size_t& observed)
++                : observed_(&observed) {}
++            MoveOnlyActivePathVisitor(const MoveOnlyActivePathVisitor&) = delete;
++            MoveOnlyActivePathVisitor& operator=(
++                const MoveOnlyActivePathVisitor&) = delete;
++            MoveOnlyActivePathVisitor(MoveOnlyActivePathVisitor&&) = default;
++            MoveOnlyActivePathVisitor& operator=(
++                MoveOnlyActivePathVisitor&&) = default;
++
++            void operator()(
++                const SyncReplicaPathView&,
++                std::span<const SyncReplicaOperation* const>) const {
++                ++*observed_;
++            }
++
++        private:
++            std::size_t* observed_;
++        };
++        std::size_t move_only_path_visits = 0U;
++        MoveOnlyActivePathVisitor move_only_path_visitor(
++            move_only_path_visits);
++        grouped_projection_model.for_each_active_path(
++            move_only_path_visitor);
++        require(
++            move_only_path_visits == expected_grouped_projection.size(),
++            "compile-time active-path visitor copied or omitted a move-only visitor",
++            checks);
++
++        // The optimized coverage projection must remain exactly equivalent to
++        // the public pairwise supersession definition even for a long history
++        // with concurrent actor branches. This is deliberately a differential
++        // oracle: the production path aggregates causal coverage, while the
++        // test keeps the former all-pairs definition.
++        const std::string long_history_folder =
++            "folder-long-history-projection";
++        const std::string long_history_path =
++            "history/long-lived.txt";
++        SyncReplicaModel long_history(
++            long_history_folder, actor("device-history-local", 79U));
++        SyncReplicaOperation shared_history_root =
++            long_history.create_local_file_or_throw(
++                long_history_path, 1U, payload_digest("history-root"));
++        SyncReplicaOperation local_history_head = shared_history_root;
++        for (std::uint64_t counter = 0U; counter < 255U; ++counter) {
++            local_history_head = long_history.create_local_file_or_throw(
++                long_history_path, counter + 2U,
++                payload_digest(
++                    "local-history-" + std::to_string(counter)));
++        }
++        SyncReplicaModel remote_history(
++            long_history_folder, actor("device-history-remote", 83U));
++        require(
++            remote_history.accept_remote_or_throw(shared_history_root) ==
++                SyncReplicaAdmission::InsertedActive,
++            "long-history differential fixture lost its shared root", checks);
++        const SyncReplicaOperation remote_branch_one =
++            remote_history.create_local_file_or_throw(
++                long_history_path, 11U,
++                payload_digest("remote-history-one"));
++        const SyncReplicaOperation remote_branch_two =
++            remote_history.create_local_file_or_throw(
++                long_history_path, 12U,
++                payload_digest("remote-history-two"));
++        require(
++            long_history.accept_remote_or_throw(remote_branch_one) ==
++                    SyncReplicaAdmission::InsertedActive &&
++                long_history.accept_remote_or_throw(remote_branch_two) ==
++                    SyncReplicaAdmission::InsertedActive,
++            "long-history differential fixture lost its remote branch", checks);
++
++        bool long_history_group_observed = false;
++        long_history.for_each_active_path(
++            [&](const SyncReplicaPathView& view,
++                std::span<const SyncReplicaOperation* const> operations) {
++                if (view.canonical_path != long_history_path) return;
++                long_history_group_observed = true;
++                std::vector<std::string> pairwise_visible;
++                bool pointer_ordered = true;
++                for (std::size_t index = 0U;
++                     index < operations.size(); ++index) {
++                    const SyncReplicaOperation* candidate = operations[index];
++                    if (candidate == nullptr ||
++                        (index != 0U &&
++                         operations[index - 1U]->operation_id >=
++                             candidate->operation_id)) {
++                        pointer_ordered = false;
++                    }
++                    const bool superseded = std::any_of(
++                        operations.begin(), operations.end(),
++                        [&](const SyncReplicaOperation* other) {
++                            return sync_replica_operation_supersedes(
++                                *other, *candidate);
++                        });
++                    if (!superseded) {
++                        pairwise_visible.push_back(candidate->operation_id);
++                    }
++                }
++                std::sort(
++                    pairwise_visible.begin(), pairwise_visible.end());
++                require(
++                    pointer_ordered && operations.size() == 258U &&
++                        view.visible_operation_ids == pairwise_visible &&
++                        pairwise_visible == std::vector<std::string>{
++                            std::min(
++                                local_history_head.operation_id,
++                                remote_branch_two.operation_id),
++                            std::max(
++                                local_history_head.operation_id,
++                                remote_branch_two.operation_id)},
++                    "causal-coverage projection diverged from pairwise supersession",
++                    checks);
++            });
++        require(
++            long_history_group_observed,
++            "long-history differential projection omitted its active path",
++            checks);
++
+         // A filesystem observation is valid only against the exact path heads
+         // it saw. Ordinary publication must never turn one displayed side of a
+         // concurrent edit into an implicit winner, and conflict resolution must
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index a21a29dd1ee0a1d06b8099ce84eff0c169628fa2..69bd6793a9f3362b3050260e09bc3ca6b3780f5d 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -47,6 +47,7 @@ REQUIRED = (
+     Path("src/anonsync_sync.cpp"),
+     Path("src/sync_local_status_socket.hpp"),
+     Path("src/sync_local_status_socket.cpp"),
++    Path("src/sync_replica_historical_version_query.hpp"),
+     Path("src/sync_replica_folder_observer.hpp"),
+     Path("src/sync_replica_folder_observer.cpp"),
+     Path("src/sync_replica_model.hpp"),
+@@ -68,6 +69,8 @@ REQUIRED = (
+     Path("src/sync_replica_sync_once.cpp"),
+     Path("src/sync_replica_deployment_manifest.hpp"),
+     Path("src/sync_replica_reconciliation_protocol.hpp"),
++    Path("src/sync_replica_reconciliation_protocol.cpp"),
++    Path("src/sync_replica_reconciliation_service.hpp"),
+     Path("src/sync_replica_file_payload_snapshot.hpp"),
+     Path("src/sync_replica_file_delivery_service.hpp"),
+     Path("src/sync_replica_file_delivery_service.cpp"),
+@@ -129,6 +132,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0965.md"),
+     Path("EXPLICIT_CAUSAL_VERSION_INSPECTION_AND_ROOTED_RESTORE_AUDIT_rev0966.md"),
+     Path("REVISION_NOTES_rev0966.md"),
++    Path("PAGED_CAUSAL_VERSION_QUERY_AND_GROUPED_PROJECTION_AUDIT_rev0967.md"),
++    Path("REVISION_NOTES_rev0967.md"),
+ )
+ 
+ 
+@@ -272,6 +277,9 @@ def main() -> int:
+     sync_cli = text["src/anonsync_sync.cpp"]
+     local_status_h = text["src/sync_local_status_socket.hpp"]
+     local_status = text["src/sync_local_status_socket.cpp"]
++    historical_query_h = text[
++        "src/sync_replica_historical_version_query.hpp"
++    ]
+     folder_observer_h = text["src/sync_replica_folder_observer.hpp"]
+     folder_observer = text["src/sync_replica_folder_observer.cpp"]
+     model_h = text["src/sync_replica_model.hpp"]
+@@ -295,6 +303,12 @@ def main() -> int:
+     sync_once = text["src/sync_replica_sync_once.cpp"]
+     deployment_manifest_h = text["src/sync_replica_deployment_manifest.hpp"]
+     reconciliation_h = text["src/sync_replica_reconciliation_protocol.hpp"]
++    reconciliation_protocol_cpp = text[
++        "src/sync_replica_reconciliation_protocol.cpp"
++    ]
++    reconciliation_service_h = text[
++        "src/sync_replica_reconciliation_service.hpp"
++    ]
+     service_h = text["src/sync_replica_file_delivery_service.hpp"]
+     service = text["src/sync_replica_file_delivery_service.cpp"]
+     reconciliation_service = text["src/sync_replica_reconciliation_service.cpp"]
+@@ -405,6 +419,10 @@ def main() -> int:
+         "EXPLICIT_CAUSAL_VERSION_INSPECTION_AND_ROOTED_RESTORE_AUDIT_rev0966.md"
+     ]
+     rev0966_notes = text["REVISION_NOTES_rev0966.md"]
++    paged_history_design = text[
++        "PAGED_CAUSAL_VERSION_QUERY_AND_GROUPED_PROJECTION_AUDIT_rev0967.md"
++    ]
++    rev0967_notes = text["REVISION_NOTES_rev0967.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -493,9 +511,20 @@ def main() -> int:
+         if rev0966_verifier_start >= 0 and rev0966_verifier_end >= 0
+         else ""
+     )
++    rev0967_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 967:"
++    )
++    rev0967_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0967_verifier_start
++    )
++    rev0967_verifier_block = (
++        verifier[rev0967_verifier_start:rev0967_verifier_end]
++        if rev0967_verifier_start >= 0 and rev0967_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+-    historical_version_inspection = function_body(
++    historical_version_inspection = last_function_body(
+         folder_scan,
+         "SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(",
+     )
+@@ -2834,44 +2863,71 @@ def main() -> int:
+     visible_path_projection = function_body(
+         model, "visible_path_view_or_throw("
+     )
++    active_path_ordering = function_body(
++        model, "SyncReplicaModel::ordered_active_operations_by_path() const"
++    )
++    active_path_projection = function_body(
++        model_h, "void for_each_active_path(const Visitor& visitor) const"
++    )
+     visible_paths_projection = function_body(
+         model, "SyncReplicaModel::visible_paths() const"
+     )
+     require(
+         ordered(
+-            visible_paths_projection,
+-            "std::map<",
+-            "std::string_view",
+-            "candidates_by_path",
++            active_path_ordering,
++            "std::vector<const SyncReplicaOperation*> ordered",
+             "for (const std::string& operation_id : active_operation_ids_)",
+-            "candidates_by_path[operation.canonical_path].push_back(&operation)",
+-            "views.reserve(candidates_by_path.size())",
+-            "visible_path_view_or_throw(path, candidates)",
++            "std::sort(",
++            "left->canonical_path < right->canonical_path",
++            "return ordered;",
+         )
++        and ordered(
++            active_path_projection,
++            "ordered_active_operations_by_path()",
++            "std::span<const SyncReplicaOperation* const> candidates",
++            "visible_path_view_from_active_candidates_or_throw(candidates)",
++            "visitor(view, candidates)",
++        )
++        and "std::map<" not in active_path_ordering + active_path_projection
++        and "std::vector<SyncReplicaOperation>" not in active_path_ordering + active_path_projection
++        and "std::function" not in model_h
++        and "for_each_active_path(" in visible_paths_projection
+         and "visible_path(path)" not in visible_paths_projection
+         and "std::set<std::string> paths" not in visible_paths_projection
+-        and "visible_path_view_or_throw(canonical_path, candidates)" in
++        and "visible_path_view_from_active_candidates_or_throw(" in
+             function_body(model, "SyncReplicaModel::visible_path(")
++        and "visible_path_view_or_throw(" in function_body(
++            model,
++            "SyncReplicaModel::visible_path_view_from_active_candidates_or_throw(",
++        )
+         and all(
+             token in visible_path_projection
+             for token in (
++                "std::map<SyncReplicaActor, std::uint64_t>",
++                "maximum_covered_counter",
++                "candidate->causal_context",
++                "covered->second < candidate->dot.counter",
+                 "visible.reserve(candidates.size())",
+-                "sync_replica_operation_supersedes",
+                 "primary_visible_operation_or_throw(visible)",
+                 "view.visible_operation_ids.reserve(visible.size())",
+                 "view.preserved_file_operation_ids.reserve(visible.size() - 1U)",
+             )
+         )
++        and "sync_replica_operation_supersedes" not in visible_path_projection
+         and all(
+             token in network_model_runtime
+             for token in (
+                 "grouped_projection_path_count = 512U",
+                 "grouped_projection_model.visible_paths()",
+                 "one-pass grouped visible projection changed canonical ordering or primary evidence",
++                "borrowed active-path visitor changed ordering, grouping, or model-owned operation identity",
++                "compile-time active-path visitor copied or omitted a move-only visitor",
++                "causal-coverage projection diverged from pairwise supersession",
++                "operations.size() == 258U",
+             )
+         ),
+         "visible_path_projection_groups_active_operations_once_by_borrowed_path",
+-        "bulk projection no longer copies a distinct-path set and rescans the complete active evidence set once per path; one grouping pass preserves canonical ordering, conflict projection, primary selection, and immutable model ownership",
++        "bulk projection sorts one borrowed pointer vector, visits each path once, and computes maximal operations from aggregate causal coverage while runtime differential coverage preserves canonical ordering, conflict projection, and model-owned identity",
+     )
+ 
+     require(
+@@ -4356,7 +4412,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v11"' in peer_status_h
++        '"anonsync.peer-service.status.v12"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4770,12 +4826,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v11"' in peer_status_h
++        '"anonsync.peer-service.status.v12"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v11"'
++        and '"anonsync.peer-service.status.v12"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v11"'
++        and '"anonsync.peer-service.status.v12"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -6188,7 +6244,7 @@ def main() -> int:
+                 "payload_quarantine_request",
+                 "quarantine EXPECTED OBSERVED\\n",
+                 "anonsync.local-quarantine.response.v1",
+-                "kMaximumRequestBytes = 192U",
++                "kMaximumRequestBytes = 16U * 1024U",
+                 "different_quarantine_pending",
+                 "complete_payload_quarantine_request_or_throw",
+             )
+@@ -6261,7 +6317,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v11"' in peer_status_h
++        '"anonsync.peer-service.status.v12"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6472,7 +6528,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v11"' in peer_status_h
++        and '"anonsync.peer-service.status.v12"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -6682,7 +6738,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v11"' in peer_status_h
++        '"anonsync.peer-service.status.v12"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -6698,8 +6754,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v11"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v11"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v12"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v12"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7254,7 +7310,7 @@ def main() -> int:
+ 
+     require(
+         all(
+-            token in folder_scan_h
++            token in historical_query_h + folder_scan_h
+             for token in (
+                 "kSyncReplicaHistoricalVersionDefaultMaximumEntries = 64U",
+                 "kSyncReplicaHistoricalVersionMaximumEntries = 1024U",
+@@ -7268,7 +7324,7 @@ def main() -> int:
+             )
+         ),
+         "rev0966_history_api_is_explicit_bounded_and_nonretentive",
+-        "the folder owner exposes one bounded causal-predecessor projection and one exact restore operation without claiming chronology, retention, or a second synchronization engine",
++        "the evolved folder-owner API preserves rev0966's bounded causal-predecessor projection and exact restore operation without claiming chronology, retention, or a second synchronization engine",
+     )
+ 
+     require(
+@@ -7279,7 +7335,8 @@ def main() -> int:
+                 "payload_snapshot.require_folder_or_throw",
+                 "SyncReplicaModel::restore_or_throw",
+                 "model.for_each_active_operation",
+-                "model.visible_path(operation.canonical_path)",
++                "model.for_each_active_path",
++                "std::binary_search",
+                 "inventory.entries.reserve",
+                 "std::push_heap",
+                 "std::pop_heap",
+@@ -7294,13 +7351,14 @@ def main() -> int:
+             for token in (
+                 "template <typename Visitor>",
+                 "void for_each_active_operation",
++                "void for_each_active_path",
+                 "visitor(found->second)",
+                 "must not mutate this model",
+                 "O(active operations) copy",
+             )
+         ),
+         "rev0966_inspection_pays_explicit_authority_and_retains_only_bounded_projection",
+-        "inspection performs complete payload and replica observation but removes avoidable whole-operation and whole-visible-path response clones through a borrowed visitor and bounded max-heap",
++        "inspection still performs complete payload and replica observation while bounded heaps and borrowed operation/path visitors avoid whole-response clones and repeated whole-model path scans",
+     )
+ 
+     require(
+@@ -7381,7 +7439,8 @@ def main() -> int:
+             for token in (
+                 "historical_version_pending()",
+                 "historical_version_started_generation = target_generation",
+-                "inspect_historical_versions_or_throw()",
++                "inspect_historical_versions_or_throw(",
++                "historical_version_query",
+                 "restore_historical_version_or_throw",
+                 "SyncReplicaFilePayloadStoreIntegrityError",
+                 "SyncReplicaFilePayloadStoreLeaseBusyError",
+@@ -7389,7 +7448,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v11"' in peer_status_h
++        and '"anonsync.peer-service.status.v12"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7411,7 +7470,7 @@ def main() -> int:
+             )
+         ),
+         "rev0966_service_status_and_cli_form_one_surviving_operator_path",
+-        "the retained daemon schedules both actions, preserves typed integrity/lease behavior, reports ordinary failures instead of terminating, and exposes one v11 live/terminal status contract",
++        "the retained daemon still schedules inspection and restore through one typed failure/retry path, now exposed through the backward-evolved v12 live/terminal status contract",
+     )
+ 
+     require(
+@@ -7423,7 +7482,7 @@ def main() -> int:
+                 "deleted-version restore did not create exact bytes under one new causal successor",
+                 "historical-version inspection did not report one bounded retained predecessor",
+                 "historical-version restore reactivated old evidence instead of minting one causal successor",
+-                "historical-version inspection did not bound and order superseded causal values deterministically",
++                "historical-version inspection did not bound, order, or cursor superseded causal values deterministically",
+                 "historical-version restore accepted the current visible operation",
+                 "historical-version restore minted a duplicate value over identical current bytes",
+             )
+@@ -7445,13 +7504,13 @@ def main() -> int:
+                 "historical-version predecessor was not exactly",
+                 "owner-only exact historical-version restore",
+                 "historical-version restore did not converge exact v1 bytes",
+-                '"historical_version_inspections": 1',
++                '"historical_version_inspections": 3',
+                 '"historical_version_restores": 1',
+                 '"historical_version_failures": 0',
+             )
+         ),
+         "rev0966_compiled_and_process_regressions_bind_exact_discovery_restore_and_peer_convergence",
+-        "focused C++ tests cover bounds and action linearization while the configured two-peer process proves exact predecessor selection, distinct successor minting, and authenticated reconvergence",
++        "the evolved focused and two-peer process regressions retain exact predecessor discovery, distinct successor minting, authenticated reconvergence, and explicit action accounting",
+     )
+ 
+     require(
+@@ -7531,6 +7590,195 @@ def main() -> int:
+         "the release verifier makes the CLI, action lane, model refactor, folder authority, service/status, C++ regressions, process oracle, audit, and revision records mandatory from rev0966 onward",
+     )
+ 
++    require(
++        all(
++            token in historical_query_h
++            for token in (
++                "struct SyncReplicaHistoricalVersionQuery final",
++                "maximum_entries",
++                "canonical_path",
++                "start_after_operation_id",
++                "kSyncReplicaHistoricalVersionMaximumEntries = 1024U",
++                "kSyncReplicaHistoricalVersionMaximumCanonicalPathBytes = 4096U",
++                "validate_sync_relative_path",
++                "is_lowercase_sha256_hex",
++            )
++        ),
++        "rev0967_query_contract_is_explicit_canonical_and_independently_bounded",
++        "path, cursor, and page size are one reusable validated owner query rather than ad hoc CLI or socket parsing state",
++    )
++
++    require(
++        all(
++            token in historical_version_inspection
++            for token in (
++                "cursor is not one active file operation",
++                "cursor is outside the selected path",
++                "cursor is no longer superseded",
++                "historical_file_operation_count_after_cursor",
++                "next_start_after_operation_id",
++                "model.for_each_active_path",
++                "std::push_heap",
++                "std::pop_heap",
++                "std::sort_heap",
++            )
++        )
++        and "model.visible_path(operation.canonical_path)" not in historical_version_inspection
++        and all(
++            token in folder_scan_runtime
++            for token in (
++                "historical-version cursor did not expose the exact deterministic second page",
++                "path-scoped historical inspection did not expose the complete selected history",
++                "historical-version inspection accepted a cursor from another path scope",
++                "historical-version inspection accepted a now-visible cursor",
++                "historical-version inspection accepted a malformed cursor",
++            )
++        ),
++        "rev0967_pagination_is_exact_bounded_and_stale_cursor_fail_closed",
++        "the folder owner returns a canonical bounded suffix, exposes its exact next tail, and refuses cursor semantics that no longer match current causal evidence",
++    )
++
++    require(
++        all(
++            token in model_h + model
++            for token in (
++                "template <typename Visitor>",
++                "for_each_active_path",
++                "ordered_active_operations_by_path",
++                "std::vector<const SyncReplicaOperation*> ordered",
++                "maximum_covered_counter",
++                "candidate->causal_context",
++            )
++        )
++        and "sync_replica_operation_supersedes(" in network_model_runtime
++        and "*other, *candidate" in network_model_runtime
++        and "operations.size() == 258U" in network_model_runtime
++        and "causal-coverage projection diverged from pairwise supersession" in network_model_runtime,
++        "rev0967_grouped_projection_removes_repeated_whole_model_and_pairwise_work",
++        "one sorted borrowed-pointer traversal and one actor-coverage aggregate replace the quadratic projection while a 258-operation differential oracle retains the old semantic definition",
++    )
++
++    require(
++        all(
++            token in local_status_h + local_status
++            for token in (
++                "versions-query LIMIT PATH_HEX",
++                "kHistoricalVersionsQueryRequestPrefix",
++                "anonsync.local-historical-versions.response.v2",
++                "kMaximumRequestBytes = 16U * 1024U",
++                "historical_version_pending->query != query",
++                "request_sync_local_status_historical_versions_query_or_throw",
++            )
++        )
++        and all(
++            token in local_status_runtime
++            for token in (
++                "path-scoped cursor page must return exact acceptance",
++                "same historical inspection must coalesce by generation",
++                "a different history page must not overwrite pending work",
++                "historical query client accepted a zero entry limit",
++                "historical query client accepted a non-canonical path",
++                "historical query client accepted a malformed cursor",
++                "query must reject a socket without exact mode 0600",
++            )
++        ),
++        "rev0967_owner_socket_binds_exact_query_identity_and_pid_bound_echo",
++        "the strict lowercase-hex frame, bounded request, exact response echo, request equality, completion, mode checks, and peer PID remain in one existing action lane",
++    )
++
++    require(
++        '"anonsync.peer-service.status.v12"' in peer_status_h
++        and all(
++            token in peer_status
++            for token in (
++                "append_historical_version_query",
++                "historical_file_operation_count_after_cursor",
++                "next_start_after_operation_id",
++                "status.query",
++            )
++        )
++        and all(
++            token in service_configuration_runtime
++            for token in (
++                "owner-only historical-version first page",
++                "owner-only historical-version second page",
++                "historical-version first page omitted its exact tail cursor",
++                "historical-version second page did not settle the exact",
++                '"historical_version_inspections": 3',
++                '"historical_version_restores": 1',
++            )
++        ),
++        "rev0967_service_status_and_real_process_make_every_bounded_page_reachable",
++        "v12 carries the exact retained query and page continuation through live and terminal status while one real two-peer service proves inspection, restore, first-page truncation, and second-page completion",
++    )
++
++    require(
++        all(
++            token in normalized_prose(paged_history_design)
++            for token in (
++                "bounded output, quadratic work",
++                "Owner query contract",
++                "Pagination semantics",
++                "Service and status integration",
++                "Contamination correction",
++                "retains reconciliation protocol generation 2",
++                "What this does not prove",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0967_notes)
++            for token in (
++                "quadratic",
++                "versions-query",
++                "anonsync.peer-service.status.v12",
++                "unsealed protocol-generation-3 branch",
++                "operation-before-bytes invariant",
++                "Nonclaims",
++            )
++        )
++        and all(
++            token in normalized_prose(readme)
++            for token in (
++                "## Rev0967: paged causal history and grouped projection",
++                "--path CANONICAL_RELATIVE_PATH",
++                "--after LOWERCASE_SHA256",
++                "next_start_after_operation_id",
++                "not chronology",
++            )
++        )
++        and "reconciliation-request-frame-v3" not in reconciliation_protocol_cpp
++        and "metadata-only history pages" not in reconciliation_service_h
++        and "test_superseded_missing_payload_transfers_as_metadata_without_store_scan" not in reconciliation_runtime,
++        "rev0967_records_scaling_fix_nonclaims_and_removes_unimplemented_protocol_contamination",
++        "the visible records bind the actual paging/projection slice and mechanically exclude the discarded generation-3 metadata-only reconciliation prototype",
++    )
++
++    require(
++        verifier.count(
++            "if revision_number is not None and revision_number >= 967:"
++        ) == 1
++        and all(
++            token in rev0967_verifier_block
++            for token in (
++                "PAGED_CAUSAL_VERSION_QUERY_AND_GROUPED_PROJECTION_AUDIT_rev0967.md",
++                "REVISION_NOTES_rev0967.md",
++                "src/sync_replica_historical_version_query.hpp",
++                "src/sync_replica_model.cpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_local_status_socket.cpp",
++                "src/sync_replica_peer_service_status.cpp",
++                "tests/sync_replica_network_model_test.cpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0967_package_policy_binds_every_paging_and_projection_surface",
++        "the release verifier requires the query, model, folder owner, socket, service/status, tests, process oracle, audit, records, and package policy from rev0967 onward",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -7554,6 +7802,16 @@ def main() -> int:
+         "the new owner recovery surface cannot pass the structural audit until final validation and the visible bootstrap bind the exact release archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0967" not in rev0967_notes
++        and "VALIDATION_PENDING_REV0967" not in readme
++        and "ARCHIVE_PENDING_REV0967" not in bootstrap
++        and "CODENAME_PENDING_REV0967" not in bootstrap
++        and "VALIDATION_PENDING_REV0967" not in bootstrap,
++        "rev0967_final_validation_and_visible_release_cutpoint_are_sealed",
++        "paging and projection changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final rev0967 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index 086daf000425a57d2be71ad98b8441a123b7c4fc..d53f127330db958df24a33d98ac73a069158a609 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -321,11 +321,31 @@ def is_canonical_sha256(value: Any) -> bool:
+     )
+ 
+ 
++def require_historical_version_query(query: Any, label: str) -> None:
++    if not isinstance(query, dict) or set(query) != {
++        "maximum_entries", "canonical_path", "start_after_operation_id"
++    }:
++        fail(f"{label} historical query was not canonical")
++    maximum_entries = query.get("maximum_entries")
++    if not isinstance(maximum_entries, int) or not (1 <= maximum_entries <= 1024):
++        fail(f"{label} historical query omitted its bounded entry limit")
++    canonical_path = query.get("canonical_path")
++    if canonical_path is not None and (
++        not isinstance(canonical_path, str) or not canonical_path
++    ):
++        fail(f"{label} historical query path was neither string nor null")
++    cursor = query.get("start_after_operation_id")
++    if cursor is not None and not is_canonical_sha256(cursor):
++        fail(f"{label} historical query cursor was neither digest nor null")
++
++
+ def require_historical_version_inventory(
+     inventory: Any, label: str
+ ) -> None:
+     if not isinstance(inventory, dict):
+         fail(f"{label} historical inventory was not an object")
++    query = inventory.get("query")
++    require_historical_version_query(query, label)
+     for digest_field in (
+         "source_visible_state_digest",
+         "source_payload_snapshot_digest",
+@@ -339,6 +359,7 @@ def require_historical_version_inventory(
+         "payload_scan_reused_entries",
+         "payload_scan_reused_bytes",
+         "historical_file_operation_count",
++        "historical_file_operation_count_after_cursor",
+         "payload_present_count",
+         "restore_ready_count",
+         "entry_limit",
+@@ -349,20 +370,25 @@ def require_historical_version_inventory(
+                 f"{label} historical inventory omitted bounded "
+                 f"{integer_field}"
+             )
+-    if inventory.get("entry_limit") != 64:
+-        fail(f"{label} historical inventory entry limit was not 64")
++    if inventory.get("entry_limit") != query["maximum_entries"]:
++        fail(f"{label} historical inventory disagreed with its query limit")
+     if not isinstance(inventory.get("truncated"), bool):
+         fail(f"{label} historical inventory omitted truncation state")
++    next_cursor = inventory.get("next_start_after_operation_id")
++    if next_cursor is not None and not is_canonical_sha256(next_cursor):
++        fail(f"{label} historical inventory next cursor was invalid")
+     entries = inventory.get("entries")
+-    if not isinstance(entries, list) or len(entries) > 64:
++    if not isinstance(entries, list) or len(entries) > query["maximum_entries"]:
+         fail(f"{label} historical inventory entries were not bounded")
+-    if inventory["historical_file_operation_count"] < len(entries):
+-        fail(f"{label} historical inventory count was smaller than entries")
+-    if inventory["payload_present_count"] > inventory[
+-        "historical_file_operation_count"
+-    ] or inventory["restore_ready_count"] > inventory[
+-        "payload_present_count"
+-    ]:
++    total_count = inventory["historical_file_operation_count"]
++    after_cursor_count = inventory[
++        "historical_file_operation_count_after_cursor"
++    ]
++    if total_count < after_cursor_count or after_cursor_count < len(entries):
++        fail(f"{label} historical inventory cursor counts were incoherent")
++    if inventory["payload_present_count"] > total_count or inventory[
++        "restore_ready_count"
++    ] > inventory["payload_present_count"]:
+         fail(f"{label} historical inventory aggregate counts were incoherent")
+     canonical_order: list[tuple[str, str, int, int, str]] = []
+     for index, entry in enumerate(entries):
+@@ -382,6 +408,10 @@ def require_historical_version_inventory(
+             "canonical_path"
+         ]:
+             fail(f"{label} historical entry {index} omitted canonical_path")
++        if query["canonical_path"] is not None and entry[
++            "canonical_path"
++        ] != query["canonical_path"]:
++            fail(f"{label} historical entry escaped its selected path")
+         if not isinstance(entry.get("actor_device_id"), str) or not entry[
+             "actor_device_id"
+         ]:
+@@ -419,10 +449,12 @@ def require_historical_version_inventory(
+         )
+     if canonical_order != sorted(canonical_order):
+         fail(f"{label} historical inventory was not canonical")
+-    if inventory["truncated"] != (
+-        inventory["historical_file_operation_count"] > len(entries)
+-    ):
+-        fail(f"{label} historical truncation disagreed with exact count")
++    expected_truncated = after_cursor_count > len(entries)
++    if inventory["truncated"] != expected_truncated:
++        fail(f"{label} historical truncation disagreed with cursor count")
++    expected_next = entries[-1]["operation_id"] if expected_truncated else None
++    if next_cursor != expected_next:
++        fail(f"{label} historical next cursor did not bind the page tail")
+ 
+ 
+ def require_historical_version_restore(restored: Any, label: str) -> None:
+@@ -484,21 +516,25 @@ def require_historical_version_status(
+     ] != (requested > completed):
+         fail(f"{label} historical-version pending state was incoherent")
+     action = history.get("action")
++    query = history.get("query")
+     operation_id = history.get("operation_id")
+     if requested == 0:
+-        if action is not None or operation_id is not None:
++        if action is not None or query is not None or operation_id is not None:
+             fail(f"{label} invented historical-version request state")
+     elif action == "inspect":
+         if operation_id is not None:
+             fail(f"{label} inspection invented an operation ID")
++        require_historical_version_query(query, label)
+     elif action == "restore":
+-        if not is_canonical_sha256(operation_id):
++        if query is not None or not is_canonical_sha256(operation_id):
+             fail(f"{label} restore omitted its exact operation ID")
+     else:
+         fail(f"{label} historical versions omitted its exact action")
+     inventory = history.get("last_inventory")
+     if inventory is not None:
+         require_historical_version_inventory(inventory, label)
++        if action == "inspect" and inventory.get("query") != query:
++            fail(f"{label} historical status changed the completed query")
+     restored = history.get("last_restore")
+     if restored is not None:
+         require_historical_version_restore(restored, label)
+@@ -1132,7 +1168,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v11",
++                    "schema": "anonsync.peer-service.status.v12",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -2099,15 +2135,20 @@ def main() -> int:
+             versions_response = run_json(
+                 [
+                     str(sync), "versions", "--socket", str(source_status),
++                    "--path", historical_relative_path,
++                    "--limit", "1",
+                     "--timeout-milliseconds", "1000",
+                 ],
+                 label="owner-only historical-version inspection",
+             )
+             expected_versions_response = {
+-                "schema": "anonsync.local-historical-versions.response.v1",
++                "schema": "anonsync.local-historical-versions.response.v2",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": history_inspection_generation,
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": None,
+                 "server_pid": source.pid,
+             }
+             if versions_response != expected_versions_response:
+@@ -2125,6 +2166,27 @@ def main() -> int:
+             require_historical_version_inventory(
+                 inventory, "historical-version inspection"
+             )
++            expected_initial_history_query = {
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": None,
++            }
++            if inventory.get("query") != expected_initial_history_query:
++                fail(
++                    "historical-version inspection changed its exact query: "
++                    f"{json.dumps(inventory, sort_keys=True)}"
++                )
++            if inventory.get("historical_file_operation_count") != 1 or (
++                inventory.get("historical_file_operation_count_after_cursor")
++                != 1
++            ) or inventory.get("truncated") is not False or (
++                inventory.get("next_start_after_operation_id") is not None
++            ):
++                fail(
++                    "historical-version first inspection did not prove the "
++                    "single path-scoped predecessor exactly: "
++                    f"{json.dumps(inventory, sort_keys=True)}"
++                )
+             historical_v1_digest = hashlib.sha256(historical_v1).hexdigest()
+             matching_entries = [
+                 entry for entry in inventory["entries"]
+@@ -2206,14 +2268,144 @@ def main() -> int:
+                 receiver_files / historical_relative_path
+             ).read_bytes() != historical_v1:
+                 fail("historical-version restore did not converge exact v1 bytes")
+-            history_counters = restored_status.get("counters")
++
++            # Restoring v1 publishes a new causal successor and leaves both
++            # superseded operations active as immutable historical evidence.
++            # Exercise exact one-entry cursor pagination so neither predecessor
++            # can be stranded behind the bounded first page.
++            first_page_generation = restore_generation + 1
++            first_page_response = run_json(
++                [
++                    str(sync), "versions", "--socket", str(source_status),
++                    "--path", historical_relative_path,
++                    "--limit", "1",
++                    "--timeout-milliseconds", "1000",
++                ],
++                label="owner-only historical-version first page",
++            )
++            expected_first_page_response = {
++                "schema": "anonsync.local-historical-versions.response.v2",
++                "command": "versions",
++                "terminal_class": "accepted",
++                "request_generation": first_page_generation,
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": None,
++                "server_pid": source.pid,
++            }
++            if first_page_response != expected_first_page_response:
++                fail(
++                    "historical-version first-page acceptance was not exact: "
++                    f"{json.dumps(first_page_response, sort_keys=True)}"
++                )
++            first_page_status = wait_for_historical_version_completion(
++                sync, source, source_status, first_page_generation, "inspect",
++                "historical-version first page",
++            )
++            first_page = first_page_status["historical_versions"][
++                "last_inventory"
++            ]
++            require_historical_version_inventory(
++                first_page, "historical-version first page"
++            )
++            expected_first_page_query = {
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": None,
++            }
++            if first_page.get("query") != expected_first_page_query or (
++                first_page.get("historical_file_operation_count") != 2
++            ) or first_page.get(
++                "historical_file_operation_count_after_cursor"
++            ) != 2 or first_page.get("truncated") is not True or len(
++                first_page.get("entries", [])
++            ) != 1:
++                fail(
++                    "historical-version first page did not expose the exact "
++                    "two-predecessor cursor frontier: "
++                    f"{json.dumps(first_page, sort_keys=True)}"
++                )
++            page_cursor = first_page.get("next_start_after_operation_id")
++            if not is_canonical_sha256(page_cursor) or page_cursor != (
++                first_page["entries"][0]["operation_id"]
++            ):
++                fail("historical-version first page omitted its exact tail cursor")
++
++            second_page_generation = first_page_generation + 1
++            second_page_response = run_json(
++                [
++                    str(sync), "versions", "--socket", str(source_status),
++                    "--path", historical_relative_path,
++                    "--after", page_cursor,
++                    "--limit", "1",
++                    "--timeout-milliseconds", "1000",
++                ],
++                label="owner-only historical-version second page",
++            )
++            expected_second_page_response = {
++                "schema": "anonsync.local-historical-versions.response.v2",
++                "command": "versions",
++                "terminal_class": "accepted",
++                "request_generation": second_page_generation,
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": page_cursor,
++                "server_pid": source.pid,
++            }
++            if second_page_response != expected_second_page_response:
++                fail(
++                    "historical-version second-page acceptance was not exact: "
++                    f"{json.dumps(second_page_response, sort_keys=True)}"
++                )
++            second_page_status = wait_for_historical_version_completion(
++                sync, source, source_status, second_page_generation, "inspect",
++                "historical-version second page",
++            )
++            second_page = second_page_status["historical_versions"][
++                "last_inventory"
++            ]
++            require_historical_version_inventory(
++                second_page, "historical-version second page"
++            )
++            expected_second_page_query = {
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": page_cursor,
++            }
++            if second_page.get("query") != expected_second_page_query or (
++                second_page.get("historical_file_operation_count") != 2
++            ) or second_page.get(
++                "historical_file_operation_count_after_cursor"
++            ) != 1 or second_page.get("truncated") is not False or (
++                second_page.get("next_start_after_operation_id") is not None
++            ) or len(second_page.get("entries", [])) != 1:
++                fail(
++                    "historical-version second page did not settle the exact "
++                    "cursor suffix: "
++                    f"{json.dumps(second_page, sort_keys=True)}"
++                )
++            paged_operation_ids = {
++                first_page["entries"][0]["operation_id"],
++                second_page["entries"][0]["operation_id"],
++            }
++            if paged_operation_ids != {
++                historical_operation_id,
++                replaced_operation_id,
++            }:
++                fail(
++                    "historical-version cursor pages omitted, duplicated, or "
++                    "invented predecessor operations: "
++                    f"{sorted(paged_operation_ids)!r}"
++                )
++
++            history_counters = second_page_status.get("counters")
+             if not isinstance(history_counters, dict):
+                 fail("historical-version restore status omitted counters")
+             expected_history_counters = {
+-                "historical_version_requests_observed": 2,
+-                "historical_version_attempts": 2,
+-                "historical_version_completions": 2,
+-                "historical_version_inspections": 1,
++                "historical_version_requests_observed": 4,
++                "historical_version_attempts": 4,
++                "historical_version_completions": 4,
++                "historical_version_inspections": 3,
+                 "historical_version_restores": 1,
+                 "historical_version_failures": 0,
+             }
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index f61c18c930682877cfe2c47ef3b7dac22e30799f..40cdd920400fe9fe91af62cb96ef9bd4d3821ac9 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v11"
++                    value.get("schema") == "anonsync.peer-service.status.v12"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 3fc6170e553ee802d46679aea9b15bc628a9469b..7c61dd479fe5b561ffb9449129c5b2c356a4f486 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1362,6 +1362,31 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 967:
++        revision_scoped_required.update({
++            "PAGED_CAUSAL_VERSION_QUERY_AND_GROUPED_PROJECTION_AUDIT_rev0967.md",
++            "REVISION_NOTES_rev0967.md",
++            "CMakeLists.txt",
++            "src/anonsync_sync.cpp",
++            "src/sync_local_status_socket.hpp",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_historical_version_query.hpp",
++            "src/sync_replica_model.hpp",
++            "src/sync_replica_model.cpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_peer_service.hpp",
++            "src/sync_replica_peer_service.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_peer_service_status.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tests/sync_replica_network_model_test.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

@@ -1,0 +1,1770 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9f5c5b1..c0446e4 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1090,15 +1090,18 @@ target_compile_options(
+   -Wall -Wextra -Wpedantic)
+ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ANONSYNC_USE_BUNDLED_SQLITE)
+   # SQLite's global allocator can only be replaced before initialization. The
+-  # campaign therefore execs one fresh worker for every transaction-stack cut.
++  # campaign therefore self-execs one fresh worker for every transaction-stack
++  # cut and drains bounded stdout/stderr through the test-only process owner.
+   add_executable(anonsync_sqlite_transaction_allocator_fault_test
+     tests/sqlite_transaction_allocator_fault_test.cpp)
+   target_include_directories(
+     anonsync_sqlite_transaction_allocator_fault_test PRIVATE
+-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
++    ${CMAKE_CURRENT_SOURCE_DIR}/src
++    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+   target_link_libraries(
+     anonsync_sqlite_transaction_allocator_fault_test PRIVATE
+-    anonsync_sqlite_support)
++    anonsync_sqlite_support
++    anonsync_self_exec_test_process)
+   target_compile_options(
+     anonsync_sqlite_transaction_allocator_fault_test PRIVATE
+     -Wall -Wextra -Wpedantic)
+diff --git a/tests/self_exec_test_process.cpp b/tests/self_exec_test_process.cpp
+index 9a8b1be..bc00482 100644
+--- a/tests/self_exec_test_process.cpp
++++ b/tests/self_exec_test_process.cpp
+@@ -14,6 +14,7 @@
+ #include <limits>
+ #include <memory>
+ #include <optional>
++#include <poll.h>
+ #include <spawn.h>
+ #include <stdexcept>
+ #include <string>
+@@ -40,9 +41,11 @@ constexpr std::size_t kMaximumArgumentCount = 32;
+ constexpr std::size_t kMaximumArgumentBytes = 64U * 1024U;
+ constexpr std::size_t kMaximumSingleArgumentBytes = 4096;
+ constexpr std::size_t kMaximumEnvironmentBytes = 64U * 1024U;
++constexpr std::size_t kMaximumCaptureBytesPerStream = 16U * 1024U * 1024U;
+ constexpr int kPinnedExecutableDescriptor = 3;
+ constexpr int kFirstSanitizedDescriptor = kPinnedExecutableDescriptor + 1;
+ constexpr std::string_view kPinnedExecutablePath = "/proc/self/fd/3";
++constexpr auto kCapturePollSlice = 10ms;
+ constexpr std::array<std::string_view, 7> kPropagatedEnvironmentNames{{
+     "ASAN_OPTIONS",
+     "ASAN_SYMBOLIZER_PATH",
+@@ -81,6 +84,9 @@ public:
+     ~ScopedDescriptor() { reset(); }
+ 
+     [[nodiscard]] int get() const noexcept { return descriptor_; }
++    [[nodiscard]] int release() noexcept {
++        return std::exchange(descriptor_, -1);
++    }
+ 
+ private:
+     void reset() noexcept {
+@@ -94,6 +100,11 @@ private:
+     int descriptor_ = -1;
+ };
+ 
++struct CapturePipe final {
++    ScopedDescriptor read_end;
++    ScopedDescriptor write_end;
++};
++
+ class SpawnFileActions final {
+ public:
+     SpawnFileActions() {
+@@ -243,6 +254,44 @@ private:
+     return ScopedDescriptor(descriptor);
+ }
+ 
++[[nodiscard]] ScopedDescriptor promote_for_spawn_action_or_throw(
++    ScopedDescriptor descriptor,
++    std::string_view label) {
++    if (descriptor.get() >= kFirstSanitizedDescriptor) {
++        return descriptor;
++    }
++    const int replacement = ::fcntl(descriptor.get(), F_DUPFD_CLOEXEC,
++                                    kFirstSanitizedDescriptor);
++    if (replacement < 0) {
++        throw_errno(std::string(label) + " fcntl(F_DUPFD_CLOEXEC)");
++    }
++    return ScopedDescriptor(replacement);
++}
++
++[[nodiscard]] CapturePipe make_capture_pipe_or_throw(
++    std::string_view label) {
++    int raw_descriptors[2] = {-1, -1};
++    if (::pipe2(raw_descriptors, O_CLOEXEC) != 0) {
++        throw_errno(std::string(label) + " pipe2");
++    }
++
++    CapturePipe pipe{ScopedDescriptor(raw_descriptors[0]),
++                     ScopedDescriptor(raw_descriptors[1])};
++    pipe.read_end = promote_for_spawn_action_or_throw(
++        std::move(pipe.read_end), std::string(label) + " read end");
++    pipe.write_end = promote_for_spawn_action_or_throw(
++        std::move(pipe.write_end), std::string(label) + " write end");
++
++    const int flags = ::fcntl(pipe.read_end.get(), F_GETFL);
++    if (flags < 0) {
++        throw_errno(std::string(label) + " read fcntl(F_GETFL)");
++    }
++    if (::fcntl(pipe.read_end.get(), F_SETFL, flags | O_NONBLOCK) != 0) {
++        throw_errno(std::string(label) + " read fcntl(F_SETFL O_NONBLOCK)");
++    }
++    return pipe;
++}
++
+ [[nodiscard]] bool same_file_identity(const struct stat& left,
+                                       const struct stat& right) noexcept {
+     return left.st_dev == right.st_dev && left.st_ino == right.st_ino;
+@@ -348,6 +397,94 @@ void validate_arguments_or_throw(const std::vector<std::string>& arguments) {
+     return "unclassified wait status " + std::to_string(status);
+ }
+ 
++void close_descriptor_noexcept(int& descriptor) noexcept {
++    if (descriptor < 0) return;
++    const int owned_descriptor = std::exchange(descriptor, -1);
++    // As with ScopedDescriptor, close authority is consumed once. Retrying an
++    // EINTR result can race descriptor reuse in another thread.
++    (void)::close(owned_descriptor);
++}
++
++void drain_capture_descriptor_or_throw(int& descriptor,
++                                       std::string& output,
++                                       std::size_t maximum_bytes,
++                                       std::string_view label,
++                                       std::string_view stream_name) {
++    if (descriptor < 0) return;
++    std::array<char, 4096> buffer{};
++    for (;;) {
++        const ssize_t count = ::read(descriptor, buffer.data(), buffer.size());
++        if (count > 0) {
++            const std::size_t bytes = static_cast<std::size_t>(count);
++            if (bytes > maximum_bytes - output.size()) {
++                const std::size_t remaining = maximum_bytes - output.size();
++                output.append(buffer.data(), remaining);
++                throw std::runtime_error(
++                    std::string(label) + " captured " +
++                    std::string(stream_name) + " exceeded its " +
++                    std::to_string(maximum_bytes) + "-byte budget");
++            }
++            output.append(buffer.data(), bytes);
++            continue;
++        }
++        if (count == 0) {
++            close_descriptor_noexcept(descriptor);
++            return;
++        }
++        if (errno == EINTR) continue;
++        if (errno == EAGAIN || errno == EWOULDBLOCK) return;
++        throw_errno(std::string(label) + " read captured " +
++                    std::string(stream_name));
++    }
++}
++
++[[nodiscard]] std::string escaped_output_excerpt(std::string_view output) {
++    constexpr std::size_t kMaximumExcerptBytes = 2048;
++    constexpr char kHex[] = "0123456789abcdef";
++    const std::size_t bytes = std::min(output.size(), kMaximumExcerptBytes);
++    std::string rendered;
++    rendered.reserve(bytes + 32);
++    for (std::size_t index = 0; index < bytes; ++index) {
++        const unsigned char byte =
++            static_cast<unsigned char>(output[index]);
++        switch (byte) {
++            case '\n':
++                rendered += "\\n";
++                break;
++            case '\r':
++                rendered += "\\r";
++                break;
++            case '\t':
++                rendered += "\\t";
++                break;
++            case '\\':
++                rendered += "\\\\";
++                break;
++            default:
++                if (byte >= 0x20U && byte <= 0x7eU) {
++                    rendered.push_back(static_cast<char>(byte));
++                } else {
++                    rendered += "\\x";
++                    rendered.push_back(kHex[(byte >> 4U) & 0x0fU]);
++                    rendered.push_back(kHex[byte & 0x0fU]);
++                }
++                break;
++        }
++    }
++    if (output.size() > bytes) rendered += "...";
++    return rendered;
++}
++
++[[nodiscard]] std::string captured_output_context(
++    const SelfExecTestProcessOutput& output) {
++    return "; captured stdout bytes=" +
++           std::to_string(output.standard_output.size()) + " [" +
++           escaped_output_excerpt(output.standard_output) +
++           "]; captured stderr bytes=" +
++           std::to_string(output.standard_error.size()) + " [" +
++           escaped_output_excerpt(output.standard_error) + "]";
++}
++
+ void kill_process_group_noexcept(pid_t child) noexcept {
+     if (child <= 0) return;
+     if (::kill(-child, SIGKILL) != 0 && errno != ESRCH) {
+@@ -364,13 +501,17 @@ void reap_blocking_noexcept(pid_t child) noexcept {
+ }  // namespace
+ 
+ SelfExecTestProcess::SelfExecTestProcess(SelfExecTestProcess&& other) noexcept
+-    : child_(std::exchange(other.child_, -1)) {}
++    : child_(std::exchange(other.child_, -1)),
++      stdout_read_(std::exchange(other.stdout_read_, -1)),
++      stderr_read_(std::exchange(other.stderr_read_, -1)) {}
+ 
+ SelfExecTestProcess& SelfExecTestProcess::operator=(
+     SelfExecTestProcess&& other) noexcept {
+     if (this != &other) {
+         terminate_and_reap_noexcept();
+         child_ = std::exchange(other.child_, -1);
++        stdout_read_ = std::exchange(other.stdout_read_, -1);
++        stderr_read_ = std::exchange(other.stderr_read_, -1);
+     }
+     return *this;
+ }
+@@ -380,10 +521,17 @@ SelfExecTestProcess::~SelfExecTestProcess() {
+ }
+ 
+ void SelfExecTestProcess::terminate_and_reap_noexcept() noexcept {
+-    if (child_ <= 0) return;
+-    kill_process_group_noexcept(child_);
+-    reap_blocking_noexcept(child_);
+-    child_ = -1;
++    if (child_ > 0) {
++        const pid_t child = std::exchange(child_, -1);
++        kill_process_group_noexcept(child);
++        reap_blocking_noexcept(child);
++    }
++    close_output_capture_noexcept();
++}
++
++void SelfExecTestProcess::close_output_capture_noexcept() noexcept {
++    close_descriptor_noexcept(stdout_read_);
++    close_descriptor_noexcept(stderr_read_);
+ }
+ 
+ void SelfExecTestProcess::wait_for_exact_exit(
+@@ -394,6 +542,10 @@ void SelfExecTestProcess::wait_for_exact_exit(
+         throw std::logic_error(
+             "self-exec child has already been reaped or was never owned");
+     }
++    if (stdout_read_ >= 0 || stderr_read_ >= 0) {
++        throw std::logic_error(
++            "captured self-exec child requires wait_for_exact_exit_with_output");
++    }
+     if (expected_exit < 0 || expected_exit > 255) {
+         throw std::invalid_argument("expected child exit must fit in one byte");
+     }
+@@ -444,6 +596,109 @@ void SelfExecTestProcess::wait_for_exact_exit(
+     }
+ }
+ 
++SelfExecTestProcessOutput SelfExecTestProcess::wait_for_exact_exit_with_output(
++    int expected_exit,
++    std::chrono::milliseconds timeout,
++    std::size_t maximum_bytes_per_stream,
++    std::string_view label) {
++    if (child_ <= 0) {
++        throw std::logic_error(
++            "self-exec child has already been reaped or was never owned");
++    }
++    if (stdout_read_ < 0 || stderr_read_ < 0) {
++        throw std::logic_error(
++            "self-exec child was not spawned with output capture");
++    }
++    if (expected_exit < 0 || expected_exit > 255) {
++        throw std::invalid_argument("expected child exit must fit in one byte");
++    }
++    if (timeout <= std::chrono::milliseconds::zero()) {
++        throw std::invalid_argument("self-exec child timeout must be positive");
++    }
++    if (maximum_bytes_per_stream == 0 ||
++        maximum_bytes_per_stream > kMaximumCaptureBytesPerStream) {
++        throw std::invalid_argument(
++            "self-exec capture byte budget is zero or exceeds its hard limit");
++    }
++
++    const pid_t process_group = child_;
++    const auto deadline = std::chrono::steady_clock::now() + timeout;
++    SelfExecTestProcessOutput output;
++    bool leader_reaped = false;
++    int status = 0;
++
++    try {
++        output.standard_output.reserve(
++            std::min<std::size_t>(maximum_bytes_per_stream, 4096));
++        output.standard_error.reserve(
++            std::min<std::size_t>(maximum_bytes_per_stream, 4096));
++        for (;;) {
++            drain_capture_descriptor_or_throw(
++                stdout_read_, output.standard_output,
++                maximum_bytes_per_stream, label, "stdout");
++            drain_capture_descriptor_or_throw(
++                stderr_read_, output.standard_error,
++                maximum_bytes_per_stream, label, "stderr");
++
++            if (!leader_reaped) {
++                const pid_t observed = ::waitpid(child_, &status, WNOHANG);
++                if (observed == child_) {
++                    child_ = -1;
++                    leader_reaped = true;
++                } else if (observed < 0 && errno != EINTR) {
++                    throw_errno(std::string(label) + " waitpid");
++                }
++            }
++
++            if (leader_reaped && stdout_read_ < 0 && stderr_read_ < 0) {
++                break;
++            }
++
++            const auto now = std::chrono::steady_clock::now();
++            if (now >= deadline) {
++                throw std::runtime_error(
++                    std::string(label) +
++                    " timed out while draining captured output");
++            }
++
++            const auto remaining = std::chrono::duration_cast<
++                std::chrono::milliseconds>(deadline - now);
++            const auto bounded_wait =
++                std::max(1ms, std::min(kCapturePollSlice, remaining));
++            std::array<struct pollfd, 2> descriptors{{
++                {stdout_read_, POLLIN, 0},
++                {stderr_read_, POLLIN, 0},
++            }};
++            const int poll_result = ::poll(
++                descriptors.data(), descriptors.size(),
++                static_cast<int>(bounded_wait.count()));
++            if (poll_result < 0 && errno != EINTR) {
++                throw_errno(std::string(label) + " poll captured output");
++            }
++            if ((descriptors[0].revents & POLLNVAL) != 0 ||
++                (descriptors[1].revents & POLLNVAL) != 0) {
++                throw std::runtime_error(
++                    std::string(label) +
++                    " capture poll observed an invalid descriptor");
++            }
++        }
++    } catch (...) {
++        kill_process_group_noexcept(process_group);
++        if (child_ > 0) reap_blocking_noexcept(child_);
++        child_ = -1;
++        close_output_capture_noexcept();
++        throw;
++    }
++
++    if (!WIFEXITED(status) || WEXITSTATUS(status) != expected_exit) {
++        throw std::runtime_error(
++            std::string(label) + " returned " + child_status_text(status) +
++            ", expected exit status " + std::to_string(expected_exit) +
++            captured_output_context(output));
++    }
++    return output;
++}
++
+ fs::path current_self_executable_or_throw() {
+     std::array<char, 4096> buffer{};
+     const ssize_t size =
+@@ -463,9 +718,19 @@ fs::path current_self_executable_or_throw() {
+     return canonical;
+ }
+ 
+-SelfExecTestProcess spawn_self_exec_test_process_or_throw(
++namespace {
++
++struct SpawnedSelfExecProcess final {
++    pid_t child = -1;
++    int stdout_read = -1;
++    int stderr_read = -1;
++};
++
++[[nodiscard]] SpawnedSelfExecProcess
++spawn_self_exec_test_process_components_or_throw(
+     const fs::path& executable,
+-    const std::vector<std::string>& arguments) {
++    const std::vector<std::string>& arguments,
++    bool capture_output) {
+     validate_arguments_or_throw(arguments);
+ 
+     const std::string requested_path = executable.native();
+@@ -496,12 +761,23 @@ SelfExecTestProcess spawn_self_exec_test_process_or_throw(
+             "self-exec sanitation sentinel was not observable before spawn");
+     }
+ 
++    std::optional<CapturePipe> stdout_pipe;
++    std::optional<CapturePipe> stderr_pipe;
++    if (capture_output) {
++        stdout_pipe.emplace(make_capture_pipe_or_throw("self-exec stdout"));
++        stderr_pipe.emplace(make_capture_pipe_or_throw("self-exec stderr"));
++    }
++
+     SpawnFileActions actions;
+     // Descriptor 3 pins the exact running executable object. The child execs
+     // through /proc/self/fd/3, proves that identity against /proc/self/exe, and
+     // consumes the descriptor before any test state is opened. closefrom then
+     // covers every unrelated descriptor, including concurrent parent opens.
+     actions.add_dup2(pinned_executable.get(), kPinnedExecutableDescriptor);
++    if (capture_output) {
++        actions.add_dup2(stdout_pipe->write_end.get(), STDOUT_FILENO);
++        actions.add_dup2(stderr_pipe->write_end.get(), STDERR_FILENO);
++    }
+     actions.add_close_from(kFirstSanitizedDescriptor);
+     SpawnAttributes attributes;
+ 
+@@ -531,7 +807,34 @@ SelfExecTestProcess spawn_self_exec_test_process_or_throw(
+     if (child <= 0) {
+         throw std::runtime_error("posix_spawn returned no owned child PID");
+     }
+-    return SelfExecTestProcess(child);
++    SpawnedSelfExecProcess result;
++    result.child = child;
++    if (capture_output) {
++        result.stdout_read = stdout_pipe->read_end.release();
++        result.stderr_read = stderr_pipe->read_end.release();
++    }
++    return result;
++}
++
++}  // namespace
++
++SelfExecTestProcess spawn_self_exec_test_process_or_throw(
++    const fs::path& executable,
++    const std::vector<std::string>& arguments) {
++    const SpawnedSelfExecProcess spawned =
++        spawn_self_exec_test_process_components_or_throw(executable, arguments,
++                                                         false);
++    return SelfExecTestProcess(spawned.child);
++}
++
++SelfExecTestProcess spawn_self_exec_test_process_with_output_capture_or_throw(
++    const fs::path& executable,
++    const std::vector<std::string>& arguments) {
++    const SpawnedSelfExecProcess spawned =
++        spawn_self_exec_test_process_components_or_throw(executable, arguments,
++                                                         true);
++    return SelfExecTestProcess(spawned.child, spawned.stdout_read,
++                               spawned.stderr_read);
+ }
+ 
+ void verify_self_exec_child_boundary_or_throw() {
+diff --git a/tests/self_exec_test_process.hpp b/tests/self_exec_test_process.hpp
+index 44a7005..b2d29f2 100644
+--- a/tests/self_exec_test_process.hpp
++++ b/tests/self_exec_test_process.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <chrono>
++#include <cstddef>
+ #include <filesystem>
+ #include <string>
+ #include <string_view>
+@@ -10,6 +11,11 @@
+ 
+ namespace anonsync::test {
+ 
++struct SelfExecTestProcessOutput final {
++    std::string standard_output;
++    std::string standard_error;
++};
++
+ // One test-only process owner for crash/frontier probes. The parent pins the
+ // exact running executable object, prepares a versioned argv instruction,
+ // closes every unrelated descriptor through posix_spawn file actions, supplies
+@@ -30,18 +36,43 @@ public:
+                              std::chrono::milliseconds timeout,
+                              std::string_view label);
+ 
++    // Captured helpers must use this wait so stdout and stderr are drained
++    // concurrently while the child runs. Each stream has an explicit byte
++    // budget; timeout, read failure, invalid status, and overflow consume the
++    // complete process/capture authority before throwing.
++    [[nodiscard]] SelfExecTestProcessOutput wait_for_exact_exit_with_output(
++        int expected_exit,
++        std::chrono::milliseconds timeout,
++        std::size_t maximum_bytes_per_stream,
++        std::string_view label);
++
+     [[nodiscard]] bool active() const noexcept { return child_ > 0; }
+     [[nodiscard]] pid_t process_id() const noexcept { return child_; }
++    [[nodiscard]] bool captures_output() const noexcept {
++        return stdout_read_ >= 0 && stderr_read_ >= 0;
++    }
+ 
+ private:
+     friend SelfExecTestProcess spawn_self_exec_test_process_or_throw(
+         const std::filesystem::path& executable,
+         const std::vector<std::string>& arguments);
++    friend SelfExecTestProcess
++    spawn_self_exec_test_process_with_output_capture_or_throw(
++        const std::filesystem::path& executable,
++        const std::vector<std::string>& arguments);
+ 
+-    explicit SelfExecTestProcess(pid_t child) noexcept : child_(child) {}
++    explicit SelfExecTestProcess(pid_t child,
++                                 int stdout_read = -1,
++                                 int stderr_read = -1) noexcept
++        : child_(child),
++          stdout_read_(stdout_read),
++          stderr_read_(stderr_read) {}
+     void terminate_and_reap_noexcept() noexcept;
++    void close_output_capture_noexcept() noexcept;
+ 
+     pid_t child_ = -1;
++    int stdout_read_ = -1;
++    int stderr_read_ = -1;
+ };
+ 
+ // Linux-focused tests use /proc/self/exe rather than trusting argv[0] or PATH.
+@@ -55,6 +86,15 @@ private:
+     const std::filesystem::path& executable,
+     const std::vector<std::string>& arguments);
+ 
++// Like spawn_self_exec_test_process_or_throw(), but independently redirects
++// stdout and stderr into parent-owned close-on-exec pipes. The read ends are
++// nonblocking; the child write ends remain blocking. Callers must consume the
++// owner with wait_for_exact_exit_with_output().
++[[nodiscard]] SelfExecTestProcess
++spawn_self_exec_test_process_with_output_capture_or_throw(
++    const std::filesystem::path& executable,
++    const std::vector<std::string>& arguments);
++
+ // Call at the start of every helper mode, before opening SQLite or filesystem
+ // state. It proves the running image matches the pinned descriptor and consumes
+ // that descriptor, then proves an isolated process group, only descriptors
+diff --git a/tests/self_exec_test_process_test.cpp b/tests/self_exec_test_process_test.cpp
+index 9344b10..f4c43f9 100644
+--- a/tests/self_exec_test_process_test.cpp
++++ b/tests/self_exec_test_process_test.cpp
+@@ -13,6 +13,8 @@
+ #include <utility>
+ #include <vector>
+ 
++#include <dirent.h>
++#include <fcntl.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+ 
+@@ -22,6 +24,7 @@ namespace fs = std::filesystem;
+ using namespace std::chrono_literals;
+ using anonsync::test::current_self_executable_or_throw;
+ using anonsync::test::spawn_self_exec_test_process_or_throw;
++using anonsync::test::spawn_self_exec_test_process_with_output_capture_or_throw;
+ using anonsync::test::verify_self_exec_child_boundary_or_throw;
+ 
+ constexpr std::string_view kHelperFlag =
+@@ -35,6 +38,37 @@ void require(bool condition, const std::string& message, std::uint64_t& checks)
+     if (!condition) throw std::runtime_error(message);
+ }
+ 
++std::size_t count_parent_open_descriptors_or_throw() {
++    DIR* raw_directory = ::opendir("/proc/self/fd");
++    if (raw_directory == nullptr) {
++        throw std::runtime_error("could not open /proc/self/fd");
++    }
++    const int scan_descriptor = ::dirfd(raw_directory);
++    if (scan_descriptor < 0) {
++        (void)::closedir(raw_directory);
++        throw std::runtime_error("could not identify /proc/self/fd scanner");
++    }
++
++    std::size_t count = 0;
++    errno = 0;
++    while (dirent* entry = ::readdir(raw_directory)) {
++        char* end = nullptr;
++        errno = 0;
++        const long descriptor = std::strtol(entry->d_name, &end, 10);
++        if (errno == 0 && end != entry->d_name && *end == '\0' &&
++            descriptor >= 0 && descriptor != scan_descriptor) {
++            ++count;
++        }
++        errno = 0;
++    }
++    const int read_errno = errno;
++    (void)::closedir(raw_directory);
++    if (read_errno != 0) {
++        throw std::runtime_error("could not enumerate /proc/self/fd");
++    }
++    return count;
++}
++
+ int run_helper(int argc, char** argv) {
+     try {
+         verify_self_exec_child_boundary_or_throw();
+@@ -46,6 +80,39 @@ int run_helper(int argc, char** argv) {
+         }
+         const std::string_view action(argv[2]);
+         if (action == "return-exact") return kSuccessExit;
++        if (action == "emit-captured") {
++            std::cout << "stdout-evidence\n" << std::flush;
++            std::cerr << "stderr-evidence\n" << std::flush;
++            return kSuccessExit;
++        }
++        if (action == "emit-large-captured") {
++            constexpr int kMaximumReviewedPipeCapacity = 4 * 1024 * 1024;
++            const int stdout_capacity = ::fcntl(STDOUT_FILENO, F_GETPIPE_SZ);
++            const int stderr_capacity = ::fcntl(STDERR_FILENO, F_GETPIPE_SZ);
++            if (stdout_capacity <= 0 || stderr_capacity <= 0 ||
++                stdout_capacity > kMaximumReviewedPipeCapacity ||
++                stderr_capacity > kMaximumReviewedPipeCapacity) {
++                return kHelperFailureExit;
++            }
++            std::cout << std::string(
++                             static_cast<std::size_t>(stdout_capacity) + 4096,
++                             'o')
++                      << std::flush;
++            std::cerr << std::string(
++                             static_cast<std::size_t>(stderr_capacity) + 4096,
++                             'e')
++                      << std::flush;
++            return kSuccessExit;
++        }
++        if (action == "emit-over-budget") {
++            std::cout << std::string(4096, 'x') << std::flush;
++            for (;;) (void)::pause();
++        }
++        if (action == "emit-then-hang") {
++            std::cout << "stdout-before-hang\n" << std::flush;
++            std::cerr << "stderr-before-hang\n" << std::flush;
++            for (;;) (void)::pause();
++        }
+         if (action == "hang-until-parent-kills") {
+             for (;;) (void)::pause();
+         }
+@@ -159,6 +226,129 @@ void test_destructor_kills_and_reaps(const fs::path& executable,
+             "destructor did not synchronously kill and reap its helper", checks);
+ }
+ 
++void test_captured_output_is_separate_and_exact(const fs::path& executable,
++                                                std::uint64_t& checks) {
++    auto child = spawn_self_exec_test_process_with_output_capture_or_throw(
++        executable, {std::string(kHelperFlag), "emit-captured"});
++    require(child.active() && child.captures_output(),
++            "captured spawn did not return combined process/pipe authority",
++            checks);
++    anonsync::test::SelfExecTestProcess transferred(std::move(child));
++    require(!child.active() && !child.captures_output() &&
++                transferred.active() && transferred.captures_output(),
++            "capture move construction duplicated or lost joint authority",
++            checks);
++    const anonsync::test::SelfExecTestProcessOutput output =
++        transferred.wait_for_exact_exit_with_output(
++            kSuccessExit, 5s, 4096, "self-exec captured-output helper");
++    require(output.standard_output == "stdout-evidence\n",
++            "captured stdout was not byte-exact", checks);
++    require(output.standard_error == "stderr-evidence\n",
++            "captured stderr was not byte-exact", checks);
++    require(!transferred.active() && !transferred.captures_output(),
++            "captured wait did not consume PID and both pipe owners", checks);
++}
++
++void test_large_capture_drains_while_child_runs(const fs::path& executable,
++                                               std::uint64_t& checks) {
++    auto child = spawn_self_exec_test_process_with_output_capture_or_throw(
++        executable, {std::string(kHelperFlag), "emit-large-captured"});
++    const anonsync::test::SelfExecTestProcessOutput output =
++        child.wait_for_exact_exit_with_output(
++            kSuccessExit, 5s, 5U * 1024U * 1024U,
++            "self-exec large captured-output helper");
++    require(output.standard_output.size() > 4096 &&
++                output.standard_output.find_first_not_of('o') ==
++                    std::string::npos,
++            "over-capacity stdout capture was truncated or corrupted", checks);
++    require(output.standard_error.size() > 4096 &&
++                output.standard_error.find_first_not_of('e') ==
++                    std::string::npos,
++            "over-capacity stderr capture was truncated or corrupted", checks);
++    require(!child.active() && !child.captures_output(),
++            "large capture did not consume process and descriptor authority",
++            checks);
++}
++
++void test_capture_overflow_kills_and_reaps(const fs::path& executable,
++                                           std::uint64_t& checks) {
++    auto child = spawn_self_exec_test_process_with_output_capture_or_throw(
++        executable, {std::string(kHelperFlag), "emit-over-budget"});
++    const pid_t child_pid = child.process_id();
++    bool overflowed = false;
++    try {
++        (void)child.wait_for_exact_exit_with_output(
++            kSuccessExit, 5s, 128, "self-exec capture-overflow helper");
++    } catch (const std::exception& error) {
++        overflowed = std::string_view(error.what()).find(
++                         "captured stdout exceeded its 128-byte budget") !=
++                     std::string_view::npos;
++    }
++    require(overflowed,
++            "capture byte budget did not reject an overproducing helper",
++            checks);
++    require(!child.active() && !child.captures_output(),
++            "capture overflow retained process or descriptor authority", checks);
++
++    int status = 0;
++    errno = 0;
++    const pid_t observed = ::waitpid(child_pid, &status, WNOHANG);
++    require(observed == -1 && errno == ECHILD,
++            "capture overflow did not synchronously kill and reap the helper",
++            checks);
++}
++
++void test_capture_timeout_drains_then_kills(const fs::path& executable,
++                                            std::uint64_t& checks) {
++    auto child = spawn_self_exec_test_process_with_output_capture_or_throw(
++        executable, {std::string(kHelperFlag), "emit-then-hang"});
++    bool timed_out = false;
++    try {
++        (void)child.wait_for_exact_exit_with_output(
++            kSuccessExit, 75ms, 4096, "self-exec captured-timeout helper");
++    } catch (const std::exception& error) {
++        timed_out = std::string_view(error.what()).find(
++                        "timed out while draining captured output") !=
++                    std::string_view::npos;
++    }
++    require(timed_out,
++            "capture-aware wait did not enforce its monotonic deadline", checks);
++    require(!child.active() && !child.captures_output(),
++            "capture timeout retained process or descriptor authority", checks);
++}
++
++void test_wait_api_mode_mismatch_is_fail_closed(const fs::path& executable,
++                                                std::uint64_t& checks) {
++    auto captured = spawn_self_exec_test_process_with_output_capture_or_throw(
++        executable, {std::string(kHelperFlag), "emit-captured"});
++    bool plain_wait_rejected = false;
++    try {
++        captured.wait_for_exact_exit(kSuccessExit, 5s,
++                                     "captured child plain-wait misuse");
++    } catch (const std::logic_error&) {
++        plain_wait_rejected = true;
++    }
++    require(plain_wait_rejected && captured.active() &&
++                captured.captures_output(),
++            "plain wait consumed or accepted a captured child", checks);
++    (void)captured.wait_for_exact_exit_with_output(
++        kSuccessExit, 5s, 4096, "captured child corrected wait");
++
++    auto plain = spawn_self_exec_test_process_or_throw(
++        executable, {std::string(kHelperFlag), "return-exact"});
++    bool capture_wait_rejected = false;
++    try {
++        (void)plain.wait_for_exact_exit_with_output(
++            kSuccessExit, 5s, 4096, "plain child capture-wait misuse");
++    } catch (const std::logic_error&) {
++        capture_wait_rejected = true;
++    }
++    require(capture_wait_rejected && plain.active() &&
++                !plain.captures_output(),
++            "capture wait consumed or accepted an uncaptured child", checks);
++    plain.wait_for_exact_exit(kSuccessExit, 5s, "plain child corrected wait");
++}
++
+ void test_spawn_input_fences(const fs::path& executable,
+                              std::uint64_t& checks) {
+     bool missing_executable_rejected = false;
+@@ -232,6 +422,16 @@ int main(int argc, char** argv) {
+         test_move_assignment_consumes_displaced_owner(executable, checks);
+         test_timeout_kills_and_reaps(executable, checks);
+         test_destructor_kills_and_reaps(executable, checks);
++        const std::size_t descriptors_before_capture =
++            count_parent_open_descriptors_or_throw();
++        test_captured_output_is_separate_and_exact(executable, checks);
++        test_large_capture_drains_while_child_runs(executable, checks);
++        test_capture_overflow_kills_and_reaps(executable, checks);
++        test_capture_timeout_drains_then_kills(executable, checks);
++        test_wait_api_mode_mismatch_is_fail_closed(executable, checks);
++        require(count_parent_open_descriptors_or_throw() ==
++                    descriptors_before_capture,
++                "capture paths leaked a parent descriptor", checks);
+         test_spawn_input_fences(executable, checks);
+         std::cout << "anonsync_self_exec_test_process_test checks=" << checks
+                   << "\n";
+diff --git a/tests/sqlite_transaction_allocator_fault_test.cpp b/tests/sqlite_transaction_allocator_fault_test.cpp
+index 8838f20..d8752aa 100644
+--- a/tests/sqlite_transaction_allocator_fault_test.cpp
++++ b/tests/sqlite_transaction_allocator_fault_test.cpp
+@@ -1,12 +1,15 @@
++#include "self_exec_test_process.hpp"
+ #include "sync_sqlite_connection_authority.hpp"
+ #include "sync_sqlite_support.hpp"
+ 
+ #include <algorithm>
+ #include <array>
+ #include <charconv>
++#include <chrono>
+ #include <cstdint>
+ #include <cstdlib>
+ #include <exception>
++#include <filesystem>
+ #include <iostream>
+ #include <memory>
+ #include <optional>
+@@ -17,18 +20,12 @@
+ #include <utility>
+ #include <vector>
+ 
+-#if defined(__linux__)
+-#include <cerrno>
+-#include <sys/types.h>
+-#include <sys/wait.h>
+-#include <unistd.h>
+-#endif
+-
+ #include <sqlite3.h>
+ 
+ namespace {
+ 
+ using namespace anonsync;
++using namespace std::chrono_literals;
+ 
+ [[noreturn]] void fail(const std::string& message) {
+     throw std::runtime_error(message);
+@@ -701,82 +698,31 @@ int worker_main(std::string_view scenario_raw,
+ 
+ #if defined(__linux__)
+ 
+-struct ChildResult final {
+-    int exit_code = -1;
+-    std::string output;
+-};
+-
+-std::string executable_path() {
+-    std::array<char, 4096> buffer{};
+-    const ssize_t count =
+-        ::readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
+-    if (count <= 0 || static_cast<std::size_t>(count) >= buffer.size()) {
+-        fail("could not resolve /proc/self/exe");
+-    }
+-    buffer[static_cast<std::size_t>(count)] = '\0';
+-    return std::string(buffer.data(), static_cast<std::size_t>(count));
+-}
+-
+-ChildResult run_worker_process(const std::string& executable,
+-                               std::string_view scenario,
+-                               std::string_view mode,
+-                               std::uint64_t fail_at) {
+-    // Materialize every exec argument before fork. The child then uses only
+-    // async-signal-safe descriptor operations, execl(), and _Exit().
+-    const std::string scenario_text(scenario);
+-    const std::string mode_text(mode);
+-    const std::string fail_at_text = std::to_string(fail_at);
+-    int pipe_fds[2] = {-1, -1};
+-    if (::pipe(pipe_fds) != 0) fail("worker pipe creation failed");
+-
+-    const pid_t child = ::fork();
+-    if (child < 0) {
+-        (void)::close(pipe_fds[0]);
+-        (void)::close(pipe_fds[1]);
+-        fail("worker fork failed");
+-    }
+-    if (child == 0) {
+-        (void)::close(pipe_fds[0]);
+-        if (::dup2(pipe_fds[1], STDOUT_FILENO) < 0 ||
+-            ::dup2(pipe_fds[1], STDERR_FILENO) < 0) {
+-            std::_Exit(120);
+-        }
+-        (void)::close(pipe_fds[1]);
+-        ::execl(executable.c_str(),
+-                executable.c_str(),
+-                "--worker",
+-                scenario_text.c_str(),
+-                mode_text.c_str(),
+-                fail_at_text.c_str(),
+-                static_cast<char*>(nullptr));
+-        std::_Exit(121);
+-    }
+-
+-    (void)::close(pipe_fds[1]);
+-    std::string output;
+-    std::array<char, 4096> buffer{};
+-    for (;;) {
+-        const ssize_t count = ::read(pipe_fds[0], buffer.data(), buffer.size());
+-        if (count > 0) {
+-            output.append(buffer.data(), static_cast<std::size_t>(count));
+-            continue;
+-        }
+-        if (count < 0 && errno == EINTR) continue;
+-        break;
+-    }
+-    (void)::close(pipe_fds[0]);
+-
+-    int status = 0;
+-    for (;;) {
+-        const pid_t waited = ::waitpid(child, &status, 0);
+-        if (waited == child) break;
+-        if (waited < 0 && errno == EINTR) continue;
+-        fail("worker waitpid failed");
+-    }
+-    ChildResult result;
+-    result.output = std::move(output);
+-    if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
+-    return result;
++constexpr std::string_view kWorkerFlag =
++    "--anonsync-sqlite-transaction-allocator-fault-worker-v1";
++constexpr std::size_t kWorkerCaptureBytesPerStream = 16U * 1024U;
++constexpr auto kWorkerTimeout = 5s;
++
++anonsync::test::SelfExecTestProcessOutput run_worker_process(
++    const std::filesystem::path& executable,
++    std::string_view scenario,
++    std::string_view mode,
++    std::uint64_t fail_at) {
++    auto child =
++        anonsync::test::spawn_self_exec_test_process_with_output_capture_or_throw(
++            executable,
++            {std::string(kWorkerFlag), std::string(scenario), std::string(mode),
++             std::to_string(fail_at)});
++    const std::string label =
++        "allocator worker " + std::string(scenario) + " " +
++        std::string(mode) + " cut " + std::to_string(fail_at);
++    anonsync::test::SelfExecTestProcessOutput output =
++        child.wait_for_exact_exit_with_output(
++            0, kWorkerTimeout, kWorkerCaptureBytesPerStream, label);
++    if (!output.standard_error.empty()) {
++        fail(label + " wrote unexpected stderr: " + output.standard_error);
++    }
++    return output;
+ }
+ 
+ std::uint64_t parse_output_field(const std::string& output,
+@@ -793,33 +739,21 @@ std::uint64_t parse_output_field(const std::string& output,
+         "worker output field " + std::string(field));
+ }
+ 
+-void require_worker_success(const ChildResult& result,
+-                            std::string_view scenario,
+-                            std::string_view mode,
+-                            std::uint64_t fail_at,
+-                            std::uint64_t& checks) {
+-    ++checks;
+-    if (result.exit_code != 0) {
+-        fail("allocator worker failed for " + std::string(scenario) + " " +
+-             std::string(mode) + " cut " + std::to_string(fail_at) +
+-             ": " + result.output);
+-    }
+-}
+-
+ int parent_main() {
+-    const std::string executable = executable_path();
++    const std::filesystem::path executable =
++        anonsync::test::current_self_executable_or_throw();
+     std::uint64_t checks = 0;
+     std::uint64_t workers = 0;
+     std::uint64_t cutpoints = 0;
+ 
+     for (const auto& [name, scenario] : kScenarios) {
+         (void)scenario;
+-        const ChildResult baseline =
++        const anonsync::test::SelfExecTestProcessOutput baseline =
+             run_worker_process(executable, name, "oneshot", 0);
+         ++workers;
+-        require_worker_success(baseline, name, "oneshot", 0, checks);
++        ++checks;
+         const std::uint64_t attempts =
+-            parse_output_field(baseline.output, "attempts");
++            parse_output_field(baseline.standard_output, "attempts");
+         require(attempts > 0,
+                 "baseline worker reached no SQLite allocation boundary for " +
+                     std::string(name),
+@@ -832,16 +766,17 @@ int parent_main() {
+         for (std::uint64_t cut = 1; cut <= attempts; ++cut) {
+             for (std::string_view mode : {std::string_view("oneshot"),
+                                           std::string_view("sticky")}) {
+-                const ChildResult result =
++                const anonsync::test::SelfExecTestProcessOutput result =
+                     run_worker_process(executable, name, mode, cut);
+                 ++workers;
+                 ++cutpoints;
+-                require_worker_success(result, name, mode, cut, checks);
+-                require(parse_output_field(result.output, "failures") >= 1,
+-                        "allocator worker did not fire configured cut for " +
+-                            std::string(name) + " " + std::string(mode) +
+-                            " cut " + std::to_string(cut),
+-                        checks);
++                ++checks;
++                require(
++                    parse_output_field(result.standard_output, "failures") >= 1,
++                    "allocator worker did not fire configured cut for " +
++                        std::string(name) + " " + std::string(mode) +
++                        " cut " + std::to_string(cut),
++                    checks);
+             }
+         }
+     }
+@@ -865,7 +800,9 @@ int parent_main() {
+ 
+ int main(int argc, char** argv) {
+     try {
+-        if (argc == 5 && std::string_view(argv[1]) == "--worker") {
++        if (argc >= 2 && std::string_view(argv[1]) == kWorkerFlag) {
++            anonsync::test::verify_self_exec_child_boundary_or_throw();
++            if (argc != 5) fail("invalid allocator-fault worker instruction");
+             return worker_main(argv[2], argv[3], argv[4]);
+         }
+         if (argc != 1) fail("unexpected allocator-fault test arguments");
+diff --git a/tools/audit_raw_fork_boundaries.py b/tools/audit_raw_fork_boundaries.py
+index acd8157..53a83cb 100755
+--- a/tools/audit_raw_fork_boundaries.py
++++ b/tools/audit_raw_fork_boundaries.py
+@@ -1,10 +1,10 @@
+ #!/usr/bin/env python3
+ """Fail-closed inventory of raw fork() boundaries in AnonSync.
+ 
+-Raw fork is allowlisted only for explicit inherited-state probes or for one
+-reviewed fork-exec bridge whose child performs descriptor syscalls and exec only.
+-Crash/fail-stop campaigns that need application or SQLite work in a separate
+-process must cross the Linux self-exec boundary and begin in a fresh image.
++Raw fork is allowlisted only for explicit inherited-state probes. Crash and
++fail-stop campaigns that need application or SQLite work in a separate process
++must cross the Linux self-exec boundary and begin in a fresh image. Helpers that
++return evidence must use its bounded concurrent stdout/stderr capture owner.
+ """
+ 
+ from __future__ import annotations
+@@ -31,21 +31,35 @@ EXPECTED_TEST_CALLS = {
+     "tests/sqlite_process_authority_fork_test.cpp": 1,
+     "tests/sqlite_replay_ledger_selftests.cpp": 3,
+     "tests/sqlite_source_first_move_test.cpp": 1,
+-    "tests/sqlite_transaction_allocator_fault_test.cpp": 1,
+     "tests/sync_atomic_file_publication_prepared_test.cpp": 1,
+ }
+ 
+-FORK_EXEC_BRIDGE = "tests/sqlite_transaction_allocator_fault_test.cpp"
+-
+ MIGRATED_CAMPAIGNS = {
+-    "tests/sync_atomic_file_publication_test.cpp":
++    "tests/sync_atomic_file_publication_test.cpp": (
+         "--anonsync-atomic-publication-writer-helper-v1",
+-    "tests/sync_atomic_file_publication_cutpoint_test.cpp":
++        "spawn_self_exec_test_process_or_throw(",
++        "wait_for_exact_exit(",
++    ),
++    "tests/sync_atomic_file_publication_cutpoint_test.cpp": (
+         "--anonsync-atomic-publication-crash-helper-v1",
+-    "tests/sqlite_runtime_payload_store_test.cpp":
++        "spawn_self_exec_test_process_or_throw(",
++        "wait_for_exact_exit(",
++    ),
++    "tests/sqlite_runtime_payload_store_test.cpp": (
+         "--anonsync-payload-crash-helper-v1",
+-    "tests/peer_ingress_schema_attestation_test.cpp":
++        "spawn_self_exec_test_process_or_throw(",
++        "wait_for_exact_exit(",
++    ),
++    "tests/peer_ingress_schema_attestation_test.cpp": (
+         "--anonsync-peer-schema-owner-close-helper-v1",
++        "spawn_self_exec_test_process_or_throw(",
++        "wait_for_exact_exit(",
++    ),
++    "tests/sqlite_transaction_allocator_fault_test.cpp": (
++        "--anonsync-sqlite-transaction-allocator-fault-worker-v1",
++        "spawn_self_exec_test_process_with_output_capture_or_throw(",
++        "wait_for_exact_exit_with_output(",
++    ),
+ }
+ 
+ REQUIRED = (
+@@ -171,7 +185,7 @@ def main() -> int:
+     require(not missing, "required_files_exist", f"missing={missing}")
+     if missing:
+         report = {
+-            "format": "anonsync-raw-fork-boundary-audit-v1",
++            "format": "anonsync-raw-fork-boundary-audit-v2",
+             "root": str(root),
+             "passed": False,
+             "passed_checks": 0,
+@@ -206,7 +220,8 @@ def main() -> int:
+ 
+     migrated_ok = True
+     migrated_detail: list[str] = []
+-    for relative, helper_flag in MIGRATED_CAMPAIGNS.items():
++    for relative, campaign_tokens in MIGRATED_CAMPAIGNS.items():
++        helper_flag, spawn_token, wait_token = campaign_tokens
+         text = (root / relative).read_text(encoding="utf-8")
+         code = erase_non_code(text)
+         call_count = len(FORK_CALL.findall(code))
+@@ -217,8 +232,8 @@ def main() -> int:
+                 '#include "self_exec_test_process.hpp"',
+                 helper_flag,
+                 "verify_self_exec_child_boundary_or_throw()",
+-                "spawn_self_exec_test_process_or_throw(",
+-                "wait_for_exact_exit(",
++                spawn_token,
++                wait_token,
+             )
+         )
+         file_ok = call_count == 0 and no_waitpid and tokens_ok
+@@ -228,7 +243,7 @@ def main() -> int:
+         )
+     require(
+         migrated_ok,
+-        "four_crash_campaigns_use_fresh_self_exec_images",
++        "five_fault_and_crash_campaigns_use_fresh_self_exec_images",
+         "; ".join(migrated_detail),
+     )
+ 
+@@ -261,53 +276,6 @@ def main() -> int:
+         "one raw child invokes only the inherited capability; parent uses monotonic WNOHANG timeout, SIGKILL, and reap",
+     )
+ 
+-    fork_exec_path = root / FORK_EXEC_BRIDGE
+-    fork_exec = fork_exec_path.read_text(encoding="utf-8")
+-    fork_exec_code = erase_non_code(fork_exec)
+-    child_start = fork_exec_code.find("if (child == 0)")
+-    child_stop = fork_exec_code.find("(void)::close(pipe_fds[1]);", child_start)
+-    # Select the parent-side close, not the same spelling inside the child.
+-    child_stop = fork_exec_code.find("(void)::close(pipe_fds[1]);", child_stop + 1)
+-    fork_exec_child = (
+-        fork_exec[child_start:child_stop]
+-        if child_start >= 0 and child_stop > child_start
+-        else ""
+-    )
+-    fork_exec_ok = (
+-        len(FORK_CALL.findall(fork_exec_code)) == 1
+-        and "Materialize every exec argument before fork" in fork_exec
+-        and all(
+-            token in fork_exec_child
+-            for token in (
+-                "(void)::close(pipe_fds[0]);",
+-                "::dup2(pipe_fds[1], STDOUT_FILENO)",
+-                "::dup2(pipe_fds[1], STDERR_FILENO)",
+-                "(void)::close(pipe_fds[1]);",
+-                "::execl(executable.c_str(),",
+-                "std::_Exit(120);",
+-                "std::_Exit(121);",
+-            )
+-        )
+-        and not any(
+-            token in fork_exec_child
+-            for token in (
+-                "sqlite3_",
+-                "run_scenario(",
+-                "std::cout",
+-                "std::cerr",
+-                "throw ",
+-                "fail(",
+-                " new ",
+-                " delete ",
+-            )
+-        )
+-    )
+-    require(
+-        fork_exec_ok,
+-        "allocator_fault_fork_exec_bridge_has_no_application_or_sqlite_child_work",
+-        "the sole non-inheritance raw child performs close/dup2/exec/_Exit only; capture-capable SelfExecTestProcess migration remains future work",
+-    )
+-
+     publication = (root / "src/sync_atomic_file_publication.cpp").read_text(
+         encoding="utf-8"
+     )
+@@ -334,8 +302,8 @@ def main() -> int:
+     )
+     require(
+         cmake_links,
+-        "all_four_helpers_link_the_test_only_process_owner",
+-        "CMake links the fresh-image owner into the two atomic, payload, and peer-schema executables only",
++        "all_five_helpers_link_the_test_only_process_owner",
++        "CMake links the fresh-image owner into both atomic tests, payload, peer-schema, and allocator-fault executables",
+     )
+     require(
+         "anonsync_raw_fork_boundary_source_audit" in cmake
+@@ -349,20 +317,19 @@ def main() -> int:
+     total_test = sum(tests.values())
+     metrics_ok = (
+         total_production == 0
+-        and total_test == 16
+-        and len(tests) == 9
+-        and len(MIGRATED_CAMPAIGNS) == 4
+-        and EXPECTED_TEST_CALLS.get(FORK_EXEC_BRIDGE) == 1
++        and total_test == 15
++        and len(tests) == 8
++        and len(MIGRATED_CAMPAIGNS) == 5
+     )
+     require(
+         metrics_ok,
+         "inventory_metrics_are_exact",
+-        f"production_calls={total_production}, test_calls={total_test}, allowlisted_test_tus={len(tests)}, inherited_probe_calls={total_test - EXPECTED_TEST_CALLS[FORK_EXEC_BRIDGE]}, fork_exec_bridge_calls={EXPECTED_TEST_CALLS[FORK_EXEC_BRIDGE]}, migrated_campaigns={len(MIGRATED_CAMPAIGNS)}",
++        f"production_calls={total_production}, test_calls={total_test}, allowlisted_test_tus={len(tests)}, inherited_probe_calls={total_test}, fork_exec_bridge_calls=0, migrated_campaigns={len(MIGRATED_CAMPAIGNS)}",
+     )
+ 
+     failures = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-raw-fork-boundary-audit-v1",
++        "format": "anonsync-raw-fork-boundary-audit-v2",
+         "root": str(root),
+         "passed": not failures,
+         "passed_checks": sum(check.passed for check in checks),
+@@ -373,8 +340,8 @@ def main() -> int:
+             "allowlisted_test_raw_fork_calls": total_test,
+             "allowlisted_test_translation_units": len(tests),
+             "fresh_image_migrated_campaigns": len(MIGRATED_CAMPAIGNS),
+-            "inherited_probe_raw_fork_calls": total_test - EXPECTED_TEST_CALLS[FORK_EXEC_BRIDGE],
+-            "reviewed_fork_exec_bridge_calls": EXPECTED_TEST_CALLS[FORK_EXEC_BRIDGE],
++            "inherited_probe_raw_fork_calls": total_test,
++            "reviewed_fork_exec_bridge_calls": 0,
+         },
+         "production_inventory": production,
+         "test_inventory": tests,
+diff --git a/tools/audit_self_exec_test_process.py b/tools/audit_self_exec_test_process.py
+index afa86e4..02cbf5a 100644
+--- a/tools/audit_self_exec_test_process.py
++++ b/tools/audit_self_exec_test_process.py
+@@ -22,7 +22,9 @@ REQUIRED = (
+     Path("tests/sync_atomic_file_publication_cutpoint_test.cpp"),
+     Path("tests/sqlite_runtime_payload_store_test.cpp"),
+     Path("tests/peer_ingress_schema_attestation_test.cpp"),
++    Path("tests/sqlite_transaction_allocator_fault_test.cpp"),
+     Path("tools/audit_raw_fork_boundaries.py"),
++    Path("tools/audit_sqlite_transaction_allocator_fault.py"),
+     Path("tools/audit_self_exec_test_process.py"),
+     Path("tools/audit_sqlite_replay_ledger_reset.py"),
+     Path("tools/audit_sqlite_replay_ledger_reset_crash_frontier.py"),
+@@ -58,7 +60,7 @@ def block_between(text: str, begin: str, end: str) -> str:
+ 
+ def report_missing(root: Path, missing: list[str], output: Path | None) -> int:
+     report = {
+-        "format": "anonsync-self-exec-test-process-audit-v3",
++        "format": "anonsync-self-exec-test-process-audit-v4",
+         "root": str(root),
+         "passed": False,
+         "passed_checks": 0,
+@@ -106,7 +108,13 @@ def main() -> int:
+     ]
+     payload_test = text[Path("tests/sqlite_runtime_payload_store_test.cpp")]
+     peer_schema_test = text[Path("tests/peer_ingress_schema_attestation_test.cpp")]
++    allocator_fault_test = text[
++        Path("tests/sqlite_transaction_allocator_fault_test.cpp")
++    ]
+     raw_fork_audit = text[Path("tools/audit_raw_fork_boundaries.py")]
++    allocator_fault_audit = text[
++        Path("tools/audit_sqlite_transaction_allocator_fault.py")
++    ]
+     reset_audit = text[Path("tools/audit_sqlite_replay_ledger_reset.py")]
+     frontier_audit = text[
+         Path("tools/audit_sqlite_replay_ledger_reset_crash_frontier.py")
+@@ -137,16 +145,27 @@ def main() -> int:
+         all(
+             token in header
+             for token in (
++                "struct SelfExecTestProcessOutput final",
+                 "class SelfExecTestProcess final",
+                 "SelfExecTestProcess(const SelfExecTestProcess&) = delete",
+                 "operator=(const SelfExecTestProcess&) = delete",
+                 "SelfExecTestProcess(SelfExecTestProcess&& other) noexcept",
+                 "~SelfExecTestProcess()",
++                "wait_for_exact_exit_with_output(",
+                 "pid_t child_ = -1",
++                "int stdout_read_ = -1",
++                "int stderr_read_ = -1",
+             )
+-        ),
+-        "process_owner_is_move_only_raii",
+-        "exactly one object owns one child PID and copy cannot duplicate reap authority",
++        )
++        and "stdout_read_(std::exchange(other.stdout_read_, -1))" in source
++        and "stderr_read_(std::exchange(other.stderr_read_, -1))" in source,
++        "process_and_capture_owner_is_move_only_raii",
++        "one move-only object jointly owns the child PID and any two capture descriptors; copy cannot duplicate kill, reap, read, or close authority",
++    )
++    terminate_owner = block_between(
++        source,
++        "void SelfExecTestProcess::terminate_and_reap_noexcept()",
++        "void SelfExecTestProcess::close_output_capture_noexcept()",
+     )
+     require(
+         checks,
+@@ -155,15 +174,16 @@ def main() -> int:
+             "SelfExecTestProcess::~SelfExecTestProcess()",
+             "terminate_and_reap_noexcept();",
+         )
++        and bool(terminate_owner)
+         and ordered(
+-            source,
+-            "void SelfExecTestProcess::terminate_and_reap_noexcept()",
+-            "kill_process_group_noexcept(child_)",
+-            "reap_blocking_noexcept(child_)",
+-            "child_ = -1",
++            terminate_owner,
++            "std::exchange(child_, -1)",
++            "kill_process_group_noexcept(child)",
++            "reap_blocking_noexcept(child)",
++            "close_output_capture_noexcept();",
+         ),
+-        "destructor_kills_group_and_reaps_leader",
+-        "abandoned helpers and descendants cannot outlive their move-only parent authority",
++        "destructor_consumes_process_and_capture_authority",
++        "abandoned helpers and descendants are killed/reaped before both capture descriptors are single-consumption closed",
+     )
+ 
+     require(
+@@ -248,6 +268,40 @@ def main() -> int:
+         "the move-only descriptor owner cannot retry close after EINTR and accidentally close a concurrently reused descriptor number",
+     )
+ 
++    capture_pipe = block_between(
++        source,
++        "[[nodiscard]] CapturePipe make_capture_pipe_or_throw(",
++        "[[nodiscard]] bool same_file_identity(",
++    )
++    capture_spawn = block_between(
++        source,
++        "spawn_self_exec_test_process_components_or_throw(",
++        "SelfExecTestProcess spawn_self_exec_test_process_or_throw(",
++    )
++    require(
++        checks,
++        bool(capture_pipe)
++        and "::pipe2(raw_descriptors, O_CLOEXEC)" in capture_pipe
++        and "O_CLOEXEC | O_NONBLOCK" not in capture_pipe
++        and "pipe.read_end.get(), F_GETFL" in capture_pipe
++        and "pipe.read_end.get(), F_SETFL, flags | O_NONBLOCK" in capture_pipe
++        and "pipe.write_end.get(), F_SETFL" not in capture_pipe
++        and bool(capture_spawn)
++        and "actions.add_dup2(stdout_pipe->write_end.get(), STDOUT_FILENO)" in capture_spawn
++        and "actions.add_dup2(stderr_pipe->write_end.get(), STDERR_FILENO)" in capture_spawn
++        and ordered(
++            capture_spawn,
++            "actions.add_dup2(stdout_pipe->write_end.get(), STDOUT_FILENO)",
++            "actions.add_dup2(stderr_pipe->write_end.get(), STDERR_FILENO)",
++            "actions.add_close_from(kFirstSanitizedDescriptor)",
++            "::posix_spawn(",
++            "stdout_pipe->read_end.release()",
++            "stderr_pipe->read_end.release()",
++        ),
++        "capture_pipes_keep_child_writes_blocking_and_parent_reads_nonblocking",
++        "close-on-exec pipes are promoted before spawn; only parent read ends become nonblocking, exact stdout/stderr dup2 actions precede closefrom, and ownership transfers only after successful spawn",
++    )
++
+     require(
+         checks,
+         'environment.emplace_back("LC_ALL=C")' in source
+@@ -330,6 +384,43 @@ def main() -> int:
+         "every non-success wait path kills/reaps before throwing and clears the owned PID",
+     )
+ 
++    capture_wait = block_between(
++        source,
++        "SelfExecTestProcessOutput SelfExecTestProcess::wait_for_exact_exit_with_output(",
++        "fs::path current_self_executable_or_throw()",
++    )
++    require(
++        checks,
++        bool(capture_wait)
++        and "maximum_bytes_per_stream == 0" in capture_wait
++        and "maximum_bytes_per_stream > kMaximumCaptureBytesPerStream" in capture_wait
++        and capture_wait.count("drain_capture_descriptor_or_throw(") == 2
++        and "::waitpid(child_, &status, WNOHANG)" in capture_wait
++        and "std::chrono::steady_clock::now() + timeout" in capture_wait
++        and "::poll(" in capture_wait
++        and "POLLIN" in capture_wait
++        and "POLLNVAL" in capture_wait
++        and "leader_reaped && stdout_read_ < 0 && stderr_read_ < 0" in capture_wait,
++        "capture_wait_drains_both_streams_under_one_deadline",
++        "stdout and stderr are multiplexed while the child runs, bounded independently, and completion requires both exact leader status and EOF on both streams",
++    )
++    require(
++        checks,
++        bool(capture_wait)
++        and ordered(
++            capture_wait,
++            "catch (...)",
++            "kill_process_group_noexcept(process_group)",
++            "reap_blocking_noexcept(child_)",
++            "child_ = -1",
++            "close_output_capture_noexcept();",
++            "throw;",
++        )
++        and "captured_output_context(output)" in capture_wait,
++        "capture_failures_consume_authority_and_status_errors_preserve_evidence",
++        "timeout, poll, read, and overflow failures kill/reap/close before throw; nonzero status reports bounded escaped stdout/stderr context",
++    )
++
+     require(
+         checks,
+         all(
+@@ -375,6 +466,31 @@ def main() -> int:
+         "runtime proof covers pinned-image identity, NUL aliases, environment and signal sanitation, timeout/destructor reap, and argument budgets",
+     )
+ 
++    require(
++        checks,
++        all(
++            token in runtime_test
++            for token in (
++                "emit-captured",
++                "emit-large-captured",
++                "F_GETPIPE_SZ",
++                "static_cast<std::size_t>(stdout_capacity) + 4096",
++                "static_cast<std::size_t>(stderr_capacity) + 4096",
++                "wait_for_exact_exit_with_output(",
++                "stdout-evidence",
++                "stderr-evidence",
++                "test_large_capture_drains_while_child_runs",
++                "capture byte budget did not reject",
++                "capture-aware wait did not enforce its monotonic deadline",
++                "test_wait_api_mode_mismatch_is_fail_closed",
++                "count_parent_open_descriptors_or_throw",
++                "capture paths leaked a parent descriptor",
++            )
++        ),
++        "runtime_oracle_proves_concurrent_bounded_separate_capture",
++        "the executable oracle distinguishes streams, writes beyond each measured pipe capacity, detects parent descriptor residue, and proves overflow, timeout, and wait-mode misuse fail closed",
++    )
++
+     additional_campaigns = (
+         (
+             atomic_test,
+@@ -409,9 +525,31 @@ def main() -> int:
+             and "::waitpid(" not in body
+             for body, helper_flag, _ in additional_campaigns
+         ),
+-        "four_additional_crash_campaigns_use_fresh_images",
++        "four_non_capture_campaigns_use_fresh_images",
+         "; ".join(label for _, _, label in additional_campaigns),
+     )
++    require(
++        checks,
++        '#include "self_exec_test_process.hpp"' in allocator_fault_test
++        and "--anonsync-sqlite-transaction-allocator-fault-worker-v1"
++        in allocator_fault_test
++        and "verify_self_exec_child_boundary_or_throw();"
++        in allocator_fault_test
++        and "spawn_self_exec_test_process_with_output_capture_or_throw("
++        in allocator_fault_test
++        and "wait_for_exact_exit_with_output(" in allocator_fault_test
++        and "kWorkerCaptureBytesPerStream = 16U * 1024U" in allocator_fault_test
++        and "kWorkerTimeout = 5s" in allocator_fault_test
++        and "!output.standard_error.empty()" in allocator_fault_test
++        and "::fork(" not in allocator_fault_test
++        and "::pipe(" not in allocator_fault_test
++        and "::dup2(" not in allocator_fault_test
++        and "::waitpid(" not in allocator_fault_test
++        and "allocator_fault_campaign_uses_fresh_image_capture" in allocator_fault_audit,
++        "allocator_campaign_uses_bounded_capture_owner",
++        "all 318 allocator workers enter the pinned fresh image and return parseable stdout under independent stderr, byte, deadline, process-group, and reap authority",
++    )
++
+     require(
+         checks,
+         "EXPECTED_TEST_CALLS" in raw_fork_audit
+@@ -420,9 +558,12 @@ def main() -> int:
+         and "intentional_inherited_capability_probe_is_minimal_and_bounded"
+         in raw_fork_audit
+         and "inventory_metrics_are_exact" in raw_fork_audit
+-        and "allowlisted_test_raw_fork_calls" in raw_fork_audit,
++        and "allowlisted_test_raw_fork_calls" in raw_fork_audit
++        and '"reviewed_fork_exec_bridge_calls": 0' in raw_fork_audit
++        and "five_fault_and_crash_campaigns_use_fresh_self_exec_images"
++        in raw_fork_audit,
+         "raw_fork_inventory_is_fail_closed_and_exact",
+-        "a separately registered audit rejects any production fork or test call outside the 16-call inheritance-specific allowlist",
++        "a separately registered audit rejects any production fork or test call outside the exact 15-call inherited-state-probe allowlist and proves no reviewed fork-exec exception remains",
+     )
+ 
+     require(
+@@ -513,7 +654,11 @@ def main() -> int:
+         and "add_library(anonsync_self_exec_test_process STATIC" in cmake
+         and "tests/self_exec_test_process.cpp" in cmake
+         and "add_executable(anonsync_self_exec_test_process_test" in cmake
+-        and "anonsync_self_exec_test_process)" in cmake,
++        and "anonsync_self_exec_test_process)" in cmake
++        and """target_link_libraries(
++    anonsync_sqlite_transaction_allocator_fault_test PRIVATE
++    anonsync_sqlite_support
++    anonsync_self_exec_test_process)""" in cmake,
+         "cmake_owns_linux_test_only_support_and_oracle",
+         "the harness and runtime oracle are explicit Linux test targets rather than production-library sources",
+     )
+@@ -548,6 +693,8 @@ def main() -> int:
+                 "tests/self_exec_test_process_test.cpp",
+                 "tools/audit_self_exec_test_process.py",
+                 "tools/audit_raw_fork_boundaries.py",
++                "tests/sqlite_transaction_allocator_fault_test.cpp",
++                "tools/audit_sqlite_transaction_allocator_fault.py",
+             )
+         ),
+         "release_verifier_requires_entire_selfexec_surface",
+@@ -569,11 +716,15 @@ def main() -> int:
+             for token in (
+                 "pinned_exec_and_closefrom_cover_descriptor_races",
+                 "descriptor_close_consumes_authority_once",
++                "capture_pipes_keep_child_writes_blocking_and_parent_reads_nonblocking",
+                 "wait_errors_and_timeouts_consume_process_authority",
++                "capture_wait_drains_both_streams_under_one_deadline",
++                "capture_failures_consume_authority_and_status_errors_preserve_evidence",
++                "runtime_oracle_proves_concurrent_bounded_separate_capture",
+                 "focused_reset_helper_rebinds_parent_evidence_after_exec",
+                 "frontier_helper_rebinds_path_hashes_and_cutpoint_after_exec",
+                 "release_verifier_requires_entire_selfexec_surface",
+-                "four_additional_crash_campaigns_use_fresh_images",
++                "four_non_capture_campaigns_use_fresh_images",
+                 "raw_fork_inventory_is_fail_closed_and_exact",
+             )
+         ),
+@@ -589,7 +740,7 @@ def main() -> int:
+ 
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-self-exec-test-process-audit-v3",
++        "format": "anonsync-self-exec-test-process-audit-v4",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+diff --git a/tools/audit_sqlite_transaction_allocator_fault.py b/tools/audit_sqlite_transaction_allocator_fault.py
+index 3c3b57d..cb36334 100644
+--- a/tools/audit_sqlite_transaction_allocator_fault.py
++++ b/tools/audit_sqlite_transaction_allocator_fault.py
+@@ -2,9 +2,10 @@
+ """Deterministic source audit for SQLite transaction allocator-fault recovery.
+ 
+ The runtime campaign proves compiled behavior under allocation cuts. This audit
+-binds the process-isolation machinery, allocator overlay, tri-state authority
+-classification, retry/revocation split, and removal of redundant sqlite3_exec()
+-error-buffer ownership from the reviewed runtime helpers.
++binds the fresh-image process owner, concurrent bounded output capture,
++allocator overlay, tri-state authority classification, retry/revocation split,
++and removal of redundant sqlite3_exec() error-buffer ownership from the
++reviewed runtime helpers.
+ """
+ 
+ from __future__ import annotations
+@@ -28,6 +29,9 @@ SENSITIVE_FILES = (
+     Path("src/sqlite_replay_ledger.cpp"),
+     Path("src/runner.cpp"),
+     Path("tests/sqlite_transaction_allocator_fault_test.cpp"),
++    Path("tests/self_exec_test_process.hpp"),
++    Path("tests/self_exec_test_process.cpp"),
++    Path("tools/audit_raw_fork_boundaries.py"),
+     Path("tools/audit_sqlite_transaction_stack_authority.py"),
+     Path("tools/audit_sqlite_transaction_exception_composition.py"),
+     Path("tools/audit_sqlite_replay_ledger_schema_contract.py"),
+@@ -94,7 +98,7 @@ def main() -> int:
+     missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
+     if missing:
+         report = {
+-            "format": "anonsync-sqlite-transaction-allocator-fault-audit-v1",
++            "format": "anonsync-sqlite-transaction-allocator-fault-audit-v2",
+             "root": str(root),
+             "passed": False,
+             "check_count": 0,
+@@ -119,6 +123,9 @@ def main() -> int:
+     transaction = texts[Path("src/sync_sqlite_transaction.cpp")]
+     support_hpp = texts[Path("src/sync_sqlite_support.hpp")]
+     worker = texts[Path("tests/sqlite_transaction_allocator_fault_test.cpp")]
++    self_exec_header = texts[Path("tests/self_exec_test_process.hpp")]
++    self_exec_source = texts[Path("tests/self_exec_test_process.cpp")]
++    raw_fork_audit = texts[Path("tools/audit_raw_fork_boundaries.py")]
+     stack_audit = texts[Path("tools/audit_sqlite_transaction_stack_authority.py")]
+     composition_audit = texts[
+         Path("tools/audit_sqlite_transaction_exception_composition.py")
+@@ -139,7 +146,9 @@ def main() -> int:
+         ('if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ANONSYNC_USE_BUNDLED_SQLITE)', "target_requires_linux_and_bundled_sqlite"),
+         ("add_executable(anonsync_sqlite_transaction_allocator_fault_test", "allocator_campaign_target_exists"),
+         ("tests/sqlite_transaction_allocator_fault_test.cpp", "allocator_campaign_source_is_compiled"),
+-        ("anonsync_sqlite_support", "allocator_campaign_links_reviewed_owner"),
++        ("${CMAKE_CURRENT_SOURCE_DIR}/tests", "allocator_campaign_includes_test_owner_surface"),
++        ("anonsync_sqlite_support", "allocator_campaign_links_reviewed_sqlite_owner"),
++        ("anonsync_self_exec_test_process", "allocator_campaign_links_fresh_image_owner"),
+         ("-Wall -Wextra -Wpedantic", "allocator_campaign_enables_warnings"),
+     ):
+         require(checks, needle in target_section, check_id, f"required target marker: {needle}")
+@@ -379,31 +388,75 @@ def main() -> int:
+         "retry after a partial ROLLBACK TO must rewind work added after the failed close",
+     )
+ 
+-    process_segment = segment(worker, "ChildResult run_worker_process(", "std::uint64_t parse_output_field(")
+-    require(
+-        checks,
+-        all(marker in process_segment for marker in ("::fork()", "::execl(", "::waitpid(", "::pipe(", "::dup2(")),
+-        "each_cut_execs_a_fresh_worker_process",
+-        "global allocator configuration is isolated by fork/exec and observed by the parent",
++    process_segment = segment(
++        worker,
++        "anonsync::test::SelfExecTestProcessOutput run_worker_process(",
++        "std::uint64_t parse_output_field(",
+     )
+-    child_segment = segment(process_segment, "if (child == 0)", "(void)::close(pipe_fds[1]);\n    std::string output")
+     require(
+         checks,
+-        "std::string(" not in child_segment and "std::to_string(" not in child_segment,
+-        "post_fork_child_avoids_cpp_allocation",
+-        "all exec arguments are materialized before fork; the child performs descriptor operations and exec only",
++        all(
++            marker in process_segment
++            for marker in (
++                "spawn_self_exec_test_process_with_output_capture_or_throw(",
++                "wait_for_exact_exit_with_output(",
++                "kWorkerTimeout",
++                "kWorkerCaptureBytesPerStream",
++                "!output.standard_error.empty()",
++            )
++        )
++        and all(
++            marker not in worker
++            for marker in (
++                "::fork(",
++                "::pipe(",
++                "::dup2(",
++                "::execl(",
++                "::waitpid(",
++            )
++        ),
++        "allocator_fault_campaign_uses_fresh_image_capture",
++        "every cut enters the pinned self-exec image and returns evidence through bounded, separately owned stdout/stderr without a raw post-fork C++ path",
++    )
++    require(
++        checks,
++        "struct SelfExecTestProcessOutput final" in self_exec_header
++        and "wait_for_exact_exit_with_output(" in self_exec_header
++        and "kMaximumCaptureBytesPerStream" in self_exec_source
++        and "::pipe2(raw_descriptors, O_CLOEXEC)" in self_exec_source
++        and "O_CLOEXEC | O_NONBLOCK" not in self_exec_source
++        and "::poll(" in self_exec_source
++        and self_exec_source.count("drain_capture_descriptor_or_throw(") >= 3
++        and "kill_process_group_noexcept(process_group)" in self_exec_source
++        and "close_output_capture_noexcept();" in self_exec_source,
++        "capture_owner_is_bounded_concurrent_and_fail_closed",
++        "the reusable owner keeps child writes blocking, multiplexes nonblocking parent reads under one hard deadline and byte cap, and kills/reaps/closes on every capture failure",
++    )
++    helper_main_start = worker.find("int main(int argc, char** argv)")
++    helper_main = worker[helper_main_start:] if helper_main_start >= 0 else ""
++    require(
++        checks,
++        bool(helper_main)
++        and ordered(
++            helper_main,
++            "std::string_view(argv[1]) == kWorkerFlag",
++            "verify_self_exec_child_boundary_or_throw();",
++            "argc != 5",
++            "worker_main(argv[2], argv[3], argv[4])",
++        ),
++        "allocator_worker_verifies_boundary_before_instruction_or_sqlite_work",
++        "the helper proves its pinned image, isolated process group, environment, signals, and descriptor hygiene before parsing the exact worker instruction or initializing SQLite",
+     )
+     require(
+         checks,
+-        ordered(
+-            process_segment,
+-            "const std::string scenario_text",
+-            "const std::string mode_text",
+-            "const std::string fail_at_text",
+-            "::fork()",
+-        ),
+-        "exec_arguments_are_materialized_before_fork",
+-        "the child does not depend on allocator or locale state after fork",
++        "tests/sqlite_transaction_allocator_fault_test.cpp" in raw_fork_audit
++        and "five_fault_and_crash_campaigns_use_fresh_self_exec_images"
++        in raw_fork_audit
++        and '"reviewed_fork_exec_bridge_calls": 0' in raw_fork_audit
++        and '"tests/sqlite_transaction_allocator_fault_test.cpp": 1'
++        not in raw_fork_audit,
++        "raw_fork_inventory_removes_allocator_bridge_exception",
++        "the exact raw-fork gate now classifies all remaining 15 calls as inherited-state probes and treats the allocator campaign as a fresh-image migration",
+     )
+     parent_segment = segment(worker, "int parent_main()", "#else")
+     require(
+@@ -427,7 +480,8 @@ def main() -> int:
+     )
+     require(
+         checks,
+-        'parse_output_field(result.output, "failures") >= 1' in parent_segment,
++        'parse_output_field(result.standard_output, "failures") >= 1'
++        in parent_segment,
+         "parent_proves_each_requested_cut_fired",
+         "a successful child without an injected failure cannot count as a cutpoint pass",
+     )
+@@ -474,6 +528,8 @@ def main() -> int:
+     require(
+         checks,
+         "tests/sqlite_transaction_allocator_fault_test.cpp" in package_verifier
++        and "tests/self_exec_test_process.hpp" in package_verifier
++        and "tests/self_exec_test_process.cpp" in package_verifier
+         and "tools/audit_sqlite_transaction_allocator_fault.py" in package_verifier,
+         "release_package_requires_allocator_proof_surface",
+         "the worker and source audit cannot be omitted while CMake retains stale references",
+@@ -503,7 +559,7 @@ def main() -> int:
+ 
+     violations = [asdict(check) for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sqlite-transaction-allocator-fault-audit-v1",
++        "format": "anonsync-sqlite-transaction-allocator-fault-audit-v2",
+         "root": str(root),
+         "passed": not violations,
+         "check_count": len(checks),
+@@ -516,8 +572,10 @@ def main() -> int:
+         "interpretation": (
+             "Current requires a completed exact callback probe. Invalid revokes. "
+             "Indeterminate denies the present use but retains the exact generation for retry. "
+-            "The isolated allocator campaign cuts every allocation on each no-fault boundary "
+-            "frontier in both one-shot and persistent modes, and its overlay accounts all live blocks."
++            "The fresh-image allocator campaign cuts every allocation on each no-fault boundary "
++            "frontier in both one-shot and persistent modes. Its bounded concurrent stdout/stderr "
++            "owner prevents pipe deadlock, enforces one deadline and two byte caps, and consumes "
++            "process and descriptor authority before reporting any failure."
+         ),
+     }
+     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+diff --git a/tools/audit_sqlite_transaction_stack_authority.py b/tools/audit_sqlite_transaction_stack_authority.py
+index cd1ea93..549afd5 100644
+--- a/tools/audit_sqlite_transaction_stack_authority.py
++++ b/tools/audit_sqlite_transaction_stack_authority.py
+@@ -127,7 +127,7 @@ def main() -> int:
+     missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
+     if missing:
+         report = {
+-            "format": "anonsync-sqlite-transaction-stack-authority-audit-v2",
++            "format": "anonsync-sqlite-transaction-stack-authority-audit-v3",
+             "passed": False,
+             "violations": [f"missing sensitive file: {path}" for path in missing],
+         }
+@@ -451,8 +451,9 @@ def main() -> int:
+         ("failed commit revoked a still-live transaction", "test_allocator_commit_retry"),
+         ("failed rollback revoked a still-live transaction", "test_allocator_outer_rollback_retry"),
+         ("g_allocator.live_blocks != 0", "test_allocator_live_block_accounting"),
+-        ("::fork()", "test_allocator_process_isolation"),
+-        ("::execl(", "test_allocator_fresh_exec"),
++        ("verify_self_exec_child_boundary_or_throw();", "test_allocator_rebinds_fresh_image"),
++        ("spawn_self_exec_test_process_with_output_capture_or_throw(", "test_allocator_process_owner"),
++        ("wait_for_exact_exit_with_output(", "test_allocator_bounded_output_capture"),
+     ):
+         require(
+             checks,
+@@ -460,10 +461,22 @@ def main() -> int:
+             check_id,
+             f"required allocator-fault marker: {needle}",
+         )
++    require(
++        checks,
++        "::fork(" not in allocator_test
++        and "::pipe(" not in allocator_test
++        and "::dup2(" not in allocator_test
++        and "::execl(" not in allocator_test
++        and "::waitpid(" not in allocator_test,
++        "allocator_campaign_has_no_raw_postfork_bridge",
++        "the allocator process campaign delegates fresh-image and capture ownership entirely to SelfExecTestProcess",
++    )
+     require(
+         checks,
+         "SyncSqliteBoundaryAuthorityStatus" in allocator_audit
+-        and "Indeterminate" in allocator_audit,
++        and "Indeterminate" in allocator_audit
++        and "allocator_fault_campaign_uses_fresh_image_capture" in allocator_audit
++        and "capture_owner_is_bounded_concurrent_and_fail_closed" in allocator_audit,
+         "allocator_source_audit_tracks_tri_state_owner",
+         "the focused audit must bind the runtime campaign to retry/revocation semantics",
+     )
+@@ -530,7 +543,7 @@ def main() -> int:
+ 
+     violations = [asdict(check) for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sqlite-transaction-stack-authority-audit-v2",
++        "format": "anonsync-sqlite-transaction-stack-authority-audit-v3",
+         "root": str(root),
+         "passed": not violations,
+         "check_count": len(checks),

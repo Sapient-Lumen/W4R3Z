@@ -1,0 +1,1144 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e264b2d..834026e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -411,6 +411,12 @@ target_link_libraries(anonsync_sync_atomic_file_publication PUBLIC
+ target_compile_options(anonsync_sync_atomic_file_publication PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++# Sealed SQLite images publish their exact resident bytes through the same
++# capability-bound atomic owner used by reports. Keep the dependency one-way:
++# publication is independent of SQLite and snapshot interpretation.
++target_link_libraries(anonsync_sqlite_snapshot_seal PUBLIC
++  anonsync_sync_atomic_file_publication)
++
+ set(ANONSYNC_CORE_SOURCES
+   src/sync_domain.cpp
+   src/sync_checkpoint_scheduler.cpp
+@@ -721,6 +727,12 @@ target_include_directories(anonsync_sqlite_replay_ledger_schema_integrity_test P
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/persistence)
+ target_compile_options(anonsync_sqlite_replay_ledger_schema_integrity_test PRIVATE
+   -Wall -Wextra -Wpedantic)
++add_executable(anonsync_sqlite_restore_namespace_authority_test
++  tests/sqlite_restore_namespace_authority_test.cpp)
++target_link_libraries(anonsync_sqlite_restore_namespace_authority_test PRIVATE
++  anonsync_core_lib)
++target_compile_options(anonsync_sqlite_restore_namespace_authority_test PRIVATE
++  -Wall -Wextra -Wpedantic)
+ add_executable(anonsync_sqlite_snapshot_seal_test
+   tests/persistence/sqlite_snapshot_seal_tests.cpp)
+ target_include_directories(anonsync_sqlite_snapshot_seal_test PRIVATE
+@@ -1058,6 +1070,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_sqlite_snapshot_geometry_binding_test
+     anonsync_sqlite_snapshot_sidecar_binding_test
+     anonsync_sqlite_replay_ledger_schema_integrity_test
++    anonsync_sqlite_restore_namespace_authority_test
+     anonsync_sqlite_ingress_sender_replay_integrity_test
+     anonsync_sqlite_runtime_policy_test
+     anonsync_sqlite_support_test
+@@ -1120,6 +1133,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_sqlite_snapshot_geometry_binding_test
+       anonsync_sqlite_snapshot_sidecar_binding_test
+       anonsync_sqlite_replay_ledger_schema_integrity_test
++      anonsync_sqlite_restore_namespace_authority_test
+       anonsync_sqlite_ingress_sender_replay_integrity_test
+       anonsync_sqlite_runtime_policy_test
+       anonsync_sqlite_support_test
+@@ -1294,6 +1308,10 @@ if(Python3_Interpreter_FOUND)
+     COMMAND ${Python3_EXECUTABLE}
+       ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sync_atomic_file_publication.py
+       --root ${CMAKE_CURRENT_SOURCE_DIR})
++  add_test(NAME anonsync_sqlite_restore_publication_source_audit
++    COMMAND ${Python3_EXECUTABLE}
++      ${CMAKE_CURRENT_SOURCE_DIR}/tools/audit_sqlite_restore_publication.py
++      --root ${CMAKE_CURRENT_SOURCE_DIR})
+ endif()
+ set_tests_properties(
+   anonsync_core_sync_domain_model_selftest
+@@ -1337,6 +1355,10 @@ add_test(NAME anonsync_sqlite_replay_ledger_schema_integrity_test
+   COMMAND anonsync_sqlite_replay_ledger_schema_integrity_test)
+ set_tests_properties(anonsync_sqlite_replay_ledger_schema_integrity_test
+   PROPERTIES TIMEOUT 30)
++add_test(NAME anonsync_sqlite_restore_namespace_authority_test
++  COMMAND anonsync_sqlite_restore_namespace_authority_test)
++set_tests_properties(anonsync_sqlite_restore_namespace_authority_test
++  PROPERTIES TIMEOUT 30)
+ add_test(NAME anonsync_sqlite_ingress_sender_replay_integrity_test
+   COMMAND anonsync_sqlite_ingress_sender_replay_integrity_test)
+ set_tests_properties(anonsync_sqlite_ingress_sender_replay_integrity_test
+diff --git a/src/persistence/sqlite_snapshot_seal.cpp b/src/persistence/sqlite_snapshot_seal.cpp
+index 894acf0..54aed39 100644
+--- a/src/persistence/sqlite_snapshot_seal.cpp
++++ b/src/persistence/sqlite_snapshot_seal.cpp
+@@ -550,6 +550,31 @@ sqlite3* SealedSqliteSnapshot::open_database_or_throw(
+     }
+ }
+ 
++void SealedSqliteSnapshot::publish_exact_copy_atomically_or_throw(
++    const fs::path& destination_path,
++    const std::string& label) {
++    publish_exact_copy_atomically_with_observer_or_throw(
++        destination_path, label, nullptr, nullptr);
++}
++
++void SealedSqliteSnapshot::publish_exact_copy_atomically_with_observer_or_throw(
++    const fs::path& destination_path,
++    const std::string& label,
++    atomic_file_publication_detail::AtomicFilePublicationObserver observer,
++    void* observer_context) {
++    require_current_process_or_throw(label);
++    verify_unchanged_or_throw(label + " prepublication");
++    atomic_file_publication_detail::
++        write_sync_file_atomically_with_observer_or_throw(
++            destination_path,
++            std::span<const unsigned char>(serialized_bytes_.data(),
++                                           serialized_bytes_.size()),
++            label,
++            observer,
++            observer_context);
++    verify_unchanged_or_throw(label + " postpublication");
++}
++
+ void SealedSqliteSnapshot::cleanup_noexcept() noexcept {
+     require_current_process_noexcept();
+     std::vector<unsigned char>{}.swap(serialized_bytes_);
+diff --git a/src/persistence/sqlite_snapshot_seal.hpp b/src/persistence/sqlite_snapshot_seal.hpp
+index 00d43fb..3e18ec3 100644
+--- a/src/persistence/sqlite_snapshot_seal.hpp
++++ b/src/persistence/sqlite_snapshot_seal.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "sqlite_snapshot_geometry.hpp"
++#include "sync_atomic_file_publication_internal.hpp"
+ #include "sync_sqlite_process_incarnation.hpp"
+ 
+ #include <cstdint>
+@@ -62,6 +63,22 @@ public:
+     // is owned by the caller and remains valid after this seal is destroyed.
+     sqlite3* open_database_or_throw(const std::string& label);
+ 
++    // Publish the exact resident bytes through the capability-bound atomic
++    // file owner. This does not reopen the source pathname and does not create
++    // a SQLite staging database or sidecar family. The resident image is
++    // reverified immediately before and after synchronous publication.
++    void publish_exact_copy_atomically_or_throw(
++        const std::filesystem::path& destination_path,
++        const std::string& label);
++
++    // Deterministic-observer form used by the restore crash-frontier model.
++    // Production callers normally use the wrapper above.
++    void publish_exact_copy_atomically_with_observer_or_throw(
++        const std::filesystem::path& destination_path,
++        const std::string& label,
++        atomic_file_publication_detail::AtomicFilePublicationObserver observer,
++        void* observer_context);
++
+ private:
+     void require_current_process_noexcept() const noexcept;
+     void require_current_process_or_throw(std::string_view label) const;
+diff --git a/src/sqlite_replay_ledger.cpp b/src/sqlite_replay_ledger.cpp
+index afa25b4..55c97a4 100644
+--- a/src/sqlite_replay_ledger.cpp
++++ b/src/sqlite_replay_ledger.cpp
+@@ -426,26 +426,89 @@ void bind_int64_or_throw(sqlite3* db, sqlite3_stmt* stmt, int index, long long v
+ }
+ 
+ 
++std::uint64_t guarded_sqlite_main_size_or_throw(
++    SqlitePathFamilyGuard& guard,
++    const std::string& label) {
++    int fd = guard.open_readonly_file_or_throw(label);
++    struct stat status{};
++    if (::fstat(fd, &status) != 0) {
++        const int status_error = errno;
++        (void)::close(fd);
++        throw std::runtime_error(
++            label + " fstat failed: " + std::strerror(status_error));
++    }
++    if (::close(fd) != 0) {
++        throw std::runtime_error(
++            label + " close failed: " + std::strerror(errno));
++    }
++    if (status.st_size < 0) {
++        throw std::runtime_error(label + " reported a negative file size");
++    }
++    return static_cast<std::uint64_t>(status.st_size);
++}
++
+ void assert_restore_destination_not_writer_locked(const std::string& path) {
+     if (path.empty()) return;
+-    std::error_code ec;
+-    if (!std::filesystem::exists(path, ec) || ec) return;
++    SqlitePathFamilyGuard destination_guard =
++        guard_sqlite_path_family_or_throw(
++            path,
++            true,
++            {"-wal", "-shm", "-journal"},
++            "sqlite-wal snapshot restore writer-lock probe");
++    destination_guard.verify_sidecars_absent_or_throw(
++        "sqlite-wal snapshot restore writer-lock pre-open family gate");
++    if (!destination_guard.database_existed_at_preflight()) return;
++    if (guarded_sqlite_main_size_or_throw(
++            destination_guard,
++            "sqlite-wal snapshot restore writer-lock size evidence") == 0) {
++        return;
++    }
++
++    require_sync_sqlite_wal_runtime_safe_or_throw(
++        "sqlite-wal snapshot restore writer-lock SQLite runtime gate");
+     sqlite3* db = nullptr;
+     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX;
+ #ifdef SQLITE_OPEN_NOFOLLOW
+     flags |= SQLITE_OPEN_NOFOLLOW;
+ #endif
+-    if (sqlite3_open_v2(path.c_str(), &db, flags, nullptr) != SQLITE_OK) {
+-        if (db) sqlite3_close(db);
+-        return;
+-    }
+-    sqlite3_busy_timeout(db, 100);
+-    const int rc = sqlite3_exec(
+-        db, "BEGIN IMMEDIATE; ROLLBACK;", nullptr, nullptr, nullptr);
+-    const std::string msg = sqlite3_errmsg(db);
+-    sqlite3_close(db);
+-    if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED || msg.find("locked") != std::string::npos || msg.find("busy") != std::string::npos) {
+-        throw std::runtime_error("sqlite-wal snapshot restore refuses destination with active writer lock: " + path);
++    try {
++        db = sqlite_open_or_throw(
++            path,
++            flags,
++            "sqlite-wal snapshot restore writer-lock probe open failed");
++        destination_guard.verify_open_database_or_throw(
++            db,
++            "sqlite-wal snapshot restore writer-lock probe identity");
++        if (sqlite3_busy_timeout(db, 100) != SQLITE_OK) {
++            sqlite_throw(
++                db,
++                "sqlite-wal snapshot restore writer-lock busy timeout failed");
++        }
++        const int rc = sqlite3_exec(
++            db, "BEGIN IMMEDIATE; ROLLBACK;", nullptr, nullptr, nullptr);
++        const std::string message = sqlite3_errmsg(db);
++        if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED ||
++            message.find("locked") != std::string::npos ||
++            message.find("busy") != std::string::npos) {
++            throw std::runtime_error(
++                "sqlite-wal snapshot restore refuses destination with active writer lock: " +
++                path);
++        }
++        if (rc != SQLITE_OK) {
++            throw std::runtime_error(
++                "sqlite-wal snapshot restore writer-lock probe failed: " + message);
++        }
++        destination_guard.verify_open_database_or_throw(
++            db,
++            "sqlite-wal snapshot restore writer-lock post-probe identity");
++        sqlite_close_or_throw(
++            db,
++            "sqlite-wal snapshot restore writer-lock probe close failed");
++        destination_guard.verify_sidecars_absent_or_throw(
++            "sqlite-wal snapshot restore writer-lock post-close family gate");
++    } catch (...) {
++        sqlite_close_best_effort(db);
++        throw;
+     }
+ }
+ 
+@@ -673,37 +736,30 @@ void maybe_inject_restore_fault(const std::string& checkpoint) {
+     }
+ }
+ 
+-void fsync_parent_directory_for_restore(const std::string& path) {
+-    std::filesystem::path parent = std::filesystem::path(path).parent_path();
+-    if (parent.empty()) parent = ".";
+-    int dfd = ::open(parent.string().c_str(), O_RDONLY | O_DIRECTORY);
+-    if (dfd < 0) throw std::runtime_error(std::string("sqlite-wal snapshot restore parent directory open failed: ") + std::strerror(errno));
+-    if (::fsync(dfd) != 0) {
+-        std::string msg = std::string("sqlite-wal snapshot restore parent directory fsync failed: ") + std::strerror(errno);
+-        ::close(dfd);
+-        throw std::runtime_error(msg);
+-    }
+-    ::close(dfd);
+-}
+-
+-std::string restore_temp_path_for(const std::string& ledger_path) {
+-    std::filesystem::path p(ledger_path);
+-    std::filesystem::path parent = p.parent_path();
+-    if (parent.empty()) parent = ".";
+-    std::ostringstream name;
+-    name << "." << p.filename().string() << ".restore-tmp-" << static_cast<long long>(::getpid()) << "-" << static_cast<long long>(std::time(nullptr)) << ".sqlite";
+-    return (parent / name.str()).string();
+-}
+-
+ void checkpoint_destination_before_restore_replace(const std::string& ledger_path) {
+     if (ledger_path.empty()) return;
+-    std::error_code ec;
+-    if (!std::filesystem::exists(ledger_path, ec) || ec) return;
+-    std::error_code size_ec;
+-    const auto existing_size = std::filesystem::file_size(ledger_path, size_ec);
+-    if (size_ec || existing_size == 0) {
+-        std::remove((ledger_path + "-wal").c_str());
+-        std::remove((ledger_path + "-shm").c_str());
++    SqlitePathFamilyGuard destination_guard =
++        guard_sqlite_path_family_or_throw(
++            ledger_path,
++            true,
++            {"-wal", "-shm", "-journal"},
++            "sqlite-wal snapshot restore destination quiescence");
++    // Sidecar names are not cleanup opportunities. Check absence before any
++    // SQLite open: opening even an empty or malformed destination can consume
++    // or remove a pre-existing WAL/SHM name as part of SQLite recovery.
++    destination_guard.verify_sidecars_absent_or_throw(
++        "sqlite-wal snapshot restore destination pre-open quiescence");
++    if (!destination_guard.database_existed_at_preflight()) {
++        destination_guard.verify_sidecars_absent_or_throw(
++            "sqlite-wal snapshot restore absent destination quiescence");
++        return;
++    }
++
++    if (guarded_sqlite_main_size_or_throw(
++            destination_guard,
++            "sqlite-wal snapshot restore destination size evidence") == 0) {
++        destination_guard.verify_sidecars_absent_or_throw(
++            "sqlite-wal snapshot restore empty destination quiescence");
+         return;
+     }
+     require_sync_sqlite_wal_runtime_safe_or_throw(
+@@ -713,18 +769,55 @@ void checkpoint_destination_before_restore_replace(const std::string& ledger_pat
+ #ifdef SQLITE_OPEN_NOFOLLOW
+     flags |= SQLITE_OPEN_NOFOLLOW;
+ #endif
+-    db = sqlite_open_or_throw(ledger_path, flags, "sqlite-wal snapshot restore destination checkpoint open failed");
+-    int log_frames = 0;
+-    int checkpointed_frames = 0;
+-    int rc = sqlite3_wal_checkpoint_v2(db, nullptr, SQLITE_CHECKPOINT_TRUNCATE, &log_frames, &checkpointed_frames);
+-    if (rc != SQLITE_OK) {
+-        std::string msg = sqlite3_errmsg(db);
++    try {
++        db = sqlite_open_or_throw(
++            ledger_path,
++            flags,
++            "sqlite-wal snapshot restore destination checkpoint open failed");
++        destination_guard.verify_open_database_or_throw(
++            db,
++            "sqlite-wal snapshot restore destination checkpoint identity");
++        int log_frames = 0;
++        int checkpointed_frames = 0;
++        const int rc = sqlite3_wal_checkpoint_v2(
++            db,
++            nullptr,
++            SQLITE_CHECKPOINT_TRUNCATE,
++            &log_frames,
++            &checkpointed_frames);
++        if (rc != SQLITE_OK) {
++            throw std::runtime_error(
++                "sqlite-wal snapshot restore destination checkpoint failed: " +
++                std::string(sqlite3_errmsg(db)));
++        }
++        destination_guard.verify_open_database_or_throw(
++            db,
++            "sqlite-wal snapshot restore destination post-checkpoint identity");
++        sqlite_close_or_throw(
++            db,
++            "sqlite-wal snapshot restore destination checkpoint close failed");
++        destination_guard.verify_sidecars_absent_or_throw(
++            "sqlite-wal snapshot restore destination post-close quiescence");
++    } catch (...) {
+         sqlite_close_best_effort(db);
+-        throw std::runtime_error("sqlite-wal snapshot restore destination checkpoint failed: " + msg);
++        throw;
++    }
++}
++
++void restore_atomic_publication_fault_observer(
++    const atomic_file_publication_detail::AtomicFilePublicationObservation&
++        observation,
++    void*) {
++    using atomic_file_publication_detail::AtomicFilePublicationCutpoint;
++    if (observation.cutpoint ==
++        AtomicFilePublicationCutpoint::NamespacePublished) {
++        maybe_inject_restore_fault(
++            "after-atomic-rename-before-parent-fsync");
++    } else if (observation.cutpoint ==
++               AtomicFilePublicationCutpoint::DirectorySynced) {
++        maybe_inject_restore_fault(
++            "after-parent-fsync-before-final-verify");
+     }
+-    sqlite_close_or_throw(db, "sqlite-wal snapshot restore destination checkpoint close failed");
+-    std::remove((ledger_path + "-wal").c_str());
+-    std::remove((ledger_path + "-shm").c_str());
+ }
+ 
+ 
+@@ -4302,9 +4395,9 @@ void restore_sqlite_snapshot_into_ledger_internal(const std::string& snapshot_pa
+ 
+     assert_restore_destination_not_writer_locked(ledger_path);
+ 
+-    // Capture the source pathname exactly once.  The byte digest, logical
+-    // verifier, prefix-continuity query, and sqlite3_backup source all consume
+-    // the same private immutable staging inode.  Sibling WAL/SHM/journal files
++    // Capture the source pathname exactly once. The byte digest, logical
++    // verifier, prefix-continuity query, and eventual publication all consume
++    // the same process-resident sealed bytes. Sibling WAL/SHM/journal files
+     // are rejected rather than being merged into a logical state that the
+     // signed main-file digest did not cover.
+     persistence::SealedSqliteSnapshot sealed_snapshot =
+@@ -4365,71 +4458,37 @@ void restore_sqlite_snapshot_into_ledger_internal(const std::string& snapshot_pa
+         }
+     }
+ 
+-    // Restore through a same-directory temp SQLite database first.  The active destination is not
+-    // unlinked or replaced until the temp database has been copied and verified through the dedicated
+-    // read-only SQLite snapshot verifier.  This avoids the rev0616 direct-copy failure mode where an error
+-    // or crash during copy could destroy the active ledger family after unlinking it.
+-    const std::string temp_path = restore_temp_path_for(ledger_path);
+-    bool renamed_to_final = false;
+-    reject_sqlite_family_symlinks(temp_path);
+-    unlink_sqlite_family(temp_path);
+-    sqlite3* src = nullptr;
+-    sqlite3* dst = nullptr;
+-    try {
+-        src = sealed_snapshot.open_database_or_throw(
+-            "sqlite-wal snapshot restore sealed source open failed");
+-        int dst_flags = sqlite_open_flags_for_ledger();
+-        dst = sqlite_open_or_throw(temp_path, dst_flags, "sqlite-wal snapshot restore temp destination open failed");
+-        sqlite3_backup* backup = sqlite3_backup_init(dst, "main", src, "main");
+-        if (!backup) sqlite_throw(dst, "sqlite-wal snapshot restore backup init failed");
+-        int rc = sqlite3_backup_step(backup, -1);
+-        int finish_rc = sqlite3_backup_finish(backup);
+-        if (finish_rc != SQLITE_OK || (rc != SQLITE_DONE && rc != SQLITE_OK)) sqlite_throw(dst, "sqlite-wal snapshot restore backup copy failed");
+-        sqlite_close_or_throw(dst, "sqlite-wal snapshot restore temp destination close failed");
+-        dst = nullptr;
+-        sealed_snapshot.verify_unchanged_or_throw(
+-            "sqlite-wal snapshot restore sealed source post-backup check");
+-        sqlite_close_or_throw(src, "sqlite-wal snapshot restore source close failed");
+-        src = nullptr;
+-        sealed_snapshot.verify_unchanged_or_throw(
+-            "sqlite-wal snapshot restore sealed source post-close check");
+-        std::remove((temp_path + "-wal").c_str());
+-        std::remove((temp_path + "-shm").c_str());
+-
+-        // Verify the staged temp database before touching the destination.
+-        {
+-            ReplayLedgerStats staged_stats = verify_sqlite_ledger_snapshot_readonly(temp_path, "sqlite-wal snapshot restore staged temp read-only verifier");
+-            if (staged_stats.loaded_entries != snapshot_stats.loaded_entries ||
+-                staged_stats.durable_line_count != snapshot_stats.durable_line_count ||
+-                staged_stats.durable_head_hash != snapshot_stats.durable_head_hash) {
+-                throw std::runtime_error("sqlite-wal snapshot restore staged temp verification does not match source snapshot");
+-            }
+-        }
+-        maybe_inject_restore_fault("after-temp-verify-before-replace");
+-
+-        assert_restore_destination_not_writer_locked(ledger_path);
+-        checkpoint_destination_before_restore_replace(ledger_path);
+-        maybe_inject_restore_fault("after-destination-checkpoint-before-replace");
+-
+-        std::filesystem::rename(temp_path, ledger_path);
+-        renamed_to_final = true;
+-        maybe_inject_restore_fault("after-atomic-rename-before-parent-fsync");
+-        fsync_parent_directory_for_restore(ledger_path);
+-        maybe_inject_restore_fault("after-parent-fsync-before-final-verify");
+-
+-        // Verify the restored destination through the dedicated read-only verifier so profile/integrity/hash-chain/metadata checks run without reopening the write path.
+-        ReplayLedgerStats restored_stats = verify_sqlite_ledger_snapshot_readonly(ledger_path, "sqlite-wal snapshot restore destination read-only verifier");
+-        if (restored_stats.loaded_entries <= 0) throw std::runtime_error("sqlite-wal snapshot restore destination verified empty after atomic replace");
+-        if (restored_stats.durable_line_count != snapshot_stats.durable_line_count || restored_stats.durable_head_hash != snapshot_stats.durable_head_hash) {
+-            throw std::runtime_error("sqlite-wal snapshot restore destination verification does not match source snapshot after atomic replace");
+-        }
+-    } catch (...) {
+-        sqlite_close_best_effort(dst);
+-        sqlite_close_best_effort(src);
+-        if (!renamed_to_final) unlink_sqlite_family(temp_path);
+-        throw;
++    // The source seal already owns the exact portable 1/1 database image.
++    // Reconstructing those bytes through a second mutable SQLite database adds
++    // no authority, but did add a predictable namespace, sidecars, pre-delete,
++    // and failure cleanup races. Publish the resident bytes directly through
++    // the capability-bound atomic file owner instead.
++    maybe_inject_restore_fault("after-temp-verify-before-replace");
++    assert_restore_destination_not_writer_locked(ledger_path);
++    checkpoint_destination_before_restore_replace(ledger_path);
++    maybe_inject_restore_fault("after-destination-checkpoint-before-replace");
++
++    sealed_snapshot.publish_exact_copy_atomically_with_observer_or_throw(
++        ledger_path,
++        "sqlite-wal snapshot restore sealed-byte publication",
++        &restore_atomic_publication_fault_observer,
++        nullptr);
++
++    // Verify the restored destination through the dedicated read-only verifier
++    // so profile, integrity, hash-chain, metadata, sidecar, and byte-geometry
++    // checks run without reopening the write path.
++    ReplayLedgerStats restored_stats = verify_sqlite_ledger_snapshot_readonly(
++        ledger_path,
++        "sqlite-wal snapshot restore destination read-only verifier");
++    if (restored_stats.loaded_entries <= 0) {
++        throw std::runtime_error(
++            "sqlite-wal snapshot restore destination verified empty after atomic replace");
++    }
++    if (restored_stats.durable_line_count != snapshot_stats.durable_line_count ||
++        restored_stats.durable_head_hash != snapshot_stats.durable_head_hash) {
++        throw std::runtime_error(
++            "sqlite-wal snapshot restore destination verification does not match source snapshot after atomic replace");
+     }
+-    unlink_sqlite_family(temp_path);
+ }
+ 
+ void restore_sqlite_snapshot_into_ledger(const std::string& snapshot_path, const std::string& ledger_path) {
+diff --git a/src/sync_atomic_file_publication.cpp b/src/sync_atomic_file_publication.cpp
+index e1cd50b..324d8ce 100644
+--- a/src/sync_atomic_file_publication.cpp
++++ b/src/sync_atomic_file_publication.cpp
+@@ -10,6 +10,7 @@
+ #include <filesystem>
+ #include <iomanip>
+ #include <limits>
++#include <span>
+ #include <sstream>
+ #include <stdexcept>
+ #include <string>
+@@ -136,6 +137,11 @@ std::string next_temp_basename(const std::string& final_basename) {
+            ".tmp";
+ }
+ 
++std::span<const unsigned char> byte_span(const std::string& payload) noexcept {
++    return {reinterpret_cast<const unsigned char*>(payload.data()),
++            payload.size()};
++}
++
+ fs::path absolute_lexically_normal_path_or_throw(
+     const fs::path& raw_path,
+     const std::string& label) {
+@@ -252,9 +258,9 @@ void inspect_final_path_or_throw(const fs::path& final_path,
+ }
+ 
+ void write_windows_handle_all_or_throw(HANDLE handle,
+-                                       const std::string& payload,
++                                       std::span<const unsigned char> payload,
+                                        const std::string& label) {
+-    const char* cursor = payload.data();
++    const unsigned char* cursor = payload.data();
+     std::size_t remaining = payload.size();
+     while (remaining != 0) {
+         const DWORD requested = static_cast<DWORD>(
+@@ -283,7 +289,7 @@ void sanitize_windows_temp_handle_noexcept(HANDLE handle) noexcept {
+ }
+ 
+ void publish_windows_or_throw(const fs::path& final_path,
+-                              const std::string& payload,
++                              std::span<const unsigned char> payload,
+                               const std::string& label,
+                               AtomicFilePublicationObserver observer,
+                               void* observer_context,
+@@ -453,9 +459,9 @@ void inspect_final_entry_at_or_throw(int directory_fd,
+ }
+ 
+ void write_fd_all_or_throw(int fd,
+-                           const std::string& payload,
++                           std::span<const unsigned char> payload,
+                            const std::string& label) {
+-    const char* cursor = payload.data();
++    const unsigned char* cursor = payload.data();
+     std::size_t remaining = payload.size();
+     while (remaining != 0) {
+         const ssize_t written = ::write(fd, cursor, remaining);
+@@ -695,7 +701,7 @@ std::pair<OwnedFd, std::string> create_unique_temp_at_or_throw(
+ }
+ 
+ void publish_posix_or_throw(const fs::path& final_path,
+-                            const std::string& payload,
++                            std::span<const unsigned char> payload,
+                             const std::string& label,
+                             AtomicFilePublicationObserver observer,
+                             void* observer_context,
+@@ -834,6 +840,16 @@ void write_sync_json_file_atomically_with_observer_or_throw(
+     const std::string& label,
+     AtomicFilePublicationObserver observer,
+     void* observer_context) {
++    write_sync_file_atomically_with_observer_or_throw(
++        final_path, byte_span(payload), label, observer, observer_context);
++}
++
++void write_sync_file_atomically_with_observer_or_throw(
++    const fs::path& final_path,
++    std::span<const unsigned char> payload,
++    const std::string& label,
++    AtomicFilePublicationObserver observer,
++    void* observer_context) {
+     if (label.empty()) {
+         throw std::invalid_argument(
+             "atomic file publication label must not be empty");
+@@ -869,6 +885,15 @@ void write_sync_json_file_atomically_no_symlink_or_throw(
+             final_path, payload, label, nullptr, nullptr);
+ }
+ 
++void write_sync_file_atomically_no_symlink_or_throw(
++    const fs::path& final_path,
++    std::span<const unsigned char> payload,
++    const std::string& label) {
++    atomic_file_publication_detail::
++        write_sync_file_atomically_with_observer_or_throw(
++            final_path, payload, label, nullptr, nullptr);
++}
++
+ void write_sync_cli_report_json_or_throw(const std::string& report_path,
+                                          const std::string& payload,
+                                          const std::string& label) {
+diff --git a/src/sync_atomic_file_publication.hpp b/src/sync_atomic_file_publication.hpp
+index 430a68a..7aa21a8 100644
+--- a/src/sync_atomic_file_publication.hpp
++++ b/src/sync_atomic_file_publication.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <filesystem>
++#include <span>
+ #include <stdexcept>
+ #include <string>
+ 
+@@ -73,6 +74,15 @@ void write_sync_json_file_atomically_no_symlink_or_throw(
+     const std::string& payload,
+     const std::string& label);
+ 
++// Binary payloads use the exact same capability-bound publication owner as
++// JSON reports. The span is consumed synchronously and is never retained.
++// This avoids manufacturing a second in-memory copy merely to publish an
++// already sealed database or other byte-exact artifact.
++void write_sync_file_atomically_no_symlink_or_throw(
++    const std::filesystem::path& final_path,
++    std::span<const unsigned char> payload,
++    const std::string& label);
++
+ // Resolves the operator-supplied path to an absolute lexically-normal path and
+ // delegates to the same directory-bound publication owner used by heartbeats.
+ void write_sync_cli_report_json_or_throw(
+diff --git a/src/sync_atomic_file_publication_internal.hpp b/src/sync_atomic_file_publication_internal.hpp
+index c2c3cc1..de16c35 100644
+--- a/src/sync_atomic_file_publication_internal.hpp
++++ b/src/sync_atomic_file_publication_internal.hpp
+@@ -3,6 +3,7 @@
+ #include "sync_atomic_file_publication.hpp"
+ 
+ #include <filesystem>
++#include <span>
+ #include <string>
+ 
+ namespace anonsync::atomic_file_publication_detail {
+@@ -46,4 +47,14 @@ void write_sync_json_file_atomically_with_observer_or_throw(
+     AtomicFilePublicationObserver observer,
+     void* observer_context);
+ 
++// Binary equivalent used by invariant owners that already hold exact bytes.
++// The observer contract and typed publication outcomes are identical to the
++// JSON wrapper.
++void write_sync_file_atomically_with_observer_or_throw(
++    const std::filesystem::path& final_path,
++    std::span<const unsigned char> payload,
++    const std::string& label,
++    AtomicFilePublicationObserver observer,
++    void* observer_context);
++
+ }  // namespace anonsync::atomic_file_publication_detail
+diff --git a/tests/persistence/sqlite_snapshot_seal_tests.cpp b/tests/persistence/sqlite_snapshot_seal_tests.cpp
+index 128336b..b7ebfcf 100644
+--- a/tests/persistence/sqlite_snapshot_seal_tests.cpp
++++ b/tests/persistence/sqlite_snapshot_seal_tests.cpp
+@@ -296,6 +296,7 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+                                               std::uint64_t& checks) {
+     const fs::path source = root / "snapshot with ? hash# percent%.sqlite";
+     const fs::path replacement = root / "replacement.sqlite";
++    const fs::path published = root / "published exact copy.sqlite";
+     create_database(source, "alpha");
+     const std::string source_digest = sha256_file(source);
+     const auto namespace_before = snapshot_staging_entries();
+@@ -321,6 +322,23 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+         require(seal.geometry().byte_count == seal.byte_count(),
+                 "sealed geometry capability lost its byte count", checks);
+ 
++        seal.publish_exact_copy_atomically_or_throw(
++            published, "focused sealed snapshot exact publication");
++        require(sha256_file(published) == seal.sha256_hex(),
++                "sealed publication changed the exact resident bytes", checks);
++        require(sqlite_file_format_versions(published) ==
++                    std::array<unsigned char, 2>{1U, 1U},
++                "sealed publication did not preserve portable 1/1 format", checks);
++        require(Database(published, SQLITE_OPEN_READONLY)
++                    .text("SELECT value FROM evidence") == "alpha",
++                "sealed publication did not preserve logical snapshot state",
++                checks);
++        require(!fs::exists(fs::path(published.string() + "-wal")) &&
++                    !fs::exists(fs::path(published.string() + "-shm")) &&
++                    !fs::exists(fs::path(published.string() + "-journal")),
++                "sealed publication manufactured a SQLite sidecar family",
++                checks);
++
+         sqlite3_vfs* const captured_default_vfs = sqlite3_vfs_find(nullptr);
+         require(captured_default_vfs != nullptr,
+                 "SQLite did not expose a default VFS before substitution", checks);
+@@ -396,6 +414,7 @@ void test_exact_capture_and_path_independence(const fs::path& root,
+     }
+     cleanup_sqlite_family(source);
+     cleanup_sqlite_family(replacement);
++    cleanup_sqlite_family(published);
+ }
+ void test_wal_laundering_rejected(const fs::path& root,
+                                   std::uint64_t& checks) {
+diff --git a/tests/sqlite_restore_namespace_authority_test.cpp b/tests/sqlite_restore_namespace_authority_test.cpp
+new file mode 100644
+index 0000000..5a56f82
+--- /dev/null
++++ b/tests/sqlite_restore_namespace_authority_test.cpp
+@@ -0,0 +1,208 @@
++#include "anonsync_core_internal.hpp"
++
++#include <cstdint>
++#include <cstdio>
++#include <ctime>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <map>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <vector>
++
++#include <sys/stat.h>
++#include <unistd.h>
++
++namespace {
++
++namespace fs = std::filesystem;
++
++void require(bool condition, const std::string& message, std::uint64_t& checks) {
++    ++checks;
++    if (!condition) throw std::runtime_error(message);
++}
++
++void write_binary(const fs::path& path, const std::string& bytes) {
++    std::ofstream output(path, std::ios::binary | std::ios::trunc);
++    if (!output) throw std::runtime_error("could not create fixture: " + path.string());
++    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
++    if (!output) throw std::runtime_error("could not write fixture: " + path.string());
++}
++
++std::string read_binary(const fs::path& path) {
++    std::ifstream input(path, std::ios::binary);
++    if (!input) throw std::runtime_error("could not read fixture: " + path.string());
++    return std::string(std::istreambuf_iterator<char>(input),
++                       std::istreambuf_iterator<char>());
++}
++
++void cleanup_sqlite_family(const fs::path& path) {
++    for (const std::string_view suffix : {
++             "", "-wal", "-shm", "-journal", ".restore.lock", ".write.lock"}) {
++        std::error_code ignored;
++        fs::remove(fs::path(path.string() + std::string(suffix)), ignored);
++    }
++}
++
++anonsync::Json make_case(const std::string& case_id) {
++    anonsync::Json value;
++    value.type = anonsync::Json::Type::Object;
++    value.o["case_id"] = anonsync::json_string_value(case_id);
++    value.o["kind"] = anonsync::json_string_value("openapi");
++    value.o["operation_id"] =
++        anonsync::json_string_value("restoreNamespaceAuthority");
++    value.o["contract_digest_sha256"] =
++        anonsync::json_string_value("restore-namespace-authority-contract");
++    value.o["cloud_event_source"] = anonsync::json_string_value("");
++    value.o["cloud_event_id"] = anonsync::json_string_value("");
++    return value;
++}
++
++anonsync::Json make_claims(const std::string& jti) {
++    anonsync::Json value;
++    value.type = anonsync::Json::Type::Object;
++    value.o["operation_id"] =
++        anonsync::json_string_value("restoreNamespaceAuthority");
++    value.o["contract_digest_sha256"] = anonsync::json_string_value(
++        anonsync::sha256_hex("restore-namespace-authority-contract"));
++    value.o["jti"] = anonsync::json_string_value(jti);
++    return value;
++}
++
++void create_snapshot(const fs::path& ledger, const fs::path& snapshot) {
++    cleanup_sqlite_family(ledger);
++    cleanup_sqlite_family(snapshot);
++    std::string reason;
++    auto backend = anonsync::create_replay_ledger_backend("sqlite-wal");
++    backend->load(ledger.string(), true, "batch");
++    if (!backend->stage(make_case("namespace-authority-case"),
++                        make_claims("namespace-authority-jti"),
++                        "allow", reason)) {
++        throw std::runtime_error("could not stage snapshot fixture: " + reason);
++    }
++    if (!backend->commit(reason)) {
++        throw std::runtime_error("could not commit snapshot fixture: " + reason);
++    }
++    if (!backend->backup_snapshot(snapshot.string(), reason)) {
++        throw std::runtime_error("could not create snapshot fixture: " + reason);
++    }
++    backend->close();
++}
++
++bool has_atomic_publication_temp(const fs::path& root) {
++    for (const auto& entry : fs::directory_iterator(root)) {
++        const std::string name = entry.path().filename().string();
++        if (name.rfind(".anonsync-publish-v1-", 0) == 0) return true;
++    }
++    return false;
++}
++
++void expect_sidecar_rejection(const fs::path& snapshot,
++                              const fs::path& destination,
++                              std::string_view suffix,
++                              std::uint64_t& checks) {
++    cleanup_sqlite_family(destination);
++    write_binary(destination, "");
++    const fs::path sidecar(destination.string() + std::string(suffix));
++    const std::string foreign_bytes =
++        "foreign-sidecar-authority:" + std::string(suffix) +
++        std::string("\0tail", 5);
++    write_binary(sidecar, foreign_bytes);
++
++    bool rejected = false;
++    std::string reason;
++    try {
++        anonsync::restore_sqlite_snapshot_into_ledger(
++            snapshot.string(), destination.string());
++    } catch (const std::exception& error) {
++        rejected = true;
++        reason = error.what();
++    }
++    require(rejected, "restore accepted an authority-free sidecar " +
++                          std::string(suffix), checks);
++    require(reason.find("snapshot sidecar " + std::string(suffix)) !=
++                std::string::npos,
++            "restore sidecar rejection reason mismatch: " + reason, checks);
++    require(fs::exists(destination) && fs::file_size(destination) == 0,
++            "sidecar rejection replaced the empty destination main file", checks);
++    require(fs::exists(sidecar) && read_binary(sidecar) == foreign_bytes,
++            "sidecar rejection deleted or changed foreign sidecar bytes", checks);
++    require(!has_atomic_publication_temp(destination.parent_path()),
++            "sidecar rejection left an atomic publication temp", checks);
++    cleanup_sqlite_family(destination);
++}
++
++}  // namespace
++
++int main() {
++    std::uint64_t checks = 0;
++    const fs::path root = fs::path("/tmp") /
++        ("anonsync-r0821-restore-namespace-" +
++         std::to_string(static_cast<long long>(::getpid())) + "-" +
++         std::to_string(static_cast<long long>(std::time(nullptr))));
++    const fs::path source = root / "source.sqlite";
++    const fs::path snapshot = root / "snapshot.sqlite";
++    const fs::path destination = root / "destination.sqlite";
++
++    try {
++        fs::create_directory(root);
++        if (::chmod(root.c_str(), 0700) != 0) {
++            throw std::runtime_error("could not make test directory private");
++        }
++        create_snapshot(source, snapshot);
++
++        std::map<fs::path, std::string> foreign_predictable_names;
++        const std::time_t now = std::time(nullptr);
++        for (long long offset = -4; offset <= 4; ++offset) {
++            const fs::path candidate = root /
++                ("." + destination.filename().string() + ".restore-tmp-" +
++                 std::to_string(static_cast<long long>(::getpid())) + "-" +
++                 std::to_string(static_cast<long long>(now) + offset) +
++                 ".sqlite");
++            const std::string bytes =
++                "foreign-predictable-temp:" + std::to_string(offset) +
++                std::string("\0tail", 5);
++            write_binary(candidate, bytes);
++            foreign_predictable_names.emplace(candidate, bytes);
++        }
++
++        anonsync::restore_sqlite_snapshot_into_ledger(
++            snapshot.string(), destination.string());
++        require(fs::exists(destination) && fs::file_size(destination) > 0,
++                "valid restore did not publish a destination", checks);
++        for (const auto& [path, bytes] : foreign_predictable_names) {
++            require(fs::exists(path) && read_binary(path) == bytes,
++                    "restore consumed or changed a predictable foreign temp name: " +
++                        path.filename().string(), checks);
++        }
++        require(!has_atomic_publication_temp(root),
++                "successful restore left an atomic publication temp", checks);
++        require(!fs::exists(fs::path(destination.string() + "-wal")) &&
++                    !fs::exists(fs::path(destination.string() + "-shm")) &&
++                    !fs::exists(fs::path(destination.string() + "-journal")),
++                "successful sealed-byte restore manufactured sidecars", checks);
++
++        expect_sidecar_rejection(snapshot, root / "foreign-wal.sqlite", "-wal",
++                                 checks);
++        expect_sidecar_rejection(snapshot, root / "foreign-shm.sqlite", "-shm",
++                                 checks);
++        expect_sidecar_rejection(snapshot, root / "foreign-journal.sqlite",
++                                 "-journal", checks);
++
++        cleanup_sqlite_family(source);
++        cleanup_sqlite_family(snapshot);
++        cleanup_sqlite_family(destination);
++        std::error_code ignored;
++        fs::remove_all(root, ignored);
++        std::cout << "anonsync sqlite restore namespace authority test passed="
++                  << checks << " failed=0\n";
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "FATAL: " << error.what() << '\n';
++        std::error_code ignored;
++        fs::remove_all(root, ignored);
++        return 2;
++    }
++}
+diff --git a/tools/audit_sqlite_restore_publication.py b/tools/audit_sqlite_restore_publication.py
+new file mode 100755
+index 0000000..1cbbe96
+--- /dev/null
++++ b/tools/audit_sqlite_restore_publication.py
+@@ -0,0 +1,169 @@
++#!/usr/bin/env python3
++"""Fail-closed audit of the SQLite snapshot restore publication protocol.
++
++The restore path may replace its destination main file only through the shared
++atomic publisher. It must not reserve a predictable SQLite staging database,
++open a second writable reconstruction database, or delete destination sidecar
++names that it has not proved it owns.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def slice_between(text: str, begin: str, end: str) -> str:
++    start = text.find(begin)
++    stop = text.find(end, start + len(begin)) if start >= 0 else -1
++    return text[start:stop] if start >= 0 and stop > start else ""
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", type=Path, required=True)
++    parser.add_argument("--json", type=Path)
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    paths = {
++        "cmake": root / "CMakeLists.txt",
++        "ledger": root / "src/sqlite_replay_ledger.cpp",
++        "seal_header": root / "src/persistence/sqlite_snapshot_seal.hpp",
++        "seal_source": root / "src/persistence/sqlite_snapshot_seal.cpp",
++        "publisher_header": root / "src/sync_atomic_file_publication.hpp",
++        "publisher_internal": root / "src/sync_atomic_file_publication_internal.hpp",
++        "publisher_source": root / "src/sync_atomic_file_publication.cpp",
++        "test": root / "tests/sqlite_restore_namespace_authority_test.cpp",
++    }
++    missing = [name for name, path in paths.items() if not path.is_file()]
++    if missing:
++        result = {
++            "format": "anonsync-sqlite-restore-publication-audit-v1",
++            "passed": False,
++            "checks": [],
++            "violations": [f"missing required file: {name}" for name in missing],
++        }
++        rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
++        if args.json:
++            args.json.parent.mkdir(parents=True, exist_ok=True)
++            args.json.write_text(rendered, encoding="utf-8")
++        else:
++            sys.stdout.write(rendered)
++        return 2
++
++    text = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
++    restore = slice_between(
++        text["ledger"],
++        "void restore_sqlite_snapshot_into_ledger_internal(",
++        "void restore_sqlite_snapshot_into_ledger(",
++    )
++    writer_probe = slice_between(
++        text["ledger"],
++        "void assert_restore_destination_not_writer_locked(",
++        "void unlink_sqlite_family(",
++    )
++    quiescence = slice_between(
++        text["ledger"],
++        "void checkpoint_destination_before_restore_replace(",
++        "void restore_atomic_publication_fault_observer(",
++    )
++    checks: list[Check] = []
++
++    def require(check_id: str, condition: bool, detail: str) -> None:
++        checks.append(Check(check_id, bool(condition), detail))
++
++    require("restore_function_was_located", bool(restore),
++            "the production restore implementation must remain discoverable")
++    require("writer_lock_probe_was_located", bool(writer_probe),
++            "the preflight writer-lock owner must remain discoverable")
++    require("destination_quiescence_function_was_located", bool(quiescence),
++            "the destination family gate must remain discoverable")
++    require(
++        "writer_lock_probe_is_sidecar_first_identity_bound_and_fail_closed",
++        writer_probe.find("verify_sidecars_absent_or_throw") >= 0
++        and writer_probe.find("verify_sidecars_absent_or_throw") < writer_probe.find("sqlite_open_or_throw")
++        and "verify_open_database_or_throw" in writer_probe
++        and "writer-lock probe failed" in writer_probe
++        and "sqlite3_open_v2" not in writer_probe,
++        "the lock probe must reject foreign sidecars before open, bind identity, and reject non-lock SQLite errors",
++    )
++    require(
++        "restore_publishes_the_sealed_resident_bytes",
++        "publish_exact_copy_atomically_with_observer_or_throw" in restore
++        and "SealedSqliteSnapshot::capture" in restore,
++        "one source byte seal feeds verification, continuity, and publication",
++    )
++    forbidden_restore = (
++        "restore_temp_path_for", "unlink_sqlite_family", "sqlite3_backup_init",
++        "sqlite3_backup_step", "std::filesystem::rename", "std::remove", "::unlink(",
++    )
++    require(
++        "restore_has_no_private_reconstruction_namespace",
++        all(token not in restore for token in forbidden_restore),
++        "restore must not create, pre-delete, clean up, or rename a writable SQLite staging family",
++    )
++    require(
++        "quiescence_rejects_sidecars_instead_of_deleting_them",
++        quiescence.count("verify_sidecars_absent_or_throw") >= 3
++        and "verify_open_database_or_throw" in quiescence
++        and all(token not in quiescence for token in ("std::remove", "::unlink(", "unlink_sqlite_family")),
++        "destination WAL, SHM, and journal names are evidence failures, not cleanup authority",
++    )
++    require(
++        "binary_atomic_publication_is_explicitly_typed",
++        "std::span<const unsigned char> payload" in text["publisher_header"]
++        and "write_sync_file_atomically_with_observer_or_throw" in text["publisher_internal"]
++        and "publish_posix_or_throw(normalized_path, payload" in text["publisher_source"],
++        "exact SQLite bytes must not be coerced through a text-only API",
++    )
++    require(
++        "snapshot_seal_owns_exact_copy_publication",
++        "publish_exact_copy_atomically_or_throw" in text["seal_header"]
++        and "serialized_bytes_" in text["seal_source"]
++        and "write_sync_file_atomically_with_observer_or_throw" in text["seal_source"],
++        "the move-only byte capability, not a reopened source pathname, authorizes publication",
++    )
++    require(
++        "focused_adversarial_test_is_registered",
++        "anonsync_sqlite_restore_namespace_authority_test" in text["cmake"]
++        and "foreign-predictable-temp" in text["test"]
++        and "foreign-sidecar-authority" in text["test"],
++        "CTest preserves foreign predictable names and all three SQLite sidecar classes",
++    )
++    require(
++        "source_audit_is_registered",
++        "anonsync_sqlite_restore_publication_source_audit" in text["cmake"],
++        "architectural drift fails the normal CTest gate",
++    )
++
++    violations = [check.check_id for check in checks if not check.passed]
++    result = {
++        "format": "anonsync-sqlite-restore-publication-audit-v1",
++        "passed": not violations,
++        "passed_checks": len(checks) - len(violations),
++        "total_checks": len(checks),
++        "checks": [asdict(check) for check in checks],
++        "violations": violations,
++    }
++    rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
++    if args.json:
++        args.json.parent.mkdir(parents=True, exist_ok=True)
++        args.json.write_text(rendered, encoding="utf-8")
++    else:
++        sys.stdout.write(rendered)
++    return 0 if not violations else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tools/audit_sqlite_snapshot_seal.py b/tools/audit_sqlite_snapshot_seal.py
+index 2ae89a6..c881153 100644
+--- a/tools/audit_sqlite_snapshot_seal.py
++++ b/tools/audit_sqlite_snapshot_seal.py
+@@ -366,11 +366,11 @@ def main() -> int:
+         and "sealed_snapshot.sha256_hex()" in restore
+         and "verify_sealed_sqlite_ledger_snapshot_readonly" in restore
+         and "sqlite_entry_hash_at_sequence(\n                            sealed_snapshot" in restore
+-        and "sealed_snapshot.open_database_or_throw" in restore
++        and "sealed_snapshot.publish_exact_copy_atomically_with_observer_or_throw" in restore
+         and "read_file(snapshot_path)" not in restore
+         and "sqlite_open_or_throw(snapshot_path" not in restore,
+         "restore_reuses_one_seal_for_all_source_authority",
+-        "digest, full verification, prefix proof, and sqlite3_backup must never reopen the source path",
++        "digest, full verification, prefix proof, and exact-byte publication must never reopen the source path",
+     )
+     require(
+         checks,
+diff --git a/tools/audit_sync_atomic_file_publication.py b/tools/audit_sync_atomic_file_publication.py
+index ed4d502..3a818e3 100644
+--- a/tools/audit_sync_atomic_file_publication.py
++++ b/tools/audit_sync_atomic_file_publication.py
+@@ -107,13 +107,25 @@ def main() -> int:
+ 
+     declarations = [
+         "write_sync_json_file_atomically_no_symlink_or_throw(",
++        "write_sync_file_atomically_no_symlink_or_throw(",
+         "write_sync_cli_report_json_or_throw(",
+     ]
+     check(
+-        "header_owns_the_two_publication_entry_points",
++        "header_owns_all_publication_entry_points",
+         all(token in header for token in declarations)
+         and "namespace anonsync" in header,
+-        "one focused public header declares heartbeat/file and CLI-report publication",
++        "one focused public header declares JSON, byte-exact, and CLI-report publication",
++    )
++
++    check(
++        "binary_publication_is_span_based_and_observer_compatible",
++        "#include <span>" in header
++        and "std::span<const unsigned char> payload" in header
++        and "write_sync_file_atomically_with_observer_or_throw(" in internal_header
++        and "std::span<const unsigned char> payload" in internal_header
++        and "write_sync_file_atomically_no_symlink_or_throw(" in source
++        and "write_sync_file_atomically_with_observer_or_throw(" in source,
++        "sealed binary artifacts reuse the same synchronous span-based public and deterministic-observer owner without an intermediate string copy",
+     )
+ 
+     public_outcome_tokens = [
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 9a070ca..807a28c 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -132,6 +132,7 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         "tests/sqlite_transaction_exception_composition_test.cpp",
+         "tests/sqlite_transaction_allocator_fault_test.cpp",
+         "tests/sqlite_source_first_move_test.cpp",
++        "tests/sqlite_restore_namespace_authority_test.cpp",
+         "tests/sync_atomic_file_publication_test.cpp",
+         "tests/sync_atomic_file_publication_state_test.cpp",
+         "tests/sync_atomic_file_publication_cutpoint_test.cpp",
+@@ -143,6 +144,7 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+         "tools/audit_sqlite_transaction_exception_composition.py",
+         "tools/audit_sqlite_transaction_allocator_fault.py",
+         "tools/audit_sqlite_source_first_move.py",
++        "tools/audit_sqlite_restore_publication.py",
+         "tools/audit_sync_atomic_file_publication.py",
+         "tools/audit_peer_ingress_schema_owner_generation.py",
+         "tools/verify_release_package.py",

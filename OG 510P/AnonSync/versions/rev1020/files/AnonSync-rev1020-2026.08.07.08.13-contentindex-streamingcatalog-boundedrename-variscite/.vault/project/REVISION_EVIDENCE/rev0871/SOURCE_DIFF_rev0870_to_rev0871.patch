@@ -1,0 +1,1604 @@
+diff --git a/src/sync_replica_outbox_lease.cpp b/src/sync_replica_outbox_lease.cpp
+index 2e3f04640b8e8f318778c6a795b8263bcfe4f0c2..b48d3ef08ae89621a2220708de08e3abd60c3b78 100644
+--- a/src/sync_replica_outbox_lease.cpp
++++ b/src/sync_replica_outbox_lease.cpp
+@@ -12,7 +12,6 @@
+ namespace anonsync {
+ namespace {
+ 
+-constexpr std::uint64_t kMaxLeaseSeconds = 24U * 60U * 60U;
+ constexpr std::size_t kClaimEntropyBytes = 32U;
+ 
+ [[nodiscard]] std::string u64_be(std::uint64_t value) {
+@@ -41,7 +40,8 @@ void append_framed(Sha256DigestBuilder& digest, std::string_view bytes) {
+     if (now_epoch == 0U) {
+         throw std::invalid_argument(label + " now_epoch must be positive");
+     }
+-    if (lease_seconds == 0U || lease_seconds > kMaxLeaseSeconds) {
++    if (lease_seconds == 0U ||
++        lease_seconds > kSyncReplicaOutboxMaxLeaseSeconds) {
+         throw std::invalid_argument(
+             label + " lease_seconds must be in the range 1..86400");
+     }
+@@ -74,6 +74,11 @@ void validate_sync_replica_outbox_lease_state_or_throw(
+             state.retry_not_before_epoch != 0U) {
+             throw std::runtime_error(label + " has invalid active lease authority");
+         }
++        if (state.lease_expires_at_epoch - state.claimed_at_epoch >
++            kSyncReplicaOutboxMaxClaimLifetimeSeconds) {
++            throw std::runtime_error(
++                label + " exceeds the cumulative claim lifetime budget");
++        }
+     } else if (state.dispatch_attempts == 0U &&
+                state.retry_not_before_epoch != 0U) {
+         throw std::runtime_error(
+@@ -93,6 +98,31 @@ bool sync_replica_outbox_lease_is_claimable_at_or_throw(
+     return state.claim_id.empty() || state.lease_expires_at_epoch <= now_epoch;
+ }
+ 
++SyncReplicaOutboxClaimStatus sync_replica_outbox_claim_status_at_or_throw(
++    const SyncReplicaOutboxLeaseState& state,
++    std::string_view expected_claim_id,
++    std::uint64_t now_epoch,
++    const std::string& label) {
++    validate_sync_replica_outbox_lease_state_or_throw(state, label);
++    if (!is_lowercase_sha256_hex(expected_claim_id)) {
++        throw std::invalid_argument(label + " expected claim id is invalid");
++    }
++    if (now_epoch == 0U) {
++        throw std::invalid_argument(label + " now_epoch must be positive");
++    }
++    if (state.claim_id.empty() || state.claim_id != expected_claim_id) {
++        return SyncReplicaOutboxClaimStatus::Stale;
++    }
++    if (now_epoch < state.claimed_at_epoch) {
++        throw std::invalid_argument(
++            label + " now_epoch predates the current claim");
++    }
++    if (now_epoch >= state.lease_expires_at_epoch) {
++        return SyncReplicaOutboxClaimStatus::Expired;
++    }
++    return SyncReplicaOutboxClaimStatus::Current;
++}
++
+ SyncReplicaOutboxLeaseState claim_sync_replica_outbox_lease_or_throw(
+     const SyncReplicaOutboxLeaseState& current,
+     std::string_view folder_id,
+@@ -157,18 +187,63 @@ SyncReplicaOutboxLeaseState claim_sync_replica_outbox_lease_or_throw(
+     return next;
+ }
+ 
++SyncReplicaOutboxLeaseState renew_sync_replica_outbox_lease_or_throw(
++    const SyncReplicaOutboxLeaseState& current,
++    std::string_view expected_claim_id,
++    std::uint64_t now_epoch,
++    std::uint64_t lease_seconds,
++    const std::string& label) {
++    const SyncReplicaOutboxClaimStatus status =
++        sync_replica_outbox_claim_status_at_or_throw(
++            current, expected_claim_id, now_epoch, label);
++    if (status == SyncReplicaOutboxClaimStatus::Stale) {
++        throw std::runtime_error(label + " expected claim is stale");
++    }
++    if (status == SyncReplicaOutboxClaimStatus::Expired) {
++        throw std::runtime_error(label + " expected claim is expired");
++    }
++
++    const std::uint64_t proposed_deadline = lease_deadline_or_throw(
++        now_epoch, lease_seconds, label);
++    if (proposed_deadline <= current.lease_expires_at_epoch) {
++        return current;
++    }
++    if (proposed_deadline - current.claimed_at_epoch >
++        kSyncReplicaOutboxMaxClaimLifetimeSeconds) {
++        throw std::invalid_argument(
++            label + " renewal exceeds the cumulative claim lifetime budget");
++    }
++
++    SyncReplicaOutboxLeaseState next = current;
++    next.lease_expires_at_epoch = proposed_deadline;
++    validate_sync_replica_outbox_lease_state_or_throw(next, label);
++    return next;
++}
++
+ SyncReplicaOutboxLeaseState release_sync_replica_outbox_lease_or_throw(
+     const SyncReplicaOutboxLeaseState& current,
+     std::string_view expected_claim_id,
++    std::uint64_t now_epoch,
+     std::uint64_t retry_not_before_epoch,
+     const std::string& label) {
+-    validate_sync_replica_outbox_lease_state_or_throw(current, label);
+-    if (!is_lowercase_sha256_hex(expected_claim_id)) {
+-        throw std::invalid_argument(label + " expected claim id is invalid");
+-    }
+-    if (current.claim_id.empty() || current.claim_id != expected_claim_id) {
++    const SyncReplicaOutboxClaimStatus status =
++        sync_replica_outbox_claim_status_at_or_throw(
++            current, expected_claim_id, now_epoch, label);
++    if (status == SyncReplicaOutboxClaimStatus::Stale) {
+         throw std::runtime_error(label + " expected claim is stale");
+     }
++    if (status == SyncReplicaOutboxClaimStatus::Expired) {
++        throw std::runtime_error(label + " expected claim is expired");
++    }
++    if (retry_not_before_epoch < now_epoch) {
++        throw std::invalid_argument(
++            label + " retry_not_before_epoch predates now_epoch");
++    }
++    if (retry_not_before_epoch - now_epoch >
++        kSyncReplicaOutboxMaxRetryDelaySeconds) {
++        throw std::invalid_argument(
++            label + " retry delay exceeds the fixed retry budget");
++    }
+ 
+     SyncReplicaOutboxLeaseState next;
+     next.dispatch_attempts = current.dispatch_attempts;
+diff --git a/src/sync_replica_outbox_lease.hpp b/src/sync_replica_outbox_lease.hpp
+index 382d144acdc80a6ed90880e9caf4e9fc7abf40a5..8ec2ff9a90fcb138e86e7f7eadb5e52c8c16c9fa 100644
+--- a/src/sync_replica_outbox_lease.hpp
++++ b/src/sync_replica_outbox_lease.hpp
+@@ -6,11 +6,20 @@
+ 
+ namespace anonsync {
+ 
++inline constexpr std::uint64_t kSyncReplicaOutboxMaxLeaseSeconds =
++    24U * 60U * 60U;
++inline constexpr std::uint64_t kSyncReplicaOutboxMaxClaimLifetimeSeconds =
++    24U * 60U * 60U;
++inline constexpr std::uint64_t kSyncReplicaOutboxMaxRetryDelaySeconds =
++    24U * 60U * 60U;
++
+ // Durable dispatch state for one immutable (destination, operation) intent.
+ // The intent remains unsettled until the exact current claim is settled. An
+ // expired claim may be replaced, but its old receipt can never settle the new
+-// attempt. Time controls liveness and duplicate-send exposure only; it does not
+-// grant settlement authority.
++// attempt. Expiry also revokes settlement, retry-release, and renewal authority
++// from the still-stored receipt: a lease is not merely a hint that another
++// worker may race it. Time can revoke authority but can never grant it; the
++// exact current claim ID is always required before the deadline.
+ struct SyncReplicaOutboxLeaseState final {
+     std::uint64_t dispatch_attempts = 0;
+     std::string claim_id;
+@@ -22,6 +31,12 @@ struct SyncReplicaOutboxLeaseState final {
+     bool operator==(const SyncReplicaOutboxLeaseState&) const = default;
+ };
+ 
++enum class SyncReplicaOutboxClaimStatus {
++    Current,
++    Stale,
++    Expired,
++};
++
+ void validate_sync_replica_outbox_lease_state_or_throw(
+     const SyncReplicaOutboxLeaseState& state,
+     const std::string& label);
+@@ -31,6 +46,16 @@ void validate_sync_replica_outbox_lease_state_or_throw(
+     std::uint64_t now_epoch,
+     const std::string& label);
+ 
++// Classifies one receipt against the exact stored attempt. The deadline is
++// exclusive: at lease_expires_at_epoch the current receipt is expired. A stale
++// receipt is reported as stale even when a newer attempt has a later clock.
++[[nodiscard]] SyncReplicaOutboxClaimStatus
++sync_replica_outbox_claim_status_at_or_throw(
++    const SyncReplicaOutboxLeaseState& state,
++    std::string_view expected_claim_id,
++    std::uint64_t now_epoch,
++    const std::string& label);
++
+ // Entropy must contain exactly 32 CSPRNG bytes. Keeping entropy injection at
+ // this pure boundary makes the state machine deterministic under test while the
+ // SQLite owner remains responsible for obtaining process-local CSPRNG output.
+@@ -48,10 +73,24 @@ claim_sync_replica_outbox_lease_or_throw(
+     std::string_view entropy,
+     const std::string& label);
+ 
++// Extends one still-current, still-live receipt without changing attempt
++// identity. A heartbeat never shortens a lease and cannot extend one claim
++// beyond the fixed cumulative lifetime budget measured from claimed_at_epoch.
++// Returning an unchanged state means the existing deadline already covers the
++// requested interval.
++[[nodiscard]] SyncReplicaOutboxLeaseState
++renew_sync_replica_outbox_lease_or_throw(
++    const SyncReplicaOutboxLeaseState& current,
++    std::string_view expected_claim_id,
++    std::uint64_t now_epoch,
++    std::uint64_t lease_seconds,
++    const std::string& label);
++
+ [[nodiscard]] SyncReplicaOutboxLeaseState
+ release_sync_replica_outbox_lease_or_throw(
+     const SyncReplicaOutboxLeaseState& current,
+     std::string_view expected_claim_id,
++    std::uint64_t now_epoch,
+     std::uint64_t retry_not_before_epoch,
+     const std::string& label);
+ 
+diff --git a/src/sync_replica_sqlite_owner.cpp b/src/sync_replica_sqlite_owner.cpp
+index a1f02119a767ec5aee4abad4d64eb0f16ce8899d..71f46da126b8550fe1934cdd863811bcc0260dad 100644
+--- a/src/sync_replica_sqlite_owner.cpp
++++ b/src/sync_replica_sqlite_owner.cpp
+@@ -1858,6 +1858,44 @@ void delete_outbox_intent_exact_or_throw(
+     return entropy;
+ }
+ 
++[[nodiscard]] std::vector<SyncReplicaSqliteOutboxIntent>::iterator
++find_outbox_intent(
++    std::vector<SyncReplicaSqliteOutboxIntent>& outbox,
++    std::string_view destination_device_id,
++    std::string_view operation_id) {
++    const std::pair<std::string_view, std::string_view> key{
++        destination_device_id, operation_id};
++    auto found = std::lower_bound(
++        outbox.begin(), outbox.end(), key,
++        [](const SyncReplicaSqliteOutboxIntent& intent,
++           const std::pair<std::string_view, std::string_view>& candidate) {
++            return std::pair<std::string_view, std::string_view>{
++                       intent.destination_device_id, intent.operation_id} <
++                   candidate;
++        });
++    if (found == outbox.end() ||
++        found->destination_device_id != destination_device_id ||
++        found->operation_id != operation_id) {
++        return outbox.end();
++    }
++    return found;
++}
++
++[[nodiscard]] SyncReplicaSqliteOutboxReceiptResult
++sqlite_receipt_result_for_claim_status(
++    SyncReplicaOutboxClaimStatus status) {
++    switch (status) {
++        case SyncReplicaOutboxClaimStatus::Current:
++            return SyncReplicaSqliteOutboxReceiptResult::Applied;
++        case SyncReplicaOutboxClaimStatus::Stale:
++            return SyncReplicaSqliteOutboxReceiptResult::StaleClaim;
++        case SyncReplicaOutboxClaimStatus::Expired:
++            return SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim;
++    }
++    throw std::invalid_argument(
++        "sync replica SQLite claim status is invalid");
++}
++
+ [[nodiscard]] std::vector<std::string> validate_destinations_or_throw(
+     std::span<const std::string> destinations,
+     const std::string& local_device_id,
+@@ -1978,6 +2016,27 @@ void attest_and_commit_staged_cutpoint_or_throw(
+     transaction.commit();
+ }
+ 
++void publish_outbox_lease_update_or_throw(
++    SyncSqliteTransaction& transaction,
++    SyncSqliteDbHandleSlot& db,
++    const std::string& folder_id,
++    const SyncReplicaActor& local_actor,
++    LoadedState& loaded,
++    SyncReplicaSqliteOutboxIntent& intent,
++    const SyncReplicaOutboxLeaseState& previous,
++    const std::string& label) {
++    update_outbox_lease_exact_or_throw(db, intent, previous, label);
++    const std::uint64_t generation = increment_or_throw(
++        loaded.meta.state_generation, label + " state generation");
++    const DurableMeta meta = meta_from_state_or_throw(
++        loaded.model, loaded.meta.limits, generation,
++        loaded.meta.policy_generation, loaded.outbox);
++    update_meta_or_throw(db, meta, label);
++    attest_and_commit_staged_cutpoint_or_throw(
++        transaction, db, folder_id, local_actor, loaded.model, meta,
++        loaded.outbox, label);
++}
++
+ 
+ void migrate_legacy_schema_or_throw(
+     SyncSqliteTransaction& transaction,
+@@ -2289,8 +2348,8 @@ SyncReplicaSqliteOwner::claim_next_outbox_or_throw(
+         throw std::invalid_argument(
+             label_ + " outbox claim now_epoch must be positive");
+     }
+-    constexpr std::uint64_t kMaxLeaseSeconds = 24U * 60U * 60U;
+-    if (lease_seconds == 0U || lease_seconds > kMaxLeaseSeconds) {
++    if (lease_seconds == 0U ||
++        lease_seconds > kSyncReplicaOutboxMaxLeaseSeconds) {
+         throw std::invalid_argument(
+             label_ + " outbox claim lease_seconds must be in 1..86400");
+     }
+@@ -2300,6 +2359,13 @@ SyncReplicaSqliteOwner::claim_next_outbox_or_throw(
+             label_ + " outbox claim lease deadline overflows uint64_t");
+     }
+ 
++    // Entropy is operational input, not SQLite authority. Acquire it before
++    // BEGIN IMMEDIATE so a slow or failing CSPRNG never monopolizes the one
++    // writer slot. The exact loaded cutpoint and selected intent are still
++    // bound into the claim ID inside the transaction.
++    const std::string claim_entropy =
++        random_claim_entropy_or_throw(label_ + " outbox claim");
++
+     SyncSqliteTransaction transaction(
+         db_, label_ + " outbox claim", SyncSqliteTransactionMode::Immediate);
+     require_write_authority_or_throw(
+@@ -2325,10 +2391,7 @@ SyncReplicaSqliteOwner::claim_next_outbox_or_throw(
+         previous, folder_id_, found->destination_device_id,
+         found->operation_id, found->enqueued_generation,
+         loaded.meta.cutpoint_digest, std::move(worker_id), now_epoch,
+-        lease_seconds, random_claim_entropy_or_throw(label_ + " outbox claim"),
+-        label_ + " outbox claim");
+-    update_outbox_lease_exact_or_throw(
+-        db_, *found, previous, label_ + " outbox claim");
++        lease_seconds, claim_entropy, label_ + " outbox claim");
+ 
+     const std::optional<SyncReplicaOperation> operation =
+         loaded.model.evidence_operation_by_id(found->operation_id);
+@@ -2337,15 +2400,9 @@ SyncReplicaSqliteOwner::claim_next_outbox_or_throw(
+             label_ + " claimed intent lost its canonical operation owner");
+     }
+     const SyncReplicaSqliteOutboxClaim claim{*found, *operation};
+-    const std::uint64_t generation = increment_or_throw(
+-        loaded.meta.state_generation, label_ + " state generation");
+-    const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
+-        loaded.meta.policy_generation, loaded.outbox);
+-    update_meta_or_throw(db_, meta, label_ + " outbox claim");
+-    attest_and_commit_staged_cutpoint_or_throw(
+-        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
+-        loaded.outbox, label_ + " outbox claim");
++    publish_outbox_lease_update_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded, *found, previous,
++        label_ + " outbox claim");
+     return claim;
+ }
+ 
+@@ -2353,13 +2410,18 @@ SyncReplicaSqliteOutboxReceiptResult
+ SyncReplicaSqliteOwner::settle_outbox_or_throw(
+     const std::string& destination_device_id,
+     const std::string& operation_id,
+-    const std::string& claim_id) {
++    const std::string& claim_id,
++    std::uint64_t now_epoch) {
+     if (!sync_id_is_valid(destination_device_id) ||
+         !is_lowercase_sha256_hex(operation_id) ||
+         !is_lowercase_sha256_hex(claim_id)) {
+         throw std::invalid_argument(
+             label_ + " outbox settlement identity is invalid");
+     }
++    if (now_epoch == 0U) {
++        throw std::invalid_argument(
++            label_ + " outbox settlement now_epoch must be positive");
++    }
+     SyncSqliteTransaction transaction(
+         db_, label_ + " outbox settlement",
+         SyncSqliteTransactionMode::Immediate);
+@@ -2367,19 +2429,19 @@ SyncReplicaSqliteOwner::settle_outbox_or_throw(
+         transaction, db_, label_ + " outbox settlement");
+     LoadedState loaded = load_state_or_throw(
+         db_, folder_id_, local_actor_, label_ + " outbox settlement");
+-    const auto found = std::find_if(
+-        loaded.outbox.begin(), loaded.outbox.end(),
+-        [&](const SyncReplicaSqliteOutboxIntent& intent) {
+-            return intent.destination_device_id == destination_device_id &&
+-                   intent.operation_id == operation_id;
+-        });
++    const auto found = find_outbox_intent(
++        loaded.outbox, destination_device_id, operation_id);
+     if (found == loaded.outbox.end()) {
+         transaction.commit();
+         return SyncReplicaSqliteOutboxReceiptResult::IntentMissing;
+     }
+-    if (found->lease.claim_id.empty() || found->lease.claim_id != claim_id) {
++    const SyncReplicaOutboxClaimStatus status =
++        sync_replica_outbox_claim_status_at_or_throw(
++            found->lease, claim_id, now_epoch,
++            label_ + " outbox settlement");
++    if (status != SyncReplicaOutboxClaimStatus::Current) {
+         transaction.commit();
+-        return SyncReplicaSqliteOutboxReceiptResult::StaleClaim;
++        return sqlite_receipt_result_for_claim_status(status);
+     }
+ 
+     delete_outbox_intent_exact_or_throw(
+@@ -2397,11 +2459,77 @@ SyncReplicaSqliteOwner::settle_outbox_or_throw(
+     return SyncReplicaSqliteOutboxReceiptResult::Applied;
+ }
+ 
++SyncReplicaSqliteOutboxReceiptResult
++SyncReplicaSqliteOwner::renew_outbox_lease_or_throw(
++    const std::string& destination_device_id,
++    const std::string& operation_id,
++    const std::string& claim_id,
++    std::uint64_t now_epoch,
++    std::uint64_t lease_seconds) {
++    if (!sync_id_is_valid(destination_device_id) ||
++        !is_lowercase_sha256_hex(operation_id) ||
++        !is_lowercase_sha256_hex(claim_id)) {
++        throw std::invalid_argument(
++            label_ + " outbox renewal identity is invalid");
++    }
++    if (now_epoch == 0U) {
++        throw std::invalid_argument(
++            label_ + " outbox renewal now_epoch must be positive");
++    }
++    if (lease_seconds == 0U ||
++        lease_seconds > kSyncReplicaOutboxMaxLeaseSeconds) {
++        throw std::invalid_argument(
++            label_ + " outbox renewal lease_seconds must be in 1..86400");
++    }
++    if (lease_seconds >
++        std::numeric_limits<std::uint64_t>::max() - now_epoch) {
++        throw std::overflow_error(
++            label_ + " outbox renewal lease deadline overflows uint64_t");
++    }
++
++    SyncSqliteTransaction transaction(
++        db_, label_ + " outbox renewal", SyncSqliteTransactionMode::Immediate);
++    require_write_authority_or_throw(
++        transaction, db_, label_ + " outbox renewal");
++    LoadedState loaded = load_state_or_throw(
++        db_, folder_id_, local_actor_, label_ + " outbox renewal");
++    const auto found = find_outbox_intent(
++        loaded.outbox, destination_device_id, operation_id);
++    if (found == loaded.outbox.end()) {
++        transaction.commit();
++        return SyncReplicaSqliteOutboxReceiptResult::IntentMissing;
++    }
++    const SyncReplicaOutboxClaimStatus status =
++        sync_replica_outbox_claim_status_at_or_throw(
++            found->lease, claim_id, now_epoch,
++            label_ + " outbox renewal");
++    if (status != SyncReplicaOutboxClaimStatus::Current) {
++        transaction.commit();
++        return sqlite_receipt_result_for_claim_status(status);
++    }
++
++    const SyncReplicaOutboxLeaseState previous = found->lease;
++    const SyncReplicaOutboxLeaseState renewed =
++        renew_sync_replica_outbox_lease_or_throw(
++            previous, claim_id, now_epoch, lease_seconds,
++            label_ + " outbox renewal");
++    if (renewed == previous) {
++        transaction.commit();
++        return SyncReplicaSqliteOutboxReceiptResult::LeaseAlreadyCovered;
++    }
++    found->lease = renewed;
++    publish_outbox_lease_update_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded, *found, previous,
++        label_ + " outbox renewal");
++    return SyncReplicaSqliteOutboxReceiptResult::Applied;
++}
++
+ SyncReplicaSqliteOutboxReceiptResult
+ SyncReplicaSqliteOwner::release_outbox_for_retry_or_throw(
+     const std::string& destination_device_id,
+     const std::string& operation_id,
+     const std::string& claim_id,
++    std::uint64_t now_epoch,
+     std::uint64_t retry_not_before_epoch) {
+     if (!sync_id_is_valid(destination_device_id) ||
+         !is_lowercase_sha256_hex(operation_id) ||
+@@ -2409,42 +2537,48 @@ SyncReplicaSqliteOwner::release_outbox_for_retry_or_throw(
+         throw std::invalid_argument(
+             label_ + " outbox release identity is invalid");
+     }
++    if (now_epoch == 0U) {
++        throw std::invalid_argument(
++            label_ + " outbox release now_epoch must be positive");
++    }
++    if (retry_not_before_epoch < now_epoch) {
++        throw std::invalid_argument(
++            label_ + " outbox release retry_not_before_epoch predates now_epoch");
++    }
++    if (retry_not_before_epoch - now_epoch >
++        kSyncReplicaOutboxMaxRetryDelaySeconds) {
++        throw std::invalid_argument(
++            label_ + " outbox release retry delay exceeds the fixed retry budget");
++    }
++
+     SyncSqliteTransaction transaction(
+         db_, label_ + " outbox release", SyncSqliteTransactionMode::Immediate);
+     require_write_authority_or_throw(
+         transaction, db_, label_ + " outbox release");
+     LoadedState loaded = load_state_or_throw(
+         db_, folder_id_, local_actor_, label_ + " outbox release");
+-    const auto found = std::find_if(
+-        loaded.outbox.begin(), loaded.outbox.end(),
+-        [&](const SyncReplicaSqliteOutboxIntent& intent) {
+-            return intent.destination_device_id == destination_device_id &&
+-                   intent.operation_id == operation_id;
+-        });
++    const auto found = find_outbox_intent(
++        loaded.outbox, destination_device_id, operation_id);
+     if (found == loaded.outbox.end()) {
+         transaction.commit();
+         return SyncReplicaSqliteOutboxReceiptResult::IntentMissing;
+     }
+-    if (found->lease.claim_id.empty() || found->lease.claim_id != claim_id) {
++    const SyncReplicaOutboxClaimStatus status =
++        sync_replica_outbox_claim_status_at_or_throw(
++            found->lease, claim_id, now_epoch,
++            label_ + " outbox release");
++    if (status != SyncReplicaOutboxClaimStatus::Current) {
+         transaction.commit();
+-        return SyncReplicaSqliteOutboxReceiptResult::StaleClaim;
++        return sqlite_receipt_result_for_claim_status(status);
+     }
+ 
+     const SyncReplicaOutboxLeaseState previous = found->lease;
+     found->lease = release_sync_replica_outbox_lease_or_throw(
+-        previous, claim_id, retry_not_before_epoch,
++        previous, claim_id, now_epoch, retry_not_before_epoch,
++        label_ + " outbox release");
++    publish_outbox_lease_update_or_throw(
++        transaction, db_, folder_id_, local_actor_, loaded, *found, previous,
+         label_ + " outbox release");
+-    update_outbox_lease_exact_or_throw(
+-        db_, *found, previous, label_ + " outbox release");
+-    const std::uint64_t generation = increment_or_throw(
+-        loaded.meta.state_generation, label_ + " state generation");
+-    const DurableMeta meta = meta_from_state_or_throw(
+-        loaded.model, loaded.meta.limits, generation,
+-        loaded.meta.policy_generation, loaded.outbox);
+-    update_meta_or_throw(db_, meta, label_ + " outbox release");
+-    attest_and_commit_staged_cutpoint_or_throw(
+-        transaction, db_, folder_id_, local_actor_, loaded.model, meta,
+-        loaded.outbox, label_ + " outbox release");
+     return SyncReplicaSqliteOutboxReceiptResult::Applied;
+ }
+ 
+diff --git a/src/sync_replica_sqlite_owner.hpp b/src/sync_replica_sqlite_owner.hpp
+index ad60bc3d63cc3fddb796d4169f12d279feeff73d..fbcac453e1a14337360839426c4bda210d41c8e4 100644
+--- a/src/sync_replica_sqlite_owner.hpp
++++ b/src/sync_replica_sqlite_owner.hpp
+@@ -41,8 +41,10 @@ struct SyncReplicaSqliteOutboxClaim final {
+ 
+ enum class SyncReplicaSqliteOutboxReceiptResult {
+     Applied,
++    LeaseAlreadyCovered,
+     IntentMissing,
+     StaleClaim,
++    ExpiredClaim,
+ };
+ 
+ struct SyncReplicaSqliteSnapshot final {
+@@ -110,8 +112,9 @@ public:
+ 
+     // Claims the first ready intent in canonical order, optionally restricted
+     // to one destination. Every attempt receives a fresh CSPRNG-bound claim ID.
+-    // Expiry permits replacement but never authorizes an old receipt to settle
+-    // or release the replacement attempt.
++    // Expiry revokes the current receipt and permits replacement. Entropy is
++    // acquired before the IMMEDIATE transaction so CSPRNG latency never holds
++    // the single SQLite writer slot.
+     [[nodiscard]] std::optional<SyncReplicaSqliteOutboxClaim>
+     claim_next_outbox_or_throw(
+         std::string worker_id,
+@@ -120,19 +123,34 @@ public:
+         std::optional<std::string> destination_device_id = std::nullopt);
+ 
+     // Retires one exact unsettled sender intent only when claim_id names its
+-    // current attempt. Canonical evidence and other destinations remain owned.
++    // current unexpired attempt. Canonical evidence and other destinations
++    // remain owned.
+     [[nodiscard]] SyncReplicaSqliteOutboxReceiptResult settle_outbox_or_throw(
+         const std::string& destination_device_id,
+         const std::string& operation_id,
+-        const std::string& claim_id);
++        const std::string& claim_id,
++        std::uint64_t now_epoch);
+ 
+-    // Releases the exact current attempt and installs caller-supplied absolute
+-    // retry backoff. Missing or stale receipts are durable no-ops.
++    // Extends one exact current attempt before its deadline. A heartbeat never
++    // changes the receipt, never revives an expired attempt, never shortens the
++    // current deadline, and cannot exceed the pure policy's cumulative claim
++    // lifetime budget. LeaseAlreadyCovered is a durable no-op.
++    [[nodiscard]] SyncReplicaSqliteOutboxReceiptResult renew_outbox_lease_or_throw(
++        const std::string& destination_device_id,
++        const std::string& operation_id,
++        const std::string& claim_id,
++        std::uint64_t now_epoch,
++        std::uint64_t lease_seconds);
++
++    // Releases the exact current unexpired attempt and installs a bounded
++    // caller-supplied absolute retry backoff. Missing, stale, and expired
++    // receipts are durable no-ops.
+     [[nodiscard]] SyncReplicaSqliteOutboxReceiptResult
+     release_outbox_for_retry_or_throw(
+         const std::string& destination_device_id,
+         const std::string& operation_id,
+         const std::string& claim_id,
++        std::uint64_t now_epoch,
+         std::uint64_t retry_not_before_epoch);
+ 
+     // Policy change is explicit durable state. It succeeds only when all
+diff --git a/tests/sync_replica_outbox_lease_test.cpp b/tests/sync_replica_outbox_lease_test.cpp
+index 9472d3a18de416208fac6d6334b2da857c93b3a4..db76ff5a7ab8b0466af524f835cd976e920224a2 100644
+--- a/tests/sync_replica_outbox_lease_test.cpp
++++ b/tests/sync_replica_outbox_lease_test.cpp
+@@ -94,14 +94,14 @@ void test_claim_expiry_reclaim_and_release() {
+     require_error(
+         [&] {
+             (void)anonsync::release_sync_replica_outbox_lease_or_throw(
+-                second, first.claim_id, 120U, "stale release");
++                second, first.claim_id, 115U, 120U, "stale release");
+         },
+         "stale",
+         "old claim released a replacement attempt");
+ 
+     const SyncReplicaOutboxLeaseState released =
+         anonsync::release_sync_replica_outbox_lease_or_throw(
+-            second, second.claim_id, 130U, "current release");
++            second, second.claim_id, 115U, 130U, "current release");
+     require(released.dispatch_attempts == 2U &&
+                 released.claim_id.empty() &&
+                 released.worker_id.empty() &&
+@@ -125,6 +125,93 @@ void test_claim_expiry_reclaim_and_release() {
+             "claim token did not bind CSPRNG entropy");
+ }
+ 
++void test_renewal_and_expiry_revoke_receipt_authority() {
++    const SyncReplicaOutboxLeaseState claimed =
++        claim({}, 100U, "worker-heartbeat", 'h');
++    require(
++        anonsync::sync_replica_outbox_claim_status_at_or_throw(
++            claimed, claimed.claim_id, 109U, "live receipt") ==
++            anonsync::SyncReplicaOutboxClaimStatus::Current,
++        "current receipt was not live before its exact deadline");
++    require(
++        anonsync::sync_replica_outbox_claim_status_at_or_throw(
++            claimed, claimed.claim_id, 110U, "expired receipt") ==
++            anonsync::SyncReplicaOutboxClaimStatus::Expired,
++        "receipt remained authoritative at its expiry boundary");
++    require(
++        anonsync::sync_replica_outbox_claim_status_at_or_throw(
++            claimed, anonsync::sha256_hex("different receipt"), 101U,
++            "stale receipt") ==
++            anonsync::SyncReplicaOutboxClaimStatus::Stale,
++        "different receipt was not classified as stale");
++
++    const SyncReplicaOutboxLeaseState renewed =
++        anonsync::renew_sync_replica_outbox_lease_or_throw(
++            claimed, claimed.claim_id, 105U, 10U, "heartbeat renewal");
++    require(renewed.claim_id == claimed.claim_id &&
++                renewed.worker_id == claimed.worker_id &&
++                renewed.dispatch_attempts == claimed.dispatch_attempts &&
++                renewed.claimed_at_epoch == claimed.claimed_at_epoch &&
++                renewed.lease_expires_at_epoch == 115U,
++            "heartbeat changed attempt identity or failed to extend the deadline");
++    const SyncReplicaOutboxLeaseState already_covered =
++        anonsync::renew_sync_replica_outbox_lease_or_throw(
++            renewed, renewed.claim_id, 106U, 5U,
++            "already-covered heartbeat");
++    require(already_covered == renewed,
++            "heartbeat shortened or rewrote an already-covered lease");
++
++    require_error(
++        [&] {
++            (void)anonsync::renew_sync_replica_outbox_lease_or_throw(
++                claimed, claimed.claim_id, 110U, 10U,
++                "expired heartbeat");
++        },
++        "expired",
++        "expired receipt renewed its former attempt");
++    require_error(
++        [&] {
++            (void)anonsync::release_sync_replica_outbox_lease_or_throw(
++                claimed, claimed.claim_id, 110U, 120U,
++                "expired retry release");
++        },
++        "expired",
++        "expired receipt installed retry policy");
++    require_error(
++        [&] {
++            (void)anonsync::renew_sync_replica_outbox_lease_or_throw(
++                claimed, claimed.claim_id, 109U,
++                anonsync::kSyncReplicaOutboxMaxLeaseSeconds,
++                "cumulative lifetime overflow");
++        },
++        "cumulative",
++        "heartbeat exceeded the cumulative claim lifetime budget");
++    require_error(
++        [&] {
++            (void)anonsync::release_sync_replica_outbox_lease_or_throw(
++                claimed, claimed.claim_id, 105U, 104U,
++                "backward retry clock");
++        },
++        "predates",
++        "retry release accepted a schedule before its observation clock");
++    require_error(
++        [&] {
++            (void)anonsync::release_sync_replica_outbox_lease_or_throw(
++                claimed, claimed.claim_id, 105U,
++                105U + anonsync::kSyncReplicaOutboxMaxRetryDelaySeconds + 1U,
++                "unbounded retry delay");
++        },
++        "fixed retry budget",
++        "retry release accepted an unbounded liveness delay");
++    require_error(
++        [&] {
++            (void)anonsync::sync_replica_outbox_claim_status_at_or_throw(
++                claimed, claimed.claim_id, 99U, "clock rollback");
++        },
++        "predates",
++        "current receipt accepted a clock observation before its claim");
++}
++
+ void test_invalid_and_overflow_states_fail_closed() {
+     SyncReplicaOutboxLeaseState partial;
+     partial.claim_id = anonsync::sha256_hex("claim");
+@@ -147,6 +234,19 @@ void test_invalid_and_overflow_states_fail_closed() {
+         "invalid active",
+         "persisted zero-duration lease was accepted as reachable state");
+ 
++    SyncReplicaOutboxLeaseState overlong_lifetime = claim(
++        {}, 100U, "worker-a", 'l');
++    overlong_lifetime.lease_expires_at_epoch =
++        overlong_lifetime.claimed_at_epoch +
++        anonsync::kSyncReplicaOutboxMaxClaimLifetimeSeconds + 1U;
++    require_error(
++        [&] {
++            anonsync::validate_sync_replica_outbox_lease_state_or_throw(
++                overlong_lifetime, "overlong lifetime");
++        },
++        "cumulative claim lifetime",
++        "persisted claim exceeded the cumulative lifetime policy");
++
+     SyncReplicaOutboxLeaseState active_backoff = claim(
+         {}, 100U, "worker-a", 'q');
+     active_backoff.retry_not_before_epoch = 111U;
+@@ -220,6 +320,7 @@ void test_invalid_and_overflow_states_fail_closed() {
+ int main() {
+     try {
+         test_claim_expiry_reclaim_and_release();
++        test_renewal_and_expiry_revoke_receipt_authority();
+         test_invalid_and_overflow_states_fail_closed();
+         std::cout << "sync replica outbox lease tests passed: "
+                   << checks << " checks\n";
+diff --git a/tests/sync_replica_sqlite_owner_test.cpp b/tests/sync_replica_sqlite_owner_test.cpp
+index 8d0215a39abf664092387d4a9720c061ce57aa6b..436ffe9b72f0a5fd951012bcd3742391014d1b6f 100644
+--- a/tests/sync_replica_sqlite_owner_test.cpp
++++ b/tests/sync_replica_sqlite_owner_test.cpp
+@@ -612,7 +612,7 @@ void test_exact_v1_migration_preserves_evidence_and_outbox() {
+         const auto& intent = claimed.outbox.front();
+         require(owner.settle_outbox_or_throw(
+                     destination, operation.operation_id,
+-                    intent.lease.claim_id) ==
++                    intent.lease.claim_id, 110U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::Applied &&
+                     owner.snapshot_or_throw().outbox.empty(),
+                 "current migrated receipt did not settle after restart");
+@@ -754,7 +754,7 @@ void test_atomic_local_publication_and_single_copy_outbox() {
+ 
+         require(owner.settle_outbox_or_throw(
+                     "device-sqlite-peer-b", operation.operation_id,
+-                    claim_b->intent.lease.claim_id) ==
++                    claim_b->intent.lease.claim_id, 105U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::Applied,
+                 "exact current receipt did not settle its intent");
+         settled = owner.snapshot_or_throw();
+@@ -766,7 +766,7 @@ void test_atomic_local_publication_and_single_copy_outbox() {
+                 "settlement changed evidence or retired the wrong destination");
+         require(owner.settle_outbox_or_throw(
+                     "device-sqlite-peer-b", operation.operation_id,
+-                    claim_b->intent.lease.claim_id) ==
++                    claim_b->intent.lease.claim_id, 105U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::IntentMissing &&
+                     owner.snapshot_or_throw() == settled,
+                 "missing-intent settlement advanced durable generation");
+@@ -793,7 +793,7 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+     const SyncReplicaActor local = actor("device-sqlite-receipts", 1051U);
+     const std::string destination = "device-sqlite-receipts-peer";
+     SyncReplicaOperation operation;
+-    SyncReplicaSqliteSnapshot first_claim_snapshot;
++    SyncReplicaSqliteSnapshot renewed_snapshot;
+     std::string first_claim_id;
+ 
+     {
+@@ -811,46 +811,133 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+                     first->intent.lease.lease_expires_at_epoch == 110U,
+                 "first durable dispatch attempt was not claimed exactly");
+         first_claim_id = first->intent.lease.claim_id;
+-        first_claim_snapshot = owner.snapshot_or_throw();
++        const SyncReplicaSqliteSnapshot first_claim_snapshot =
++            owner.snapshot_or_throw();
+         require(!owner.claim_next_outbox_or_throw(
+                      "worker-receipt-b", 109U, 10U, destination)
+                      .has_value() &&
+                     owner.snapshot_or_throw() == first_claim_snapshot,
+                 "unexpired claim was stolen or no-op claim advanced generation");
++
++        require(owner.renew_outbox_lease_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    105U, 10U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::Applied,
++                "exact live receipt did not renew its durable deadline");
++        renewed_snapshot = owner.snapshot_or_throw();
++        require(renewed_snapshot.state_generation ==
++                    first_claim_snapshot.state_generation + 1U &&
++                    renewed_snapshot.outbox.size() == 1U &&
++                    renewed_snapshot.outbox.front().lease.claim_id ==
++                        first_claim_id &&
++                    renewed_snapshot.outbox.front().lease.worker_id ==
++                        "worker-receipt-a" &&
++                    renewed_snapshot.outbox.front().lease.dispatch_attempts ==
++                        1U &&
++                    renewed_snapshot.outbox.front().lease.claimed_at_epoch ==
++                        100U &&
++                    renewed_snapshot.outbox.front().lease
++                            .lease_expires_at_epoch == 115U,
++                "heartbeat changed attempt identity or failed to extend the deadline");
++        require(owner.renew_outbox_lease_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    106U, 5U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::LeaseAlreadyCovered &&
++                    owner.snapshot_or_throw() == renewed_snapshot,
++                "already-covered heartbeat advanced durable generation");
++        require_error(
++            [&] {
++                (void)owner.renew_outbox_lease_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    106U,
++                    anonsync::kSyncReplicaOutboxMaxLeaseSeconds + 1U);
++            },
++            "1..86400",
++            "owner accepted an overlong heartbeat duration");
++        require(owner.snapshot_or_throw() == renewed_snapshot,
++                "invalid heartbeat changed the durable cutpoint");
++        require_error(
++            [&] {
++                (void)owner.release_outbox_for_retry_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    106U,
++                    106U +
++                        anonsync::kSyncReplicaOutboxMaxRetryDelaySeconds + 1U);
++            },
++            "fixed retry budget",
++            "owner accepted an unbounded retry delay");
++        require(owner.snapshot_or_throw() == renewed_snapshot,
++                "invalid retry release changed the durable cutpoint");
++        require_error(
++            [&] {
++                (void)owner.settle_outbox_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    99U);
++            },
++            "predates",
++            "owner accepted a matching receipt with a pre-claim clock");
++        require(owner.snapshot_or_throw() == renewed_snapshot,
++                "clock-rollback settlement changed the durable cutpoint");
++        require(!owner.claim_next_outbox_or_throw(
++                     "worker-receipt-b", 114U, 10U, destination)
++                     .has_value() &&
++                    owner.snapshot_or_throw() == renewed_snapshot,
++                "renewed lease was stolen before its exact deadline");
+     }
+ 
+     {
+         SyncSqliteDb db = open_database(file.path);
+         SyncReplicaSqliteOwner owner(
+             db.db, folder, local, limits(999U), "receipt restart owner");
+-        require(owner.snapshot_or_throw() == first_claim_snapshot,
+-                "restart forgot active receipt authority");
++        require(owner.snapshot_or_throw() == renewed_snapshot,
++                "restart forgot renewed receipt authority");
++
++        require(owner.settle_outbox_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    115U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim &&
++                    owner.snapshot_or_throw() == renewed_snapshot,
++                "expired receipt retained settlement authority at its deadline");
++        require(owner.release_outbox_for_retry_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    115U, 130U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim &&
++                    owner.snapshot_or_throw() == renewed_snapshot,
++                "expired receipt retained retry-release authority");
++        require(owner.renew_outbox_lease_or_throw(
++                    destination, operation.operation_id, first_claim_id,
++                    115U, 10U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim &&
++                    owner.snapshot_or_throw() == renewed_snapshot,
++                "expired receipt was revived by a heartbeat");
+ 
+         const auto replacement = owner.claim_next_outbox_or_throw(
+-            "worker-receipt-b", 110U, 10U, destination);
++            "worker-receipt-b", 115U, 10U, destination);
+         require(replacement.has_value() &&
+                     replacement->operation == operation &&
+                     replacement->intent.lease.dispatch_attempts == 2U &&
+                     replacement->intent.lease.claim_id != first_claim_id &&
+-                    replacement->intent.lease.claimed_at_epoch == 110U &&
+-                    replacement->intent.lease.lease_expires_at_epoch == 120U,
+-                "exact expiry did not mint a fresh replacement receipt");
++                    replacement->intent.lease.claimed_at_epoch == 115U &&
++                    replacement->intent.lease.lease_expires_at_epoch == 125U,
++                "exact renewed expiry did not mint a fresh replacement receipt");
+         const SyncReplicaSqliteSnapshot replacement_snapshot =
+             owner.snapshot_or_throw();
+         require(owner.settle_outbox_or_throw(
+-                    destination, operation.operation_id, first_claim_id) ==
++                    destination, operation.operation_id, first_claim_id,
++                    120U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::StaleClaim &&
+                     owner.snapshot_or_throw() == replacement_snapshot,
+                 "stale receipt settled a replacement attempt");
+         require(owner.release_outbox_for_retry_or_throw(
+                     destination, operation.operation_id, first_claim_id,
+-                    130U) == SyncReplicaSqliteOutboxReceiptResult::StaleClaim &&
++                    120U, 130U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::StaleClaim &&
+                     owner.snapshot_or_throw() == replacement_snapshot,
+                 "stale receipt released a replacement attempt");
+ 
+         require(owner.release_outbox_for_retry_or_throw(
+                     destination, operation.operation_id,
+-                    replacement->intent.lease.claim_id, 130U) ==
++                    replacement->intent.lease.claim_id, 120U, 130U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::Applied,
+                 "current receipt did not release its attempt");
+         const SyncReplicaSqliteSnapshot released = owner.snapshot_or_throw();
+@@ -875,7 +962,7 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+                 "retry-not-before boundary did not mint attempt three");
+         require(owner.settle_outbox_or_throw(
+                     destination, operation.operation_id,
+-                    third->intent.lease.claim_id) ==
++                    third->intent.lease.claim_id, 135U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::Applied,
+                 "current third receipt did not settle");
+         const SyncReplicaSqliteSnapshot final = owner.snapshot_or_throw();
+@@ -885,7 +972,7 @@ void test_receipt_bound_reclaim_backoff_and_restart() {
+                 "settlement removed canonical evidence with its sender intent");
+         require(owner.settle_outbox_or_throw(
+                     destination, operation.operation_id,
+-                    third->intent.lease.claim_id) ==
++                    third->intent.lease.claim_id, 135U) ==
+                     SyncReplicaSqliteOutboxReceiptResult::IntentMissing &&
+                     owner.snapshot_or_throw() == final,
+                 "missing receipt replay changed the settled cutpoint");
+@@ -931,6 +1018,40 @@ void test_claim_precommit_reattestation_and_lease_tamper() {
+             "worker-trigger-intended", 100U, 10U, destination);
+         require(claim.has_value() && claim->operation == operation,
+                 "claim path did not recover after rollback of trigger mutation");
++        const SyncReplicaSqliteSnapshot claimed = owner.snapshot_or_throw();
++        exec(db,
++             "CREATE TEMP TRIGGER silent_renew_worker_mutation "
++             "AFTER UPDATE OF lease_expires_at_epoch_be "
++             "ON main.sync_replica_outbox "
++             "BEGIN UPDATE main.sync_replica_outbox "
++             "SET worker_id='worker-renew-trigger-mutated' "
++             "WHERE destination_device_id=NEW.destination_device_id "
++             "AND operation_id=NEW.operation_id; END;");
++        require_error(
++            [&] {
++                (void)owner.renew_outbox_lease_or_throw(
++                    destination, operation.operation_id,
++                    claim->intent.lease.claim_id, 105U, 10U);
++            },
++            "outbox attestation mismatch",
++            "valid-looking TEMP-trigger heartbeat mutation escaped re-attestation");
++        require(owner.snapshot_or_throw() == claimed,
++                "failed heartbeat re-attestation left a durable lease prefix");
++        exec(db, "DROP TRIGGER temp.silent_renew_worker_mutation;");
++        require(owner.renew_outbox_lease_or_throw(
++                    destination, operation.operation_id,
++                    claim->intent.lease.claim_id, 105U, 10U) ==
++                    SyncReplicaSqliteOutboxReceiptResult::Applied,
++                "heartbeat path did not recover after trigger rollback");
++        const SyncReplicaSqliteSnapshot renewed = owner.snapshot_or_throw();
++        require(renewed.state_generation == claimed.state_generation + 1U &&
++                    renewed.outbox.size() == 1U &&
++                    renewed.outbox.front().lease.claim_id ==
++                        claim->intent.lease.claim_id &&
++                    renewed.outbox.front().lease.worker_id ==
++                        "worker-trigger-intended" &&
++                    renewed.outbox.front().lease.lease_expires_at_epoch == 115U,
++                "successful heartbeat changed receipt identity or deadline");
+     }
+ 
+     TempDatabasePath tamper_file(
+@@ -1517,6 +1638,8 @@ constexpr std::string_view kReplicaCrashHelper =
+     "--anonsync-replica-sqlite-owner-crash-helper-v1";
+ constexpr std::string_view kReplicaClaimCrashHelper =
+     "--anonsync-replica-sqlite-owner-claim-crash-helper-v2";
++constexpr std::string_view kReplicaRenewCrashHelper =
++    "--anonsync-replica-sqlite-owner-renew-crash-helper-v1";
+ constexpr std::string_view kReplicaCrashFolder = "folder-sqlite-crash";
+ constexpr std::string_view kReplicaCrashDevice = "device-sqlite-crash";
+ constexpr std::uint64_t kReplicaCrashEpoch = 1501U;
+@@ -1527,6 +1650,13 @@ constexpr std::string_view kReplicaClaimCrashDevice =
+ constexpr std::string_view kReplicaClaimCrashDestination =
+     "device-sqlite-claim-crash-peer";
+ constexpr std::uint64_t kReplicaClaimCrashEpoch = 1511U;
++constexpr std::string_view kReplicaRenewCrashFolder =
++    "folder-sqlite-renew-crash";
++constexpr std::string_view kReplicaRenewCrashDevice =
++    "device-sqlite-renew-crash";
++constexpr std::string_view kReplicaRenewCrashDestination =
++    "device-sqlite-renew-crash-peer";
++constexpr std::uint64_t kReplicaRenewCrashEpoch = 1521U;
+ 
+ void crash_after_outbox_insert(
+     void*, int operation, const char*, const char* table_name,
+@@ -1577,7 +1707,7 @@ int run_replica_crash_helper(int argc, char** argv) {
+ }
+ 
+ 
+-void crash_after_outbox_claim_update(
++void crash_after_outbox_lease_update(
+     void*, int operation, const char*, const char* table_name,
+     sqlite3_int64) {
+     if (operation == SQLITE_UPDATE && table_name != nullptr &&
+@@ -1613,7 +1743,7 @@ int run_replica_claim_crash_helper(int argc, char** argv) {
+             limits(16U), "claim crash self-exec owner");
+         auto borrow = db.db.borrow();
+         sqlite3_update_hook(
+-            borrow.get(), &crash_after_outbox_claim_update, nullptr);
++            borrow.get(), &crash_after_outbox_lease_update, nullptr);
+         (void)owner.claim_next_outbox_or_throw(
+             "worker-claim-crash", 500U, 30U,
+             std::string(kReplicaClaimCrashDestination));
+@@ -1625,6 +1755,54 @@ int run_replica_claim_crash_helper(int argc, char** argv) {
+     }
+ }
+ 
++int run_replica_renew_crash_helper(int argc, char** argv) {
++    try {
++        anonsync::test::verify_self_exec_child_boundary_or_throw();
++        if (argc != 3 || argv == nullptr || argv[1] == nullptr ||
++            argv[2] == nullptr ||
++            std::string_view(argv[1]) != kReplicaRenewCrashHelper) {
++            throw std::runtime_error(
++                "invalid replica SQLite renewal crash helper instruction");
++        }
++        const std::filesystem::path database_path(argv[2]);
++        const std::string filename = database_path.filename().string();
++        if (!database_path.is_absolute() ||
++            database_path != database_path.lexically_normal() ||
++            database_path.extension() != ".sqlite3" ||
++            filename.rfind("anonsync-replica-sqlite-owner-crash-", 0) != 0) {
++            throw std::runtime_error(
++                "replica SQLite renewal crash helper path binding failed");
++        }
++
++        SyncSqliteDb db = open_database(database_path);
++        SyncReplicaSqliteOwner owner(
++            db.db, std::string(kReplicaRenewCrashFolder),
++            actor(std::string(kReplicaRenewCrashDevice),
++                  kReplicaRenewCrashEpoch),
++            limits(16U), "renewal crash self-exec owner");
++        const SyncReplicaSqliteSnapshot snapshot = owner.snapshot_or_throw();
++        if (snapshot.outbox.size() != 1U ||
++            snapshot.outbox.front().destination_device_id !=
++                kReplicaRenewCrashDestination ||
++            snapshot.outbox.front().lease.claim_id.empty()) {
++            throw std::runtime_error(
++                "replica SQLite renewal crash fixture is not one active claim");
++        }
++        auto borrow = db.db.borrow();
++        sqlite3_update_hook(
++            borrow.get(), &crash_after_outbox_lease_update, nullptr);
++        (void)owner.renew_outbox_lease_or_throw(
++            std::string(kReplicaRenewCrashDestination),
++            snapshot.outbox.front().operation_id,
++            snapshot.outbox.front().lease.claim_id, 505U, 30U);
++        return 80;
++    } catch (const std::exception& error) {
++        std::cerr << "replica SQLite renewal crash helper failed: "
++                  << error.what() << '\n';
++        return 79;
++    }
++}
++
+ void test_process_crash_before_commit_recovers_old_generation() {
+     TempDatabasePath file("anonsync-replica-sqlite-owner-crash");
+     const std::string folder(kReplicaCrashFolder);
+@@ -1705,6 +1883,59 @@ void test_process_crash_during_claim_recovers_unclaimed_cutpoint() {
+                 recovered_claim->intent.lease.dispatch_attempts == 1U,
+             "rolled-back claim consumed attempt authority or stranded the intent");
+ }
++void test_process_crash_during_renewal_recovers_prior_deadline() {
++    TempDatabasePath file("anonsync-replica-sqlite-owner-crash-renew");
++    const std::string folder(kReplicaRenewCrashFolder);
++    const SyncReplicaActor local = actor(
++        std::string(kReplicaRenewCrashDevice), kReplicaRenewCrashEpoch);
++    const std::string destination(kReplicaRenewCrashDestination);
++    SyncReplicaSqliteSnapshot baseline;
++    SyncReplicaOperation operation;
++    {
++        SyncSqliteDb db = open_database(file.path);
++        SyncReplicaSqliteOwner owner(
++            db.db, folder, local, limits(16U), "renewal crash seed owner");
++        operation = owner.create_local_file_or_throw(
++            "crash/renew.bin", 7U, anonsync::sha256_hex("renew-crash"),
++            std::vector<std::string>{destination});
++        const auto claim = owner.claim_next_outbox_or_throw(
++            "worker-renew-crash", 500U, 10U, destination);
++        require(claim.has_value() &&
++                    claim->intent.lease.lease_expires_at_epoch == 510U,
++                "renewal crash seed did not publish one active claim");
++        baseline = owner.snapshot_or_throw();
++    }
++
++    anonsync::test::SelfExecTestProcess child =
++        anonsync::test::spawn_self_exec_test_process_or_throw(
++            anonsync::test::current_self_executable_or_throw(),
++            {std::string(kReplicaRenewCrashHelper), file.path.string()});
++    child.wait_for_exact_exit(
++        76, std::chrono::seconds(10),
++        "replica SQLite post-heartbeat-update pre-commit crash helper");
++    require(true,
++            "child crashed at the intended post-heartbeat-update/pre-commit frontier");
++
++    SyncSqliteDb db = open_database(file.path);
++    SyncReplicaSqliteOwner owner(
++        db.db, folder, local, limits(16U), "renewal crash recovery owner");
++    require(owner.snapshot_or_throw() == baseline,
++            "SQLite recovery exposed a partial renewed deadline");
++    const auto& intent = baseline.outbox.front();
++    require(owner.renew_outbox_lease_or_throw(
++                destination, operation.operation_id,
++                intent.lease.claim_id, 505U, 30U) ==
++                SyncReplicaSqliteOutboxReceiptResult::Applied,
++            "rolled-back heartbeat stranded live renewal authority");
++    const SyncReplicaSqliteSnapshot renewed = owner.snapshot_or_throw();
++    require(renewed.state_generation == baseline.state_generation + 1U &&
++                renewed.outbox.size() == 1U &&
++                renewed.outbox.front().lease.claim_id ==
++                    intent.lease.claim_id &&
++                renewed.outbox.front().lease.lease_expires_at_epoch == 535U,
++            "recovered heartbeat did not publish one exact renewed cutpoint");
++}
++
+ #endif
+ 
+ }  // namespace
+@@ -1719,6 +1950,10 @@ int main(int argc, char** argv) {
+         std::string_view(argv[1]) == kReplicaClaimCrashHelper) {
+         return run_replica_claim_crash_helper(argc, argv);
+     }
++    if (argc >= 2 && argv != nullptr && argv[1] != nullptr &&
++        std::string_view(argv[1]) == kReplicaRenewCrashHelper) {
++        return run_replica_renew_crash_helper(argc, argv);
++    }
+ #endif
+     try {
+         if (argc != 1) {
+@@ -1743,6 +1978,7 @@ int main(int argc, char** argv) {
+ #ifdef __linux__
+         test_process_crash_before_commit_recovers_old_generation();
+         test_process_crash_during_claim_recovers_unclaimed_cutpoint();
++        test_process_crash_during_renewal_recovers_prior_deadline();
+ #endif
+         std::cout << "sync replica SQLite owner tests passed: "
+                   << checks << " checks\n";
+diff --git a/tools/audit_sync_replica_outbox_lease.py b/tools/audit_sync_replica_outbox_lease.py
+index 72a69e1d468302c76d89be054dd880a69b6f06f7..6d620d39e1d50d308ba02cd7a728385b7c8b3db5 100755
+--- a/tools/audit_sync_replica_outbox_lease.py
++++ b/tools/audit_sync_replica_outbox_lease.py
+@@ -57,7 +57,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-outbox-lease-audit-v1",
++        "format": "anonsync-sync-replica-outbox-lease-audit-v2",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -120,10 +120,11 @@ def main() -> int:
+     )
+     require(
+         "expired claim may be replaced" in header
+-        and "old receipt can never settle" in header
+-        and "Time controls liveness" in header,
+-        "lease_contract_separates_time_from_settlement_authority",
+-        "expiry enables replacement but does not make a stale receipt current",
++        and "Expiry also revokes settlement" in header
++        and "Time can revoke authority but can never grant it" in header
++        and "exact current claim ID is always required before the deadline" in header,
++        "lease_contract_makes_expiry_an_authority_boundary",
++        "settlement, retry release, and renewal all require the exact live receipt",
+     )
+     require(
+         "RAND_bytes" not in source
+@@ -154,9 +155,11 @@ def main() -> int:
+         and "!is_lowercase_sha256_hex(state.claim_id)" in validate
+         and "!sync_id_is_valid(state.worker_id)" in validate
+         and "state.lease_expires_at_epoch <= state.claimed_at_epoch" in validate
+-        and "state.retry_not_before_epoch != 0U" in validate,
+-        "active_lease_is_strictly_positive_reachable_and_not_backed_off",
+-        "zero-duration and otherwise unreachable active states fail restore",
++        and "state.retry_not_before_epoch != 0U" in validate
++        and "kSyncReplicaOutboxMaxClaimLifetimeSeconds" in validate
++        and "exceeds the cumulative claim lifetime budget" in validate,
++        "active_lease_is_positive_reachable_bounded_and_not_backed_off",
++        "zero-duration, overlong, and otherwise unreachable active states fail restore",
+     )
+     require(
+         "backs off an intent that has never been dispatched" in validate,
+@@ -181,7 +184,7 @@ def main() -> int:
+ 
+     deadline = function_body(source, "lease_deadline_or_throw(")
+     require(
+-        "kMaxLeaseSeconds" in deadline
++        "kSyncReplicaOutboxMaxLeaseSeconds" in deadline
+         and "1..86400" in deadline
+         and "max() - now_epoch" in deadline,
+         "lease_duration_and_deadline_arithmetic_fail_closed",
+@@ -251,22 +254,66 @@ def main() -> int:
+         "tokens are scoped to one exact durable transition rather than only random bytes",
+     )
+ 
++    status = function_body(
++        source, "sync_replica_outbox_claim_status_at_or_throw("
++    )
++    require(
++        ordered(
++            status,
++            "validate_sync_replica_outbox_lease_state_or_throw",
++            "is_lowercase_sha256_hex(expected_claim_id)",
++            "now_epoch == 0U",
++            "state.claim_id.empty() || state.claim_id != expected_claim_id",
++            "SyncReplicaOutboxClaimStatus::Stale",
++            "now_epoch < state.claimed_at_epoch",
++            "now_epoch >= state.lease_expires_at_epoch",
++            "SyncReplicaOutboxClaimStatus::Expired",
++            "SyncReplicaOutboxClaimStatus::Current",
++        ),
++        "receipt_status_is_exact_stale_first_and_deadline_exclusive",
++        "a different receipt is stale while the matching receipt expires exactly at its deadline",
++    )
++
++    renew = function_body(
++        source, "renew_sync_replica_outbox_lease_or_throw("
++    )
++    require(
++        ordered(
++            renew,
++            "sync_replica_outbox_claim_status_at_or_throw",
++            "SyncReplicaOutboxClaimStatus::Stale",
++            "expected claim is stale",
++            "SyncReplicaOutboxClaimStatus::Expired",
++            "expected claim is expired",
++            "lease_deadline_or_throw",
++            "proposed_deadline <= current.lease_expires_at_epoch",
++            "kSyncReplicaOutboxMaxClaimLifetimeSeconds",
++            "next.lease_expires_at_epoch = proposed_deadline",
++            "validate_sync_replica_outbox_lease_state_or_throw(next",
++        ),
++        "heartbeat_is_live_receipt_fenced_nonshortening_and_lifetime_bounded",
++        "renewal preserves attempt identity and cannot revive or extend a claim indefinitely",
++    )
++
+     release = function_body(
+         source, "release_sync_replica_outbox_lease_or_throw("
+     )
+     require(
+         ordered(
+             release,
+-            "validate_sync_replica_outbox_lease_state_or_throw(current",
+-            "is_lowercase_sha256_hex(expected_claim_id)",
+-            "current.claim_id != expected_claim_id",
++            "sync_replica_outbox_claim_status_at_or_throw",
++            "SyncReplicaOutboxClaimStatus::Stale",
+             "expected claim is stale",
++            "SyncReplicaOutboxClaimStatus::Expired",
++            "expected claim is expired",
++            "retry_not_before_epoch < now_epoch",
++            "kSyncReplicaOutboxMaxRetryDelaySeconds",
+             "next.dispatch_attempts = current.dispatch_attempts",
+             "next.retry_not_before_epoch = retry_not_before_epoch",
+             "validate_sync_replica_outbox_lease_state_or_throw(next",
+         ),
+-        "release_is_exact_receipt_fenced_and_preserves_attempt_history",
+-        "a stale sender cannot install backoff over a replacement attempt",
++        "release_is_live_receipt_fenced_bounded_and_preserves_attempt_history",
++        "a stale or expired sender cannot install an unbounded delay over current work",
+     )
+ 
+     require(
+@@ -274,19 +321,25 @@ def main() -> int:
+             token in runtime
+             for token in (
+                 "claim did not expire at its exact deadline",
++                "receipt remained authoritative at its expiry boundary",
++                "expired receipt renewed its former attempt",
++                "expired receipt installed retry policy",
++                "heartbeat exceeded the cumulative claim lifetime budget",
++                "retry release accepted an unbounded liveness delay",
+                 "old claim released a replacement attempt",
+                 "retry-not-before boundary was not exact",
+                 "pure claim token construction is not deterministic",
+                 "claim token did not bind CSPRNG entropy",
+                 "persisted zero-duration lease was accepted",
++                "persisted claim exceeded the cumulative lifetime policy",
+                 "dispatch counter overflow was not rejected",
+                 "short claim entropy was accepted",
+                 "lease deadline overflow was accepted",
+                 "zero claim clock was accepted",
+             )
+         ),
+-        "runtime_covers_reclaim_stale_release_backoff_determinism_and_overflow",
+-        "adversarial boundary tests pin the pure state machine",
++        "runtime_covers_expiry_renewal_release_backoff_determinism_and_overflow",
++        "adversarial boundary tests pin the complete live-receipt state machine",
+     )
+     require(
+         "anonsync_sync_replica_outbox_lease" in cmake
+@@ -296,15 +349,37 @@ def main() -> int:
+         "lease_policy_and_runtime_are_registered_in_cmake",
+         "the pure authority layer is compiled, linked, and executed",
+     )
++    owner_claim = function_body(
++        owner, "SyncReplicaSqliteOwner::claim_next_outbox_or_throw("
++    )
+     require(
+         "random_claim_entropy_or_throw" in owner
+         and "RAND_bytes" in owner
+-        and "claim_sync_replica_outbox_lease_or_throw" in owner,
+-        "sqlite_owner_supplies_checked_csprng_entropy_to_pure_policy",
+-        "randomness stays at the process boundary and policy stays deterministic",
++        and ordered(
++            owner_claim,
++            "random_claim_entropy_or_throw",
++            "SyncSqliteTransaction transaction",
++            "SyncSqliteTransactionMode::Immediate",
++            "claim_sync_replica_outbox_lease_or_throw",
++        ),
++        "sqlite_owner_acquires_checked_csprng_entropy_before_writer_authority",
++        "randomness stays at the process boundary without holding SQLite's single writer slot",
++    )
++    require(
++        all(
++            token in owner
++            for token in (
++                "SyncReplicaSqliteOwner::renew_outbox_lease_or_throw",
++                "SyncReplicaSqliteOutboxReceiptResult::LeaseAlreadyCovered",
++                "SyncReplicaSqliteOutboxReceiptResult::ExpiredClaim",
++                "publish_outbox_lease_update_or_throw",
++            )
++        ),
++        "sqlite_owner_exposes_fenced_heartbeat_and_shared_publication_path",
++        "claim, renewal, and retry release converge on one re-attested lease publication helper",
+     )
+     require(
+-        "revision_number >= 870" in verifier
++        "revision_number >= 871" in verifier
+         and all(
+             token in verifier
+             for token in (
+@@ -312,11 +387,11 @@ def main() -> int:
+                 "src/sync_replica_outbox_lease.cpp",
+                 "tests/sync_replica_outbox_lease_test.cpp",
+                 "tools/audit_sync_replica_outbox_lease.py",
+-                "RECEIPT_BOUND_OUTBOX_AUDIT_rev0870.md",
++                "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md",
+             )
+         ),
+-        "release_verifier_requires_the_receipt_authority_slice_from_rev0870",
+-        "a sealed revision cannot omit the pure policy, runtime, audit, or design record",
++        "release_verifier_requires_the_live_receipt_authority_slice_from_rev0871",
++        "a sealed revision cannot omit the policy, runtime, structural audit, or design record",
+     )
+ 
+     return emit(root, args.json, checks)
+diff --git a/tools/audit_sync_replica_sqlite_owner.py b/tools/audit_sync_replica_sqlite_owner.py
+index 3a169c424e3d8e3c60a67df24b2c7a30b906b9a6..c53c8c18347de16b3c977b2fe250c31f170f0dab 100755
+--- a/tools/audit_sync_replica_sqlite_owner.py
++++ b/tools/audit_sync_replica_sqlite_owner.py
+@@ -59,7 +59,7 @@ def function_body(text: str, signature: str) -> str:
+ def emit(root: Path, output: Path | None, checks: list[Check]) -> int:
+     violations = [check.check_id for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sync-replica-sqlite-owner-audit-v2",
++        "format": "anonsync-sync-replica-sqlite-owner-audit-v3",
+         "root": str(root),
+         "passed": not violations,
+         "passed_checks": len(checks) - len(violations),
+@@ -153,9 +153,25 @@ def main() -> int:
+                 "retry_not_before_epoch",
+             )
+         )
+-        and "Time controls liveness" in lease_header,
+-        "outbox_attempt_authority_is_explicit_durable_state",
+-        "expiry controls reclaim only; the current receipt controls settlement",
++        and "Expiry also revokes settlement" in lease_header
++        and "Time can revoke authority but can never grant it" in lease_header,
++        "outbox_attempt_authority_is_explicit_bounded_durable_state",
++        "the exact receipt and its unexpired deadline jointly control every terminal transition",
++    )
++    require(
++        all(
++            token in header
++            for token in (
++                "LeaseAlreadyCovered",
++                "ExpiredClaim",
++                "settle_outbox_or_throw",
++                "std::uint64_t now_epoch",
++                "renew_outbox_lease_or_throw",
++                "release_outbox_for_retry_or_throw",
++            )
++        ),
++        "owner_api_names_expiry_and_noop_heartbeat_results",
++        "callers can distinguish missing, stale, expired, extended, and already-covered receipts",
+     )
+ 
+     schema = owner[owner.find("constexpr std::array<SchemaDefinition") :]
+@@ -401,19 +417,17 @@ def main() -> int:
+     require(
+         ordered(
+             claim,
++            "random_claim_entropy_or_throw",
++            "SyncSqliteTransaction transaction",
+             "SyncSqliteTransactionMode::Immediate",
+             "load_state_or_throw",
+             "sync_replica_outbox_lease_is_claimable_at_or_throw",
+             "claim_sync_replica_outbox_lease_or_throw",
+-            "random_claim_entropy_or_throw",
+-            "update_outbox_lease_exact_or_throw",
+             "evidence_operation_by_id",
+-            "increment_or_throw",
+-            "update_meta_or_throw",
+-            "attest_and_commit_staged_cutpoint_or_throw",
++            "publish_outbox_lease_update_or_throw",
+         ),
+-        "claim_mints_one_fresh_receipt_in_the_atomic_cutpoint",
+-        "dispatch authority, canonical payload, generation, and metadata commit together",
++        "claim_mints_one_fresh_receipt_with_entropy_before_writer_lock",
++        "CSPRNG latency cannot hold SQLite's writer slot while the loaded cutpoint still binds the token",
+     )
+     random_entropy = function_body(owner, "random_claim_entropy_or_throw(")
+     require(
+@@ -444,33 +458,82 @@ def main() -> int:
+         "a trigger or competing writer cannot silently retarget the mutation",
+     )
+ 
++    lookup = function_body(owner, "find_outbox_intent(")
++    require(
++        ordered(
++            lookup,
++            "std::lower_bound",
++            "intent.destination_device_id",
++            "intent.operation_id",
++            "found == outbox.end()",
++        ),
++        "exact_outbox_lookup_uses_canonical_logarithmic_search",
++        "settlement, renewal, and release no longer repeat linear key scans",
++    )
++    publish_lease = function_body(owner, "void publish_outbox_lease_update_or_throw(")
++    require(
++        ordered(
++            publish_lease,
++            "update_outbox_lease_exact_or_throw",
++            "increment_or_throw",
++            "meta_from_state_or_throw",
++            "update_meta_or_throw",
++            "attest_and_commit_staged_cutpoint_or_throw",
++        ),
++        "lease_mutations_share_one_exact_re_attested_publication_path",
++        "claim, heartbeat, and release cannot drift in generation or precommit attestation behavior",
++    )
++
+     settle = function_body(owner, "SyncReplicaSqliteOwner::settle_outbox_or_throw(")
++    renew = function_body(owner, "SyncReplicaSqliteOwner::renew_outbox_lease_or_throw(")
+     release = function_body(owner, "SyncReplicaSqliteOwner::release_outbox_for_retry_or_throw(")
+     require(
+         ordered(
+             settle,
++            "now_epoch == 0U",
+             "load_state_or_throw",
++            "find_outbox_intent",
+             "SyncReplicaSqliteOutboxReceiptResult::IntentMissing",
+-            "found->lease.claim_id != claim_id",
+-            "SyncReplicaSqliteOutboxReceiptResult::StaleClaim",
++            "sync_replica_outbox_claim_status_at_or_throw",
++            "sqlite_receipt_result_for_claim_status",
+             "delete_outbox_intent_exact_or_throw",
+             "attest_and_commit_staged_cutpoint_or_throw",
+         ),
+-        "settlement_requires_the_exact_current_attempt_receipt",
+-        "an expired or released attempt cannot retire a replacement intent",
++        "settlement_requires_the_exact_current_unexpired_receipt",
++        "a stale, released, or expired attempt cannot retire an unsettled intent",
++    )
++    require(
++        ordered(
++            renew,
++            "now_epoch == 0U",
++            "kSyncReplicaOutboxMaxLeaseSeconds",
++            "SyncSqliteTransactionMode::Immediate",
++            "find_outbox_intent",
++            "sync_replica_outbox_claim_status_at_or_throw",
++            "sqlite_receipt_result_for_claim_status",
++            "renew_sync_replica_outbox_lease_or_throw",
++            "renewed == previous",
++            "LeaseAlreadyCovered",
++            "publish_outbox_lease_update_or_throw",
++        ),
++        "heartbeat_requires_live_receipt_and_avoids_covered_publications",
++        "renewal cannot revive expiry, shorten a lease, or advance generation for an already-covered deadline",
+     )
+     require(
+         ordered(
+             release,
+-            "load_state_or_throw",
+-            "found->lease.claim_id != claim_id",
+-            "SyncReplicaSqliteOutboxReceiptResult::StaleClaim",
++            "now_epoch == 0U",
++            "retry_not_before_epoch < now_epoch",
++            "kSyncReplicaOutboxMaxRetryDelaySeconds",
++            "SyncSqliteTransactionMode::Immediate",
++            "find_outbox_intent",
++            "sync_replica_outbox_claim_status_at_or_throw",
++            "sqlite_receipt_result_for_claim_status",
+             "release_sync_replica_outbox_lease_or_throw",
+-            "update_outbox_lease_exact_or_throw",
+-            "attest_and_commit_staged_cutpoint_or_throw",
++            "publish_outbox_lease_update_or_throw",
+         ),
+-        "retry_release_requires_current_receipt_and_persists_backoff",
+-        "retry scheduling is a fenced durable transition rather than caller-local memory",
++        "retry_release_requires_live_receipt_and_bounded_backoff",
++        "retry scheduling is a fenced durable transition with an explicit maximum delay",
+     )
+     require(
+         "acknowledge_outbox_or_throw" not in header
+@@ -503,17 +566,22 @@ def main() -> int:
+                 "test_exact_v1_migration_preserves_evidence_and_outbox",
+                 "test_malformed_v1_is_not_laundered_into_v2",
+                 "test_receipt_bound_reclaim_backoff_and_restart",
+-                "StaleClaim",
++                "LeaseAlreadyCovered",
++                "ExpiredClaim",
++                "expired receipt retained settlement authority",
++                "expired receipt was revived by a heartbeat",
+                 "worker-trigger-mutated",
++                "worker-renew-trigger-mutated",
+                 "test_concurrent_claimers_mint_one_receipt",
+-                "crash_after_outbox_claim_update",
++                "crash_after_outbox_lease_update",
+                 "test_process_crash_during_claim_recovers_unclaimed_cutpoint",
++                "test_process_crash_during_renewal_recovers_prior_deadline",
+                 "verify_self_exec_child_boundary_or_throw",
+                 "std::barrier start(2)",
+             )
+         ),
+-        "runtime_covers_migration_receipt_fencing_trigger_concurrency_restart_and_crash",
+-        "tests exercise the dangerous authority boundaries rather than only happy-path delivery",
++        "runtime_covers_migration_expiry_heartbeat_trigger_concurrency_restart_and_crash",
++        "tests exercise live-receipt revocation and precommit corruption boundaries, not only delivery",
+     )
+     require(
+         "anonsync_sync_replica_outbox_lease" in cmake
+@@ -525,13 +593,14 @@ def main() -> int:
+         "CMake registers both authority layers and the process-crash test budget",
+     )
+     require(
+-        "revision_number >= 869" in verifier
++        "revision_number >= 871" in verifier
+         and "src/sync_replica_sqlite_owner.hpp" in verifier
+         and "src/sync_replica_sqlite_owner.cpp" in verifier
+         and "tests/sync_replica_sqlite_owner_test.cpp" in verifier
+-        and "tools/audit_sync_replica_sqlite_owner.py" in verifier,
+-        "release_verifier_keeps_the_sqlite_owner_slice_mandatory",
+-        "a sealed archive cannot omit the cutpoint owner or its structural audit",
++        and "tools/audit_sync_replica_sqlite_owner.py" in verifier
++        and "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md" in verifier,
++        "release_verifier_keeps_the_rev0871_owner_slice_mandatory",
++        "a sealed archive cannot omit the cutpoint owner, heartbeat audit, or structural audit",
+     )
+     require(
+         "INSERT OR" not in owner and "ON CONFLICT" not in owner,
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index f3db9c447f09579ef60aba256c8cbacb41e8afd9..91e6d16b767df347050cf027ecfe18b9bb1f581e 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -445,6 +445,10 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_replica_outbox_lease.py",
+             "RECEIPT_BOUND_OUTBOX_AUDIT_rev0870.md",
+         })
++    if revision_number is not None and revision_number >= 871:
++        revision_scoped_required.update({
++            "LEASE_HEARTBEAT_AUTHORITY_AUDIT_rev0871.md",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

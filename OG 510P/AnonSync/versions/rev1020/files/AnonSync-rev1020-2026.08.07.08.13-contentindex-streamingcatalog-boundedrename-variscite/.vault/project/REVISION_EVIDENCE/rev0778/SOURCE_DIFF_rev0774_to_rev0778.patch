@@ -1,0 +1,3322 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index aa66f88..22cfd43 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -88,6 +88,7 @@ endif()
+ # accidental source of divergent transaction semantics.
+ add_library(anonsync_sqlite_support STATIC
+   src/sync_sqlite_support.cpp
++  src/sync_sqlite_mutex_capability.cpp
+   src/sync_sqlite_transaction.cpp
+   src/sync_sqlite_connection_authority.cpp)
+ target_include_directories(anonsync_sqlite_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+@@ -310,6 +311,8 @@ add_test(NAME anonsync_sqlite_runtime_policy_test COMMAND anonsync_sqlite_runtim
+ add_test(NAME anonsync_sqlite_support_test COMMAND anonsync_sqlite_support_test)
+ add_test(NAME anonsync_sqlite_connection_authority_test
+   COMMAND anonsync_sqlite_connection_authority_test)
++set_tests_properties(anonsync_sqlite_connection_authority_test
++  PROPERTIES TIMEOUT 15)
+ add_test(NAME anonsync_core_sqlite_runtime_profile_selftest COMMAND anonsync_core --selftest-ledger-host-capability-probe)
+ add_test(NAME anonsync_core_event_identity_replay_selftest COMMAND anonsync_core --selftest-ledger-event-identity-replay)
+ add_test(NAME anonsync_core_effect_idempotency_selftest COMMAND anonsync_core --selftest-ledger-effect-idempotency)
+diff --git a/README.md b/README.md
+index d4daa77..aaaabf5 100644
+--- a/README.md
++++ b/README.md
+@@ -1,125 +1,108 @@
+-# AnonSync rev0774
++# AnonSync rev0778
+ 
+ AnonSync is an **evidence-authorized convergence engine**. Transport receipt,
+-callback success, worker identity, a database handle, and a successful write
++callback success, worker identity, a database pointer, and a successful write
+ are observations; none is authority by itself. A transition is legitimate only
+-when exact, generation-bound, content-bound evidence is checked at the
+-operation that consumes it and reconstructs after interruption.
++when exact generation-bound, content-bound evidence is checked by the operation
++that consumes it and remains reconstructible after interruption.
+ 
+-## Current revision: typed transaction-stack authority
++## Current revision: exact SQLite mutex ownership
+ 
+-Rev0774 closes the public SQLite transaction-generation seam identified by
+-rev0773. The prior typed guard could observe that a transaction had ended, but
+-SQLite exposes transaction state rather than a native transaction identity. Raw
+-`COMMIT` followed by raw `BEGIN` could therefore replace one transaction with
+-another between observations on the same handle.
++Rev0778 closes two dynamic authority seams around retained
++`sqlite3_db_mutex()` entries:
+ 
+-On an AnonSync-authorized connection, transaction-stack control is now owned by
+-one bridge:
++1. SQLite requires the same thread to leave a mutex that entered it. Rev0774
++   documented that rule but did not enforce it.
++2. The owner thread could recursively call `sqlite3_close_v2()`, allowing SQLite
++   to destroy the connection and free its mutex while an outer AnonSync entry
++   remained retained.
++
++The correction is isolated here:
+ 
+ ```text
++src/sync_sqlite_mutex_capability.hpp
++src/sync_sqlite_mutex_capability.cpp
+ src/sync_sqlite_connection_authority.cpp
+-src/sync_sqlite_connection_authority_internal.hpp
+ src/sync_sqlite_transaction.cpp
+-src/sync_sqlite_support.hpp
+-tools/audit_sqlite_transaction_stack_authority.py
++tools/audit_sqlite_mutex_capability.py
+ ```
+ 
+-The bridge denies every ambient `SQLITE_TRANSACTION` and `SQLITE_SAVEPOINT`
+-action. A typed transaction owner arms one single-use permit for exactly one
+-`BEGIN`, `COMMIT`, or `ROLLBACK`. The proof binds the process salt, connection
+-incarnation, authorizer generation, and transaction generation. It also retains
+-the serialized SQLite connection mutex for the entire live generation, so a
+-second thread cannot replace the callback or interleave same-handle work
+-between begin, evidence checks, mutation, and finalization.
++Each C++ thread lifetime receives a monotonic process-local incarnation. A live
++lease or typed transaction records that exact incarnation. Foreign observation
++fails closed before touching SQLite and does not revoke the owner. Foreign
++COMMIT/ROLLBACK throws before SQLite access. Moving or destroying a live owner
++on another thread fails stopped before undefined mutex release.
++
++A versioned SQLite client-data sentinel separately counts retained mutex entries.
++Its count is only a **connection-lifetime pin**, never transaction authority.
++Closing or replacing the connection while the count is nonzero fails stopped
++before control can return to an owner carrying an invalid mutex pointer.
+ 
+ ## Authority flow
+ 
+ ```text
+-install/challenge exact connection-authorizer generation
+-  -> typed owner allocates exact transaction generation
+-  -> arm one BEGIN permit and consume it during prepare
+-  -> retain the FULLMUTEX connection mutex for the live generation
+-  -> establish and verify the exact main snapshot
+-  -> consume canonical durable evidence and perform mutations
+-  -> challenge callback ownership again
+-  -> arm one COMMIT or ROLLBACK permit and consume it
+-  -> restore autocommit, clear generation, revoke copied authority
+-  -> release the retained mutex exactly once
++enter FULLMUTEX connection mutex
++  -> capture exact thread incarnation
++  -> increment SQLite-owned close-lifetime sentinel
++  -> issue lease or exact transaction-generation proof
++  -> check thread before every foreign-facing observation/finalization
++  -> verify connection, authorizer, and transaction generation at use
++  -> consume the lifetime entry before sqlite3_mutex_leave()
++  -> permit connection close only after all retained entries are gone
+ ```
+ 
+-An outermost `SAVEPOINT` can begin a transaction and an outermost `RELEASE` can
+-commit it, so all savepoint actions are denied until a typed nested-scope API
+-exists. `END` is covered because SQLite reports it as `COMMIT` to the
+-authorizer.
+-
+-## Correctness and refactor work
+-
+-- Moved transaction ownership out of generic SQLite helpers into the
+-  independently testable `sync_sqlite_transaction.cpp` translation unit.
+-- Added exact, single-use transaction-boundary permits to the owned authorizer.
+-- Bound permits to one active transaction generation and rejected replacement
+-  of AnonSync authority while that generation is live.
+-- Retained the recursive connection mutex for the full generation, closing the
+-  gap between typed `BEGIN` and later schema-authority acquisition.
+-- Made copied transaction capabilities non-owners of that mutex.
+-- Preserved retryable `COMMIT` authority after `SQLITE_BUSY` only while the exact
+-  callback and generation remain current.
+-- Rejected an unsafe destructor fallback: after alien callback replacement, an
+-  unfenced raw rollback could destroy a later transaction the stale guard never
+-  owned. Connection close remains SQLite's final rollback fence.
+-- Reinstalled the restrictive schema bridge before typed recovery on a handle
+-  whose prior callback was replaced.
+-- Converted post-attestation schema tests to typed transactions.
+-- Added a 45-check transaction-stack audit and updated the older payload and
+-  authorizer audits to follow the new invariant owner rather than obsolete file
+-  locations.
++## Audit and refactor
++
++The new deterministic audit passes **63/63 checks**. It verifies thread-before-
++state ordering, exception-safe lifetime retention, close and zombie-close death
++tests, owner move semantics, finite test timeout, and a single owner for all nine
++direct production SQLite mutex calls. Only two reviewed source files may access
++SQLite connection client data: the authorizer-generation owner and the mutex-
++lifetime owner.
++
++The repository also contained 488 tracked build products totaling about 286 MB.
++Rev0778 removes them and adds `.gitignore`; source handoffs now carry portable
++code and textual evidence, not stale host binaries.
+ 
+ ## Validation
+ 
+-Required evidence under `REVISION_EVIDENCE/rev0774/` includes:
++Required evidence under `REVISION_EVIDENCE/rev0778/` records:
+ 
+ - fresh GCC Debug build and **40/40 CTest** passes;
+-- incremental Debug **40/40 CTest** passes;
+-- direct runtime **38/0**, SQLite support **61/0**, connection authority
+-  **71/0**, schema attestation **58/0**, domain **588/0**, and lifecycle
+-  **49/0** checks;
+-- 100 repeated authority executions, 50 schema executions, and 50 support
+-  executions;
+-- GCC Release focused boundary tests, GCC ASan/UBSan focused boundary tests,
+-  and independent Clang focused boundary tests, all passing;
+-- three deterministic source audits; and
++- three full-suite repetitions, **120/120**;
++- direct domain **588/0**, lifecycle **49/0**, SQLite support **61/0**, schema
++  attestation **58/0**, and connection authority **98/0** checks;
++- 100 authority repetitions, **9,800/9,800** checks;
++- GCC Release, GCC ASan/UBSan, and independent Clang focused tests, all passing;
++- four deterministic source audits; and
+ - package safety plus SHA-256 manifest verification.
+ 
+-The complete optimized and sanitizer builds are explicitly **incomplete**: the
+-unchanged 24,523-line `sync_domain.cpp` translation unit exceeded the
+-cloudtainer command ceiling. The revised invariant-owned SQLite targets built
+-and passed in all profiles. The incomplete optional result is retained rather
+-than promoted to success. `clang-format` is unavailable in this cloudtainer.
++One GCC Release warning originates in the unchanged bundled SQLite 3.53.3
++amalgamation. It is retained in the evidence. Changed AnonSync source emits no
++warning in the recorded GCC Debug, sanitizer, or Clang focused builds.
+ 
+-## Deliberate limits and next boundaries
++## Deliberate limits
+ 
+-The typed guard is thread-affine because it retains SQLite's recursive
+-connection mutex; destruction and finalization must occur on the constructing
+-thread. The contract is documented but not dynamically enforced. A future
+-connection actor/strand should make that affinity structural.
++Thread incarnation and the close sentinel are process-local authority, never
++durable evidence. They must not be serialized or trusted after restart. The
++long-term topology should be one connection actor/strand that owns open,
++commands, transactions, and close.
+ 
+-The bridge is process-local authority, not durable evidence. After crash,
+-authority must be reconstructed from reviewed schema and canonical domain
+-state. Process-crash tests still do not prove power-loss behavior; a
+-fault-injecting SQLite VFS should enumerate WAL append, sync, checkpoint,
+-directory, and reset failure points against an executable transition oracle.
++Inherited SQLite handles after `fork()` remain outside the claim. A process
++epoch or a strict post-fork ban is still needed. Power-loss behavior also
++requires a fault-injecting VFS; process termination alone does not prove WAL,
++filesystem sync, checkpoint, or directory-order durability.
+ 
+-The audit inventories **95** legacy raw transaction controls outside the new
+-owner: 45 in `sync_domain.cpp`, 15 in `reporting_selftests.cpp`, 15 in
+-`sqlite_replay_ledger.cpp`, and the remainder in smaller modules. They are not
+-claimed safe by this revision. Migration should proceed by invariant-owned
+-repository slices, not by mechanical search-and-replace.
++The transaction audit still inventories 95 legacy raw transaction controls
++outside peer-ingress production, and `src/sync_domain.cpp` remains 24,523 lines.
++Future decomposition should follow durable aggregates and transition ownership,
++not arbitrary helper groups.
+ 
+ ## Build
+ 
+ ```bash
+-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
++cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
++  -DANONSYNC_USE_BUNDLED_SQLITE=ON
+ cmake --build build -j2
+ ctest --test-dir build --output-on-failure
+ ```
+@@ -129,6 +112,7 @@ Sanitizer profile:
+ ```bash
+ cmake -S . -B build-sanitize -G Ninja \
+   -DCMAKE_BUILD_TYPE=Debug \
++  -DANONSYNC_USE_BUNDLED_SQLITE=ON \
+   -DANONSYNC_ENABLE_SANITIZERS=ON
+ cmake --build build-sanitize -j2
+ ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+diff --git a/src/sync_sqlite_connection_authority.cpp b/src/sync_sqlite_connection_authority.cpp
+index e1d287f..70a3cd6 100644
+--- a/src/sync_sqlite_connection_authority.cpp
++++ b/src/sync_sqlite_connection_authority.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "sync_sqlite_connection_authority_internal.hpp"
+ #include "sync_sqlite_support.hpp"
++#include "sync_sqlite_mutex_capability.hpp"
+ 
+ #include <atomic>
+ #include <cstdint>
+@@ -14,6 +15,7 @@
+ #include <sqlite3.h>
+ 
+ namespace anonsync {
++
+ namespace {
+ 
+ static_assert(SQLITE_VERSION_NUMBER >= 3044000,
+@@ -23,7 +25,7 @@ constexpr char kConnectionAuthorityClientDataName[] =
+     "anonsync.sqlite.connection-authority.v1";
+ constexpr std::uint64_t kStateMagic = UINT64_C(0x41534e53434f4e4e);
+ constexpr std::uint64_t kFallbackProcessSalt =
+-    UINT64_C(0x7265763037373421);  // "rev0774!"
++    UINT64_C(0x416e6f6e53796e63);  // "AnonSync"
+ 
+ enum class TransactionPermitOperation : std::uint8_t {
+     None,
+@@ -56,9 +58,68 @@ struct ConnectionAuthorityState final {
+     bool transaction_permit_observed = false;
+ };
+ 
++class RetainedMutexCapabilityReservation final {
++public:
++    RetainedMutexCapabilityReservation(sqlite3* db, const std::string& label)
++        : state_(retain_sync_sqlite_mutex_capability_or_throw(db, label)) {}
++
++    ~RetainedMutexCapabilityReservation() {
++        if (state_ != nullptr) {
++            release_sync_sqlite_mutex_capability_noexcept(state_);
++        }
++    }
++
++    RetainedMutexCapabilityReservation(
++        const RetainedMutexCapabilityReservation&) = delete;
++    RetainedMutexCapabilityReservation& operator=(
++        const RetainedMutexCapabilityReservation&) = delete;
++
++    SyncSqliteRetainedMutexCapabilityState* release() noexcept {
++        SyncSqliteRetainedMutexCapabilityState* out = state_;
++        state_ = nullptr;
++        return out;
++    }
++
++private:
++    SyncSqliteRetainedMutexCapabilityState* state_ = nullptr;
++};
++
++[[nodiscard]] bool retained_mutex_lease_shape_is_valid(
++    sqlite3_mutex* mutex,
++    SyncSqliteThreadIncarnation owner_thread_incarnation,
++    SyncSqliteRetainedMutexCapabilityState* retained_capability_state) noexcept {
++    if (mutex == nullptr) {
++        return owner_thread_incarnation == 0 &&
++               retained_capability_state == nullptr;
++    }
++    return owner_thread_incarnation != 0 &&
++           retained_capability_state != nullptr;
++}
++
++void require_retained_mutex_lease_owner_noexcept(
++    sqlite3_mutex* mutex,
++    SyncSqliteThreadIncarnation owner_thread_incarnation,
++    SyncSqliteRetainedMutexCapabilityState* retained_capability_state) noexcept {
++    if (!retained_mutex_lease_shape_is_valid(
++            mutex, owner_thread_incarnation, retained_capability_state)) {
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    if (mutex == nullptr) return;
++    // The immutable thread generation is safe to inspect even if connection
++    // lifetime has already been violated. Reject a foreign caller before
++    // dereferencing SQLite-owned client data.
++    if (!sync_sqlite_thread_incarnation_is_current(owner_thread_incarnation) ||
++        !sync_sqlite_mutex_capability_is_live_noexcept(
++            retained_capability_state)) {
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++}
++
+ class DbMutexGuard final {
+ public:
+-    DbMutexGuard(sqlite3* db, const std::string& label) {
++    DbMutexGuard(sqlite3* db, const std::string& label)
++        : owner_thread_incarnation_(
++              current_sync_sqlite_thread_incarnation_noexcept()) {
+         if (db == nullptr) {
+             throw std::invalid_argument(label + " database handle is null");
+         }
+@@ -71,13 +132,23 @@ public:
+     }
+ 
+     ~DbMutexGuard() {
+-        if (mutex_ != nullptr) sqlite3_mutex_leave(mutex_);
++        if (mutex_ == nullptr) return;
++        if (!sync_sqlite_thread_incarnation_is_current(
++                owner_thread_incarnation_)) {
++            terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++        }
++        sqlite3_mutex_leave(mutex_);
+     }
+ 
+     DbMutexGuard(const DbMutexGuard&) = delete;
+     DbMutexGuard& operator=(const DbMutexGuard&) = delete;
+ 
+     sqlite3_mutex* release() noexcept {
++        if (mutex_ != nullptr &&
++            !sync_sqlite_thread_incarnation_is_current(
++                owner_thread_incarnation_)) {
++            terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++        }
+         sqlite3_mutex* out = mutex_;
+         mutex_ = nullptr;
+         return out;
+@@ -85,6 +156,7 @@ public:
+ 
+ private:
+     sqlite3_mutex* mutex_ = nullptr;
++    SyncSqliteThreadIncarnation owner_thread_incarnation_ = 0;
+ };
+ 
+ class TransactionPermitScope final {
+@@ -414,10 +486,22 @@ ConnectionAuthorityState& validate_boundary_proof_or_throw(
+     const std::string& label) {
+     if (!proof.fenced || proof.db == nullptr || proof.db != db ||
+         proof.process_salt == 0 || proof.connection_incarnation == 0 ||
+-        proof.authorizer_generation == 0 || proof.transaction_generation == 0) {
++        proof.authorizer_generation == 0 || proof.transaction_generation == 0 ||
++        proof.owner_thread_incarnation == 0 ||
++        proof.retained_capability_state == nullptr) {
+         throw std::logic_error(
+             label + " transaction boundary proof is empty or targets another handle");
+     }
++    // Reject a foreign caller before touching the SQLite-owned lifetime
++    // sentinel. The pointer is only safe to inspect on the exact thread that
++    // retains the recursive database-mutex entry.
++    require_sync_sqlite_thread_incarnation_or_throw(
++        proof.owner_thread_incarnation, label + " transaction boundary");
++    if (!sync_sqlite_mutex_capability_is_live_noexcept(
++            proof.retained_capability_state)) {
++        throw std::logic_error(
++            label + " retained SQLite mutex capability is no longer live");
++    }
+     ConnectionAuthorityState* state =
+         load_connection_authority_state_or_throw(db, false, label);
+     if (state->process_salt != proof.process_salt ||
+@@ -464,32 +548,72 @@ SyncSqliteConnectionAuthorityProof::authorizer_generation() const noexcept {
+ }
+ 
+ SyncSqliteConnectionAuthorityLease::SyncSqliteConnectionAuthorityLease(
+-    sqlite3_mutex* mutex) noexcept
+-    : mutex_(mutex) {}
++    sqlite3_mutex* mutex,
++    SyncSqliteThreadIncarnation owner_thread_incarnation,
++    SyncSqliteRetainedMutexCapabilityState* retained_capability_state) noexcept
++    : mutex_(mutex),
++      owner_thread_incarnation_(owner_thread_incarnation),
++      retained_capability_state_(retained_capability_state) {
++    require_retained_mutex_lease_owner_noexcept(
++        mutex_, owner_thread_incarnation_, retained_capability_state_);
++}
+ 
+ SyncSqliteConnectionAuthorityLease::~SyncSqliteConnectionAuthorityLease() {
+-    if (mutex_ != nullptr) sqlite3_mutex_leave(mutex_);
++    require_retained_mutex_lease_owner_noexcept(
++        mutex_, owner_thread_incarnation_, retained_capability_state_);
++    if (mutex_ == nullptr) return;
++    release_sync_sqlite_mutex_capability_noexcept(retained_capability_state_);
++    sqlite3_mutex_leave(mutex_);
+ }
+ 
+ SyncSqliteConnectionAuthorityLease::SyncSqliteConnectionAuthorityLease(
+     SyncSqliteConnectionAuthorityLease&& other) noexcept
+-    : mutex_(other.mutex_) {
++    : mutex_(other.mutex_),
++      owner_thread_incarnation_(other.owner_thread_incarnation_),
++      retained_capability_state_(other.retained_capability_state_) {
++    require_retained_mutex_lease_owner_noexcept(
++        mutex_, owner_thread_incarnation_, retained_capability_state_);
+     other.mutex_ = nullptr;
++    other.owner_thread_incarnation_ = 0;
++    other.retained_capability_state_ = nullptr;
+ }
+ 
+ SyncSqliteConnectionAuthorityLease&
+ SyncSqliteConnectionAuthorityLease::operator=(
+     SyncSqliteConnectionAuthorityLease&& other) noexcept {
+-    if (this != &other) {
+-        if (mutex_ != nullptr) sqlite3_mutex_leave(mutex_);
+-        mutex_ = other.mutex_;
+-        other.mutex_ = nullptr;
+-    }
++    // Validate the destination even for self-move. Otherwise an active lease
++    // could be touched from a foreign thread through `x = std::move(x)` and
++    // avoid the same fail-stop rule enforced by every other ownership move.
++    require_retained_mutex_lease_owner_noexcept(
++        mutex_, owner_thread_incarnation_, retained_capability_state_);
++    if (this == &other) return *this;
++
++    require_retained_mutex_lease_owner_noexcept(
++        other.mutex_,
++        other.owner_thread_incarnation_,
++        other.retained_capability_state_);
++    if (mutex_ != nullptr) {
++        release_sync_sqlite_mutex_capability_noexcept(
++            retained_capability_state_);
++        sqlite3_mutex_leave(mutex_);
++    }
++    mutex_ = other.mutex_;
++    owner_thread_incarnation_ = other.owner_thread_incarnation_;
++    retained_capability_state_ = other.retained_capability_state_;
++    other.mutex_ = nullptr;
++    other.owner_thread_incarnation_ = 0;
++    other.retained_capability_state_ = nullptr;
+     return *this;
+ }
+ 
+ bool SyncSqliteConnectionAuthorityLease::active() const noexcept {
+-    return mutex_ != nullptr;
++    return retained_mutex_lease_shape_is_valid(
++               mutex_, owner_thread_incarnation_, retained_capability_state_) &&
++           mutex_ != nullptr &&
++           sync_sqlite_thread_incarnation_is_current(
++               owner_thread_incarnation_) &&
++           sync_sqlite_mutex_capability_is_live_noexcept(
++               retained_capability_state_);
+ }
+ 
+ SyncSqliteConnectionAuthorityProof
+@@ -596,8 +720,16 @@ acquire_sync_sqlite_connection_authority_or_throw(
+         throw std::runtime_error(
+             label + " connection incarnation or authorizer generation changed");
+     }
++    RetainedMutexCapabilityReservation retained_capability(
++        db, label + " connection authority acquire");
+     run_authorizer_ownership_probe_or_throw(db, *state, label);
+-    return SyncSqliteConnectionAuthorityLease(guard.release());
++    const SyncSqliteThreadIncarnation owner_thread =
++        current_sync_sqlite_thread_incarnation_noexcept();
++    sqlite3_mutex* const retained_mutex = guard.release();
++    SyncSqliteRetainedMutexCapabilityState* const capability_state =
++        retained_capability.release();
++    return SyncSqliteConnectionAuthorityLease(
++        retained_mutex, owner_thread, capability_state);
+ }
+ 
+ bool sync_sqlite_connection_authority_state_present_or_throw(
+@@ -623,6 +755,8 @@ begin_sync_sqlite_transaction_boundary_or_throw(
+     ConnectionAuthorityState* state =
+         load_connection_authority_state_or_throw(db, true, label);
+     if (state == nullptr) {
++        RetainedMutexCapabilityReservation retained_capability(
++            db, label + " unfenced typed transaction");
+         try {
+             sqlite_exec_or_throw(db, begin_sql, label);
+         } catch (...) {
+@@ -637,7 +771,10 @@ begin_sync_sqlite_transaction_boundary_or_throw(
+         }
+         SyncSqliteTransactionBoundaryProof proof;
+         proof.db = db;
++        proof.owner_thread_incarnation =
++            current_sync_sqlite_thread_incarnation_noexcept();
+         proof.retained_connection_mutex = guard.release();
++        proof.retained_capability_state = retained_capability.release();
+         return proof;
+     }
+ 
+@@ -646,6 +783,8 @@ begin_sync_sqlite_transaction_boundary_or_throw(
+         throw std::logic_error(
+             label + " another typed transaction generation remains active");
+     }
++    RetainedMutexCapabilityReservation retained_capability(
++        db, label + " fenced typed transaction");
+     run_authorizer_ownership_probe_or_throw(db, *state, label);
+ 
+     const std::uint64_t generation =
+@@ -679,7 +818,10 @@ begin_sync_sqlite_transaction_boundary_or_throw(
+     proof.connection_incarnation = state->connection_incarnation;
+     proof.authorizer_generation = state->authorizer_generation;
+     proof.transaction_generation = generation;
++    proof.owner_thread_incarnation =
++        current_sync_sqlite_thread_incarnation_noexcept();
+     proof.retained_connection_mutex = guard.release();
++    proof.retained_capability_state = retained_capability.release();
+     proof.fenced = true;
+     return proof;
+ }
+@@ -689,6 +831,8 @@ void end_sync_sqlite_transaction_boundary_or_throw(
+     const SyncSqliteTransactionBoundaryProof& proof,
+     SyncSqliteTransactionBoundaryEnd operation,
+     const std::string& label) {
++    require_sync_sqlite_thread_incarnation_or_throw(
++        proof.owner_thread_incarnation, label + " transaction boundary");
+     DbMutexGuard guard(db, label + " typed transaction end");
+     if (!proof.fenced) {
+         if (proof.db != db) {
+@@ -743,16 +887,37 @@ void end_sync_sqlite_transaction_boundary_or_throw(
+ 
+ void release_sync_sqlite_transaction_mutex_noexcept(
+     SyncSqliteTransactionBoundaryProof& proof) noexcept {
+-    if (proof.retained_connection_mutex == nullptr) return;
++    if (proof.retained_connection_mutex == nullptr) {
++        if (proof.retained_capability_state != nullptr) {
++            terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++        }
++        return;
++    }
++    if (!sync_sqlite_thread_incarnation_is_current(
++            proof.owner_thread_incarnation)) {
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    if (!sync_sqlite_mutex_capability_is_live_noexcept(
++            proof.retained_capability_state)) {
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
+     sqlite3_mutex* mutex = proof.retained_connection_mutex;
+     proof.retained_connection_mutex = nullptr;
++    release_sync_sqlite_mutex_capability_noexcept(
++        proof.retained_capability_state);
+     sqlite3_mutex_leave(mutex);
+ }
+ 
+ bool sync_sqlite_transaction_boundary_authorizes_noexcept(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof) noexcept {
+-    if (db == nullptr || proof.db != db) return false;
++    if (db == nullptr || proof.db != db ||
++        !sync_sqlite_thread_incarnation_is_current(
++            proof.owner_thread_incarnation) ||
++        !sync_sqlite_mutex_capability_is_live_noexcept(
++            proof.retained_capability_state)) {
++        return false;
++    }
+     if (!proof.fenced) return sqlite3_get_autocommit(db) == 0;
+ 
+     sqlite3_mutex* mutex = sqlite3_db_mutex(db);
+@@ -781,6 +946,10 @@ void rollback_sync_sqlite_transaction_boundary_noexcept(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof) noexcept {
+     if (db == nullptr || proof.db != db) return;
++    if (!sync_sqlite_thread_incarnation_is_current(
++            proof.owner_thread_incarnation)) {
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
+     if (!proof.fenced) {
+         if (sqlite3_get_autocommit(db) == 0) {
+             (void)sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+@@ -807,7 +976,11 @@ void rollback_sync_sqlite_transaction_boundary_noexcept(
+ void abandon_sync_sqlite_transaction_boundary_noexcept(
+     sqlite3* db,
+     const SyncSqliteTransactionBoundaryProof& proof) noexcept {
+-    if (db == nullptr || !proof.fenced || proof.db != db) return;
++    if (db == nullptr || !proof.fenced || proof.db != db ||
++        !sync_sqlite_thread_incarnation_is_current(
++            proof.owner_thread_incarnation)) {
++        return;
++    }
+     sqlite3_mutex* mutex = sqlite3_db_mutex(db);
+     if (mutex == nullptr) return;
+     sqlite3_mutex_enter(mutex);
+diff --git a/src/sync_sqlite_connection_authority.hpp b/src/sync_sqlite_connection_authority.hpp
+index 21952c9..1751f86 100644
+--- a/src/sync_sqlite_connection_authority.hpp
++++ b/src/sync_sqlite_connection_authority.hpp
+@@ -3,6 +3,8 @@
+ #include <cstdint>
+ #include <string>
+ 
++#include "sync_sqlite_mutex_capability.hpp"
++
+ struct sqlite3;
+ struct sqlite3_mutex;
+ 
+@@ -19,6 +21,7 @@ using SyncSqliteAuthorizerPolicy = int (*)(void*,
+                                            const char*);
+ 
+ class SyncSqliteConnectionAuthorityLease;
++struct SyncSqliteRetainedMutexCapabilityState;
+ 
+ // Process-local evidence for one logical SQLite connection lifetime and one
+ // exact authorizer installation. It is intentionally not serializable:
+@@ -53,6 +56,11 @@ private:
+ // proves that SQLite still carries the exact client-data incarnation and that
+ // preparing SQL reaches the exact AnonSync authorizer bridge. Keep this object
+ // alive through statement preparation, stepping, and transaction completion.
++// The retained recursive mutex is bound to the exact acquiring C++ thread
++// incarnation. Observing active() elsewhere fails closed; moving or destroying
++// a live lease elsewhere fails stopped: use on the wrong thread terminates
++// before invoking SQLite undefined behavior by leaving another thread's
++// mutex entry.
+ class SyncSqliteConnectionAuthorityLease final {
+ public:
+     SyncSqliteConnectionAuthorityLease() = default;
+@@ -70,8 +78,13 @@ public:
+ 
+ private:
+     sqlite3_mutex* mutex_ = nullptr;
++    SyncSqliteThreadIncarnation owner_thread_incarnation_ = 0;
++    SyncSqliteRetainedMutexCapabilityState* retained_capability_state_ = nullptr;
+ 
+-    explicit SyncSqliteConnectionAuthorityLease(sqlite3_mutex* mutex) noexcept;
++    SyncSqliteConnectionAuthorityLease(
++        sqlite3_mutex* mutex,
++        SyncSqliteThreadIncarnation owner_thread_incarnation,
++        SyncSqliteRetainedMutexCapabilityState* retained_capability_state) noexcept;
+ 
+     friend SyncSqliteConnectionAuthorityLease
+     acquire_sync_sqlite_connection_authority_or_throw(
+diff --git a/src/sync_sqlite_connection_authority_internal.hpp b/src/sync_sqlite_connection_authority_internal.hpp
+index 0ecbcfb..5f5f2ed 100644
+--- a/src/sync_sqlite_connection_authority_internal.hpp
++++ b/src/sync_sqlite_connection_authority_internal.hpp
+@@ -3,23 +3,31 @@
+ #include <cstdint>
+ #include <string>
+ 
++#include "sync_sqlite_mutex_capability.hpp"
++
+ struct sqlite3;
+ struct sqlite3_mutex;
+ 
+ namespace anonsync {
+ 
++struct SyncSqliteRetainedMutexCapabilityState;
++
+ // Process-local proof that one exact typed transaction owns the transaction
+ // stack of an AnonSync-authorized SQLite connection. An unfenced proof is used
+ // only for connections on which no AnonSync authorizer has been installed.
+ // This type is private to the SQLite support implementation and is never
+-// serialized or exposed as domain evidence.
++// serialized or exposed as domain evidence. Retained mutex ownership is also
++// bound to one monotonic C++ thread incarnation because SQLite requires the
++// same thread to leave a recursive mutex that entered it.
+ struct SyncSqliteTransactionBoundaryProof final {
+     sqlite3* db = nullptr;
+     std::uint64_t process_salt = 0;
+     std::uint64_t connection_incarnation = 0;
+     std::uint64_t authorizer_generation = 0;
+     std::uint64_t transaction_generation = 0;
++    SyncSqliteThreadIncarnation owner_thread_incarnation = 0;
+     sqlite3_mutex* retained_connection_mutex = nullptr;
++    SyncSqliteRetainedMutexCapabilityState* retained_capability_state = nullptr;
+     bool fenced = false;
+ };
+ 
+diff --git a/src/sync_sqlite_mutex_capability.cpp b/src/sync_sqlite_mutex_capability.cpp
+new file mode 100644
+index 0000000..77584d1
+--- /dev/null
++++ b/src/sync_sqlite_mutex_capability.cpp
+@@ -0,0 +1,171 @@
++#include "sync_sqlite_mutex_capability.hpp"
++
++#include "sync_sqlite_support.hpp"
++
++#include <atomic>
++#include <exception>
++#include <limits>
++#include <stdexcept>
++
++#include <sqlite3.h>
++
++namespace anonsync {
++
++struct SyncSqliteRetainedMutexCapabilityState final {
++    static constexpr std::uint64_t kMagic =
++        UINT64_C(0x41534d5554455843);  // "ASMUTEXC"
++
++    std::uint64_t magic = kMagic;
++    SyncSqliteRetainedMutexCapabilityState* self = this;
++    // Shared close-order evidence only. A nonzero count does not identify or
++    // authorize any particular lease; each owner carries its own exact thread
++    // incarnation and consumes its own pointer on release.
++    std::uint64_t active_capabilities = 0;
++};
++
++namespace {
++
++static_assert(SQLITE_VERSION_NUMBER >= 3044000,
++              "SQLite connection client data requires SQLite 3.44.0+");
++
++constexpr char kRetainedMutexCapabilityClientDataName[] =
++    "anonsync.sqlite.retained-mutex-capabilities.v1";
++
++SyncSqliteThreadIncarnation allocate_thread_incarnation_noexcept() noexcept {
++    static std::atomic<SyncSqliteThreadIncarnation> next{1};
++    SyncSqliteThreadIncarnation current = next.load(std::memory_order_relaxed);
++    for (;;) {
++        if (current == 0 ||
++            current == std::numeric_limits<SyncSqliteThreadIncarnation>::max()) {
++            std::terminate();
++        }
++        if (next.compare_exchange_weak(current,
++                                       current + 1,
++                                       std::memory_order_relaxed,
++                                       std::memory_order_relaxed)) {
++            return current;
++        }
++    }
++}
++
++void destroy_retained_mutex_capability_state(void* raw) noexcept {
++    auto* state =
++        static_cast<SyncSqliteRetainedMutexCapabilityState*>(raw);
++    if (state == nullptr) return;
++    if (state->magic != SyncSqliteRetainedMutexCapabilityState::kMagic ||
++        state->self != state || state->active_capabilities != 0) {
++        // SQLite invokes client-data destructors during close or replacement.
++        // Returning from that operation with a live retained entry could leave
++        // its later sqlite3_mutex_leave() targeting unallocated storage.
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    state->magic = 0;
++    state->self = nullptr;
++    delete state;
++}
++
++SyncSqliteRetainedMutexCapabilityState*
++load_retained_mutex_capability_state_or_throw(
++    sqlite3* db,
++    bool allow_absent,
++    const std::string& label) {
++    void* raw =
++        sqlite3_get_clientdata(db, kRetainedMutexCapabilityClientDataName);
++    if (raw == nullptr) {
++        if (allow_absent) return nullptr;
++        throw std::runtime_error(
++            label + " retained SQLite mutex capability state is absent");
++    }
++    auto* state =
++        static_cast<SyncSqliteRetainedMutexCapabilityState*>(raw);
++    if (state->magic != SyncSqliteRetainedMutexCapabilityState::kMagic ||
++        state->self != state) {
++        throw std::runtime_error(
++            label + " retained SQLite mutex capability state is corrupt");
++    }
++    return state;
++}
++
++}  // namespace
++
++SyncSqliteThreadIncarnation
++current_sync_sqlite_thread_incarnation_noexcept() noexcept {
++    thread_local const SyncSqliteThreadIncarnation incarnation =
++        allocate_thread_incarnation_noexcept();
++    return incarnation;
++}
++
++bool sync_sqlite_thread_incarnation_is_current(
++    SyncSqliteThreadIncarnation expected) noexcept {
++    return expected != 0 &&
++           expected == current_sync_sqlite_thread_incarnation_noexcept();
++}
++
++void require_sync_sqlite_thread_incarnation_or_throw(
++    SyncSqliteThreadIncarnation expected,
++    const std::string& label) {
++    if (expected == 0) {
++        throw std::logic_error(label + " thread-affinity proof is empty");
++    }
++    if (!sync_sqlite_thread_incarnation_is_current(expected)) {
++        throw std::logic_error(
++            label + " must execute on the originating SQLite mutex thread");
++    }
++}
++
++SyncSqliteRetainedMutexCapabilityState*
++retain_sync_sqlite_mutex_capability_or_throw(
++    sqlite3* db,
++    const std::string& label) {
++    if (db == nullptr) {
++        throw std::invalid_argument(label + " database handle is null");
++    }
++    SyncSqliteRetainedMutexCapabilityState* state =
++        load_retained_mutex_capability_state_or_throw(db, true, label);
++    if (state == nullptr) {
++        state = new SyncSqliteRetainedMutexCapabilityState();
++        // With a non-null destructor SQLite assumes ownership even when this
++        // call reports SQLITE_NOMEM; do not retain a second C++ owner.
++        const int rc = sqlite3_set_clientdata(
++            db,
++            kRetainedMutexCapabilityClientDataName,
++            state,
++            destroy_retained_mutex_capability_state);
++        if (rc != SQLITE_OK) {
++            throw_sqlite_exception(
++                db, rc, label + " install retained mutex capability sentinel");
++        }
++    }
++    if (state->active_capabilities ==
++        std::numeric_limits<std::uint64_t>::max()) {
++        throw std::overflow_error(
++            label + " exhausted retained SQLite mutex capabilities");
++    }
++    ++state->active_capabilities;
++    return state;
++}
++
++void release_sync_sqlite_mutex_capability_noexcept(
++    SyncSqliteRetainedMutexCapabilityState*& state) noexcept {
++    if (state == nullptr ||
++        state->magic != SyncSqliteRetainedMutexCapabilityState::kMagic ||
++        state->self != state || state->active_capabilities == 0) {
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    --state->active_capabilities;
++    state = nullptr;
++}
++
++bool sync_sqlite_mutex_capability_is_live_noexcept(
++    const SyncSqliteRetainedMutexCapabilityState* state) noexcept {
++    return state != nullptr &&
++           state->magic == SyncSqliteRetainedMutexCapabilityState::kMagic &&
++           state->self == state && state->active_capabilities != 0;
++}
++
++[[noreturn]] void terminate_on_sync_sqlite_mutex_capability_violation_noexcept()
++    noexcept {
++    std::terminate();
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_sqlite_mutex_capability.hpp b/src/sync_sqlite_mutex_capability.hpp
+new file mode 100644
+index 0000000..f4fdc59
+--- /dev/null
++++ b/src/sync_sqlite_mutex_capability.hpp
+@@ -0,0 +1,55 @@
++#pragma once
++
++#include <cstdint>
++#include <string>
++
++struct sqlite3;
++
++namespace anonsync {
++
++// Process-local, non-serializable identity for one exact C++ thread lifetime.
++// SQLite requires a recursive mutex to be left by the same thread that entered
++// it. std::thread::id values may be reused after a thread exits, so retained
++// SQLite mutex capabilities bind to this monotonic incarnation instead.
++using SyncSqliteThreadIncarnation = std::uint64_t;
++
++// Opaque SQLite-owned sentinel for one exact connection lifetime. Each
++// AnonSync capability that retains sqlite3_db_mutex() holds one counter entry.
++// Destruction with a nonzero count is a fatal close-order violation. The count
++// is only a lifetime pin, not an authorization generation: exact authority is
++// still carried by the owning lease/transaction and its thread incarnation.
++struct SyncSqliteRetainedMutexCapabilityState;
++
++[[nodiscard]] SyncSqliteThreadIncarnation
++current_sync_sqlite_thread_incarnation_noexcept() noexcept;
++
++[[nodiscard]] bool sync_sqlite_thread_incarnation_is_current(
++    SyncSqliteThreadIncarnation expected) noexcept;
++
++void require_sync_sqlite_thread_incarnation_or_throw(
++    SyncSqliteThreadIncarnation expected,
++    const std::string& label);
++
++// These functions must be called while the connection's serialized mutex is
++// held. The returned pointer is non-owning; SQLite owns the sentinel through
++// client data. A live counter entry makes close/replacement fail stopped before
++// control can return to an owner whose retained mutex pointer became invalid;
++// it does not independently extend SQLite's object lifetime.
++[[nodiscard]] SyncSqliteRetainedMutexCapabilityState*
++retain_sync_sqlite_mutex_capability_or_throw(
++    sqlite3* db,
++    const std::string& label);
++
++void release_sync_sqlite_mutex_capability_noexcept(
++    SyncSqliteRetainedMutexCapabilityState*& state) noexcept;
++
++[[nodiscard]] bool sync_sqlite_mutex_capability_is_live_noexcept(
++    const SyncSqliteRetainedMutexCapabilityState* state) noexcept;
++
++// A retained SQLite mutex cannot be safely released by another thread or
++// after SQLite has begun destroying its connection. Those violations cannot
++// be repaired inside a noexcept destructor, so they fail stopped.
++[[noreturn]] void terminate_on_sync_sqlite_mutex_capability_violation_noexcept()
++    noexcept;
++
++}  // namespace anonsync
+diff --git a/src/sync_sqlite_support.hpp b/src/sync_sqlite_support.hpp
+index 47e95b3..1a30f2f 100644
+--- a/src/sync_sqlite_support.hpp
++++ b/src/sync_sqlite_support.hpp
+@@ -95,7 +95,10 @@ private:
+ // users of the same handle from interleaving between BEGIN, evidence checks,
+ // mutations, and the final boundary. Other SQLite connections remain free.
+ // The issued authority lease binds downstream capabilities to this exact guard
+-// lifetime, not merely to its connection.
++// lifetime, not merely to its connection. The retained mutex capability is
++// bound to one exact process-local thread incarnation: foreign-thread queries
++// fail closed, explicit finalization throws before touching SQLite, and an
++// unsafe foreign-thread destructor fails stopped.
+ class SyncSqliteTransaction final {
+ public:
+     SyncSqliteTransaction(sqlite3* db,
+diff --git a/src/sync_sqlite_transaction.cpp b/src/sync_sqlite_transaction.cpp
+index 2a338ef..0722dbf 100644
+--- a/src/sync_sqlite_transaction.cpp
++++ b/src/sync_sqlite_transaction.cpp
+@@ -1,6 +1,7 @@
+ #include "sync_sqlite_support.hpp"
+ 
+ #include "sync_sqlite_connection_authority_internal.hpp"
++#include "sync_sqlite_mutex_capability.hpp"
+ 
+ #include <atomic>
+ #include <memory>
+@@ -35,6 +36,12 @@ bool SyncSqliteTransactionAuthority::authorizes(sqlite3* db) const noexcept {
+         state->db == nullptr || state->db != db) {
+         return false;
+     }
++    // Foreign-thread observation is unusable there, but must not revoke the
++    // still-current owner-thread generation.
++    if (!sync_sqlite_thread_incarnation_is_current(
++            state->boundary.owner_thread_incarnation)) {
++        return false;
++    }
+     if (!sync_sqlite_transaction_boundary_authorizes_noexcept(
+             db, state->boundary)) {
+         // Autocommit restoration, generation supersession, or authorizer
+@@ -74,11 +81,19 @@ SyncSqliteTransaction::SyncSqliteTransaction(sqlite3* db,
+     authority_state_->db = db_;
+     authority_state_->boundary = *boundary_proof_;
+     authority_state_->boundary.retained_connection_mutex = nullptr;
++    // The copied authority keeps a non-owning view of the lifetime sentinel so
++    // use-time checks can prove that the owning guard still pins the mutex.
++    // Only boundary_proof_ owns the recursive mutex entry and decrements the
++    // sentinel during revocation.
+     authority_state_->active.store(true, std::memory_order_release);
+ }
+ 
+ SyncSqliteTransaction::~SyncSqliteTransaction() {
+     if (active_ && db_ != nullptr && boundary_proof_ != nullptr) {
++        if (!sync_sqlite_thread_incarnation_is_current(
++                boundary_proof_->owner_thread_incarnation)) {
++            terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++        }
+         rollback_sync_sqlite_transaction_boundary_noexcept(db_, *boundary_proof_);
+     }
+     revoke_authority();
+@@ -86,6 +101,8 @@ SyncSqliteTransaction::~SyncSqliteTransaction() {
+ 
+ void SyncSqliteTransaction::commit() {
+     if (!active_) throw std::logic_error(label_ + " transaction is not active");
++    require_sync_sqlite_thread_incarnation_or_throw(
++        boundary_proof_->owner_thread_incarnation, label_ + " commit");
+     if (!authority().authorizes(db_)) {
+         revoke_authority();
+         throw std::logic_error(
+@@ -111,6 +128,8 @@ void SyncSqliteTransaction::commit() {
+ 
+ void SyncSqliteTransaction::rollback() {
+     if (!active_) return;
++    require_sync_sqlite_thread_incarnation_or_throw(
++        boundary_proof_->owner_thread_incarnation, label_ + " rollback");
+     if (!authority().authorizes(db_)) {
+         const bool already_ended = sqlite3_get_autocommit(db_) != 0;
+         revoke_authority();
+@@ -136,7 +155,10 @@ void SyncSqliteTransaction::rollback() {
+ }
+ 
+ bool SyncSqliteTransaction::active() const noexcept {
+-    return active_ && authority().authorizes(db_);
++    return active_ && boundary_proof_ != nullptr &&
++           sync_sqlite_thread_incarnation_is_current(
++               boundary_proof_->owner_thread_incarnation) &&
++           authority().authorizes(db_);
+ }
+ 
+ bool SyncSqliteTransaction::authorizes(sqlite3* db) const noexcept {
+diff --git a/tests/sqlite_connection_authority_test.cpp b/tests/sqlite_connection_authority_test.cpp
+index f457cbf..a82226c 100644
+--- a/tests/sqlite_connection_authority_test.cpp
++++ b/tests/sqlite_connection_authority_test.cpp
+@@ -4,12 +4,21 @@
+ #include <atomic>
+ #include <chrono>
+ #include <cstdint>
++#include <cstdlib>
++#include <exception>
++#include <future>
+ #include <iostream>
+ #include <memory>
+ #include <stdexcept>
+ #include <string>
+ #include <string_view>
+ #include <thread>
++#include <utility>
++
++#if defined(__unix__) || defined(__APPLE__)
++#include <sys/wait.h>
++#include <unistd.h>
++#endif
+ 
+ #include <sqlite3.h>
+ 
+@@ -26,6 +35,18 @@ void require(bool condition, const std::string& message, std::uint64_t& checks)
+     if (!condition) fail(message);
+ }
+ 
++[[noreturn]] void fail_without_unwinding_live_thread(
++    const std::string& message) noexcept {
++    // The only callers have proved that a worker may be blocked inside the
++    // operation under test. Unwinding a joinable std::thread would terminate,
++    // while trying to mutate the shared SQLite owner to unblock it would add a
++    // test-only data race. Exit directly so the failure remains deterministic
++    // and does not manufacture a second concurrency defect.
++    std::cerr << "sqlite connection authority fatal test timeout: " << message
++              << "\n";
++    std::_Exit(EXIT_FAILURE);
++}
++
+ template <typename Function>
+ void require_throws(Function&& function,
+                     std::string_view expected_fragment,
+@@ -672,6 +693,426 @@ void test_transaction_policy_and_authorizer_replacement_fail_closed(
+             "stale generation was not safely cleared after explicit rollback", checks);
+ }
+ 
++
++void test_thread_incarnation_affinity(std::uint64_t& checks) {
++    using namespace std::chrono_literals;
++
++    SqlitePtr db = open_memory_database();
++    sqlite_exec_or_throw(db.get(),
++                         "CREATE TABLE thread_affinity_probe(value INTEGER);",
++                         "thread affinity schema");
++    const SyncSqliteConnectionAuthorityProof proof =
++        install_sync_sqlite_connection_authority_or_throw(
++            db.get(), deny_schema_policy, nullptr, "thread affinity baseline");
++
++    {
++        SyncSqliteConnectionAuthorityLease lease =
++            acquire_sync_sqlite_connection_authority_or_throw(
++                db.get(), proof, "thread affinity lease");
++        require(lease.active(), "owner thread did not retain an active lease", checks);
++
++        bool foreign_active = true;
++        std::thread observer([&] { foreign_active = lease.active(); });
++        observer.join();
++        require(!foreign_active,
++                "connection authority lease appeared active on a foreign thread",
++                checks);
++        require(lease.active(),
++                "foreign-thread observation revoked the owner-thread lease",
++                checks);
++    }
++
++    SyncSqliteTransaction transaction(
++        db.get(), "thread-affine transaction", SyncSqliteTransactionMode::Immediate);
++    const SyncSqliteTransactionAuthority authority = transaction.authority();
++
++    std::promise<std::pair<bool, bool>> authority_promise;
++    std::future<std::pair<bool, bool>> authority_result =
++        authority_promise.get_future();
++    std::thread authority_observer([&] {
++        authority_promise.set_value(
++            {transaction.active(), authority.authorizes(db.get())});
++    });
++    const bool authority_ready =
++        authority_result.wait_for(2s) == std::future_status::ready;
++    if (!authority_ready) {
++        fail_without_unwinding_live_thread(
++            "foreign-thread transaction authority observation blocked");
++    }
++    const auto [foreign_transaction_active, foreign_authorized] =
++        authority_result.get();
++    authority_observer.join();
++    require(!foreign_transaction_active,
++            "typed transaction appeared active on a foreign thread",
++            checks);
++    require(!foreign_authorized,
++            "transaction authority crossed its originating thread incarnation",
++            checks);
++    require(transaction.active(),
++            "foreign-thread authority observation revoked the owner generation",
++            checks);
++
++    std::promise<std::string> commit_promise;
++    std::future<std::string> commit_result = commit_promise.get_future();
++    std::thread foreign_committer([&] {
++        try {
++            transaction.commit();
++            commit_promise.set_value("unexpected success");
++        } catch (const std::exception& error) {
++            commit_promise.set_value(error.what());
++        }
++    });
++    const bool commit_ready =
++        commit_result.wait_for(2s) == std::future_status::ready;
++    if (!commit_ready) {
++        fail_without_unwinding_live_thread(
++            "foreign-thread typed COMMIT blocked on the owner-held mutex");
++    }
++    const std::string commit_reason = commit_result.get();
++    foreign_committer.join();
++    require(commit_reason.find("originating SQLite mutex thread") !=
++                std::string::npos,
++            "foreign-thread typed COMMIT did not fail at the affinity boundary: " +
++                commit_reason,
++            checks);
++    require(transaction.active(),
++            "rejected foreign-thread COMMIT revoked the owner generation",
++            checks);
++
++    std::promise<std::string> rollback_promise;
++    std::future<std::string> rollback_result = rollback_promise.get_future();
++    std::thread foreign_rollback([&] {
++        try {
++            transaction.rollback();
++            rollback_promise.set_value("unexpected success");
++        } catch (const std::exception& error) {
++            rollback_promise.set_value(error.what());
++        }
++    });
++    const bool rollback_ready =
++        rollback_result.wait_for(2s) == std::future_status::ready;
++    if (!rollback_ready) {
++        fail_without_unwinding_live_thread(
++            "foreign-thread typed ROLLBACK blocked on the owner-held mutex");
++    }
++    const std::string rollback_reason = rollback_result.get();
++    foreign_rollback.join();
++    require(rollback_reason.find("originating SQLite mutex thread") !=
++                std::string::npos,
++            "foreign-thread typed ROLLBACK did not fail at the affinity boundary: " +
++                rollback_reason,
++            checks);
++    require(transaction.active(),
++            "rejected foreign-thread ROLLBACK revoked the owner generation",
++            checks);
++
++    transaction.rollback();
++    require(sqlite3_get_autocommit(db.get()) != 0,
++            "owner thread could not roll back after rejected foreign finalization",
++            checks);
++}
++
++void test_owner_thread_lease_moves(std::uint64_t& checks) {
++    SqlitePtr db = open_memory_database();
++    const SyncSqliteConnectionAuthorityProof proof =
++        install_sync_sqlite_connection_authority_or_throw(
++            db.get(), deny_schema_policy, nullptr, "owner lease move baseline");
++
++    SyncSqliteConnectionAuthorityLease source =
++        acquire_sync_sqlite_connection_authority_or_throw(
++            db.get(), proof, "owner lease move source");
++    SyncSqliteConnectionAuthorityLease moved(std::move(source));
++    require(!source.active() && moved.active(),
++            "owner-thread lease move construction did not transfer authority",
++            checks);
++
++    SyncSqliteConnectionAuthorityLease* const same_object = &moved;
++    moved = std::move(*same_object);
++    require(moved.active(),
++            "owner-thread lease self-move revoked its retained capability",
++            checks);
++
++    SyncSqliteConnectionAuthorityLease replacement =
++        acquire_sync_sqlite_connection_authority_or_throw(
++            db.get(), proof, "owner lease move replacement");
++    moved = std::move(replacement);
++    require(moved.active() && !replacement.active(),
++            "owner-thread lease move assignment did not transfer one exact entry",
++            checks);
++}
++
++#if defined(__unix__) || defined(__APPLE__)
++constexpr int kAffinityTerminateExit = 86;
++constexpr int kAffinityUnexpectedReturnExit = 87;
++constexpr int kAffinitySetupFailureExit = 88;
++
++void child_foreign_lease_destruction() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        const SyncSqliteConnectionAuthorityProof proof =
++            install_sync_sqlite_connection_authority_or_throw(
++                db.get(), deny_schema_policy, nullptr, "foreign lease destructor");
++        auto* lease = new SyncSqliteConnectionAuthorityLease(
++            acquire_sync_sqlite_connection_authority_or_throw(
++                db.get(), proof, "foreign lease destructor acquire"));
++        std::set_terminate([] { std::_Exit(kAffinityTerminateExit); });
++        std::thread destroyer([lease] { delete lease; });
++        destroyer.join();
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
++void child_foreign_transaction_destruction() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        (void)install_sync_sqlite_connection_authority_or_throw(
++            db.get(), deny_schema_policy, nullptr, "foreign transaction destructor");
++        auto* transaction = new SyncSqliteTransaction(
++            db.get(), "foreign transaction destructor");
++        std::set_terminate([] { std::_Exit(kAffinityTerminateExit); });
++        std::thread destroyer([transaction] { delete transaction; });
++        destroyer.join();
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
++void child_foreign_lease_move() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        const SyncSqliteConnectionAuthorityProof proof =
++            install_sync_sqlite_connection_authority_or_throw(
++                db.get(), deny_schema_policy, nullptr, "foreign lease move");
++        auto* lease = new SyncSqliteConnectionAuthorityLease(
++            acquire_sync_sqlite_connection_authority_or_throw(
++                db.get(), proof, "foreign lease move acquire"));
++        std::set_terminate([] { std::_Exit(kAffinityTerminateExit); });
++        std::thread mover([lease] {
++            SyncSqliteConnectionAuthorityLease moved(std::move(*lease));
++            (void)moved;
++        });
++        mover.join();
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
++void child_close_with_live_lease() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        const SyncSqliteConnectionAuthorityProof proof =
++            install_sync_sqlite_connection_authority_or_throw(
++                db.get(), deny_schema_policy, nullptr, "live lease close fence");
++        SyncSqliteConnectionAuthorityLease lease =
++            acquire_sync_sqlite_connection_authority_or_throw(
++                db.get(), proof, "live lease close fence acquire");
++        std::set_terminate([] { std::_Exit(kAffinityTerminateExit); });
++        (void)sqlite3_close_v2(db.get());
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
++void child_close_with_live_unfenced_transaction() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        SyncSqliteTransaction transaction(
++            db.get(), "live unfenced transaction close fence");
++        std::set_terminate([] { std::_Exit(kAffinityTerminateExit); });
++        (void)sqlite3_close_v2(db.get());
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
++void child_close_with_live_fenced_transaction() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        (void)install_sync_sqlite_connection_authority_or_throw(
++            db.get(), deny_schema_policy, nullptr, "live fenced transaction close fence");
++        SyncSqliteTransaction transaction(
++            db.get(), "live fenced transaction close fence");
++        std::set_terminate([] { std::_Exit(kAffinityTerminateExit); });
++        (void)sqlite3_close_v2(db.get());
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
++void child_replace_live_capability_sentinel() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        const SyncSqliteConnectionAuthorityProof proof =
++            install_sync_sqlite_connection_authority_or_throw(
++                db.get(), deny_schema_policy, nullptr, "live sentinel replacement fence");
++        SyncSqliteConnectionAuthorityLease lease =
++            acquire_sync_sqlite_connection_authority_or_throw(
++                db.get(), proof, "live sentinel replacement fence acquire");
++        std::set_terminate([] { std::_Exit(kAffinityTerminateExit); });
++        // A second registration under the private namespace invokes the old
++        // SQLite-owned destructor. It must not invalidate a retained mutex
++        // pointer and return to the caller.
++        (void)sqlite3_set_clientdata(
++            db.get(),
++            "anonsync.sqlite.retained-mutex-capabilities.v1",
++            nullptr,
++            nullptr);
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
++void child_zombie_close_with_live_lease() noexcept {
++    try {
++        SqlitePtr db = open_memory_database();
++        sqlite3_stmt* statement = nullptr;
++        if (sqlite3_prepare_v2(db.get(), "SELECT 1;", -1, &statement, nullptr) !=
++                SQLITE_OK ||
++            statement == nullptr) {
++            std::_Exit(kAffinitySetupFailureExit);
++        }
++        const SyncSqliteConnectionAuthorityProof proof =
++            install_sync_sqlite_connection_authority_or_throw(
++                db.get(), deny_schema_policy, nullptr, "zombie close fence");
++        SyncSqliteConnectionAuthorityLease lease =
++            acquire_sync_sqlite_connection_authority_or_throw(
++                db.get(), proof, "zombie close fence acquire");
++        std::set_terminate([] { std::_Exit(kAffinityTerminateExit); });
++        if (sqlite3_close_v2(db.get()) != SQLITE_OK) {
++            std::_Exit(kAffinityUnexpectedReturnExit);
++        }
++        // sqlite3_close_v2() may defer physical destruction while this
++        // statement keeps the connection zombie alive. Whichever operation
++        // reaches client-data destruction must detect the retained mutex
++        // capability before the mutex becomes dangling.
++        (void)sqlite3_finalize(statement);
++        std::_Exit(kAffinityUnexpectedReturnExit);
++    } catch (...) {
++        std::_Exit(kAffinitySetupFailureExit);
++    }
++}
++
++
++void require_affinity_fail_stop(void (*scenario)(),
++                                const std::string& message,
++                                std::uint64_t& checks) {
++    const pid_t child = fork();
++    if (child < 0) fail(message + ": fork failed");
++    if (child == 0) scenario();
++
++    int status = 0;
++    if (waitpid(child, &status, 0) != child) {
++        fail(message + ": waitpid failed");
++    }
++    require(WIFEXITED(status) && WEXITSTATUS(status) == kAffinityTerminateExit,
++            message + ": child status=" + std::to_string(status),
++            checks);
++}
++#endif
++
++void test_mutex_capability_violations_fail_stopped(std::uint64_t& checks) {
++#if defined(__unix__) || defined(__APPLE__)
++    require_affinity_fail_stop(
++        child_foreign_lease_destruction,
++        "foreign-thread connection lease destruction did not fail-stop",
++        checks);
++    require_affinity_fail_stop(
++        child_foreign_transaction_destruction,
++        "foreign-thread transaction destruction did not fail-stop",
++        checks);
++    require_affinity_fail_stop(
++        child_foreign_lease_move,
++        "foreign-thread connection lease move did not fail-stop",
++        checks);
++    require_affinity_fail_stop(
++        child_close_with_live_lease,
++        "same-thread close with a live connection lease did not fail-stop",
++        checks);
++    require_affinity_fail_stop(
++        child_close_with_live_unfenced_transaction,
++        "same-thread close with a live unfenced transaction did not fail-stop",
++        checks);
++    require_affinity_fail_stop(
++        child_close_with_live_fenced_transaction,
++        "same-thread close with a live fenced transaction did not fail-stop",
++        checks);
++    require_affinity_fail_stop(
++        child_replace_live_capability_sentinel,
++        "replacement of the live mutex-capability sentinel did not fail-stop",
++        checks);
++    require_affinity_fail_stop(
++        child_zombie_close_with_live_lease,
++        "same-thread zombie close with a live connection lease did not fail-stop",
++        checks);
++#else
++    (void)checks;
++#endif
++}
++
++void test_close_waits_for_retained_mutex_capability(std::uint64_t& checks) {
++    using namespace std::chrono_literals;
++
++    SqlitePtr db = open_memory_database();
++    const SyncSqliteConnectionAuthorityProof proof =
++        install_sync_sqlite_connection_authority_or_throw(
++            db.get(), deny_schema_policy, nullptr, "serialized close baseline");
++    std::atomic<bool> close_started{false};
++    std::atomic<bool> close_finished{false};
++    std::atomic<int> close_rc{SQLITE_ERROR};
++    std::jthread closer;
++
++    {
++        SyncSqliteConnectionAuthorityLease lease =
++            acquire_sync_sqlite_connection_authority_or_throw(
++                db.get(), proof, "serialized close lease");
++        closer = std::jthread([&] {
++            close_started.store(true, std::memory_order_release);
++            close_rc.store(sqlite3_close_v2(db.get()), std::memory_order_release);
++            close_finished.store(true, std::memory_order_release);
++        });
++        const auto deadline = std::chrono::steady_clock::now() + 2s;
++        while (!close_started.load(std::memory_order_acquire) &&
++               std::chrono::steady_clock::now() < deadline) {
++            std::this_thread::yield();
++        }
++        require(close_started.load(std::memory_order_acquire),
++                "foreign close thread did not start", checks);
++        std::this_thread::sleep_for(30ms);
++        require(!close_finished.load(std::memory_order_acquire),
++                "foreign close crossed a retained mutex capability",
++                checks);
++        require(lease.active(),
++                "blocked foreign close revoked the owner lease",
++                checks);
++    }
++
++    closer.join();
++    require(close_finished.load(std::memory_order_acquire) &&
++                close_rc.load(std::memory_order_acquire) == SQLITE_OK,
++            "foreign close did not complete after capability release",
++            checks);
++    (void)db.release();
++
++    SqlitePtr transaction_db = open_memory_database();
++    {
++        SyncSqliteTransaction transaction(
++            transaction_db.get(), "normal close after typed rollback");
++        transaction.rollback();
++    }
++    sqlite3* const raw = transaction_db.release();
++    require(sqlite3_close_v2(raw) == SQLITE_OK,
++            "connection could not close after typed capability revocation",
++            checks);
++}
++
+ void test_fullmutex_is_required(std::uint64_t& checks) {
+     SqlitePtr db = open_memory_database(SQLITE_OPEN_NOMUTEX);
+     require_throws(
+@@ -698,6 +1139,10 @@ int main() {
+         test_transaction_retains_same_handle_serialization(checks);
+         test_transaction_stack_is_typed_and_generation_bound(checks);
+         test_transaction_policy_and_authorizer_replacement_fail_closed(checks);
++        test_thread_incarnation_affinity(checks);
++        test_owner_thread_lease_moves(checks);
++        test_mutex_capability_violations_fail_stopped(checks);
++        test_close_waits_for_retained_mutex_capability(checks);
+         test_fullmutex_is_required(checks);
+         std::cout << "sqlite connection authority checks=" << checks
+                   << " failures=0\n";
+diff --git a/tools/audit_sqlite_authorizer_ownership.py b/tools/audit_sqlite_authorizer_ownership.py
+index 4b3931d..5e05765 100755
+--- a/tools/audit_sqlite_authorizer_ownership.py
++++ b/tools/audit_sqlite_authorizer_ownership.py
+@@ -17,6 +17,7 @@ from typing import Iterable
+ 
+ SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
+ OWNER = Path("src/sync_sqlite_connection_authority.cpp")
++MUTEX_CAPABILITY_OWNER = Path("src/sync_sqlite_mutex_capability.cpp")
+ AUTHORITY_INTERNAL = Path("src/sync_sqlite_connection_authority_internal.hpp")
+ TRANSACTION_SOURCE = Path("src/sync_sqlite_transaction.cpp")
+ SCHEMA_HEADER = Path("src/sync_peer_ingress_schema.hpp")
+@@ -88,20 +89,32 @@ def main() -> int:
+     if len(set_authorizer_production) < 1:
+         violations.append("authority owner contains no sqlite3_set_authorizer call")
+ 
++    clientdata_owners = {OWNER, MUTEX_CAPABILITY_OWNER}
+     for symbol, locations in (
+         ("sqlite3_get_clientdata", get_clientdata_production),
+         ("sqlite3_set_clientdata", set_clientdata_production),
+     ):
+         for location in locations:
+-            if Path(str(location["path"])) != OWNER:
++            if Path(str(location["path"])) not in clientdata_owners:
+                 violations.append(
+-                    f"direct {symbol} outside the authority owner at "
++                    f"direct {symbol} outside reviewed client-data owners at "
+                     f"{location['path']}:{location['line']}"
+                 )
+         if not locations:
+-            violations.append(f"authority owner contains no {symbol} call")
++            violations.append(f"reviewed owners contain no {symbol} call")
++
++    for required_owner in sorted(clientdata_owners, key=lambda path: path.as_posix()):
++        for symbol, locations in (
++            ("sqlite3_get_clientdata", get_clientdata_production),
++            ("sqlite3_set_clientdata", set_clientdata_production),
++        ):
++            if not any(Path(str(location["path"])) == required_owner for location in locations):
++                violations.append(
++                    f"{required_owner.as_posix()} contains no {symbol} call"
++                )
+ 
+     owner_text = (root / OWNER).read_text(encoding="utf-8")
++    capability_text = (root / MUTEX_CAPABILITY_OWNER).read_text(encoding="utf-8")
+     for needle, label in (
+         ("SQLITE_VERSION_NUMBER >= 3044000", "SQLite client-data version floor"),
+         ("sqlite3_db_mutex", "serialized connection mutex acquisition"),
+@@ -116,6 +129,18 @@ def main() -> int:
+         ("transaction_permit_observed", "single-use transaction permit consumption"),
+     ):
+         require_contains(violations, owner_text, needle, label)
++    for needle, label in (
++        (
++            "anonsync.sqlite.retained-mutex-capabilities.v1",
++            "retained-mutex client-data namespace",
++        ),
++        (
++            "destroy_retained_mutex_capability_state",
++            "close-order lifetime sentinel destructor",
++        ),
++        ("active_capabilities", "retained-mutex lifetime counter"),
++    ):
++        require_contains(violations, capability_text, needle, label)
+ 
+     authority_internal = (root / AUTHORITY_INTERNAL).read_text(encoding="utf-8")
+     transaction_source = (root / TRANSACTION_SOURCE).read_text(encoding="utf-8")
+@@ -263,9 +288,10 @@ def main() -> int:
+         require_contains(violations, schema_test, needle, label)
+ 
+     result = {
+-        "format": "anonsync-sqlite-authority-source-audit-v2",
++        "format": "anonsync-sqlite-authority-source-audit-v3",
+         "ok": not violations,
+         "owner": OWNER.as_posix(),
++        "clientdata_owners": sorted(path.as_posix() for path in clientdata_owners),
+         "production_set_authorizer_calls": set_authorizer_production,
+         "test_set_authorizer_calls": set_authorizer_tests,
+         "production_get_clientdata_calls": get_clientdata_production,
+diff --git a/tools/audit_sqlite_mutex_capability.py b/tools/audit_sqlite_mutex_capability.py
+new file mode 100755
+index 0000000..44b6cda
+--- /dev/null
++++ b/tools/audit_sqlite_mutex_capability.py
+@@ -0,0 +1,670 @@
++#!/usr/bin/env python3
++"""Audit AnonSync's retained SQLite mutex capability boundary.
++
++This is a deterministic source-shape audit, not a proof of runtime behavior.
++It protects the rev0778 invariants that one exact C++ thread incarnation owns
++an entered SQLite recursive mutex and that SQLite connection destruction cannot
++silently invalidate a retained mutex pointer.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import re
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++SENSITIVE_FILES = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_sqlite_mutex_capability.hpp"),
++    Path("src/sync_sqlite_mutex_capability.cpp"),
++    Path("src/sync_sqlite_connection_authority.hpp"),
++    Path("src/sync_sqlite_connection_authority_internal.hpp"),
++    Path("src/sync_sqlite_connection_authority.cpp"),
++    Path("src/sync_sqlite_transaction.cpp"),
++    Path("src/sync_sqlite_support.hpp"),
++    Path("tests/sqlite_connection_authority_test.cpp"),
++)
++
++SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
++SKIP_PARTS = {".git", "third_party", "vendor"}
++MUTEX_CALL = re.compile(r"\bsqlite3_mutex_(enter|leave)\s*\(")
++CLIENT_DATA_CALL = re.compile(r"\bsqlite3_(get|set)_clientdata\s*\(")
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def sha256_file(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def require(checks: list[Check], condition: bool, check_id: str, detail: str) -> None:
++    checks.append(Check(check_id, bool(condition), detail))
++
++
++def source_files(root: Path) -> list[Path]:
++    result: list[Path] = []
++    for base in (root / "src", root / "include"):
++        if not base.is_dir():
++            continue
++        for path in sorted(base.rglob("*")):
++            if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
++                continue
++            rel = path.relative_to(root)
++            if any(
++                part in SKIP_PARTS
++                or part == "build"
++                or part == "_build"
++                or part.startswith("build-")
++                for part in rel.parts
++            ):
++                continue
++            result.append(rel)
++    return result
++
++
++def line_inventory(
++    root: Path, paths: list[Path], pattern: re.Pattern[str]
++) -> list[dict[str, object]]:
++    result: list[dict[str, object]] = []
++    for rel in paths:
++        text = (root / rel).read_text(encoding="utf-8", errors="strict")
++        for line_number, line in enumerate(text.splitlines(), 1):
++            # This inventory is deliberately lexical, but comment references
++            # are documentation rather than direct production calls.
++            code = line.split("//", 1)[0]
++            match = pattern.search(code)
++            if match:
++                result.append(
++                    {
++                        "path": rel.as_posix(),
++                        "line": line_number,
++                        "operation": match.group(1),
++                        "text": line.strip()[:300],
++                    }
++                )
++    return result
++
++
++def function_body(text: str, signature_fragment: str) -> str:
++    start = text.find(signature_fragment)
++    if start < 0:
++        return ""
++    brace = text.find("{", start)
++    if brace < 0:
++        return ""
++    depth = 0
++    for index in range(brace, len(text)):
++        if text[index] == "{":
++            depth += 1
++        elif text[index] == "}":
++            depth -= 1
++            if depth == 0:
++                return text[brace : index + 1]
++    return ""
++
++
++def ordered(body: str, *needles: str) -> bool:
++    position = -1
++    for needle in needles:
++        found = body.find(needle, position + 1)
++        if found < 0:
++            return False
++        position = found
++    return True
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root",
++        type=Path,
++        default=Path(__file__).resolve().parents[1],
++        help="AnonSync source root",
++    )
++    parser.add_argument("--json", type=Path, help="write deterministic JSON report")
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
++    if missing:
++        report = {
++            "format": "anonsync-sqlite-mutex-capability-audit-v1",
++            "passed": False,
++            "violations": [f"missing sensitive file: {path}" for path in missing],
++        }
++        rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++        if args.json:
++            args.json.parent.mkdir(parents=True, exist_ok=True)
++            args.json.write_text(rendered, encoding="utf-8")
++        sys.stdout.write(rendered)
++        return 2
++
++    texts = {
++        path: (root / path).read_text(encoding="utf-8", errors="strict")
++        for path in SENSITIVE_FILES
++    }
++    cmake = texts[Path("CMakeLists.txt")]
++    capability_hpp = texts[Path("src/sync_sqlite_mutex_capability.hpp")]
++    capability_cpp = texts[Path("src/sync_sqlite_mutex_capability.cpp")]
++    lease_hpp = texts[Path("src/sync_sqlite_connection_authority.hpp")]
++    boundary_hpp = texts[Path("src/sync_sqlite_connection_authority_internal.hpp")]
++    authority_cpp = texts[Path("src/sync_sqlite_connection_authority.cpp")]
++    transaction_cpp = texts[Path("src/sync_sqlite_transaction.cpp")]
++    support_hpp = texts[Path("src/sync_sqlite_support.hpp")]
++    authority_test = texts[Path("tests/sqlite_connection_authority_test.cpp")]
++
++    checks: list[Check] = []
++
++    require(
++        checks,
++        "src/sync_sqlite_mutex_capability.cpp" in cmake,
++        "capability_module_is_linked",
++        "the retained-mutex capability implementation must remain in anonsync_sqlite_support",
++    )
++    require(
++        checks,
++        "sync_sqlite_thread_affinity" not in "\n".join(texts.values()),
++        "obsolete_affinity_module_is_absent",
++        "the superseded thread-only module name must not remain in sensitive source",
++    )
++    require(
++        checks,
++        "using SyncSqliteThreadIncarnation = std::uint64_t" in capability_hpp,
++        "incarnation_has_explicit_type",
++        "process-local thread lifetime identity must use one named nonserializable type",
++    )
++    for needle, check_id, detail in (
++        (
++            "std::atomic<SyncSqliteThreadIncarnation>",
++            "incarnation_allocator_is_atomic",
++            "thread incarnations must be allocated across threads without collision",
++        ),
++        (
++            "thread_local const SyncSqliteThreadIncarnation",
++            "incarnation_is_stable_for_thread_lifetime",
++            "one immutable value must represent one exact C++ thread lifetime",
++        ),
++        (
++            "compare_exchange_weak",
++            "incarnation_allocator_is_monotonic",
++            "the allocator must consume one process-local generation per thread",
++        ),
++        (
++            "std::numeric_limits<SyncSqliteThreadIncarnation>::max()",
++            "incarnation_exhaustion_is_detected",
++            "wraparound must not reauthorize a stale thread generation",
++        ),
++        (
++            "std::terminate()",
++            "incarnation_exhaustion_fails_stopped",
++            "counter exhaustion cannot be recovered without ambiguous identity",
++        ),
++    ):
++        require(checks, needle in capability_cpp, check_id, detail)
++
++    for marker in (
++        "std::thread::id",
++        "std::this_thread::get_id",
++        "hash<std::thread::id>",
++        "pthread_self",
++    ):
++        require(
++            checks,
++            marker not in capability_cpp,
++            "incarnation_avoids_" + re.sub(r"[^a-z0-9]+", "_", marker.lower()).strip("_"),
++            f"retained authority must not depend on reusable or representation-specific {marker}",
++        )
++
++    for needle, check_id, detail in (
++        (
++            "SQLITE_VERSION_NUMBER >= 3044000",
++            "clientdata_version_floor_is_explicit",
++            "the lifetime sentinel requires SQLite connection client data",
++        ),
++        (
++            '"anonsync.sqlite.retained-mutex-capabilities.v1"',
++            "lifetime_sentinel_has_versioned_namespace",
++            "the SQLite-owned sentinel must use a stable, narrow namespace",
++        ),
++        (
++            "SyncSqliteRetainedMutexCapabilityState* self = this",
++            "lifetime_sentinel_is_self_authenticating",
++            "corrupt or alien client data must fail closed",
++        ),
++        (
++            "std::uint64_t active_capabilities = 0",
++            "lifetime_sentinel_counts_retained_entries",
++            "connection destruction must know whether any mutex entry remains retained",
++        ),
++    ):
++        require(checks, needle in capability_cpp, check_id, detail)
++
++    destroy_body = function_body(
++        capability_cpp, "void destroy_retained_mutex_capability_state(void* raw)"
++    )
++    require(checks, bool(destroy_body), "lifetime_destructor_is_present", "SQLite must own one sentinel destructor")
++    require(
++        checks,
++        "state->active_capabilities != 0" in destroy_body
++        and "terminate_on_sync_sqlite_mutex_capability_violation_noexcept" in destroy_body,
++        "connection_close_with_live_entry_fails_stopped",
++        "close or replacement may not invalidate a still-retained sqlite3_db_mutex pointer",
++    )
++    require(
++        checks,
++        ordered(destroy_body, "state->magic = 0", "state->self = nullptr", "delete state"),
++        "lifetime_sentinel_is_poisoned_before_delete",
++        "normal close must invalidate diagnostic markers before deallocation",
++    )
++
++    retain_body = function_body(
++        capability_cpp, "retain_sync_sqlite_mutex_capability_or_throw("
++    )
++    require(
++        checks,
++        "db == nullptr" in retain_body and "std::invalid_argument" in retain_body,
++        "retain_rejects_null_database",
++        "client-data lookup must never receive an empty connection handle",
++    )
++    require(
++        checks,
++        "sqlite3_set_clientdata" in retain_body
++        and "destroy_retained_mutex_capability_state" in retain_body,
++        "retain_installs_sqlite_owned_sentinel",
++        "SQLite connection lifetime must own and destroy the sentinel",
++    )
++    require(
++        checks,
++        "std::numeric_limits<std::uint64_t>::max()" in retain_body
++        and "std::overflow_error" in retain_body,
++        "retained_entry_count_rejects_overflow",
++        "counter wraparound must not make a live close appear safe",
++    )
++    require(
++        checks,
++        ordered(retain_body, "active_capabilities ==", "++state->active_capabilities", "return state"),
++        "retain_increments_before_return",
++        "a capability may escape only after its lifetime pin exists",
++    )
++
++    release_body = function_body(
++        capability_cpp, "void release_sync_sqlite_mutex_capability_noexcept("
++    )
++    require(
++        checks,
++        all(
++            needle in release_body
++            for needle in ("state == nullptr", "state->magic", "state->self", "active_capabilities == 0")
++        ),
++        "release_validates_sentinel_and_count",
++        "underflow, corruption, or an absent lifetime pin must fail stopped",
++    )
++    require(
++        checks,
++        ordered(release_body, "--state->active_capabilities", "state = nullptr"),
++        "release_consumes_local_pointer_after_decrement",
++        "the exact owner must not retain a usable pointer after releasing its entry",
++    )
++
++    require(
++        checks,
++        "owner_thread_incarnation_" in lease_hpp
++        and "retained_capability_state_" in lease_hpp,
++        "lease_carries_thread_and_lifetime_proofs",
++        "a retained connection lease must carry both exact thread and connection-lifetime state",
++    )
++    require(
++        checks,
++        "owner_thread_incarnation" in boundary_hpp
++        and "retained_capability_state" in boundary_hpp,
++        "transaction_proof_carries_thread_and_lifetime_proofs",
++        "both fenced and utility transactions must retain the same dynamic ownership evidence",
++    )
++    require(
++        checks,
++        "class RetainedMutexCapabilityReservation" in authority_cpp,
++        "retention_is_exception_safe",
++        "temporary retention must unwind before the scoped database mutex leaves",
++    )
++    require(
++        checks,
++        authority_cpp.count("RetainedMutexCapabilityReservation retained_capability") >= 3,
++        "all_retaining_acquisition_branches_reserve_lifetime",
++        "connection lease plus fenced and unfenced transaction paths must pin connection lifetime",
++    )
++    require(
++        checks,
++        authority_cpp.count("proof.owner_thread_incarnation =") >= 2,
++        "both_transaction_branches_capture_thread_incarnation",
++        "fenced and unfenced typed transaction generations must bind the entering thread",
++    )
++
++    db_guard_destructor = function_body(authority_cpp, "~DbMutexGuard()")
++    db_guard_release = function_body(authority_cpp, "sqlite3_mutex* release() noexcept")
++    require(
++        checks,
++        ordered(db_guard_destructor, "sync_sqlite_thread_incarnation_is_current", "sqlite3_mutex_leave"),
++        "scoped_mutex_guard_destructor_checks_thread_first",
++        "even private scoped mutex ownership must not rely on convention",
++    )
++    require(
++        checks,
++        ordered(db_guard_release, "sync_sqlite_thread_incarnation_is_current", "mutex_ = nullptr"),
++        "scoped_mutex_transfer_checks_thread_first",
++        "an entered mutex may transfer only on its originating thread",
++    )
++
++    lease_owner_helper = function_body(
++        authority_cpp, "void require_retained_mutex_lease_owner_noexcept("
++    )
++    require(
++        checks,
++        ordered(
++            lease_owner_helper,
++            "retained_mutex_lease_shape_is_valid",
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++        ),
++        "lease_owner_helper_checks_shape_thread_lifetime",
++        "shared lease validation must reject foreign callers before dereferencing SQLite-owned state",
++    )
++
++    lease_destructor = function_body(
++        authority_cpp,
++        "SyncSqliteConnectionAuthorityLease::~SyncSqliteConnectionAuthorityLease()",
++    )
++    require(
++        checks,
++        ordered(
++            lease_destructor,
++            "require_retained_mutex_lease_owner_noexcept",
++            "release_sync_sqlite_mutex_capability_noexcept",
++            "sqlite3_mutex_leave",
++        ),
++        "lease_destructor_orders_thread_lifetime_release",
++        "foreign destruction must stop before dereferencing SQLite-owned state or leaving the mutex",
++    )
++
++    lease_move = function_body(
++        authority_cpp,
++        "SyncSqliteConnectionAuthorityLease::SyncSqliteConnectionAuthorityLease(\n    SyncSqliteConnectionAuthorityLease&& other)",
++    )
++    require(
++        checks,
++        "require_retained_mutex_lease_owner_noexcept" in lease_move,
++        "lease_move_constructor_checks_thread_before_lifetime",
++        "foreign transfer must not inspect potentially invalid SQLite-owned memory",
++    )
++    lease_move_assign = function_body(
++        authority_cpp,
++        "SyncSqliteConnectionAuthorityLease::operator=(\n    SyncSqliteConnectionAuthorityLease&& other)",
++    )
++    require(
++        checks,
++        lease_move_assign.count("require_retained_mutex_lease_owner_noexcept") >= 2,
++        "lease_move_assignment_fences_both_entries",
++        "destination release and source acquisition must each prove exact ownership",
++    )
++    require(
++        checks,
++        ordered(
++            lease_move_assign,
++            "release_sync_sqlite_mutex_capability_noexcept",
++            "sqlite3_mutex_leave",
++        ),
++        "lease_move_assignment_unpins_before_leave",
++        "the connection-lifetime count must be decremented while the mutex pointer is still valid",
++    )
++
++    lease_active = function_body(
++        authority_cpp, "bool SyncSqliteConnectionAuthorityLease::active() const noexcept"
++    )
++    require(
++        checks,
++        ordered(
++            lease_active,
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++        ),
++        "lease_observation_checks_thread_before_lifetime",
++        "foreign active() must fail closed without touching SQLite-owned sentinel memory",
++    )
++
++    transaction_release = function_body(
++        authority_cpp, "void release_sync_sqlite_transaction_mutex_noexcept("
++    )
++    require(
++        checks,
++        ordered(
++            transaction_release,
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++            "release_sync_sqlite_mutex_capability_noexcept",
++            "sqlite3_mutex_leave",
++        ),
++        "transaction_release_orders_thread_lifetime_release",
++        "transaction revocation must prove owner, unpin lifetime, then leave the exact entry",
++    )
++
++    boundary_validate = function_body(
++        authority_cpp, "ConnectionAuthorityState& validate_boundary_proof_or_throw("
++    )
++    require(
++        checks,
++        ordered(
++            boundary_validate,
++            "require_sync_sqlite_thread_incarnation_or_throw",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++        ),
++        "transaction_validator_checks_thread_before_lifetime",
++        "proof validation must reject a foreign caller before dereferencing SQLite-owned sentinel memory",
++    )
++
++    boundary_authorizes = function_body(
++        authority_cpp, "bool sync_sqlite_transaction_boundary_authorizes_noexcept("
++    )
++    require(
++        checks,
++        ordered(
++            boundary_authorizes,
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++            "sqlite3_db_mutex",
++        ),
++        "transaction_observation_checks_thread_before_sqlite_state",
++        "foreign copied authority must return before sentinel dereference or SQLite mutex acquisition",
++    )
++
++    transaction_authorizes = function_body(
++        transaction_cpp, "bool SyncSqliteTransactionAuthority::authorizes(sqlite3* db) const noexcept"
++    )
++    require(
++        checks,
++        ordered(
++            transaction_authorizes,
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_transaction_boundary_authorizes_noexcept",
++        ),
++        "copied_authority_rejects_foreign_thread_early",
++        "foreign observation must not block behind its owner's recursive mutex",
++    )
++    require(
++        checks,
++        transaction_authorizes.find("return false")
++        < transaction_authorizes.find("state->active.store(false"),
++        "foreign_observation_does_not_revoke_owner",
++        "a non-owner observation is unusable but must preserve the exact owner generation",
++    )
++
++    transaction_destructor = function_body(
++        transaction_cpp, "SyncSqliteTransaction::~SyncSqliteTransaction()"
++    )
++    require(
++        checks,
++        ordered(
++            transaction_destructor,
++            "sync_sqlite_thread_incarnation_is_current",
++            "rollback_sync_sqlite_transaction_boundary_noexcept",
++        ),
++        "transaction_destructor_fails_before_foreign_rollback",
++        "a foreign destructor must not touch SQLite or attempt unsafe cleanup",
++    )
++    for method in ("commit", "rollback"):
++        body = function_body(transaction_cpp, f"void SyncSqliteTransaction::{method}()")
++        require(
++            checks,
++            ordered(
++                body,
++                "require_sync_sqlite_thread_incarnation_or_throw",
++                "authority().authorizes",
++            ),
++            f"transaction_{method}_rejects_foreign_thread_before_authority",
++            f"foreign {method.upper()} must throw before any SQLite authority probe",
++        )
++
++    require(
++        checks,
++        "PROPERTIES TIMEOUT 15" in cmake,
++        "authority_ctest_has_finite_timeout",
++        "a future self-deadlock regression must remain a bounded validation failure",
++    )
++    for needle, check_id, detail in (
++        (
++            "test_thread_incarnation_affinity",
++            "foreign_observation_and_finalization_tests_exist",
++            "foreign active/authority/commit/rollback paths need executable coverage",
++        ),
++        (
++            "test_owner_thread_lease_moves",
++            "owner_move_semantics_are_tested",
++            "normal move, self-move, and move assignment must preserve exact retained entries",
++        ),
++        (
++            "child_foreign_lease_destruction",
++            "foreign_lease_destruction_death_test_exists",
++            "noexcept destruction must prove the intended fail-stop",
++        ),
++        (
++            "child_foreign_transaction_destruction",
++            "foreign_transaction_destruction_death_test_exists",
++            "foreign destructor rollback/release must never run",
++        ),
++        (
++            "child_foreign_lease_move",
++            "foreign_lease_move_death_test_exists",
++            "moving a live retained mutex entry to another thread must fail stopped",
++        ),
++        (
++            "child_close_with_live_lease",
++            "same_thread_close_death_test_exists",
++            "recursive same-thread close must not free a retained connection mutex",
++        ),
++        (
++            "child_close_with_live_unfenced_transaction",
++            "unfenced_transaction_close_death_test_exists",
++            "the close fence must not depend on authorizer installation",
++        ),
++        (
++            "child_close_with_live_fenced_transaction",
++            "fenced_transaction_close_death_test_exists",
++            "the close fence must protect authorizer-fenced transaction ownership too",
++        ),
++        (
++            "child_replace_live_capability_sentinel",
++            "live_sentinel_replacement_death_test_exists",
++            "replacement of SQLite-owned lifetime state must not invalidate a retained mutex pointer",
++        ),
++        (
++            "child_zombie_close_with_live_lease",
++            "zombie_close_death_test_exists",
++            "deferred sqlite3_close_v2 destruction must remain fail stopped",
++        ),
++        (
++            "test_close_waits_for_retained_mutex_capability",
++            "foreign_close_serialization_test_exists",
++            "a foreign close must wait and then succeed after normal release",
++        ),
++        (
++            "SQLITE_OPEN_NOMUTEX",
++            "nomutex_rejection_remains_tested",
++            "the capability requires a real serialized connection mutex",
++        ),
++    ):
++        require(checks, needle in authority_test, check_id, detail)
++
++    require(
++        checks,
++        "thread incarnation" in support_hpp.lower()
++        and "fails stopped" in support_hpp.lower(),
++        "public_transaction_contract_documents_fail_stop",
++        "callers must know that thread handoff is not recoverable in a destructor",
++    )
++
++    production_sources = source_files(root)
++    mutex_inventory = line_inventory(root, production_sources, MUTEX_CALL)
++    mutex_owners = {item["path"] for item in mutex_inventory}
++    require(
++        checks,
++        mutex_owners == {"src/sync_sqlite_connection_authority.cpp"},
++        "direct_sqlite_mutex_calls_have_one_owner",
++        "all direct production enter/leave operations must remain in the connection-authority owner",
++    )
++    require(
++        checks,
++        any(item["operation"] == "enter" for item in mutex_inventory)
++        and any(item["operation"] == "leave" for item in mutex_inventory),
++        "mutex_inventory_contains_enter_and_leave",
++        "the source audit must observe both sides of the retained mutex protocol",
++    )
++
++    clientdata_inventory = line_inventory(root, production_sources, CLIENT_DATA_CALL)
++    clientdata_owners = {item["path"] for item in clientdata_inventory}
++    require(
++        checks,
++        clientdata_owners
++        == {
++            "src/sync_sqlite_connection_authority.cpp",
++            "src/sync_sqlite_mutex_capability.cpp",
++        },
++        "clientdata_calls_have_two_invariant_owners",
++        "authorizer generation and retained-mutex lifetime must be the only client-data namespaces",
++    )
++
++    checks_data = [asdict(check) for check in checks]
++    violations = [check.detail for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-sqlite-mutex-capability-audit-v1",
++        "passed": not violations,
++        "check_count": len(checks),
++        "passed_check_count": sum(1 for check in checks if check.passed),
++        "violations": violations,
++        "checks": checks_data,
++        "mutex_call_inventory": mutex_inventory,
++        "clientdata_call_inventory": clientdata_inventory,
++        "sensitive_file_sha256": {
++            path.as_posix(): sha256_file(root / path) for path in SENSITIVE_FILES
++        },
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if args.json:
++        args.json.parent.mkdir(parents=True, exist_ok=True)
++        args.json.write_text(rendered, encoding="utf-8")
++    sys.stdout.write(rendered)
++    return 0 if report["passed"] else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..1eb2855
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,12 @@
++# Reproducible build products never belong in source or handoff manifests.
++/build/
++/build-*/
++/_build/
++
++# Local Python/tooling residue.
++__pycache__/
++*.py[cod]
++
++# Crash products from adversarial fail-stop tests.
++/core
++/core.*
+diff --git a/REVISION_NOTES_rev0778.md b/REVISION_NOTES_rev0778.md
+new file mode 100644
+index 0000000..39b65d5
+--- /dev/null
++++ b/REVISION_NOTES_rev0778.md
+@@ -0,0 +1,131 @@
++# AnonSync rev0778 — exact thread-incarnation and close-lifetime mutex fencing
++
++## Heart of the mission
++
++AnonSync is an evidence-authorized convergence engine. A callback, pointer,
++worker, successful write, or transport receipt is an observation; none is
++sufficient authority. Authority must bind the exact dynamic generation that
++performs an operation, be checked at consumption, and fail closed when the
++proof can no longer be reconstructed.
++
++Rev0778 applies that rule to the lowest live SQLite boundary. A retained
++`sqlite3_db_mutex()` entry is not merely “a serialized connection.” It is one
++exact recursive entry owned by one C++ thread lifetime and valid only while one
++exact SQLite connection lifetime remains open.
++
++## Severe faults corrected
++
++### Foreign-thread release
++
++Rev0774 retained the connection mutex across a typed transaction, but thread
++affinity was documentation only. SQLite specifies that `sqlite3_mutex_leave()`
++must be called by the same thread that entered the mutex and that foreign leave
++is undefined behavior. A copied authority query could also block behind the
++recursive entry held by its own live owner.
++
++Rev0778 assigns a monotonic process-local incarnation to each C++ thread
++lifetime. Every retaining lease and transaction boundary captures it. Foreign
++observation returns false before SQLite access, explicit foreign COMMIT or
++ROLLBACK throws without revoking the owner, and foreign move/destruction fails
++stopped before touching SQLite-owned state.
++
++### Same-thread close invalidation
++
++A more severe lifetime seam was found during the audit. Because the connection
++mutex is recursive, the owner thread could call `sqlite3_close_v2()` while its
++lease still retained an outer entry. Bundled SQLite 3.53.3 invokes connection
++client-data destructors, marks the connection zombie, leaves the inner entry,
++and can free the mutex while the outer AnonSync entry still exists. The later
++lease destructor would then call `sqlite3_mutex_leave()` through a dangling
++pointer.
++
++Rev0778 installs a second, versioned SQLite client-data sentinel. Each retained
++mutex entry increments its count while the connection mutex is held and
++consumes its own pointer before release. Closing or replacing the sentinel with
++a nonzero count terminates immediately. This count is deliberately only a
++close-lifetime pin, not a transaction or authorization generation.
++
++## Refactor
++
++`src/sync_sqlite_mutex_capability.{hpp,cpp}` now owns:
++
++- monotonic thread-incarnation allocation without `std::thread::id` reuse;
++- exact thread comparison and deterministic foreign-thread rejection;
++- the SQLite-owned retained-mutex lifetime sentinel;
++- overflow, underflow, corruption, replacement, and close-order fail-stop; and
++- one shared lease-shape validator used by construction, destruction, and move.
++
++The authorizer bridge still owns every direct production
++`sqlite3_mutex_enter()`/`sqlite3_mutex_leave()` call. The split is by invariant,
++not line count: thread and connection lifetime are isolated from policy,
++authorizer generations, and transaction SQL.
++
++## Executable proof
++
++The connection-authority executable now reports **98 checks, 0 failures**. It
++covers owner and foreign observation, non-revoking foreign authority checks,
++foreign COMMIT/ROLLBACK latency, owner recovery, owner-thread move construction,
++self-move and move assignment, foreign move/destruction fail-stop, live-lease
++close, live fenced- and unfenced-transaction close, sentinel replacement,
++`sqlite3_close_v2()` zombie close,
++foreign close serialization, normal post-release close, and NOMUTEX rejection.
++
++The fail-stop scenarios run in child processes with a dedicated terminate exit
++code. The test has a finite 15-second CTest timeout. One hundred consecutive
++executions passed, totaling **9,800/9,800 checks**.
++
++`tools/audit_sqlite_mutex_capability.py` passes **63/63 source-shape checks** and
++inventories all nine direct production mutex calls and both reviewed client-data
++owners. The existing transaction-stack audit passes 45 checks, the payload
++authority audit passes 38, and the updated authorizer ownership audit passes.
++
++## Repository hygiene correction
++
++The source cube contained **488 tracked build artifacts totaling 286,095,753
++bytes** under `build-baseline/` and `build-rev0778-baseline/`. These included
++host-specific binaries, object files, compiler probes, CMake caches, and stale
++test logs. They were neither portable evidence nor source and could make a
++reviewer execute obsolete code accidentally.
++
++Rev0778 deletes those tracked products and adds a root `.gitignore` for build,
++Python cache, and crash artifacts. Validation remains in small text and JSON
++records under `REVISION_EVIDENCE/`; reproducible binaries are rebuilt from
++source.
++
++## Validation
++
++- fresh GCC 14.2 Debug build completed after one transparently recorded tool
++  timeout and resume;
++- full Debug CTest: **40/40 passed**;
++- full Debug CTest repeated three times: **120/120 passed**;
++- direct domain model: **588/0**;
++- direct peer-ingress lifecycle: **49/0**;
++- SQLite support: **61/0**;
++- schema attestation: **58/0**;
++- connection authority: **98/0**, repeated 100 times;
++- GCC Release focused tests: **2/2 passed**;
++- GCC ASan/UBSan focused tests: **2/2 passed**;
++- Clang 17 focused tests: **2/2 passed**.
++
++GCC Release reports one optimizer warning in the unchanged bundled SQLite
++amalgamation. No warning was emitted from changed AnonSync source. The warning
++is retained in the evidence rather than suppressed.
++
++## Deliberate limits and next work
++
++The sentinel converts invalid close order into fail-stop; it does not make a raw
++`sqlite3*` generally lifetime-safe. A connection actor/strand should eventually
++own open, operation dispatch, transaction finalization, and close so live SQLite
++capabilities never cross execution contexts.
++
++Fork remains unproved. Thread-local and process memory are copied into a child,
++so inherited connection proofs need a process epoch or an explicit prohibition
++on post-fork reuse. Process-crash tests also remain weaker than power-loss
++proof. A fault-injecting VFS should enumerate WAL write, sync, checkpoint,
++truncate, directory, and reset boundaries against an executable transition
++oracle.
++
++The transaction-stack audit still inventories 95 legacy raw controls outside
++peer-ingress production. `src/sync_domain.cpp` remains 24,523 lines. Both should
++be reduced by invariant-owned repository/state-machine slices rather than
++mechanical file splitting.
+diff --git a/src/sync_sqlite_mutex_capability.cpp b/src/sync_sqlite_mutex_capability.cpp
+new file mode 100644
+index 0000000..77584d1
+--- /dev/null
++++ b/src/sync_sqlite_mutex_capability.cpp
+@@ -0,0 +1,171 @@
++#include "sync_sqlite_mutex_capability.hpp"
++
++#include "sync_sqlite_support.hpp"
++
++#include <atomic>
++#include <exception>
++#include <limits>
++#include <stdexcept>
++
++#include <sqlite3.h>
++
++namespace anonsync {
++
++struct SyncSqliteRetainedMutexCapabilityState final {
++    static constexpr std::uint64_t kMagic =
++        UINT64_C(0x41534d5554455843);  // "ASMUTEXC"
++
++    std::uint64_t magic = kMagic;
++    SyncSqliteRetainedMutexCapabilityState* self = this;
++    // Shared close-order evidence only. A nonzero count does not identify or
++    // authorize any particular lease; each owner carries its own exact thread
++    // incarnation and consumes its own pointer on release.
++    std::uint64_t active_capabilities = 0;
++};
++
++namespace {
++
++static_assert(SQLITE_VERSION_NUMBER >= 3044000,
++              "SQLite connection client data requires SQLite 3.44.0+");
++
++constexpr char kRetainedMutexCapabilityClientDataName[] =
++    "anonsync.sqlite.retained-mutex-capabilities.v1";
++
++SyncSqliteThreadIncarnation allocate_thread_incarnation_noexcept() noexcept {
++    static std::atomic<SyncSqliteThreadIncarnation> next{1};
++    SyncSqliteThreadIncarnation current = next.load(std::memory_order_relaxed);
++    for (;;) {
++        if (current == 0 ||
++            current == std::numeric_limits<SyncSqliteThreadIncarnation>::max()) {
++            std::terminate();
++        }
++        if (next.compare_exchange_weak(current,
++                                       current + 1,
++                                       std::memory_order_relaxed,
++                                       std::memory_order_relaxed)) {
++            return current;
++        }
++    }
++}
++
++void destroy_retained_mutex_capability_state(void* raw) noexcept {
++    auto* state =
++        static_cast<SyncSqliteRetainedMutexCapabilityState*>(raw);
++    if (state == nullptr) return;
++    if (state->magic != SyncSqliteRetainedMutexCapabilityState::kMagic ||
++        state->self != state || state->active_capabilities != 0) {
++        // SQLite invokes client-data destructors during close or replacement.
++        // Returning from that operation with a live retained entry could leave
++        // its later sqlite3_mutex_leave() targeting unallocated storage.
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    state->magic = 0;
++    state->self = nullptr;
++    delete state;
++}
++
++SyncSqliteRetainedMutexCapabilityState*
++load_retained_mutex_capability_state_or_throw(
++    sqlite3* db,
++    bool allow_absent,
++    const std::string& label) {
++    void* raw =
++        sqlite3_get_clientdata(db, kRetainedMutexCapabilityClientDataName);
++    if (raw == nullptr) {
++        if (allow_absent) return nullptr;
++        throw std::runtime_error(
++            label + " retained SQLite mutex capability state is absent");
++    }
++    auto* state =
++        static_cast<SyncSqliteRetainedMutexCapabilityState*>(raw);
++    if (state->magic != SyncSqliteRetainedMutexCapabilityState::kMagic ||
++        state->self != state) {
++        throw std::runtime_error(
++            label + " retained SQLite mutex capability state is corrupt");
++    }
++    return state;
++}
++
++}  // namespace
++
++SyncSqliteThreadIncarnation
++current_sync_sqlite_thread_incarnation_noexcept() noexcept {
++    thread_local const SyncSqliteThreadIncarnation incarnation =
++        allocate_thread_incarnation_noexcept();
++    return incarnation;
++}
++
++bool sync_sqlite_thread_incarnation_is_current(
++    SyncSqliteThreadIncarnation expected) noexcept {
++    return expected != 0 &&
++           expected == current_sync_sqlite_thread_incarnation_noexcept();
++}
++
++void require_sync_sqlite_thread_incarnation_or_throw(
++    SyncSqliteThreadIncarnation expected,
++    const std::string& label) {
++    if (expected == 0) {
++        throw std::logic_error(label + " thread-affinity proof is empty");
++    }
++    if (!sync_sqlite_thread_incarnation_is_current(expected)) {
++        throw std::logic_error(
++            label + " must execute on the originating SQLite mutex thread");
++    }
++}
++
++SyncSqliteRetainedMutexCapabilityState*
++retain_sync_sqlite_mutex_capability_or_throw(
++    sqlite3* db,
++    const std::string& label) {
++    if (db == nullptr) {
++        throw std::invalid_argument(label + " database handle is null");
++    }
++    SyncSqliteRetainedMutexCapabilityState* state =
++        load_retained_mutex_capability_state_or_throw(db, true, label);
++    if (state == nullptr) {
++        state = new SyncSqliteRetainedMutexCapabilityState();
++        // With a non-null destructor SQLite assumes ownership even when this
++        // call reports SQLITE_NOMEM; do not retain a second C++ owner.
++        const int rc = sqlite3_set_clientdata(
++            db,
++            kRetainedMutexCapabilityClientDataName,
++            state,
++            destroy_retained_mutex_capability_state);
++        if (rc != SQLITE_OK) {
++            throw_sqlite_exception(
++                db, rc, label + " install retained mutex capability sentinel");
++        }
++    }
++    if (state->active_capabilities ==
++        std::numeric_limits<std::uint64_t>::max()) {
++        throw std::overflow_error(
++            label + " exhausted retained SQLite mutex capabilities");
++    }
++    ++state->active_capabilities;
++    return state;
++}
++
++void release_sync_sqlite_mutex_capability_noexcept(
++    SyncSqliteRetainedMutexCapabilityState*& state) noexcept {
++    if (state == nullptr ||
++        state->magic != SyncSqliteRetainedMutexCapabilityState::kMagic ||
++        state->self != state || state->active_capabilities == 0) {
++        terminate_on_sync_sqlite_mutex_capability_violation_noexcept();
++    }
++    --state->active_capabilities;
++    state = nullptr;
++}
++
++bool sync_sqlite_mutex_capability_is_live_noexcept(
++    const SyncSqliteRetainedMutexCapabilityState* state) noexcept {
++    return state != nullptr &&
++           state->magic == SyncSqliteRetainedMutexCapabilityState::kMagic &&
++           state->self == state && state->active_capabilities != 0;
++}
++
++[[noreturn]] void terminate_on_sync_sqlite_mutex_capability_violation_noexcept()
++    noexcept {
++    std::terminate();
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_sqlite_mutex_capability.hpp b/src/sync_sqlite_mutex_capability.hpp
+new file mode 100644
+index 0000000..f4fdc59
+--- /dev/null
++++ b/src/sync_sqlite_mutex_capability.hpp
+@@ -0,0 +1,55 @@
++#pragma once
++
++#include <cstdint>
++#include <string>
++
++struct sqlite3;
++
++namespace anonsync {
++
++// Process-local, non-serializable identity for one exact C++ thread lifetime.
++// SQLite requires a recursive mutex to be left by the same thread that entered
++// it. std::thread::id values may be reused after a thread exits, so retained
++// SQLite mutex capabilities bind to this monotonic incarnation instead.
++using SyncSqliteThreadIncarnation = std::uint64_t;
++
++// Opaque SQLite-owned sentinel for one exact connection lifetime. Each
++// AnonSync capability that retains sqlite3_db_mutex() holds one counter entry.
++// Destruction with a nonzero count is a fatal close-order violation. The count
++// is only a lifetime pin, not an authorization generation: exact authority is
++// still carried by the owning lease/transaction and its thread incarnation.
++struct SyncSqliteRetainedMutexCapabilityState;
++
++[[nodiscard]] SyncSqliteThreadIncarnation
++current_sync_sqlite_thread_incarnation_noexcept() noexcept;
++
++[[nodiscard]] bool sync_sqlite_thread_incarnation_is_current(
++    SyncSqliteThreadIncarnation expected) noexcept;
++
++void require_sync_sqlite_thread_incarnation_or_throw(
++    SyncSqliteThreadIncarnation expected,
++    const std::string& label);
++
++// These functions must be called while the connection's serialized mutex is
++// held. The returned pointer is non-owning; SQLite owns the sentinel through
++// client data. A live counter entry makes close/replacement fail stopped before
++// control can return to an owner whose retained mutex pointer became invalid;
++// it does not independently extend SQLite's object lifetime.
++[[nodiscard]] SyncSqliteRetainedMutexCapabilityState*
++retain_sync_sqlite_mutex_capability_or_throw(
++    sqlite3* db,
++    const std::string& label);
++
++void release_sync_sqlite_mutex_capability_noexcept(
++    SyncSqliteRetainedMutexCapabilityState*& state) noexcept;
++
++[[nodiscard]] bool sync_sqlite_mutex_capability_is_live_noexcept(
++    const SyncSqliteRetainedMutexCapabilityState* state) noexcept;
++
++// A retained SQLite mutex cannot be safely released by another thread or
++// after SQLite has begun destroying its connection. Those violations cannot
++// be repaired inside a noexcept destructor, so they fail stopped.
++[[noreturn]] void terminate_on_sync_sqlite_mutex_capability_violation_noexcept()
++    noexcept;
++
++}  // namespace anonsync
+diff --git a/tools/audit_sqlite_mutex_capability.py b/tools/audit_sqlite_mutex_capability.py
+new file mode 100755
+index 0000000..44b6cda
+--- /dev/null
++++ b/tools/audit_sqlite_mutex_capability.py
+@@ -0,0 +1,670 @@
++#!/usr/bin/env python3
++"""Audit AnonSync's retained SQLite mutex capability boundary.
++
++This is a deterministic source-shape audit, not a proof of runtime behavior.
++It protects the rev0778 invariants that one exact C++ thread incarnation owns
++an entered SQLite recursive mutex and that SQLite connection destruction cannot
++silently invalidate a retained mutex pointer.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import re
++import sys
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++SENSITIVE_FILES = (
++    Path("CMakeLists.txt"),
++    Path("src/sync_sqlite_mutex_capability.hpp"),
++    Path("src/sync_sqlite_mutex_capability.cpp"),
++    Path("src/sync_sqlite_connection_authority.hpp"),
++    Path("src/sync_sqlite_connection_authority_internal.hpp"),
++    Path("src/sync_sqlite_connection_authority.cpp"),
++    Path("src/sync_sqlite_transaction.cpp"),
++    Path("src/sync_sqlite_support.hpp"),
++    Path("tests/sqlite_connection_authority_test.cpp"),
++)
++
++SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
++SKIP_PARTS = {".git", "third_party", "vendor"}
++MUTEX_CALL = re.compile(r"\bsqlite3_mutex_(enter|leave)\s*\(")
++CLIENT_DATA_CALL = re.compile(r"\bsqlite3_(get|set)_clientdata\s*\(")
++
++
++@dataclass(frozen=True)
++class Check:
++    check_id: str
++    passed: bool
++    detail: str
++
++
++def sha256_file(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def require(checks: list[Check], condition: bool, check_id: str, detail: str) -> None:
++    checks.append(Check(check_id, bool(condition), detail))
++
++
++def source_files(root: Path) -> list[Path]:
++    result: list[Path] = []
++    for base in (root / "src", root / "include"):
++        if not base.is_dir():
++            continue
++        for path in sorted(base.rglob("*")):
++            if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
++                continue
++            rel = path.relative_to(root)
++            if any(
++                part in SKIP_PARTS
++                or part == "build"
++                or part == "_build"
++                or part.startswith("build-")
++                for part in rel.parts
++            ):
++                continue
++            result.append(rel)
++    return result
++
++
++def line_inventory(
++    root: Path, paths: list[Path], pattern: re.Pattern[str]
++) -> list[dict[str, object]]:
++    result: list[dict[str, object]] = []
++    for rel in paths:
++        text = (root / rel).read_text(encoding="utf-8", errors="strict")
++        for line_number, line in enumerate(text.splitlines(), 1):
++            # This inventory is deliberately lexical, but comment references
++            # are documentation rather than direct production calls.
++            code = line.split("//", 1)[0]
++            match = pattern.search(code)
++            if match:
++                result.append(
++                    {
++                        "path": rel.as_posix(),
++                        "line": line_number,
++                        "operation": match.group(1),
++                        "text": line.strip()[:300],
++                    }
++                )
++    return result
++
++
++def function_body(text: str, signature_fragment: str) -> str:
++    start = text.find(signature_fragment)
++    if start < 0:
++        return ""
++    brace = text.find("{", start)
++    if brace < 0:
++        return ""
++    depth = 0
++    for index in range(brace, len(text)):
++        if text[index] == "{":
++            depth += 1
++        elif text[index] == "}":
++            depth -= 1
++            if depth == 0:
++                return text[brace : index + 1]
++    return ""
++
++
++def ordered(body: str, *needles: str) -> bool:
++    position = -1
++    for needle in needles:
++        found = body.find(needle, position + 1)
++        if found < 0:
++            return False
++        position = found
++    return True
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser()
++    parser.add_argument(
++        "--root",
++        type=Path,
++        default=Path(__file__).resolve().parents[1],
++        help="AnonSync source root",
++    )
++    parser.add_argument("--json", type=Path, help="write deterministic JSON report")
++    args = parser.parse_args()
++    root = args.root.resolve()
++
++    missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
++    if missing:
++        report = {
++            "format": "anonsync-sqlite-mutex-capability-audit-v1",
++            "passed": False,
++            "violations": [f"missing sensitive file: {path}" for path in missing],
++        }
++        rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++        if args.json:
++            args.json.parent.mkdir(parents=True, exist_ok=True)
++            args.json.write_text(rendered, encoding="utf-8")
++        sys.stdout.write(rendered)
++        return 2
++
++    texts = {
++        path: (root / path).read_text(encoding="utf-8", errors="strict")
++        for path in SENSITIVE_FILES
++    }
++    cmake = texts[Path("CMakeLists.txt")]
++    capability_hpp = texts[Path("src/sync_sqlite_mutex_capability.hpp")]
++    capability_cpp = texts[Path("src/sync_sqlite_mutex_capability.cpp")]
++    lease_hpp = texts[Path("src/sync_sqlite_connection_authority.hpp")]
++    boundary_hpp = texts[Path("src/sync_sqlite_connection_authority_internal.hpp")]
++    authority_cpp = texts[Path("src/sync_sqlite_connection_authority.cpp")]
++    transaction_cpp = texts[Path("src/sync_sqlite_transaction.cpp")]
++    support_hpp = texts[Path("src/sync_sqlite_support.hpp")]
++    authority_test = texts[Path("tests/sqlite_connection_authority_test.cpp")]
++
++    checks: list[Check] = []
++
++    require(
++        checks,
++        "src/sync_sqlite_mutex_capability.cpp" in cmake,
++        "capability_module_is_linked",
++        "the retained-mutex capability implementation must remain in anonsync_sqlite_support",
++    )
++    require(
++        checks,
++        "sync_sqlite_thread_affinity" not in "\n".join(texts.values()),
++        "obsolete_affinity_module_is_absent",
++        "the superseded thread-only module name must not remain in sensitive source",
++    )
++    require(
++        checks,
++        "using SyncSqliteThreadIncarnation = std::uint64_t" in capability_hpp,
++        "incarnation_has_explicit_type",
++        "process-local thread lifetime identity must use one named nonserializable type",
++    )
++    for needle, check_id, detail in (
++        (
++            "std::atomic<SyncSqliteThreadIncarnation>",
++            "incarnation_allocator_is_atomic",
++            "thread incarnations must be allocated across threads without collision",
++        ),
++        (
++            "thread_local const SyncSqliteThreadIncarnation",
++            "incarnation_is_stable_for_thread_lifetime",
++            "one immutable value must represent one exact C++ thread lifetime",
++        ),
++        (
++            "compare_exchange_weak",
++            "incarnation_allocator_is_monotonic",
++            "the allocator must consume one process-local generation per thread",
++        ),
++        (
++            "std::numeric_limits<SyncSqliteThreadIncarnation>::max()",
++            "incarnation_exhaustion_is_detected",
++            "wraparound must not reauthorize a stale thread generation",
++        ),
++        (
++            "std::terminate()",
++            "incarnation_exhaustion_fails_stopped",
++            "counter exhaustion cannot be recovered without ambiguous identity",
++        ),
++    ):
++        require(checks, needle in capability_cpp, check_id, detail)
++
++    for marker in (
++        "std::thread::id",
++        "std::this_thread::get_id",
++        "hash<std::thread::id>",
++        "pthread_self",
++    ):
++        require(
++            checks,
++            marker not in capability_cpp,
++            "incarnation_avoids_" + re.sub(r"[^a-z0-9]+", "_", marker.lower()).strip("_"),
++            f"retained authority must not depend on reusable or representation-specific {marker}",
++        )
++
++    for needle, check_id, detail in (
++        (
++            "SQLITE_VERSION_NUMBER >= 3044000",
++            "clientdata_version_floor_is_explicit",
++            "the lifetime sentinel requires SQLite connection client data",
++        ),
++        (
++            '"anonsync.sqlite.retained-mutex-capabilities.v1"',
++            "lifetime_sentinel_has_versioned_namespace",
++            "the SQLite-owned sentinel must use a stable, narrow namespace",
++        ),
++        (
++            "SyncSqliteRetainedMutexCapabilityState* self = this",
++            "lifetime_sentinel_is_self_authenticating",
++            "corrupt or alien client data must fail closed",
++        ),
++        (
++            "std::uint64_t active_capabilities = 0",
++            "lifetime_sentinel_counts_retained_entries",
++            "connection destruction must know whether any mutex entry remains retained",
++        ),
++    ):
++        require(checks, needle in capability_cpp, check_id, detail)
++
++    destroy_body = function_body(
++        capability_cpp, "void destroy_retained_mutex_capability_state(void* raw)"
++    )
++    require(checks, bool(destroy_body), "lifetime_destructor_is_present", "SQLite must own one sentinel destructor")
++    require(
++        checks,
++        "state->active_capabilities != 0" in destroy_body
++        and "terminate_on_sync_sqlite_mutex_capability_violation_noexcept" in destroy_body,
++        "connection_close_with_live_entry_fails_stopped",
++        "close or replacement may not invalidate a still-retained sqlite3_db_mutex pointer",
++    )
++    require(
++        checks,
++        ordered(destroy_body, "state->magic = 0", "state->self = nullptr", "delete state"),
++        "lifetime_sentinel_is_poisoned_before_delete",
++        "normal close must invalidate diagnostic markers before deallocation",
++    )
++
++    retain_body = function_body(
++        capability_cpp, "retain_sync_sqlite_mutex_capability_or_throw("
++    )
++    require(
++        checks,
++        "db == nullptr" in retain_body and "std::invalid_argument" in retain_body,
++        "retain_rejects_null_database",
++        "client-data lookup must never receive an empty connection handle",
++    )
++    require(
++        checks,
++        "sqlite3_set_clientdata" in retain_body
++        and "destroy_retained_mutex_capability_state" in retain_body,
++        "retain_installs_sqlite_owned_sentinel",
++        "SQLite connection lifetime must own and destroy the sentinel",
++    )
++    require(
++        checks,
++        "std::numeric_limits<std::uint64_t>::max()" in retain_body
++        and "std::overflow_error" in retain_body,
++        "retained_entry_count_rejects_overflow",
++        "counter wraparound must not make a live close appear safe",
++    )
++    require(
++        checks,
++        ordered(retain_body, "active_capabilities ==", "++state->active_capabilities", "return state"),
++        "retain_increments_before_return",
++        "a capability may escape only after its lifetime pin exists",
++    )
++
++    release_body = function_body(
++        capability_cpp, "void release_sync_sqlite_mutex_capability_noexcept("
++    )
++    require(
++        checks,
++        all(
++            needle in release_body
++            for needle in ("state == nullptr", "state->magic", "state->self", "active_capabilities == 0")
++        ),
++        "release_validates_sentinel_and_count",
++        "underflow, corruption, or an absent lifetime pin must fail stopped",
++    )
++    require(
++        checks,
++        ordered(release_body, "--state->active_capabilities", "state = nullptr"),
++        "release_consumes_local_pointer_after_decrement",
++        "the exact owner must not retain a usable pointer after releasing its entry",
++    )
++
++    require(
++        checks,
++        "owner_thread_incarnation_" in lease_hpp
++        and "retained_capability_state_" in lease_hpp,
++        "lease_carries_thread_and_lifetime_proofs",
++        "a retained connection lease must carry both exact thread and connection-lifetime state",
++    )
++    require(
++        checks,
++        "owner_thread_incarnation" in boundary_hpp
++        and "retained_capability_state" in boundary_hpp,
++        "transaction_proof_carries_thread_and_lifetime_proofs",
++        "both fenced and utility transactions must retain the same dynamic ownership evidence",
++    )
++    require(
++        checks,
++        "class RetainedMutexCapabilityReservation" in authority_cpp,
++        "retention_is_exception_safe",
++        "temporary retention must unwind before the scoped database mutex leaves",
++    )
++    require(
++        checks,
++        authority_cpp.count("RetainedMutexCapabilityReservation retained_capability") >= 3,
++        "all_retaining_acquisition_branches_reserve_lifetime",
++        "connection lease plus fenced and unfenced transaction paths must pin connection lifetime",
++    )
++    require(
++        checks,
++        authority_cpp.count("proof.owner_thread_incarnation =") >= 2,
++        "both_transaction_branches_capture_thread_incarnation",
++        "fenced and unfenced typed transaction generations must bind the entering thread",
++    )
++
++    db_guard_destructor = function_body(authority_cpp, "~DbMutexGuard()")
++    db_guard_release = function_body(authority_cpp, "sqlite3_mutex* release() noexcept")
++    require(
++        checks,
++        ordered(db_guard_destructor, "sync_sqlite_thread_incarnation_is_current", "sqlite3_mutex_leave"),
++        "scoped_mutex_guard_destructor_checks_thread_first",
++        "even private scoped mutex ownership must not rely on convention",
++    )
++    require(
++        checks,
++        ordered(db_guard_release, "sync_sqlite_thread_incarnation_is_current", "mutex_ = nullptr"),
++        "scoped_mutex_transfer_checks_thread_first",
++        "an entered mutex may transfer only on its originating thread",
++    )
++
++    lease_owner_helper = function_body(
++        authority_cpp, "void require_retained_mutex_lease_owner_noexcept("
++    )
++    require(
++        checks,
++        ordered(
++            lease_owner_helper,
++            "retained_mutex_lease_shape_is_valid",
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++        ),
++        "lease_owner_helper_checks_shape_thread_lifetime",
++        "shared lease validation must reject foreign callers before dereferencing SQLite-owned state",
++    )
++
++    lease_destructor = function_body(
++        authority_cpp,
++        "SyncSqliteConnectionAuthorityLease::~SyncSqliteConnectionAuthorityLease()",
++    )
++    require(
++        checks,
++        ordered(
++            lease_destructor,
++            "require_retained_mutex_lease_owner_noexcept",
++            "release_sync_sqlite_mutex_capability_noexcept",
++            "sqlite3_mutex_leave",
++        ),
++        "lease_destructor_orders_thread_lifetime_release",
++        "foreign destruction must stop before dereferencing SQLite-owned state or leaving the mutex",
++    )
++
++    lease_move = function_body(
++        authority_cpp,
++        "SyncSqliteConnectionAuthorityLease::SyncSqliteConnectionAuthorityLease(\n    SyncSqliteConnectionAuthorityLease&& other)",
++    )
++    require(
++        checks,
++        "require_retained_mutex_lease_owner_noexcept" in lease_move,
++        "lease_move_constructor_checks_thread_before_lifetime",
++        "foreign transfer must not inspect potentially invalid SQLite-owned memory",
++    )
++    lease_move_assign = function_body(
++        authority_cpp,
++        "SyncSqliteConnectionAuthorityLease::operator=(\n    SyncSqliteConnectionAuthorityLease&& other)",
++    )
++    require(
++        checks,
++        lease_move_assign.count("require_retained_mutex_lease_owner_noexcept") >= 2,
++        "lease_move_assignment_fences_both_entries",
++        "destination release and source acquisition must each prove exact ownership",
++    )
++    require(
++        checks,
++        ordered(
++            lease_move_assign,
++            "release_sync_sqlite_mutex_capability_noexcept",
++            "sqlite3_mutex_leave",
++        ),
++        "lease_move_assignment_unpins_before_leave",
++        "the connection-lifetime count must be decremented while the mutex pointer is still valid",
++    )
++
++    lease_active = function_body(
++        authority_cpp, "bool SyncSqliteConnectionAuthorityLease::active() const noexcept"
++    )
++    require(
++        checks,
++        ordered(
++            lease_active,
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++        ),
++        "lease_observation_checks_thread_before_lifetime",
++        "foreign active() must fail closed without touching SQLite-owned sentinel memory",
++    )
++
++    transaction_release = function_body(
++        authority_cpp, "void release_sync_sqlite_transaction_mutex_noexcept("
++    )
++    require(
++        checks,
++        ordered(
++            transaction_release,
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++            "release_sync_sqlite_mutex_capability_noexcept",
++            "sqlite3_mutex_leave",
++        ),
++        "transaction_release_orders_thread_lifetime_release",
++        "transaction revocation must prove owner, unpin lifetime, then leave the exact entry",
++    )
++
++    boundary_validate = function_body(
++        authority_cpp, "ConnectionAuthorityState& validate_boundary_proof_or_throw("
++    )
++    require(
++        checks,
++        ordered(
++            boundary_validate,
++            "require_sync_sqlite_thread_incarnation_or_throw",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++        ),
++        "transaction_validator_checks_thread_before_lifetime",
++        "proof validation must reject a foreign caller before dereferencing SQLite-owned sentinel memory",
++    )
++
++    boundary_authorizes = function_body(
++        authority_cpp, "bool sync_sqlite_transaction_boundary_authorizes_noexcept("
++    )
++    require(
++        checks,
++        ordered(
++            boundary_authorizes,
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_mutex_capability_is_live_noexcept",
++            "sqlite3_db_mutex",
++        ),
++        "transaction_observation_checks_thread_before_sqlite_state",
++        "foreign copied authority must return before sentinel dereference or SQLite mutex acquisition",
++    )
++
++    transaction_authorizes = function_body(
++        transaction_cpp, "bool SyncSqliteTransactionAuthority::authorizes(sqlite3* db) const noexcept"
++    )
++    require(
++        checks,
++        ordered(
++            transaction_authorizes,
++            "sync_sqlite_thread_incarnation_is_current",
++            "sync_sqlite_transaction_boundary_authorizes_noexcept",
++        ),
++        "copied_authority_rejects_foreign_thread_early",
++        "foreign observation must not block behind its owner's recursive mutex",
++    )
++    require(
++        checks,
++        transaction_authorizes.find("return false")
++        < transaction_authorizes.find("state->active.store(false"),
++        "foreign_observation_does_not_revoke_owner",
++        "a non-owner observation is unusable but must preserve the exact owner generation",
++    )
++
++    transaction_destructor = function_body(
++        transaction_cpp, "SyncSqliteTransaction::~SyncSqliteTransaction()"
++    )
++    require(
++        checks,
++        ordered(
++            transaction_destructor,
++            "sync_sqlite_thread_incarnation_is_current",
++            "rollback_sync_sqlite_transaction_boundary_noexcept",
++        ),
++        "transaction_destructor_fails_before_foreign_rollback",
++        "a foreign destructor must not touch SQLite or attempt unsafe cleanup",
++    )
++    for method in ("commit", "rollback"):
++        body = function_body(transaction_cpp, f"void SyncSqliteTransaction::{method}()")
++        require(
++            checks,
++            ordered(
++                body,
++                "require_sync_sqlite_thread_incarnation_or_throw",
++                "authority().authorizes",
++            ),
++            f"transaction_{method}_rejects_foreign_thread_before_authority",
++            f"foreign {method.upper()} must throw before any SQLite authority probe",
++        )
++
++    require(
++        checks,
++        "PROPERTIES TIMEOUT 15" in cmake,
++        "authority_ctest_has_finite_timeout",
++        "a future self-deadlock regression must remain a bounded validation failure",
++    )
++    for needle, check_id, detail in (
++        (
++            "test_thread_incarnation_affinity",
++            "foreign_observation_and_finalization_tests_exist",
++            "foreign active/authority/commit/rollback paths need executable coverage",
++        ),
++        (
++            "test_owner_thread_lease_moves",
++            "owner_move_semantics_are_tested",
++            "normal move, self-move, and move assignment must preserve exact retained entries",
++        ),
++        (
++            "child_foreign_lease_destruction",
++            "foreign_lease_destruction_death_test_exists",
++            "noexcept destruction must prove the intended fail-stop",
++        ),
++        (
++            "child_foreign_transaction_destruction",
++            "foreign_transaction_destruction_death_test_exists",
++            "foreign destructor rollback/release must never run",
++        ),
++        (
++            "child_foreign_lease_move",
++            "foreign_lease_move_death_test_exists",
++            "moving a live retained mutex entry to another thread must fail stopped",
++        ),
++        (
++            "child_close_with_live_lease",
++            "same_thread_close_death_test_exists",
++            "recursive same-thread close must not free a retained connection mutex",
++        ),
++        (
++            "child_close_with_live_unfenced_transaction",
++            "unfenced_transaction_close_death_test_exists",
++            "the close fence must not depend on authorizer installation",
++        ),
++        (
++            "child_close_with_live_fenced_transaction",
++            "fenced_transaction_close_death_test_exists",
++            "the close fence must protect authorizer-fenced transaction ownership too",
++        ),
++        (
++            "child_replace_live_capability_sentinel",
++            "live_sentinel_replacement_death_test_exists",
++            "replacement of SQLite-owned lifetime state must not invalidate a retained mutex pointer",
++        ),
++        (
++            "child_zombie_close_with_live_lease",
++            "zombie_close_death_test_exists",
++            "deferred sqlite3_close_v2 destruction must remain fail stopped",
++        ),
++        (
++            "test_close_waits_for_retained_mutex_capability",
++            "foreign_close_serialization_test_exists",
++            "a foreign close must wait and then succeed after normal release",
++        ),
++        (
++            "SQLITE_OPEN_NOMUTEX",
++            "nomutex_rejection_remains_tested",
++            "the capability requires a real serialized connection mutex",
++        ),
++    ):
++        require(checks, needle in authority_test, check_id, detail)
++
++    require(
++        checks,
++        "thread incarnation" in support_hpp.lower()
++        and "fails stopped" in support_hpp.lower(),
++        "public_transaction_contract_documents_fail_stop",
++        "callers must know that thread handoff is not recoverable in a destructor",
++    )
++
++    production_sources = source_files(root)
++    mutex_inventory = line_inventory(root, production_sources, MUTEX_CALL)
++    mutex_owners = {item["path"] for item in mutex_inventory}
++    require(
++        checks,
++        mutex_owners == {"src/sync_sqlite_connection_authority.cpp"},
++        "direct_sqlite_mutex_calls_have_one_owner",
++        "all direct production enter/leave operations must remain in the connection-authority owner",
++    )
++    require(
++        checks,
++        any(item["operation"] == "enter" for item in mutex_inventory)
++        and any(item["operation"] == "leave" for item in mutex_inventory),
++        "mutex_inventory_contains_enter_and_leave",
++        "the source audit must observe both sides of the retained mutex protocol",
++    )
++
++    clientdata_inventory = line_inventory(root, production_sources, CLIENT_DATA_CALL)
++    clientdata_owners = {item["path"] for item in clientdata_inventory}
++    require(
++        checks,
++        clientdata_owners
++        == {
++            "src/sync_sqlite_connection_authority.cpp",
++            "src/sync_sqlite_mutex_capability.cpp",
++        },
++        "clientdata_calls_have_two_invariant_owners",
++        "authorizer generation and retained-mutex lifetime must be the only client-data namespaces",
++    )
++
++    checks_data = [asdict(check) for check in checks]
++    violations = [check.detail for check in checks if not check.passed]
++    report = {
++        "format": "anonsync-sqlite-mutex-capability-audit-v1",
++        "passed": not violations,
++        "check_count": len(checks),
++        "passed_check_count": sum(1 for check in checks if check.passed),
++        "violations": violations,
++        "checks": checks_data,
++        "mutex_call_inventory": mutex_inventory,
++        "clientdata_call_inventory": clientdata_inventory,
++        "sensitive_file_sha256": {
++            path.as_posix(): sha256_file(root / path) for path in SENSITIVE_FILES
++        },
++    }
++    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
++    if args.json:
++        args.json.parent.mkdir(parents=True, exist_ok=True)
++        args.json.write_text(rendered, encoding="utf-8")
++    sys.stdout.write(rendered)
++    return 0 if report["passed"] else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())

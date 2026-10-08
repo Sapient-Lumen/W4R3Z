@@ -1,0 +1,2741 @@
+--- a/src/anonsync_folder.cpp
++++ b/src/anonsync_folder.cpp
+@@ -442,6 +442,15 @@
+         << report.traversal.ignored_internal_artifact_count
+         << ",\"classified_regular_file_bytes\":"
+         << report.traversal.classified_regular_file_bytes
++        << ",\"local_scan_epoch\":" << report.local_scan_epoch
++        << ",\"completed_local_scan_epoch\":"
++        << (report.completed_local_scan_epoch ? "true" : "false")
++        << ",\"restarted_local_scan_epoch\":"
++        << (report.restarted_local_scan_epoch ? "true" : "false")
++        << ",\"local_scan_seen_path_count\":"
++        << report.local_scan_seen_path_count
++        << ",\"local_scan_resume_after_path\":"
++        << json_quote(report.local_scan_resume_after_path)
+         << ",\"used_idle_fast_path\":"
+         << (report.used_idle_fast_path ? "true" : "false")
+         << ",\"exact_local_file_bytes\":"
+@@ -490,6 +499,8 @@
+         << report.skipped_conflicted_remote_path_count
+         << ",\"skipped_tombstone_remote_paths\":"
+         << report.skipped_tombstone_remote_path_count
++        << ",\"deferred_unadjudicated_local_absence_remote_files\":"
++        << report.deferred_unadjudicated_local_absence_remote_file_count
+         << ",\"limits\":{\"maximum_entries\":"
+         << pass_limits.maximum_entries
+         << ",\"maximum_file_bytes\":"
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -901,6 +901,15 @@
+         << report->traversal.ignored_internal_artifact_count
+         << ",\"classified_regular_file_bytes\":"
+         << report->traversal.classified_regular_file_bytes
++        << ",\"local_scan_epoch\":" << report->local_scan_epoch
++        << ",\"completed_local_scan_epoch\":"
++        << json_bool(report->completed_local_scan_epoch)
++        << ",\"restarted_local_scan_epoch\":"
++        << json_bool(report->restarted_local_scan_epoch)
++        << ",\"local_scan_seen_path_count\":"
++        << report->local_scan_seen_path_count
++        << ",\"local_scan_resume_after_path\":"
++        << json_quote(report->local_scan_resume_after_path)
+         << ",\"used_idle_fast_path\":"
+         << (report->used_idle_fast_path ? "true" : "false")
+         << ",\"exact_local_file_bytes\":"
+@@ -948,7 +957,9 @@
+         << ",\"skipped_conflicted_remote_paths\":"
+         << report->skipped_conflicted_remote_path_count
+         << ",\"skipped_tombstone_remote_paths\":"
+-        << report->skipped_tombstone_remote_path_count << '}';
++        << report->skipped_tombstone_remote_path_count
++        << ",\"deferred_unadjudicated_local_absence_remote_files\":"
++        << report->deferred_unadjudicated_local_absence_remote_file_count << '}';
+ }
+ 
+ void append_reconciliation_json(
+@@ -2140,6 +2151,15 @@
+         << pass.traversal.ignored_internal_artifact_count
+         << ",\"classified_regular_file_bytes\":"
+         << pass.traversal.classified_regular_file_bytes
++        << ",\"local_scan_epoch\":" << pass.local_scan_epoch
++        << ",\"completed_local_scan_epoch\":"
++        << json_bool(pass.completed_local_scan_epoch)
++        << ",\"restarted_local_scan_epoch\":"
++        << json_bool(pass.restarted_local_scan_epoch)
++        << ",\"local_scan_seen_path_count\":"
++        << pass.local_scan_seen_path_count
++        << ",\"local_scan_resume_after_path\":"
++        << json_quote(pass.local_scan_resume_after_path)
+         << ",\"used_idle_fast_path\":"
+         << json_bool(pass.used_idle_fast_path)
+         << ",\"exact_local_file_bytes\":"
+--- a/src/sync_replica_folder_observer.cpp
++++ b/src/sync_replica_folder_observer.cpp
+@@ -212,6 +212,42 @@
+     return status;
+ }
+ 
++[[nodiscard]] bool traversal_path_less_internal(
++    std::string_view left,
++    std::string_view right) noexcept {
++    std::size_t left_begin = 0U;
++    std::size_t right_begin = 0U;
++    for (;;) {
++        const std::size_t left_end = left.find('/', left_begin);
++        const std::size_t right_end = right.find('/', right_begin);
++        const std::string_view left_component = left.substr(
++            left_begin,
++            left_end == std::string_view::npos
++                ? std::string_view::npos
++                : left_end - left_begin);
++        const std::string_view right_component = right.substr(
++            right_begin,
++            right_end == std::string_view::npos
++                ? std::string_view::npos
++                : right_end - right_begin);
++        const int comparison = left_component.compare(right_component);
++        if (comparison != 0) return comparison < 0;
++
++        const bool left_finished = left_end == std::string_view::npos;
++        const bool right_finished = right_end == std::string_view::npos;
++        if (left_finished || right_finished) {
++            return left_finished && !right_finished;
++        }
++        left_begin = left_end + 1U;
++        right_begin = right_end + 1U;
++    }
++}
++
++enum class WalkDisposition : std::uint8_t {
++    Continue = 1,
++    StoppedAtAggregateFrontier = 2,
++};
++
+ struct WalkContext final {
+     const SyncDirectoryAuthority& authority;
+     const SyncReplicaFolderObservationLimits& limits;
+@@ -221,6 +257,8 @@
+     SyncReplicaFolderTraversalSummary summary;
+     SyncReplicaFolderObservation* observation = nullptr;
+     const SyncReplicaFolderRegularFilePathVisitor* visitor = nullptr;
++    SyncReplicaFolderTraversalSegment* segment = nullptr;
++    bool segment_delivered_path = false;
+ };
+ 
+ void increment_entry_count_or_throw(WalkContext& context) {
+@@ -237,7 +275,7 @@
+     }
+ }
+ 
+-void charge_classified_regular_file_or_throw(
++[[nodiscard]] std::uint64_t classified_regular_file_size_or_throw(
+     WalkContext& context,
+     const std::string& canonical_path,
+     const struct stat& initial_status) {
+@@ -252,10 +290,27 @@
+             context.label + " file exceeds configured byte limit: " +
+             canonical_path);
+     }
+-    if (context.summary.classified_regular_file_bytes >
+-            context.limits.maximum_total_file_bytes ||
+-        initial_size > context.limits.maximum_total_file_bytes -
+-                           context.summary.classified_regular_file_bytes) {
++    return initial_size;
++}
++
++[[nodiscard]] bool classified_file_fits_aggregate(
++    const WalkContext& context,
++    std::uint64_t initial_size) noexcept {
++    return context.summary.classified_regular_file_bytes <=
++               context.limits.maximum_total_file_bytes &&
++           initial_size <=
++               context.limits.maximum_total_file_bytes -
++                   context.summary.classified_regular_file_bytes;
++}
++
++void charge_classified_regular_file_or_throw(
++    WalkContext& context,
++    const std::string& canonical_path,
++    const struct stat& initial_status) {
++    const std::uint64_t initial_size =
++        classified_regular_file_size_or_throw(
++            context, canonical_path, initial_status);
++    if (!classified_file_fits_aggregate(context, initial_size)) {
+         throw std::runtime_error(
+             context.label + " exceeds configured total file-byte limit");
+     }
+@@ -347,7 +402,7 @@
+     ++context.summary.regular_file_count;
+ }
+ 
+-void handle_regular_file_or_throw(
++[[nodiscard]] WalkDisposition handle_regular_file_or_throw(
+     WalkContext& context,
+     int parent_descriptor,
+     const std::string& component,
+@@ -357,17 +412,56 @@
+         observe_regular_file_or_throw(
+             context, parent_descriptor, component, canonical_path,
+             initial_status);
+-        return;
++        return WalkDisposition::Continue;
+     }
+     if (context.visitor == nullptr) {
+         throw std::logic_error(
+             context.label + " traversal has no regular-file consumer");
+     }
+-    charge_classified_regular_file_or_throw(
+-        context, canonical_path, initial_status);
+-    (*context.visitor)(
+-        canonical_path,
+-        static_cast<std::uint64_t>(initial_status.st_size));
++    if (context.segment == nullptr) {
++        charge_classified_regular_file_or_throw(
++            context, canonical_path, initial_status);
++        (*context.visitor)(
++            canonical_path,
++            static_cast<std::uint64_t>(initial_status.st_size));
++        return WalkDisposition::Continue;
++    }
++
++    SyncReplicaFolderTraversalSegment& segment = *context.segment;
++    if (!segment.resume_after_path.empty() &&
++        !traversal_path_less_internal(
++            segment.resume_after_path, canonical_path)) {
++        if (segment.skipped_regular_file_count ==
++            std::numeric_limits<std::uint64_t>::max()) {
++            throw std::runtime_error(
++                context.label + " skipped file count exceeds uint64 range");
++        }
++        ++segment.skipped_regular_file_count;
++        return WalkDisposition::Continue;
++    }
++
++    const std::uint64_t initial_size =
++        classified_regular_file_size_or_throw(
++            context, canonical_path, initial_status);
++    if (!classified_file_fits_aggregate(context, initial_size)) {
++        if (!context.segment_delivered_path) {
++            throw std::runtime_error(
++                context.label +
++                " cannot fit the next eligible file in an empty traversal "
++                "segment: " + canonical_path);
++        }
++        segment.completed = false;
++        return WalkDisposition::StoppedAtAggregateFrontier;
++    }
++
++    // The visitor owns all exact-file and durable effects. Advance the in-memory
++    // cursor only after it returns, so a thrown callback is replayed on restart.
++    (*context.visitor)(canonical_path, initial_size);
++    context.summary.classified_regular_file_bytes += initial_size;
++    ++context.summary.regular_file_count;
++    context.segment_delivered_path = true;
++    segment.resume_after_path = canonical_path;
++    return WalkDisposition::Continue;
+ }
+ 
+ [[nodiscard]] std::vector<std::string> read_sorted_components_or_throw(
+@@ -399,7 +493,7 @@
+     return components;
+ }
+ 
+-void walk_directory_or_throw(
++[[nodiscard]] WalkDisposition walk_directory_or_throw(
+     WalkContext& context,
+     int owned_descriptor,
+     const std::string& parent_path,
+@@ -445,9 +539,11 @@
+         require_canonical_path_or_throw(
+             canonical_path, context.limits, context.label);
+         if (S_ISREG(initial_status.st_mode)) {
+-            handle_regular_file_or_throw(
+-                context, parent_descriptor, component, canonical_path,
+-                initial_status);
++            const WalkDisposition disposition =
++                handle_regular_file_or_throw(
++                    context, parent_descriptor, component, canonical_path,
++                    initial_status);
++            if (disposition != WalkDisposition::Continue) return disposition;
+             continue;
+         }
+ 
+@@ -467,7 +563,7 @@
+                 context.label + " directory");
+         const struct stat opened_status = opened.status;
+         ++context.summary.visited_directory_count;
+-        walk_directory_or_throw(
++        const WalkDisposition child_disposition = walk_directory_or_throw(
+             context, opened.descriptor, canonical_path, depth + 1U);
+ 
+         SyncPosixOpenedDirectory rebound =
+@@ -484,11 +580,21 @@
+                 " directory path changed while being observed: " +
+                 canonical_path);
+         }
++        if (child_disposition != WalkDisposition::Continue) {
++            return child_disposition;
++        }
+     }
++    return WalkDisposition::Continue;
+ }
+ 
+ }  // namespace
+ 
++bool sync_replica_folder_traversal_path_less(
++    std::string_view left,
++    std::string_view right) noexcept {
++    return traversal_path_less_internal(left, right);
++}
++
+ void validate_sync_replica_folder_observation_limits_or_throw(
+     const SyncReplicaFolderObservationLimits& limits,
+     std::string label) {
+@@ -526,6 +632,55 @@
+     }
+ }
+ 
++SyncReplicaFolderTraversalSegment
++visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++    const SyncDirectoryAuthority& root_authority,
++    std::string resume_after_path,
++    const SyncReplicaFolderRegularFilePathVisitor& visitor,
++    const SyncReplicaFolderObservationLimits& limits,
++    std::string label) {
++    if (label.empty()) {
++        label = "sync replica folder resumable path traversal";
++    }
++    if (!visitor) {
++        throw std::invalid_argument(
++            label + " regular-file visitor must not be empty");
++    }
++    validate_sync_replica_folder_observation_limits_or_throw(limits, label);
++    if (!resume_after_path.empty()) {
++        require_canonical_path_or_throw(resume_after_path, limits, label);
++    }
++
++    SyncReplicaFolderTraversalSegment segment;
++    segment.completed = true;
++    segment.resume_after_path = std::move(resume_after_path);
++    WalkContext context{
++        root_authority,
++        limits,
++        root_authority.resolution_capability(),
++        {},
++        std::move(label),
++        {},
++        nullptr,
++        &visitor,
++        &segment,
++        false};
++    ScopedFd root = open_independent_root_or_throw(
++        root_authority, context.label + " mount capture");
++    context.root_mount = sync_posix_capture_mount_identity_or_throw(
++        root.get(), context.resolution_capability,
++        context.label + " scan root mount identity");
++    root_authority.verify_or_throw(context.label + " root before traversal");
++    const WalkDisposition disposition =
++        walk_directory_or_throw(context, root.release(), {}, 0U);
++    root_authority.verify_or_throw(context.label + " root after traversal");
++    if (disposition == WalkDisposition::StoppedAtAggregateFrontier) {
++        segment.completed = false;
++    }
++    segment.traversal = context.summary;
++    return segment;
++}
++
+ SyncReplicaFolderTraversalSummary
+ visit_sync_replica_folder_regular_file_paths_or_throw(
+     const SyncDirectoryAuthority& root_authority,
+@@ -548,14 +703,21 @@
+         std::move(label),
+         {},
+         nullptr,
+-        &visitor};
++        &visitor,
++        nullptr,
++        false};
+     ScopedFd root = open_independent_root_or_throw(
+         root_authority, context.label + " mount capture");
+     context.root_mount = sync_posix_capture_mount_identity_or_throw(
+         root.get(), context.resolution_capability,
+         context.label + " scan root mount identity");
+     root_authority.verify_or_throw(context.label + " root before traversal");
+-    walk_directory_or_throw(context, root.release(), {}, 0U);
++    const WalkDisposition disposition =
++        walk_directory_or_throw(context, root.release(), {}, 0U);
++    if (disposition != WalkDisposition::Continue) {
++        throw std::logic_error(
++            context.label + " full traversal stopped without an exception");
++    }
+     root_authority.verify_or_throw(context.label + " root after traversal");
+     return context.summary;
+ }
+@@ -577,14 +739,21 @@
+         std::move(label),
+         {},
+         &result,
+-        nullptr};
++        nullptr,
++        nullptr,
++        false};
+     ScopedFd root = open_independent_root_or_throw(
+         root_authority, context.label + " mount capture");
+     context.root_mount = sync_posix_capture_mount_identity_or_throw(
+         root.get(), context.resolution_capability,
+         context.label + " scan root mount identity");
+     root_authority.verify_or_throw(context.label + " root before observation");
+-    walk_directory_or_throw(context, root.release(), {}, 0U);
++    const WalkDisposition disposition =
++        walk_directory_or_throw(context, root.release(), {}, 0U);
++    if (disposition != WalkDisposition::Continue) {
++        throw std::logic_error(
++            context.label + " full observation stopped without an exception");
++    }
+     root_authority.verify_or_throw(context.label + " root after observation");
+ 
+     result.visited_entry_count = context.summary.visited_entry_count;
+--- a/src/sync_replica_folder_observer.hpp
++++ b/src/sync_replica_folder_observer.hpp
+@@ -8,6 +8,7 @@
+ #include <cstdint>
+ #include <functional>
+ #include <string>
++#include <string_view>
+ #include <vector>
+ 
+ namespace anonsync {
+@@ -58,6 +59,45 @@
+     std::function<void(const std::string& canonical_path,
+                        std::uint64_t classified_size_bytes)>;
+ 
++// The traversal order is component-wise bytewise preorder: entries in each
++// directory are sorted by basename, and a directory's complete subtree is
++// visited before the next sibling. This differs from a flat string comparison
++// for cases such as "a/child" and "a.txt". Persisted continuation cursors must
++// use this comparator or a restarted walk can skip or repeat a path.
++[[nodiscard]] bool sync_replica_folder_traversal_path_less(
++    std::string_view left, std::string_view right) noexcept;
++
++struct SyncReplicaFolderTraversalSegment final {
++    SyncReplicaFolderTraversalSummary traversal;
++    // True only when the walk reached the end of the namespace. A false value
++    // means the next eligible regular file would have crossed the aggregate
++    // byte frontier and was deliberately left for a later segment.
++    bool completed = false;
++    std::uint64_t skipped_regular_file_count = 0;
++    // Last path successfully delivered to the visitor. When no new path was
++    // delivered, this retains the input continuation cursor.
++    std::string resume_after_path;
++
++    bool operator==(const SyncReplicaFolderTraversalSegment&) const = default;
++};
++
++// Restartable counterpart to the full traversal below. Regular paths at or
++// before resume_after_path in component-wise traversal order are classified but
++// not charged to the aggregate file-byte budget and are not delivered again.
++// When the next eligible file would cross that budget, a non-complete segment
++// is returned after all opened directory identities and the retained root have
++// been re-proved. At least one eligible file must fit an empty segment; callers
++// should require maximum_file_bytes <= maximum_total_file_bytes. Visitor effects
++// must be idempotent and restart-safe, and the cursor should be persisted only
++// after the visitor's complete path effect succeeds.
++[[nodiscard]] SyncReplicaFolderTraversalSegment
++visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++    const SyncDirectoryAuthority& root_authority,
++    std::string resume_after_path,
++    const SyncReplicaFolderRegularFilePathVisitor& visitor,
++    const SyncReplicaFolderObservationLimits& limits = {},
++    std::string label = "sync replica folder resumable path traversal");
++
+ // Walks one retained root without retaining file payloads or a whole-tree path
+ // list. Names within each open directory are processed in bytewise order, so a
+ // stable namespace produces a stable callback order. Recursive descent retains
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -38,20 +38,25 @@
+ namespace fs = std::filesystem;
+ 
+ constexpr std::uint64_t kLegacySchemaVersion = 1U;
+-constexpr std::uint64_t kSchemaVersion = 2U;
++constexpr std::uint64_t kPreviousSchemaVersion = 2U;
++constexpr std::uint64_t kSchemaVersion = 3U;
+ constexpr std::uint64_t kMaxPersistentInteger =
+     static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+ constexpr std::string_view kLegacyCatalogDigestDomain =
+     "anonsync:sync-replica-folder-catalog:v1";
+-constexpr std::string_view kCatalogDigestDomain =
++constexpr std::string_view kPreviousCatalogDigestDomain =
+     "anonsync:sync-replica-folder-catalog:v2";
++constexpr std::string_view kCatalogDigestDomain =
++    "anonsync:sync-replica-folder-catalog:v3";
++constexpr std::string_view kFolderScanSeenChainDigestDomain =
++    "anonsync:sync-replica-folder-scan-seen-chain:v1";
+ constexpr std::string_view kSourceSnapshotDigestDomain =
+     "anonsync:sync-replica-folder-source-snapshot:v1";
+ 
+ constexpr std::string_view kMetaSchemaSql =
+     "CREATE TABLE sync_replica_folder_catalog_meta("
+     "id INTEGER PRIMARY KEY CHECK(id=1),"
+-    "schema_version INTEGER NOT NULL CHECK(schema_version=2),"
++    "schema_version INTEGER NOT NULL CHECK(schema_version=3),"
+     "folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),"
+     "absolute_root_path TEXT NOT NULL CHECK(length(absolute_root_path) BETWEEN 1 AND 16384),"
+     "root_attestation_digest TEXT NOT NULL CHECK(length(root_attestation_digest)=64),"
+@@ -76,9 +81,45 @@
+     "length(source_snapshot_sha256)=64) OR (value_kind=2 AND size_bytes=0 AND "
+     "content_sha256='' AND source_snapshot_sha256=''))) STRICT";
+ 
++constexpr std::string_view kScanProgressSchemaSql =
++    "CREATE TABLE sync_replica_folder_catalog_scan_progress("
++    "id INTEGER PRIMARY KEY CHECK(id=1),"
++    "scan_epoch INTEGER NOT NULL CHECK(scan_epoch>0),"
++    "resume_after_path TEXT NOT NULL CHECK(length(resume_after_path)<=4096),"
++    "seen_path_count INTEGER NOT NULL CHECK(seen_path_count>=0),"
++    "seen_path_bytes INTEGER NOT NULL CHECK(seen_path_bytes>=0),"
++    "seen_chain_digest TEXT NOT NULL CHECK(length(seen_chain_digest)=64)) STRICT";
++
++constexpr std::string_view kScanSeenSchemaSql =
++    "CREATE TABLE sync_replica_folder_catalog_scan_seen("
++    "ordinal INTEGER PRIMARY KEY CHECK(ordinal>0),"
++    "scan_epoch INTEGER NOT NULL CHECK(scan_epoch>0),"
++    "canonical_path TEXT NOT NULL UNIQUE CHECK(length(canonical_path) BETWEEN 1 AND 4096),"
++    "chain_digest TEXT NOT NULL CHECK(length(chain_digest)=64)) STRICT";
++
++// Exact rev0946 file/tombstone catalog definitions. They are accepted only
++// long enough to prove the complete v2 cutpoint and add an independently
++// attested continuation journal transactionally.
++constexpr std::string_view kPreviousMetaSchemaSql =
++    "CREATE TABLE sync_replica_folder_catalog_meta("
++    "id INTEGER PRIMARY KEY CHECK(id=1),"
++    "schema_version INTEGER NOT NULL CHECK(schema_version=2),"
++    "folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),"
++    "absolute_root_path TEXT NOT NULL CHECK(length(absolute_root_path) BETWEEN 1 AND 16384),"
++    "root_attestation_digest TEXT NOT NULL CHECK(length(root_attestation_digest)=64),"
++    "state_generation INTEGER NOT NULL CHECK(state_generation>=0),"
++    "max_catalog_entries INTEGER NOT NULL CHECK(max_catalog_entries>0),"
++    "max_catalog_path_bytes INTEGER NOT NULL CHECK(max_catalog_path_bytes>0),"
++    "max_payload_bytes INTEGER NOT NULL CHECK(max_payload_bytes>0),"
++    "entry_count INTEGER NOT NULL CHECK(entry_count>=0),"
++    "catalog_path_bytes INTEGER NOT NULL CHECK(catalog_path_bytes>=0),"
++    "catalog_digest TEXT NOT NULL CHECK(length(catalog_digest)=64)) STRICT";
++
++constexpr std::string_view kPreviousEntriesSchemaSql = kEntriesSchemaSql;
++
+ // Exact rev0939 file-only catalog definitions. They are accepted only long
+ // enough to prove the complete old cutpoint and migrate it transactionally to
+-// v2. A near-match is neither repaired nor partially adopted.
++// v3. A near-match is neither repaired nor partially adopted.
+ constexpr std::string_view kLegacyMetaSchemaSql =
+     "CREATE TABLE sync_replica_folder_catalog_meta("
+     "id INTEGER PRIMARY KEY CHECK(id=1),"
+@@ -108,9 +149,16 @@
+     std::string_view sql;
+ };
+ 
+-constexpr std::array<SchemaDefinition, 2U> kSchema{{
++constexpr std::array<SchemaDefinition, 4U> kSchema{{
+     {"sync_replica_folder_catalog_meta", kMetaSchemaSql},
+     {"sync_replica_folder_catalog_entries", kEntriesSchemaSql},
++    {"sync_replica_folder_catalog_scan_progress", kScanProgressSchemaSql},
++    {"sync_replica_folder_catalog_scan_seen", kScanSeenSchemaSql},
++}};
++
++constexpr std::array<SchemaDefinition, 2U> kPreviousSchema{{
++    {"sync_replica_folder_catalog_meta", kPreviousMetaSchemaSql},
++    {"sync_replica_folder_catalog_entries", kPreviousEntriesSchemaSql},
+ }};
+ 
+ constexpr std::array<SchemaDefinition, 2U> kLegacySchema{{
+@@ -709,6 +757,39 @@
+     return digest.finish_hex();
+ }
+ 
++[[nodiscard]] std::string previous_catalog_digest(
++    std::string_view folder_id,
++    std::string_view absolute_root_path,
++    std::string_view root_attestation_digest,
++    const SyncReplicaFolderScanLimits& limits,
++    std::uint64_t state_generation,
++    const std::vector<SyncReplicaFolderCatalogEntry>& entries) {
++    Sha256DigestBuilder digest;
++    append_string(digest, kPreviousCatalogDigestDomain);
++    append_u64(digest, kPreviousSchemaVersion);
++    append_string(digest, folder_id);
++    append_string(digest, absolute_root_path);
++    append_string(digest, root_attestation_digest);
++    append_u64(digest, limits.max_catalog_entries);
++    append_u64(digest, limits.max_catalog_path_bytes);
++    append_u64(digest, limits.max_payload_bytes);
++    append_u64(digest, state_generation);
++    append_u64(digest, static_cast<std::uint64_t>(entries.size()));
++    for (const auto& entry : entries) {
++        append_string(digest, entry.canonical_path);
++        append_u64(
++            digest,
++            catalog_value_kind_integer_or_throw(
++                entry.kind, "previous folder catalog digest"));
++        append_u64(digest, entry.size_bytes);
++        append_string(digest, entry.content_sha256);
++        append_string(digest, entry.operation_id);
++        append_string(digest, entry.source_snapshot_sha256);
++        append_u64(digest, entry.last_seen_generation);
++    }
++    return digest.finish_hex();
++}
++
+ [[nodiscard]] std::string legacy_catalog_digest(
+     std::string_view folder_id,
+     std::string_view absolute_root_path,
+@@ -742,6 +823,29 @@
+     return digest.finish_hex();
+ }
+ 
++[[nodiscard]] std::string scan_seen_genesis_digest(
++    std::uint64_t scan_epoch) {
++    Sha256DigestBuilder digest;
++    append_string(digest, kFolderScanSeenChainDigestDomain);
++    append_u64(digest, scan_epoch);
++    append_u64(digest, 0U);
++    return digest.finish_hex();
++}
++
++[[nodiscard]] std::string scan_seen_next_digest(
++    std::uint64_t scan_epoch,
++    std::uint64_t ordinal,
++    std::string_view previous_digest,
++    std::string_view canonical_path) {
++    Sha256DigestBuilder digest;
++    append_string(digest, kFolderScanSeenChainDigestDomain);
++    append_u64(digest, scan_epoch);
++    append_u64(digest, ordinal);
++    append_string(digest, previous_digest);
++    append_string(digest, canonical_path);
++    return digest.finish_hex();
++}
++
+ [[nodiscard]] std::uint64_t own_schema_object_count_or_throw(
+     SyncSqliteDbHandleSlot& db,
+     const std::string& label,
+@@ -839,15 +943,22 @@
+     const std::array<SchemaDefinition, Size>& schema,
+     bool deployment_bound,
+     const std::string& label) {
++    const std::uint64_t expected_owned =
++        static_cast<std::uint64_t>(schema.size());
+     const std::uint64_t expected_total =
+-        static_cast<std::uint64_t>(schema.size()) +
+-        (deployment_bound ? 1U : 0U);
+-    if (own_schema_object_count_or_throw(db, label, false) !=
+-            schema.size() ||
+-        total_user_schema_object_count_or_throw(db, label) !=
+-            expected_total) {
+-        throw std::runtime_error(
+-            label + " catalog schema object count mismatch");
++        expected_owned + (deployment_bound ? 1U : 0U);
++    const std::uint64_t observed_owned =
++        own_schema_object_count_or_throw(db, label, false);
++    const std::uint64_t observed_total =
++        total_user_schema_object_count_or_throw(db, label);
++    if (observed_owned != expected_owned ||
++        observed_total != expected_total) {
++        throw std::runtime_error(
++            label + " catalog schema object count mismatch: expected " +
++            std::to_string(expected_owned) + " owned / " +
++            std::to_string(expected_total) + " total, observed " +
++            std::to_string(observed_owned) + " owned / " +
++            std::to_string(observed_total) + " total");
+     }
+     if (own_schema_object_count_or_throw(db, label, true) != 0U ||
+         total_user_schema_object_count_or_throw(db, label, true) != 0U) {
+@@ -866,6 +977,14 @@
+     attest_schema_family_or_throw(db, kSchema, deployment_bound, label);
+ }
+ 
++void attest_previous_schema_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    bool deployment_bound,
++    const std::string& label) {
++    attest_schema_family_or_throw(
++        db, kPreviousSchema, deployment_bound, label);
++}
++
+ void attest_legacy_schema_or_throw(
+     SyncSqliteDbHandleSlot& db,
+     bool deployment_bound,
+@@ -1062,6 +1181,142 @@
+     return snapshot;
+ }
+ 
++[[nodiscard]] SyncReplicaFolderCatalogSnapshot load_previous_catalog_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& expected_folder_id,
++    const std::string& expected_root_path,
++    const std::string& expected_root_attestation_digest,
++    const SyncReplicaSqliteDeploymentBinding* deployment_binding,
++    const std::string& label,
++    bool detached_binding = false) {
++    if (detached_binding && deployment_binding == nullptr) {
++        throw std::logic_error(
++            label + " detached catalog binding is absent");
++    }
++    if (deployment_binding != nullptr) {
++        if (detached_binding) {
++            attest_sync_replica_sqlite_deployment_binding_state_in_detached_image_or_throw(
++                db, *deployment_binding, label + " detached deployment binding");
++        } else {
++            attest_sync_replica_sqlite_deployment_binding_state_or_throw(
++                db, *deployment_binding, label + " deployment binding");
++        }
++    }
++    attest_previous_schema_or_throw(db, deployment_binding != nullptr, label);
++
++    SyncSqliteStmt meta = sqlite_prepare_or_throw(
++        db,
++        "SELECT schema_version,folder_id,absolute_root_path,"
++        "root_attestation_digest,state_generation,max_catalog_entries,"
++        "max_catalog_path_bytes,max_payload_bytes,entry_count,"
++        "catalog_path_bytes,catalog_digest "
++        "FROM main.sync_replica_folder_catalog_meta WHERE id=1;",
++        label + " metadata prepare");
++    if (step_row_or_done_or_throw(
++            meta.stmt, label + " metadata step") != SQLITE_ROW) {
++        throw std::runtime_error(label + " catalog metadata row is missing");
++    }
++    const std::uint64_t schema_version = sqlite_column_u64_or_throw(
++        meta.stmt, 0, label + " schema version");
++    SyncReplicaFolderCatalogSnapshot snapshot;
++    snapshot.folder_id = sqlite_column_text_or_throw(
++        meta.stmt, 1, 128U, label + " folder identity");
++    snapshot.absolute_root_path = sqlite_column_text_or_throw(
++        meta.stmt, 2, 16384U, label + " root path");
++    snapshot.root_attestation_digest = sqlite_column_text_or_throw(
++        meta.stmt, 3, 64U, label + " root attestation digest");
++    snapshot.state_generation = sqlite_column_u64_or_throw(
++        meta.stmt, 4, label + " state generation");
++    snapshot.limits.max_catalog_entries = sqlite_column_u64_or_throw(
++        meta.stmt, 5, label + " entry limit");
++    snapshot.limits.max_catalog_path_bytes = sqlite_column_u64_or_throw(
++        meta.stmt, 6, label + " path byte limit");
++    snapshot.limits.max_payload_bytes = sqlite_column_u64_or_throw(
++        meta.stmt, 7, label + " payload byte limit");
++    const std::uint64_t expected_entry_count = sqlite_column_u64_or_throw(
++        meta.stmt, 8, label + " entry count");
++    const std::uint64_t expected_path_bytes = sqlite_column_u64_or_throw(
++        meta.stmt, 9, label + " path bytes");
++    snapshot.catalog_digest = sqlite_column_text_or_throw(
++        meta.stmt, 10, 64U, label + " catalog digest");
++    if (step_row_or_done_or_throw(
++            meta.stmt, label + " metadata trailing step") != SQLITE_DONE) {
++        throw std::runtime_error(
++            label + " catalog metadata identity is not unique");
++    }
++
++    if (schema_version != kPreviousSchemaVersion ||
++        snapshot.folder_id != expected_folder_id ||
++        snapshot.absolute_root_path != expected_root_path ||
++        snapshot.root_attestation_digest !=
++            expected_root_attestation_digest) {
++        throw std::runtime_error(
++            label + " catalog identity does not match the configured folder");
++    }
++    validate_sync_replica_folder_scan_limits_or_throw(snapshot.limits);
++    if (snapshot.state_generation > kMaxPersistentInteger ||
++        !is_lowercase_sha256_hex(snapshot.root_attestation_digest) ||
++        !is_lowercase_sha256_hex(snapshot.catalog_digest)) {
++        throw std::runtime_error(label + " catalog metadata is invalid");
++    }
++
++    SyncSqliteStmt entries = sqlite_prepare_or_throw(
++        db,
++        "SELECT canonical_path,value_kind,size_bytes,content_sha256,operation_id,"
++        "source_snapshot_sha256,last_seen_generation "
++        "FROM main.sync_replica_folder_catalog_entries "
++        "ORDER BY canonical_path;",
++        label + " entries prepare");
++    std::uint64_t path_bytes = 0U;
++    for (;;) {
++        const int step = step_row_or_done_or_throw(
++            entries.stmt, label + " entries step");
++        if (step == SQLITE_DONE) break;
++        SyncReplicaFolderCatalogEntry entry;
++        entry.canonical_path = sqlite_column_text_or_throw(
++            entries.stmt, 0, 4096U, label + " entry path");
++        entry.kind = catalog_value_kind_from_integer_or_throw(
++            sqlite_column_u64_or_throw(
++                entries.stmt, 1, label + " entry value kind"),
++            label);
++        entry.size_bytes = sqlite_column_u64_or_throw(
++            entries.stmt, 2, label + " entry size");
++        entry.content_sha256 = sqlite_column_text_or_throw(
++            entries.stmt, 3, 64U, label + " entry content digest");
++        entry.operation_id = sqlite_column_text_or_throw(
++            entries.stmt, 4, 64U, label + " entry operation identity");
++        entry.source_snapshot_sha256 = sqlite_column_text_or_throw(
++            entries.stmt, 5, 64U, label + " entry source digest");
++        entry.last_seen_generation = sqlite_column_u64_or_throw(
++            entries.stmt, 6, label + " entry generation");
++        validate_catalog_entry_or_throw(
++            entry, snapshot.limits, snapshot.state_generation, label);
++        path_bytes = add_or_throw(
++            path_bytes,
++            static_cast<std::uint64_t>(entry.canonical_path.size()),
++            label + " path bytes");
++        snapshot.entries.push_back(std::move(entry));
++        if (snapshot.entries.size() > snapshot.limits.max_catalog_entries) {
++            throw std::runtime_error(
++                label + " catalog exceeds its persisted entry limit");
++        }
++    }
++
++    if (snapshot.entries.size() != expected_entry_count ||
++        path_bytes != expected_path_bytes ||
++        path_bytes > snapshot.limits.max_catalog_path_bytes ||
++        previous_catalog_digest(
++            snapshot.folder_id, snapshot.absolute_root_path,
++            snapshot.root_attestation_digest, snapshot.limits,
++            snapshot.state_generation, snapshot.entries) !=
++            snapshot.catalog_digest) {
++        throw std::runtime_error(
++            label + " catalog cutpoint attestation failed");
++    }
++    return snapshot;
++}
++
++
+ [[nodiscard]] std::uint64_t catalog_schema_version_or_throw(
+     SyncSqliteDbHandleSlot& db,
+     const std::string& label) {
+@@ -1224,6 +1479,408 @@
+     return snapshot;
+ }
+ 
++struct FolderScanProgressHead final {
++    std::uint64_t scan_epoch = 0U;
++    std::string resume_after_path;
++    std::uint64_t seen_path_count = 0U;
++    std::uint64_t seen_path_bytes = 0U;
++    std::string seen_chain_digest;
++
++    bool operator==(const FolderScanProgressHead&) const = default;
++};
++
++void validate_scan_progress_path_or_throw(
++    std::string_view canonical_path,
++    const SyncReplicaFolderScanLimits& limits,
++    const std::string& label) {
++    if (canonical_path.empty() ||
++        canonical_path.size() > limits.max_catalog_path_bytes ||
++        canonical_path.size() > 4096U) {
++        throw std::runtime_error(
++            label + " scan-progress path exceeds its persisted limit");
++    }
++    const SyncValidationResult validation =
++        validate_sync_relative_path(canonical_path);
++    if (!validation.ok) {
++        throw std::runtime_error(
++            label + " scan-progress path is invalid: " +
++            validation.reason);
++    }
++    try {
++        reject_reserved_internal_path_components_or_throw(
++            canonical_path, label + " scan progress");
++    } catch (const std::invalid_argument& error) {
++        throw std::runtime_error(error.what());
++    }
++}
++
++[[nodiscard]] FolderScanProgressHead load_scan_progress_head_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaFolderScanLimits& limits,
++    const std::string& label) {
++    SyncSqliteStmt progress = sqlite_prepare_or_throw(
++        db,
++        "SELECT scan_epoch,resume_after_path,seen_path_count,seen_path_bytes,"
++        "seen_chain_digest FROM "
++        "main.sync_replica_folder_catalog_scan_progress WHERE id=1;",
++        label + " scan-progress prepare");
++    if (step_row_or_done_or_throw(
++            progress.stmt, label + " scan-progress step") != SQLITE_ROW) {
++        throw std::runtime_error(
++            label + " scan-progress singleton is missing");
++    }
++    FolderScanProgressHead head;
++    head.scan_epoch = sqlite_column_u64_or_throw(
++        progress.stmt, 0, label + " scan epoch");
++    head.resume_after_path = sqlite_column_text_or_throw(
++        progress.stmt, 1, 4096U, label + " scan cursor");
++    head.seen_path_count = sqlite_column_u64_or_throw(
++        progress.stmt, 2, label + " scan seen count");
++    head.seen_path_bytes = sqlite_column_u64_or_throw(
++        progress.stmt, 3, label + " scan seen path bytes");
++    head.seen_chain_digest = sqlite_column_text_or_throw(
++        progress.stmt, 4, 64U, label + " scan seen digest");
++    if (step_row_or_done_or_throw(
++            progress.stmt,
++            label + " scan-progress trailing step") != SQLITE_DONE) {
++        throw std::runtime_error(
++            label + " scan-progress singleton is not unique");
++    }
++
++    if (head.scan_epoch == 0U ||
++        head.scan_epoch > kMaxPersistentInteger ||
++        head.seen_path_count > limits.max_catalog_entries ||
++        head.seen_path_count > kMaxPersistentInteger ||
++        head.seen_path_bytes > limits.max_catalog_path_bytes ||
++        head.seen_path_bytes > kMaxPersistentInteger ||
++        !is_lowercase_sha256_hex(head.seen_chain_digest)) {
++        throw std::runtime_error(
++            label + " scan-progress metadata is invalid");
++    }
++
++    SyncSqliteStmt first = sqlite_prepare_or_throw(
++        db,
++        "SELECT ordinal FROM main.sync_replica_folder_catalog_scan_seen "
++        "ORDER BY ordinal LIMIT 1;",
++        label + " scan-progress first-row prepare");
++    const int first_step = step_row_or_done_or_throw(
++        first.stmt, label + " scan-progress first-row step");
++    if (head.seen_path_count == 0U) {
++        if (!head.resume_after_path.empty() || head.seen_path_bytes != 0U ||
++            head.seen_chain_digest !=
++                scan_seen_genesis_digest(head.scan_epoch) ||
++            first_step != SQLITE_DONE) {
++            throw std::runtime_error(
++                label + " empty scan-progress cutpoint is inconsistent");
++        }
++        return head;
++    }
++    if (first_step != SQLITE_ROW ||
++        sqlite_column_u64_or_throw(
++            first.stmt, 0, label + " scan-progress first ordinal") != 1U ||
++        step_row_or_done_or_throw(
++            first.stmt,
++            label + " scan-progress first-row trailing step") !=
++            SQLITE_DONE) {
++        throw std::runtime_error(
++            label + " scan-progress first row is inconsistent");
++    }
++
++    validate_scan_progress_path_or_throw(
++        head.resume_after_path, limits, label);
++    if (head.seen_path_bytes < head.resume_after_path.size()) {
++        throw std::runtime_error(
++            label + " scan-progress path-byte count is inconsistent");
++    }
++    SyncSqliteStmt tail = sqlite_prepare_or_throw(
++        db,
++        "SELECT scan_epoch,canonical_path,chain_digest FROM "
++        "main.sync_replica_folder_catalog_scan_seen WHERE ordinal=?;",
++        label + " scan-progress tail prepare");
++    sqlite_bind_u64_or_throw(
++        tail.stmt, 1, head.seen_path_count, label);
++    if (step_row_or_done_or_throw(
++            tail.stmt, label + " scan-progress tail step") != SQLITE_ROW) {
++        throw std::runtime_error(
++            label + " scan-progress tail row is missing");
++    }
++    const std::uint64_t tail_epoch = sqlite_column_u64_or_throw(
++        tail.stmt, 0, label + " scan-progress tail epoch");
++    const std::string tail_path = sqlite_column_text_or_throw(
++        tail.stmt, 1, 4096U, label + " scan-progress tail path");
++    const std::string tail_digest = sqlite_column_text_or_throw(
++        tail.stmt, 2, 64U, label + " scan-progress tail digest");
++    if (step_row_or_done_or_throw(
++            tail.stmt,
++            label + " scan-progress tail trailing step") != SQLITE_DONE ||
++        tail_epoch != head.scan_epoch ||
++        tail_path != head.resume_after_path ||
++        tail_digest != head.seen_chain_digest) {
++        throw std::runtime_error(
++            label + " scan-progress tail does not match its head");
++    }
++
++    SyncSqliteStmt beyond = sqlite_prepare_or_throw(
++        db,
++        "SELECT ordinal FROM main.sync_replica_folder_catalog_scan_seen "
++        "WHERE ordinal>? ORDER BY ordinal LIMIT 1;",
++        label + " scan-progress beyond-tail prepare");
++    sqlite_bind_u64_or_throw(
++        beyond.stmt, 1, head.seen_path_count, label);
++    if (step_row_or_done_or_throw(
++            beyond.stmt,
++            label + " scan-progress beyond-tail step") != SQLITE_DONE) {
++        throw std::runtime_error(
++            label + " scan-progress contains rows beyond its head");
++    }
++    return head;
++}
++
++[[nodiscard]] std::vector<std::string>
++load_complete_scan_seen_paths_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaFolderScanLimits& limits,
++    std::uint64_t expected_scan_epoch,
++    const std::string& label) {
++    const FolderScanProgressHead head =
++        load_scan_progress_head_or_throw(db, limits, label);
++    if (head.scan_epoch != expected_scan_epoch) {
++        throw std::runtime_error(
++            label + " scan epoch changed before completion proof");
++    }
++
++    SyncSqliteStmt rows = sqlite_prepare_or_throw(
++        db,
++        "SELECT ordinal,scan_epoch,canonical_path,chain_digest FROM "
++        "main.sync_replica_folder_catalog_scan_seen ORDER BY ordinal;",
++        label + " scan seen rows prepare");
++    std::vector<std::string> paths;
++    paths.reserve(static_cast<std::size_t>(head.seen_path_count));
++    std::uint64_t expected_ordinal = 1U;
++    std::uint64_t path_bytes = 0U;
++    std::string chain = scan_seen_genesis_digest(expected_scan_epoch);
++    for (;;) {
++        const int step = step_row_or_done_or_throw(
++            rows.stmt, label + " scan seen rows step");
++        if (step == SQLITE_DONE) break;
++        const std::uint64_t ordinal = sqlite_column_u64_or_throw(
++            rows.stmt, 0, label + " scan seen ordinal");
++        const std::uint64_t epoch = sqlite_column_u64_or_throw(
++            rows.stmt, 1, label + " scan seen epoch");
++        std::string path = sqlite_column_text_or_throw(
++            rows.stmt, 2, 4096U, label + " scan seen path");
++        const std::string retained_chain = sqlite_column_text_or_throw(
++            rows.stmt, 3, 64U, label + " scan seen chain");
++        validate_scan_progress_path_or_throw(path, limits, label);
++        if (ordinal != expected_ordinal || epoch != expected_scan_epoch ||
++            (!paths.empty() &&
++             !sync_replica_folder_traversal_path_less(
++                 paths.back(), path))) {
++            throw std::runtime_error(
++                label + " scan seen rows are not one complete ordered prefix");
++        }
++        path_bytes = add_or_throw(
++            path_bytes, static_cast<std::uint64_t>(path.size()),
++            label + " scan seen path bytes");
++        chain = scan_seen_next_digest(
++            expected_scan_epoch, ordinal, chain, path);
++        if (retained_chain != chain) {
++            throw std::runtime_error(
++                label + " scan seen hash chain is invalid");
++        }
++        paths.push_back(std::move(path));
++        expected_ordinal = increment_or_throw(
++            expected_ordinal, label + " scan seen ordinal");
++    }
++    if (paths.size() != head.seen_path_count ||
++        path_bytes != head.seen_path_bytes ||
++        chain != head.seen_chain_digest ||
++        (paths.empty() ? !head.resume_after_path.empty()
++                       : paths.back() != head.resume_after_path)) {
++        throw std::runtime_error(
++            label + " scan seen cutpoint attestation failed");
++    }
++    return paths;
++}
++
++[[nodiscard]] FolderScanProgressHead record_scan_seen_paths_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaFolderScanLimits& limits,
++    std::uint64_t expected_scan_epoch,
++    const std::vector<std::string>& canonical_paths,
++    const std::string& label) {
++    SyncSqliteTransaction transaction(
++        db, label + " scan cursor publication",
++        SyncSqliteTransactionMode::Immediate);
++    const FolderScanProgressHead current =
++        load_scan_progress_head_or_throw(db, limits, label + " current");
++    if (current.scan_epoch != expected_scan_epoch) {
++        throw std::runtime_error(
++            label + " scan epoch changed before cursor publication");
++    }
++    if (canonical_paths.empty()) {
++        transaction.commit();
++        return current;
++    }
++
++    // Path effects are independently idempotent and have already committed.
++    // Publish the cooperative scheduling journal once for the complete segment,
++    // rather than forcing one SQLite transaction (and potentially one durable
++    // sync boundary) per observed file. If this transaction fails or the process
++    // stops before it commits, the next pass safely replays the segment effects.
++    std::uint64_t next_count = current.seen_path_count;
++    std::uint64_t next_path_bytes = current.seen_path_bytes;
++    std::string next_chain = current.seen_chain_digest;
++    std::string previous_path = current.resume_after_path;
++
++    SyncSqliteStmt insert = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_folder_catalog_scan_seen("
++        "ordinal,scan_epoch,canonical_path,chain_digest) VALUES(?,?,?,?);",
++        label + " scan seen insert prepare");
++    for (const std::string& canonical_path : canonical_paths) {
++        validate_scan_progress_path_or_throw(
++            canonical_path, limits, label);
++        if (!previous_path.empty() &&
++            !sync_replica_folder_traversal_path_less(
++                previous_path, canonical_path)) {
++            throw std::runtime_error(
++                label + " scan cursor did not advance in traversal order");
++        }
++        next_count = increment_or_throw(
++            next_count, label + " scan seen count");
++        if (next_count > limits.max_catalog_entries) {
++            throw std::length_error(
++                label + " scan seen entry limit is exhausted");
++        }
++        next_path_bytes = add_or_throw(
++            next_path_bytes,
++            static_cast<std::uint64_t>(canonical_path.size()),
++            label + " scan seen path bytes");
++        if (next_path_bytes > limits.max_catalog_path_bytes ||
++            next_path_bytes > kMaxPersistentInteger) {
++            throw std::length_error(
++                label + " scan seen path-byte limit is exhausted");
++        }
++        next_chain = scan_seen_next_digest(
++            expected_scan_epoch, next_count, next_chain, canonical_path);
++
++        sqlite_bind_u64_or_throw(
++            insert.stmt, 1, next_count, label);
++        sqlite_bind_u64_or_throw(
++            insert.stmt, 2, expected_scan_epoch, label);
++        sqlite_bind_text_or_throw(
++            insert.stmt, 3, canonical_path, label);
++        sqlite_bind_text_or_throw(
++            insert.stmt, 4, next_chain, label);
++        sqlite_step_done_or_throw(
++            insert.stmt, label + " scan seen insert step");
++        previous_path = canonical_path;
++    }
++
++    SyncSqliteStmt update = sqlite_prepare_or_throw(
++        db,
++        "UPDATE main.sync_replica_folder_catalog_scan_progress SET "
++        "resume_after_path=?,seen_path_count=?,seen_path_bytes=?,"
++        "seen_chain_digest=? WHERE id=1 AND scan_epoch=? AND "
++        "seen_path_count=? AND seen_path_bytes=? AND "
++        "resume_after_path=? AND seen_chain_digest=?;",
++        label + " scan-progress update prepare");
++    sqlite_bind_text_or_throw(update.stmt, 1, previous_path, label);
++    sqlite_bind_u64_or_throw(update.stmt, 2, next_count, label);
++    sqlite_bind_u64_or_throw(update.stmt, 3, next_path_bytes, label);
++    sqlite_bind_text_or_throw(update.stmt, 4, next_chain, label);
++    sqlite_bind_u64_or_throw(update.stmt, 5, expected_scan_epoch, label);
++    sqlite_bind_u64_or_throw(
++        update.stmt, 6, current.seen_path_count, label);
++    sqlite_bind_u64_or_throw(
++        update.stmt, 7, current.seen_path_bytes, label);
++    sqlite_bind_text_or_throw(
++        update.stmt, 8, current.resume_after_path, label);
++    sqlite_bind_text_or_throw(
++        update.stmt, 9, current.seen_chain_digest, label);
++    sqlite_step_done_or_throw(
++        update.stmt, label + " scan-progress update step");
++
++    const FolderScanProgressHead staged =
++        load_scan_progress_head_or_throw(db, limits, label + " staged");
++    const FolderScanProgressHead expected{
++        expected_scan_epoch, previous_path, next_count, next_path_bytes,
++        next_chain};
++    if (staged != expected) {
++        throw std::runtime_error(
++            label + " staged scan cursor did not retain the exact segment");
++    }
++    transaction.commit();
++    return staged;
++}
++
++[[nodiscard]] FolderScanProgressHead reset_scan_progress_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const SyncReplicaFolderScanLimits& limits,
++    std::uint64_t expected_scan_epoch,
++    const std::string& label) {
++    SyncSqliteTransaction transaction(
++        db, label + " scan epoch reset",
++        SyncSqliteTransactionMode::Immediate);
++    const FolderScanProgressHead current =
++        load_scan_progress_head_or_throw(db, limits, label + " current");
++    if (current.scan_epoch != expected_scan_epoch) {
++        throw std::runtime_error(
++            label + " scan epoch changed before reset");
++    }
++    const std::uint64_t next_epoch =
++        current.scan_epoch == kMaxPersistentInteger
++            ? 1U
++            : current.scan_epoch + 1U;
++    sqlite_exec_or_throw(
++        db,
++        "DELETE FROM main.sync_replica_folder_catalog_scan_seen;",
++        label + " clear completed scan paths");
++    SyncSqliteStmt update = sqlite_prepare_or_throw(
++        db,
++        "UPDATE main.sync_replica_folder_catalog_scan_progress SET "
++        "scan_epoch=?,resume_after_path='',seen_path_count=0,"
++        "seen_path_bytes=0,seen_chain_digest=? WHERE id=1 AND scan_epoch=?;",
++        label + " scan epoch reset prepare");
++    sqlite_bind_u64_or_throw(update.stmt, 1, next_epoch, label);
++    sqlite_bind_text_or_throw(
++        update.stmt, 2, scan_seen_genesis_digest(next_epoch), label);
++    sqlite_bind_u64_or_throw(update.stmt, 3, expected_scan_epoch, label);
++    sqlite_step_done_or_throw(update.stmt, label + " scan epoch reset step");
++    const FolderScanProgressHead staged =
++        load_scan_progress_head_or_throw(db, limits, label + " staged");
++    const FolderScanProgressHead expected{
++        next_epoch, {}, 0U, 0U, scan_seen_genesis_digest(next_epoch)};
++    if (staged != expected) {
++        throw std::runtime_error(
++            label + " staged scan epoch did not reset exactly");
++    }
++    transaction.commit();
++    return staged;
++}
++
++void insert_genesis_scan_progress_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    std::uint64_t scan_epoch,
++    const std::string& label) {
++    if (scan_epoch == 0U || scan_epoch > kMaxPersistentInteger) {
++        throw std::invalid_argument(
++            label + " scan epoch is outside the persistent range");
++    }
++    SyncSqliteStmt insert = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_folder_catalog_scan_progress("
++        "id,scan_epoch,resume_after_path,seen_path_count,seen_path_bytes,"
++        "seen_chain_digest) VALUES(1,?,'',0,0,?);",
++        label + " scan-progress genesis prepare");
++    sqlite_bind_u64_or_throw(insert.stmt, 1, scan_epoch, label);
++    sqlite_bind_text_or_throw(
++        insert.stmt, 2, scan_seen_genesis_digest(scan_epoch), label);
++    sqlite_step_done_or_throw(
++        insert.stmt, label + " scan-progress genesis step");
++}
++
+ void migrate_legacy_catalog_or_throw(
+     SyncSqliteDbHandleSlot& db,
+     const std::string& folder_id,
+@@ -1261,7 +1918,7 @@
+         "root_attestation_digest,state_generation,max_catalog_entries,"
+         "max_catalog_path_bytes,max_payload_bytes,entry_count,"
+         "catalog_path_bytes,catalog_digest)"
+-        "SELECT id,2,folder_id,absolute_root_path,root_attestation_digest,"
++        "SELECT id,3,folder_id,absolute_root_path,root_attestation_digest,"
+         "state_generation,max_catalog_entries,max_catalog_path_bytes,"
+         "max_payload_bytes,entry_count,catalog_path_bytes,? "
+         "FROM main.sync_replica_folder_catalog_meta_v1 WHERE id=1;",
+@@ -1278,10 +1935,14 @@
+         "SELECT canonical_path,1,size_bytes,content_sha256,operation_id,"
+         "source_snapshot_sha256,last_seen_generation "
+         "FROM main.sync_replica_folder_catalog_entries_v1 "
+-        "ORDER BY canonical_path;"
++        "ORDER BY canonical_path;",
++        label + " migrate legacy entries");
++    insert_genesis_scan_progress_or_throw(db, 1U, label);
++    sqlite_exec_or_throw(
++        db,
+         "DROP TABLE main.sync_replica_folder_catalog_entries_v1;"
+         "DROP TABLE main.sync_replica_folder_catalog_meta_v1;",
+-        label + " migrate entries and retire legacy tables");
++        label + " retire legacy tables");
+ 
+     const SyncReplicaFolderCatalogSnapshot migrated = load_catalog_or_throw(
+         db, folder_id, root_path, root_attestation_digest,
+@@ -1294,6 +1955,80 @@
+     }
+ }
+ 
++void migrate_previous_catalog_or_throw(
++    SyncSqliteDbHandleSlot& db,
++    const std::string& folder_id,
++    const std::string& root_path,
++    const std::string& root_attestation_digest,
++    const SyncReplicaSqliteDeploymentBinding* deployment_binding,
++    const std::string& label,
++    bool detached_binding) {
++    const SyncReplicaFolderCatalogSnapshot previous =
++        load_previous_catalog_or_throw(
++            db, folder_id, root_path, root_attestation_digest,
++            deployment_binding, label + " v2 proof", detached_binding);
++
++    sqlite_exec_or_throw(
++        db,
++        "ALTER TABLE main.sync_replica_folder_catalog_meta "
++        "RENAME TO sync_replica_folder_catalog_meta_v2;"
++        "ALTER TABLE main.sync_replica_folder_catalog_entries "
++        "RENAME TO sync_replica_folder_catalog_entries_v2;",
++        label + " v2 table rename");
++    for (const auto& definition : kSchema) {
++        sqlite_exec_or_throw(
++            db, std::string(definition.sql),
++            label + " create " + std::string(definition.name));
++    }
++
++    const std::string migrated_digest = catalog_digest(
++        previous.folder_id, previous.absolute_root_path,
++        previous.root_attestation_digest, previous.limits,
++        previous.state_generation, previous.entries);
++    SyncSqliteStmt insert_meta = sqlite_prepare_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_folder_catalog_meta("
++        "id,schema_version,folder_id,absolute_root_path,"
++        "root_attestation_digest,state_generation,max_catalog_entries,"
++        "max_catalog_path_bytes,max_payload_bytes,entry_count,"
++        "catalog_path_bytes,catalog_digest)"
++        "SELECT id,3,folder_id,absolute_root_path,root_attestation_digest,"
++        "state_generation,max_catalog_entries,max_catalog_path_bytes,"
++        "max_payload_bytes,entry_count,catalog_path_bytes,? "
++        "FROM main.sync_replica_folder_catalog_meta_v2 WHERE id=1;",
++        label + " migrated metadata prepare");
++    sqlite_bind_text_or_throw(
++        insert_meta.stmt, 1, migrated_digest, label);
++    sqlite_step_done_or_throw(
++        insert_meta.stmt, label + " migrated metadata step");
++    sqlite_exec_or_throw(
++        db,
++        "INSERT INTO main.sync_replica_folder_catalog_entries("
++        "canonical_path,value_kind,size_bytes,content_sha256,operation_id,"
++        "source_snapshot_sha256,last_seen_generation) "
++        "SELECT canonical_path,value_kind,size_bytes,content_sha256,"
++        "operation_id,source_snapshot_sha256,last_seen_generation "
++        "FROM main.sync_replica_folder_catalog_entries_v2 "
++        "ORDER BY canonical_path;",
++        label + " migrate v2 entries");
++    insert_genesis_scan_progress_or_throw(db, 1U, label);
++    sqlite_exec_or_throw(
++        db,
++        "DROP TABLE main.sync_replica_folder_catalog_entries_v2;"
++        "DROP TABLE main.sync_replica_folder_catalog_meta_v2;",
++        label + " retire v2 tables");
++
++    const SyncReplicaFolderCatalogSnapshot migrated = load_catalog_or_throw(
++        db, folder_id, root_path, root_attestation_digest,
++        deployment_binding, label + " migrated proof", detached_binding);
++    SyncReplicaFolderCatalogSnapshot expected = previous;
++    expected.catalog_digest = migrated_digest;
++    if (migrated != expected) {
++        throw std::runtime_error(
++            label + " migrated catalog changed v2 authority");
++    }
++}
++
+ void initialize_or_attest_catalog_or_throw(
+     SyncSqliteDbHandleSlot& db,
+     const std::string& folder_id,
+@@ -1386,7 +2121,7 @@
+             "root_attestation_digest,state_generation,max_catalog_entries,"
+             "max_catalog_path_bytes,max_payload_bytes,entry_count,"
+             "catalog_path_bytes,catalog_digest)"
+-            "VALUES(1,2,?,?,?,0,?,?,?,0,0,?);",
++            "VALUES(1,3,?,?,?,0,?,?,?,0,0,?);",
+             label + " initialize metadata prepare");
+         sqlite_bind_text_or_throw(insert.stmt, 1, folder_id, label);
+         sqlite_bind_text_or_throw(insert.stmt, 2, root_path, label);
+@@ -1401,22 +2136,31 @@
+         sqlite_bind_text_or_throw(insert.stmt, 7, digest, label);
+         sqlite_step_done_or_throw(
+             insert.stmt, label + " initialize metadata step");
++        insert_genesis_scan_progress_or_throw(db, 1U, label);
+     } else {
+         const std::uint64_t version = catalog_schema_version_or_throw(
+             db, label + " existing catalog");
+         if (version == kLegacySchemaVersion) {
+             migrate_legacy_catalog_or_throw(
+                 db, folder_id, root_path, root_attestation_digest,
+-                deployment_binding, label + " catalog v1 to v2 migration",
++                deployment_binding, label + " catalog v1 to v3 migration",
++                detached_binding);
++        } else if (version == kPreviousSchemaVersion) {
++            migrate_previous_catalog_or_throw(
++                db, folder_id, root_path, root_attestation_digest,
++                deployment_binding, label + " catalog v2 to v3 migration",
+                 detached_binding);
+         } else if (version != kSchemaVersion) {
+             throw std::runtime_error(
+                 label + " catalog schema version is unsupported");
+         }
+     }
+-    (void)load_catalog_or_throw(
+-        db, folder_id, root_path, root_attestation_digest,
+-        deployment_binding, label, detached_binding);
++    const SyncReplicaFolderCatalogSnapshot initialized =
++        load_catalog_or_throw(
++            db, folder_id, root_path, root_attestation_digest,
++            deployment_binding, label, detached_binding);
++    (void)load_scan_progress_head_or_throw(
++        db, initialized.limits, label + " scan-progress proof");
+     transaction.commit();
+ }
+ 
+@@ -1759,6 +2503,11 @@
+         limits.maximum_directory_depth;
+     validate_sync_replica_folder_observation_limits_or_throw(
+         traversal_limits, label + " pass traversal limits");
++    if (limits.maximum_file_bytes > limits.maximum_total_file_bytes) {
++        throw std::invalid_argument(
++            label +
++            " pass file-byte limit exceeds its aggregate byte limit");
++    }
+ 
+     if (limits.maximum_file_bytes > owner_limits.max_payload_bytes) {
+         throw std::invalid_argument(
+@@ -3091,6 +3840,15 @@
+     // per visited file matters because the correctness-first catalog owner is
+     // intentionally O(catalog) per authoritative mutation.
+     SyncReplicaFolderCatalogSnapshot catalog_hints = snapshot_or_throw();
++    FolderScanProgressHead scan_progress =
++        load_scan_progress_head_or_throw(
++            *state_->catalog_db, state_->limits,
++            state_->label + " pass scan-progress start");
++    const std::uint64_t active_scan_epoch = scan_progress.scan_epoch;
++    report.local_scan_epoch = active_scan_epoch;
++    report.local_scan_seen_path_count = scan_progress.seen_path_count;
++    report.local_scan_resume_after_path =
++        scan_progress.resume_after_path;
+     const auto update_catalog_hint =
+         [&](const SyncReplicaFolderCatalogEntry& entry) {
+             const auto found = std::lower_bound(
+@@ -3189,9 +3947,9 @@
+         };
+ 
+         try {
+-            idle.traversal =
+-                visit_sync_replica_folder_regular_file_paths_or_throw(
+-                    state_->root_authority,
++            const SyncReplicaFolderTraversalSegment idle_segment =
++                visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++                    state_->root_authority, {},
+                     [&](const std::string& canonical_path,
+                         std::uint64_t classified_size_bytes) {
+                     const std::optional<
+@@ -3267,6 +4025,8 @@
+                     ++idle.local_catalog_no_op_count;
+                     },
+                     traversal_limits, state_->label + " idle traversal");
++            idle.traversal = idle_segment.traversal;
++            if (!idle_segment.completed) return std::nullopt;
+         } catch (const IdleFastPathMiss&) {
+             return std::nullopt;
+         }
+@@ -3358,12 +4118,17 @@
+         }
+ 
+         idle.used_idle_fast_path = true;
++        idle.local_scan_epoch = active_scan_epoch;
++        idle.completed_local_scan_epoch = true;
++        idle.local_scan_seen_path_count = 0U;
+         return idle;
+     };
+ 
+     try {
+-        if (auto idle = try_idle_fast_path(); idle.has_value()) {
+-            return std::move(*idle);
++        if (scan_progress.seen_path_count == 0U) {
++            if (auto idle = try_idle_fast_path(); idle.has_value()) {
++                return std::move(*idle);
++            }
+         }
+     } catch (const SyncReplicaFilePayloadStoreLeaseBusyError&) {
+         // A read-only optimization must not create a new terminal outcome.
+@@ -3385,12 +4150,12 @@
+         }
+     }
+ 
+-    std::vector<std::string> seen_regular_paths;
+-    seen_regular_paths.reserve(static_cast<std::size_t>(
++    std::vector<std::string> blocked_absent_paths;
++    std::vector<std::string> segment_seen_paths;
++    segment_seen_paths.reserve(static_cast<std::size_t>(
+         std::min<std::uint64_t>(
+             limits.maximum_entries,
+             static_cast<std::uint64_t>(catalog_hints.entries.size()))));
+-    std::vector<std::string> blocked_absent_paths;
+ 
+     // A fallback pass can visit thousands of unchanged files after one path
+     // invalidates the idle proof. Reuse one verified payload index across a
+@@ -3491,12 +4256,11 @@
+         }
+     };
+ 
+-    report.traversal =
+-        visit_sync_replica_folder_regular_file_paths_or_throw(
+-            state_->root_authority,
++    const SyncReplicaFolderTraversalSegment local_segment =
++        visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++            state_->root_authority, scan_progress.resume_after_path,
+             [&](const std::string& canonical_path,
+                 std::uint64_t classified_size_bytes) {
+-                seen_regular_paths.push_back(canonical_path);
+                 // A matching cataloged extent is only a scheduling hint, but
+                 // it is a valuable one: the overwhelmingly common case is an
+                 // unchanged file. Do not retain an unrelated exclusive
+@@ -3697,68 +4461,116 @@
+                 report.exact_local_file_bytes = add_or_throw(
+                     report.exact_local_file_bytes, exact_size,
+                     state_->label + " pass exact local file bytes");
++                // The path-local effect above is independently committed and
++                // idempotent. Stage its scheduling acknowledgement in memory so
++                // one pass publishes one authenticated journal segment instead
++                // of one SQLite transaction per file.
++                segment_seen_paths.push_back(canonical_path);
+             },
+             traversal_limits, state_->label + " pass traversal");
++    report.traversal = local_segment.traversal;
+ 
+     release_payload_batch();
+     if (payload_cutpoint.has_value()) {
+         payload_cutpoint->preflight_or_throw(
+             state_->label + " fallback payload cutpoint reproof");
+     }
++    if (!segment_seen_paths.empty()) {
++        scan_progress = record_scan_seen_paths_or_throw(
++            *state_->catalog_db, state_->limits, active_scan_epoch,
++            segment_seen_paths, state_->label + " pass scan progress");
++        report.local_scan_seen_path_count = scan_progress.seen_path_count;
++        report.local_scan_resume_after_path =
++            scan_progress.resume_after_path;
++    }
++
++    // Only a fully consumed durable epoch can authorize absence. The seen
++    // journal is rehashed in traversal order before it is compared with a fresh
++    // catalog cutpoint. If a cataloged file omitted from that journal is still
++    // present, the bounded suffix did not observe one coherent namespace;
++    // restart the epoch without classifying any path as deleted. A path already
++    // in the journal may change later and will be revisited in the next epoch.
++    if (local_segment.completed) {
++        std::vector<std::string> seen_regular_paths =
++            load_complete_scan_seen_paths_or_throw(
++                *state_->catalog_db, state_->limits, active_scan_epoch,
++                state_->label + " complete scan epoch");
++        std::sort(seen_regular_paths.begin(), seen_regular_paths.end());
++        catalog_hints = snapshot_or_throw();
+ 
+-    // Only successful completion of the whole traversal grants absence
+-    // authority. Compare that complete path set with the durable catalog now;
+-    // a failed or bounded walk never reaches this phase. A local absence can
+-    // mint a tombstone only while the exact cataloged file remains the sole
+-    // visible replica head. A newer file or unresolved heads are an explicit
+-    // delete/edit conflict: preserve the local absence and retain the remote
+-    // value without manufacturing a winner.
+-    std::sort(seen_regular_paths.begin(), seen_regular_paths.end());
+-    seen_regular_paths.erase(
+-        std::unique(seen_regular_paths.begin(), seen_regular_paths.end()),
+-        seen_regular_paths.end());
+-    const SyncReplicaSqliteSnapshot absence_snapshot =
+-        state_->replica_owner->snapshot_or_throw();
+-    const SyncReplicaModel absence_model = SyncReplicaModel::restore_or_throw(
+-        absence_snapshot.durable, absence_snapshot.limits.model);
+-    std::vector<std::string> absence_candidates;
+-    absence_candidates.reserve(catalog_hints.entries.size());
+-    for (const SyncReplicaFolderCatalogEntry& entry : catalog_hints.entries) {
+-        if (entry.kind == SyncReplicaValueKind::File &&
+-            !std::binary_search(
+-                seen_regular_paths.begin(), seen_regular_paths.end(),
+-                entry.canonical_path)) {
++        std::vector<std::string> absence_candidates;
++        absence_candidates.reserve(catalog_hints.entries.size());
++        bool namespace_changed_behind_cursor = false;
++        for (const SyncReplicaFolderCatalogEntry& entry :
++             catalog_hints.entries) {
++            if (entry.kind != SyncReplicaValueKind::File ||
++                std::binary_search(
++                    seen_regular_paths.begin(), seen_regular_paths.end(),
++                    entry.canonical_path)) {
++                continue;
++            }
++            if (open_optional_regular_file_beneath_root_or_throw(
++                    state_->root_authority, entry.canonical_path,
++                    state_->label +
++                        " completed epoch unseen-path inspection")
++                    .has_value()) {
++                namespace_changed_behind_cursor = true;
++                break;
++            }
+             absence_candidates.push_back(entry.canonical_path);
+         }
+-    }
+-    for (const std::string& canonical_path : absence_candidates) {
+-        const std::optional<SyncReplicaFolderCatalogEntry> prior =
+-            find_catalog_entry(catalog_hints, canonical_path);
+-        if (!prior.has_value() ||
+-            prior->kind != SyncReplicaValueKind::File) {
+-            continue;
+-        }
+-        const SyncReplicaOperation prior_operation =
+-            require_catalog_operation_or_throw(
+-                absence_model, *prior,
+-                state_->label + " complete-scan absence base");
+-        const std::vector<SyncReplicaOperation> visible =
+-            visible_operations(absence_model, canonical_path);
+-        const bool can_commit_absence =
+-            visible.size() == 1U &&
+-            (visible.front().operation_id == prior_operation.operation_id ||
+-             (visible.front().kind == SyncReplicaValueKind::Tombstone &&
+-              sync_replica_operation_supersedes(
+-                  visible.front(), prior_operation)));
+-        if (!can_commit_absence) {
+-            ++report.skipped_conflicted_remote_path_count;
+-            blocked_absent_paths.push_back(canonical_path);
+-            continue;
+-        }
+-        const SyncReplicaFolderScanResult absent =
+-            commit_complete_scan_absence_or_throw(canonical_path);
+-        record_scan_disposition(report, absent.disposition);
+-        update_catalog_hint(absent.entry);
++
++        if (namespace_changed_behind_cursor) {
++            scan_progress = reset_scan_progress_or_throw(
++                *state_->catalog_db, state_->limits, active_scan_epoch,
++                state_->label + " restart changed scan epoch");
++            report.restarted_local_scan_epoch = true;
++        } else {
++            const SyncReplicaSqliteSnapshot absence_snapshot =
++                state_->replica_owner->snapshot_or_throw();
++            const SyncReplicaModel absence_model =
++                SyncReplicaModel::restore_or_throw(
++                    absence_snapshot.durable,
++                    absence_snapshot.limits.model);
++            for (const std::string& canonical_path : absence_candidates) {
++                const std::optional<SyncReplicaFolderCatalogEntry> prior =
++                    find_catalog_entry(catalog_hints, canonical_path);
++                if (!prior.has_value() ||
++                    prior->kind != SyncReplicaValueKind::File) {
++                    continue;
++                }
++                const SyncReplicaOperation prior_operation =
++                    require_catalog_operation_or_throw(
++                        absence_model, *prior,
++                        state_->label + " complete-scan absence base");
++                const std::vector<SyncReplicaOperation> visible =
++                    visible_operations(absence_model, canonical_path);
++                const bool can_commit_absence =
++                    visible.size() == 1U &&
++                    (visible.front().operation_id ==
++                         prior_operation.operation_id ||
++                     (visible.front().kind ==
++                          SyncReplicaValueKind::Tombstone &&
++                      sync_replica_operation_supersedes(
++                          visible.front(), prior_operation)));
++                if (!can_commit_absence) {
++                    ++report.skipped_conflicted_remote_path_count;
++                    blocked_absent_paths.push_back(canonical_path);
++                    continue;
++                }
++                const SyncReplicaFolderScanResult absent =
++                    commit_complete_scan_absence_or_throw(canonical_path);
++                record_scan_disposition(report, absent.disposition);
++                update_catalog_hint(absent.entry);
++            }
++            scan_progress = reset_scan_progress_or_throw(
++                *state_->catalog_db, state_->limits, active_scan_epoch,
++                state_->label + " complete scan epoch reset");
++            report.completed_local_scan_epoch = true;
++        }
++        report.local_scan_seen_path_count = scan_progress.seen_path_count;
++        report.local_scan_resume_after_path =
++            scan_progress.resume_after_path;
+     }
+     std::sort(blocked_absent_paths.begin(), blocked_absent_paths.end());
+     blocked_absent_paths.erase(
+@@ -3840,8 +4652,19 @@
+             open_optional_regular_file_beneath_root_or_throw(
+                 state_->root_authority, path.canonical_path,
+                 state_->label + " pass remote-path inspection");
+-        if (operation->kind == SyncReplicaValueKind::Tombstone &&
+-            !local.has_value()) {
++        if (operation->kind == SyncReplicaValueKind::Tombstone) {
++            if (local.has_value()) {
++                // A present local file must be adjudicated while its stable
++                // bytes and catalog predecessor are observed together by the
++                // local traversal callback. During an incomplete epoch this
++                // path may be behind the durable cursor; applying the generic
++                // remote tombstone here could turn a legitimate local edit
++                // into a terminal race or deletion attempt. Defer it until a
++                // later epoch revisits the path. Current-segment tombstones
++                // were already applied or conflict-fenced above.
++                ++report.skipped_tombstone_remote_path_count;
++                continue;
++            }
+             const std::optional<SyncReplicaFolderCatalogEntry> prior =
+                 find_catalog_entry(catalog_hints, path.canonical_path);
+             if (prior.has_value() &&
+@@ -3852,6 +4675,25 @@
+         }
+         if (operation->kind == SyncReplicaValueKind::File) {
+             if (local.has_value()) continue;
++
++            // A cataloged file that is now absent and whose sole-visible
++            // operation is still the exact catalog predecessor is a potential
++            // local deletion. Never restore that baseline here. An incomplete
++            // epoch may not have reached the path, while a nominally completed
++            // segmented epoch may have seen it in an earlier pass and then lost
++            // it before the final suffix. In both cases the next authoritative
++            // local epoch must adjudicate the absence. Distinct remote
++            // successors remain eligible: the established policy gives those
++            // successors priority over an uncommitted local absence.
++            const std::optional<SyncReplicaFolderCatalogEntry> prior =
++                find_catalog_entry(catalog_hints, path.canonical_path);
++            if (prior.has_value() &&
++                prior->kind == SyncReplicaValueKind::File &&
++                prior->operation_id == operation->operation_id) {
++                ++report
++                    .deferred_unadjudicated_local_absence_remote_file_count;
++                continue;
++            }
+             if (operation->size_bytes > limits.maximum_file_bytes) {
+                 throw std::runtime_error(
+                     state_->label +
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -99,9 +99,10 @@
+ // One deliberately bounded synchronous folder pass. These limits govern the
+ // namespace walk and exact local file extents streamed during this invocation.
+ // The same per-file and aggregate byte ceilings independently bound remote files
+-// selected for materialization. Only successful completion of the entire walk
+-// authorizes classification of previously cataloged file paths as absent; no
+-// watcher hint, callback prefix, or failed traversal can authorize deletion.
++// selected for materialization. Only successful completion of one durable
++// scan epoch authorizes classification of cataloged file paths omitted from its
++// authenticated journal as absent; no watcher hint, segment prefix, nominal
++// completion of a changed namespace, or failed traversal authorizes deletion.
+ struct SyncReplicaFolderConvergencePassLimits final {
+     std::uint64_t maximum_entries = 100000U;
+     std::uint64_t maximum_file_bytes = 4ULL * 1024ULL * 1024ULL;
+@@ -153,6 +154,18 @@
+ 
+ struct SyncReplicaFolderConvergencePassReport final {
+     SyncReplicaFolderTraversalSummary traversal;
++    // Durable fair-scan state. A bounded pass may advance one deterministic
++    // prefix and leave the cursor for a later process incarnation. Deletion
++    // authority is available only when completed_local_scan_epoch is true. At
++    // completion, a cataloged file omitted from the authenticated seen journal
++    // but found present forces a conservative epoch restart. A path changed or
++    // deleted after it was already seen is deferred to the next epoch; journal
++    // membership never proves that its current namespace binding still exists.
++    std::uint64_t local_scan_epoch = 0U;
++    bool completed_local_scan_epoch = false;
++    bool restarted_local_scan_epoch = false;
++    std::uint64_t local_scan_seen_path_count = 0U;
++    std::string local_scan_resume_after_path;
+     // True only when the pass proved an unchanged working tree, catalog,
+     // replica cutpoint, and locally retained payload inventory using one
+     // bounded read-only observation of each authority. The ordinary
+@@ -190,6 +203,13 @@
+     std::uint64_t remote_catalog_no_op_count = 0U;
+     std::uint64_t skipped_conflicted_remote_path_count = 0U;
+     std::uint64_t skipped_tombstone_remote_path_count = 0U;
++    // A locally absent exact catalog predecessor is a possible uncommitted
++    // local deletion. Remote materialization must not silently restore that
++    // predecessor until an authoritative local scan either publishes absence
++    // or observes the path again. This fence remains necessary after nominal
++    // epoch completion because a path seen in an earlier segment can disappear
++    // before the final segment. A distinct remote successor is not deferred.
++    std::uint64_t deferred_unadjudicated_local_absence_remote_file_count = 0U;
+ 
+     bool operator==(const SyncReplicaFolderConvergencePassReport&) const =
+         default;
+--- a/tests/sync_replica_folder_observer_test.cpp
++++ b/tests/sync_replica_folder_observer_test.cpp
+@@ -318,6 +318,96 @@
+     authority.verify_or_throw("folder-visitor authority after repeated passes");
+ }
+ 
++void test_resumable_component_order_and_progress(TestState& test) {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.path();
++    fs::create_directory(root / "a");
++    write_bytes(root / "a" / "one.bin", "1111");
++    write_bytes(root / "a" / "two.bin", "2222");
++    write_bytes(root / "a.txt", "3333");
++    write_bytes(root / "z.bin", "4444");
++
++    test.require(
++        anonsync::sync_replica_folder_traversal_path_less(
++            "a/two.bin", "a.txt") &&
++            !anonsync::sync_replica_folder_traversal_path_less(
++                "a.txt", "a/two.bin"),
++        "component-wise preorder keeps a directory subtree before its next sibling");
++
++    anonsync::SyncDirectoryAuthority authority =
++        anonsync::SyncDirectoryAuthority::open_or_throw(
++            fs::absolute(root), "folder-resumable test root");
++    anonsync::SyncReplicaFolderObservationLimits limits;
++    limits.maximum_entries = 16U;
++    limits.maximum_file_bytes = 4U;
++    limits.maximum_total_file_bytes = 4U;
++    limits.maximum_directory_depth = 4U;
++
++    std::string cursor;
++    std::vector<std::string> delivered;
++    std::vector<std::string> all_delivered;
++    std::vector<anonsync::SyncReplicaFolderTraversalSegment> segments;
++    for (std::size_t invocation = 0U; invocation < 4U; ++invocation) {
++        delivered.clear();
++        auto segment =
++            anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++                authority, cursor,
++                [&](const std::string& path, std::uint64_t size_bytes) {
++                    delivered.push_back(path);
++                    test.require(
++                        size_bytes == 4U,
++                        "resumable traversal preserves classification size");
++                },
++                limits, "folder-resumable segment");
++        test.require(
++            delivered.size() == 1U &&
++                segment.traversal.regular_file_count == 1U &&
++                segment.traversal.classified_regular_file_bytes == 4U,
++            "each bounded segment makes exactly one eligible-file step");
++        all_delivered.insert(
++            all_delivered.end(), delivered.begin(), delivered.end());
++        cursor = segment.resume_after_path;
++        segments.push_back(std::move(segment));
++    }
++
++    test.require(
++        all_delivered == std::vector<std::string>{
++            "a/one.bin", "a/two.bin", "a.txt", "z.bin"},
++        "persisted resumable cursors eventually reach the deterministic suffix without repeats");
++    test.require(
++        !segments[0].completed && !segments[1].completed &&
++            !segments[2].completed && segments[3].completed,
++        "only the segment that reaches namespace end reports a completed walk");
++    test.require(
++        segments[0].resume_after_path == "a/one.bin" &&
++            segments[1].resume_after_path == "a/two.bin" &&
++            segments[2].resume_after_path == "a.txt" &&
++            segments[3].resume_after_path == "z.bin",
++        "each segment returns the last successfully delivered durable cursor");
++    test.require(
++        segments[0].skipped_regular_file_count == 0U &&
++            segments[1].skipped_regular_file_count == 1U &&
++            segments[2].skipped_regular_file_count == 2U &&
++            segments[3].skipped_regular_file_count == 3U,
++        "resumed walks skip but do not recharge the deterministic prefix");
++
++    anonsync::SyncReplicaFolderObservationLimits impossible = limits;
++    impossible.maximum_file_bytes = 4U;
++    impossible.maximum_total_file_bytes = 3U;
++    test.require(
++        throws_with(
++            [&] {
++                (void)anonsync::visit_sync_replica_folder_regular_file_paths_resumable_or_throw(
++                    authority, {},
++                    [](const std::string&, std::uint64_t) {}, impossible,
++                    "folder-resumable impossible segment");
++            },
++            "cannot fit the next eligible file"),
++        "a resumable walk rejects an empty segment that cannot make one-file progress");
++    authority.verify_or_throw(
++        "folder-resumable authority after continuation segments");
++}
++
+ void test_limits_and_portable_paths(TestState& test) {
+     TemporaryDirectory temporary;
+     const fs::path root = temporary.path();
+@@ -440,6 +530,7 @@
+         test_bounded_descriptor_rooted_scan(test);
+         test_internal_publication_artifacts_are_reserved(test);
+         test_streaming_path_visitor(test);
++        test_resumable_component_order_and_progress(test);
+         test_limits_and_portable_paths(test);
+         std::cout << "sync replica folder observer checks: " << test.passed
+                   << "/" << (test.passed + test.failed) << "\n";
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -40,6 +40,38 @@
+ 
+ std::uint64_t checks = 0U;
+ 
++struct ScanJournalTrace final {
++    std::uint64_t insert_count = 0U;
++    std::uint64_t progress_update_count = 0U;
++};
++
++int count_scan_journal_statements(
++    unsigned trace_kind,
++    void* context,
++    void* statement_pointer,
++    void*) noexcept {
++    if (trace_kind != SQLITE_TRACE_STMT || context == nullptr ||
++        statement_pointer == nullptr) {
++        return 0;
++    }
++    const char* sql = sqlite3_sql(
++        static_cast<sqlite3_stmt*>(statement_pointer));
++    if (sql == nullptr) return 0;
++    auto& trace = *static_cast<ScanJournalTrace*>(context);
++    const std::string_view text(sql);
++    if (text.find(
++            "INSERT INTO main.sync_replica_folder_catalog_scan_seen") !=
++        std::string_view::npos) {
++        ++trace.insert_count;
++    }
++    if (text.find(
++            "UPDATE main.sync_replica_folder_catalog_scan_progress SET") !=
++        std::string_view::npos) {
++        ++trace.progress_update_count;
++    }
++    return 0;
++}
++
+ [[noreturn]] void fail(const std::string& message) {
+     throw std::runtime_error(message);
+ }
+@@ -312,6 +344,42 @@
+     return digest.finish_hex();
+ }
+ 
++[[nodiscard]] std::string previous_catalog_digest_for_test(
++    const anonsync::SyncReplicaFolderCatalogSnapshot& snapshot) {
++    anonsync::Sha256DigestBuilder digest;
++    append_test_string(
++        digest, "anonsync:sync-replica-folder-catalog:v2");
++    append_test_u64(digest, 2U);
++    append_test_string(digest, snapshot.folder_id);
++    append_test_string(digest, snapshot.absolute_root_path);
++    append_test_string(digest, snapshot.root_attestation_digest);
++    append_test_u64(digest, snapshot.limits.max_catalog_entries);
++    append_test_u64(digest, snapshot.limits.max_catalog_path_bytes);
++    append_test_u64(digest, snapshot.limits.max_payload_bytes);
++    append_test_u64(digest, snapshot.state_generation);
++    append_test_u64(
++        digest, static_cast<std::uint64_t>(snapshot.entries.size()));
++    for (const auto& entry : snapshot.entries) {
++        append_test_string(digest, entry.canonical_path);
++        switch (entry.kind) {
++            case anonsync::SyncReplicaValueKind::File:
++                append_test_u64(digest, 1U);
++                break;
++            case anonsync::SyncReplicaValueKind::Tombstone:
++                append_test_u64(digest, 2U);
++                break;
++            default:
++                fail("v2 catalog fixture received an invalid value kind");
++        }
++        append_test_u64(digest, entry.size_bytes);
++        append_test_string(digest, entry.content_sha256);
++        append_test_string(digest, entry.operation_id);
++        append_test_string(digest, entry.source_snapshot_sha256);
++        append_test_u64(digest, entry.last_seen_generation);
++    }
++    return digest.finish_hex();
++}
++
+ struct ThrowAtPublicationCutpointContext final {
+     anonsync::atomic_file_publication_detail::AtomicFilePublicationCutpoint
+         cutpoint = anonsync::atomic_file_publication_detail::
+@@ -803,6 +871,40 @@
+         "changed many-file pass did not release exclusive payload authority before hashing the following likely no-op while preserving immediate warm reuse");
+ }
+ 
++void test_scan_journal_batches_one_progress_publication_per_segment() {
++    Fixture fixture("anonsync-folder-pass-journal-batch");
++    for (const std::string_view path :
++         {"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"}) {
++        write_file(fixture.shared_root / std::string(path), "four");
++    }
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "journal-batch catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    ScanJournalTrace trace;
++    require(
++        sqlite3_trace_v2(
++            catalog_db.db.get(), SQLITE_TRACE_STMT,
++            count_scan_journal_statements, &trace) == SQLITE_OK,
++        "journal-batch fixture could not install its SQLite trace");
++
++    auto three_files = Fixture::pass_limits();
++    three_files.maximum_file_bytes = 4U;
++    three_files.maximum_total_file_bytes = 12U;
++    const auto partial = scan->run_convergence_pass_or_throw(three_files);
++    require(
++        sqlite3_trace_v2(
++            catalog_db.db.get(), 0U, nullptr, nullptr) == SQLITE_OK,
++        "journal-batch fixture could not remove its SQLite trace");
++    require(
++        !partial.completed_local_scan_epoch &&
++            partial.local_scan_seen_path_count == 3U &&
++            partial.local_scan_resume_after_path == "c.txt" &&
++            trace.insert_count == 3U &&
++            trace.progress_update_count == 1U,
++        "one bounded segment did not batch its scan-progress head into one publication transaction");
++}
++
+ void test_payload_batch_segments_bound_exclusive_lease_horizon() {
+     {
+         constexpr std::size_t kFileCount = 7U;
+@@ -1481,11 +1583,16 @@
+         fixture.catalog_path(), "folder-pass bound-stop catalog database");
+     auto scan = fixture.make_scan_owner(catalog_db);
+     auto tight = Fixture::pass_limits();
+-    tight.maximum_total_file_bytes = 6U;
+-    require_error(
+-        [&] { (void)scan->run_convergence_pass_or_throw(tight); },
+-        "exceeds configured total file-byte limit",
+-        "folder pass did not stop at its aggregate file-byte bound");
++    tight.maximum_file_bytes = 8U;
++    tight.maximum_total_file_bytes = 8U;
++    const auto bounded = scan->run_convergence_pass_or_throw(tight);
++    require(
++        !bounded.completed_local_scan_epoch &&
++            !bounded.restarted_local_scan_epoch &&
++            bounded.local_scan_seen_path_count == 1U &&
++            bounded.local_scan_resume_after_path == "a-first.txt" &&
++            bounded.local_published_count == 1U,
++        "bounded pass did not persist one deterministic prefix step");
+     const auto partial_catalog = scan->snapshot_or_throw();
+     const auto partial_replica = fixture.replica.snapshot_or_throw();
+     require(
+@@ -1498,14 +1605,331 @@
+     scan.reset();
+     scan = fixture.make_scan_owner(catalog_db);
+     auto sufficient = Fixture::pass_limits();
++    sufficient.maximum_file_bytes = 32U;
+     sufficient.maximum_total_file_bytes = 32U;
+     const auto resumed = scan->run_convergence_pass_or_throw(sufficient);
+     require(
+-        resumed.local_catalog_no_op_count == 1U &&
++        resumed.completed_local_scan_epoch &&
++            !resumed.restarted_local_scan_epoch &&
++            resumed.local_catalog_no_op_count == 0U &&
+             resumed.local_published_count == 1U &&
++            resumed.local_scan_seen_path_count == 0U &&
++            resumed.local_scan_resume_after_path.empty() &&
+             scan->snapshot_or_throw().entries.size() == 2U &&
+             fixture.replica.snapshot_or_throw().durable.operations.size() == 2U,
+-        "restart did not resume a partially completed bounded folder pass idempotently");
++        "restart did not continue from the durable prefix and complete the epoch exactly once");
++}
++
++void test_durable_scan_epoch_delays_deletion_until_complete_suffix() {
++    Fixture fixture("anonsync-folder-pass-durable-delete");
++    write_file(fixture.shared_root / "a.txt", "aaaa");
++    write_file(fixture.shared_root / "m.txt", "mmmm");
++    write_file(fixture.shared_root / "y.txt", "yyyy");
++    write_file(fixture.shared_root / "z.txt", "zzzz");
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "durable-delete catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto catalog_cutpoint = scan->snapshot_or_throw();
++    const auto replica_cutpoint = fixture.replica.snapshot_or_throw();
++    require(
++        catalog_cutpoint.entries.size() == 4U &&
++            fs::remove(fixture.shared_root / "z.txt"),
++        "durable-delete fixture did not establish and remove its suffix file");
++
++    auto one_file = Fixture::pass_limits();
++    one_file.maximum_file_bytes = 4U;
++    one_file.maximum_total_file_bytes = 4U;
++
++    const auto first = scan->run_convergence_pass_or_throw(one_file);
++    require(
++        !first.completed_local_scan_epoch &&
++            !first.restarted_local_scan_epoch &&
++            first.local_scan_seen_path_count == 1U &&
++            first.local_scan_resume_after_path == "a.txt" &&
++            first.deferred_unadjudicated_local_absence_remote_file_count == 1U &&
++            !fs::exists(fixture.shared_root / "z.txt") &&
++            scan->snapshot_or_throw() == catalog_cutpoint &&
++            fixture.replica.snapshot_or_throw() == replica_cutpoint,
++        "first bounded epoch segment restored or deleted the unseen suffix");
++
++    const std::uint64_t scan_epoch = first.local_scan_epoch;
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto second = scan->run_convergence_pass_or_throw(one_file);
++    require(
++        second.local_scan_epoch == scan_epoch &&
++            !second.completed_local_scan_epoch &&
++            !second.restarted_local_scan_epoch &&
++            second.local_scan_seen_path_count == 2U &&
++            second.local_scan_resume_after_path == "m.txt" &&
++            second.deferred_unadjudicated_local_absence_remote_file_count == 1U &&
++            !fs::exists(fixture.shared_root / "z.txt") &&
++            scan->snapshot_or_throw() == catalog_cutpoint &&
++            fixture.replica.snapshot_or_throw() == replica_cutpoint,
++        "restart did not retain deletion intent through the second epoch segment");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto completed = scan->run_convergence_pass_or_throw(one_file);
++    const auto tombstone = find_entry(scan->snapshot_or_throw(), "z.txt");
++    require(
++        completed.local_scan_epoch == scan_epoch &&
++            completed.completed_local_scan_epoch &&
++            !completed.restarted_local_scan_epoch &&
++            completed.local_scan_seen_path_count == 0U &&
++            completed.local_scan_resume_after_path.empty() &&
++            completed.local_published_count == 1U &&
++            completed.deferred_unadjudicated_local_absence_remote_file_count == 0U &&
++            tombstone.has_value() &&
++            tombstone->kind ==
++                anonsync::SyncReplicaValueKind::Tombstone &&
++            !fs::exists(fixture.shared_root / "z.txt") &&
++            fixture.replica.snapshot_or_throw().durable.operations.size() ==
++                replica_cutpoint.durable.operations.size() + 1U,
++        "completed durable epoch did not publish the suffix deletion exactly once");
++}
++
++void test_completed_epoch_does_not_restore_deleted_seen_prefix() {
++    Fixture fixture("anonsync-folder-pass-deleted-seen-prefix");
++    write_file(fixture.shared_root / "a.txt", "aaaa");
++    write_file(fixture.shared_root / "z.txt", "zzzz");
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "deleted-seen-prefix catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto catalog_cutpoint = scan->snapshot_or_throw();
++    const auto replica_cutpoint = fixture.replica.snapshot_or_throw();
++
++    auto one_file = Fixture::pass_limits();
++    one_file.maximum_file_bytes = 4U;
++    one_file.maximum_total_file_bytes = 4U;
++    const auto prefix = scan->run_convergence_pass_or_throw(one_file);
++    require(
++        !prefix.completed_local_scan_epoch &&
++            prefix.local_scan_seen_path_count == 1U &&
++            prefix.local_scan_resume_after_path == "a.txt",
++        "deleted-seen-prefix fixture did not persist its first segment");
++    require(
++        fs::remove(fixture.shared_root / "a.txt"),
++        "deleted-seen-prefix fixture could not remove its visited path");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto completed = scan->run_convergence_pass_or_throw(one_file);
++    require(
++        completed.completed_local_scan_epoch &&
++            !completed.restarted_local_scan_epoch &&
++            completed.local_scan_seen_path_count == 0U &&
++            completed.local_scan_resume_after_path.empty() &&
++            completed
++                    .deferred_unadjudicated_local_absence_remote_file_count ==
++                1U &&
++            completed.remote_applied_count == 0U &&
++            !fs::exists(fixture.shared_root / "a.txt") &&
++            scan->snapshot_or_throw() == catalog_cutpoint &&
++            fixture.replica.snapshot_or_throw() == replica_cutpoint,
++        "epoch completion restored a deleted path that was seen only in an earlier segment");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto adjudicated = scan->run_convergence_pass_or_throw(
++        Fixture::pass_limits());
++    const auto tombstone = find_entry(scan->snapshot_or_throw(), "a.txt");
++    require(
++        adjudicated.completed_local_scan_epoch &&
++            adjudicated.local_published_count == 1U &&
++            adjudicated
++                    .deferred_unadjudicated_local_absence_remote_file_count ==
++                0U &&
++            adjudicated.remote_applied_count == 0U &&
++            tombstone.has_value() &&
++            tombstone->kind ==
++                anonsync::SyncReplicaValueKind::Tombstone &&
++            !fs::exists(fixture.shared_root / "a.txt") &&
++            fixture.replica.snapshot_or_throw().durable.operations.size() ==
++                replica_cutpoint.durable.operations.size() + 1U,
++        "the next epoch did not publish the deferred local deletion exactly once");
++}
++
++void test_scan_epoch_restarts_when_absent_prefix_reappears() {
++    Fixture fixture("anonsync-folder-pass-prefix-reappears");
++    write_file(fixture.shared_root / "a.txt", "aaaa");
++    write_file(fixture.shared_root / "m.txt", "mmmm");
++    write_file(fixture.shared_root / "z.txt", "zzzz");
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "prefix-reappears catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto catalog_cutpoint = scan->snapshot_or_throw();
++    const auto replica_cutpoint = fixture.replica.snapshot_or_throw();
++    require(
++        fs::remove(fixture.shared_root / "a.txt"),
++        "prefix-reappears fixture could not remove its first path");
++
++    auto one_file = Fixture::pass_limits();
++    one_file.maximum_file_bytes = 4U;
++    one_file.maximum_total_file_bytes = 4U;
++    const auto first = scan->run_convergence_pass_or_throw(one_file);
++    require(
++        !first.completed_local_scan_epoch &&
++            first.local_scan_resume_after_path == "m.txt" &&
++            first.local_scan_seen_path_count == 1U &&
++            first.deferred_unadjudicated_local_absence_remote_file_count == 1U &&
++            !fs::exists(fixture.shared_root / "a.txt"),
++        "bounded scan did not leave the absent prefix pending");
++
++    write_file(fixture.shared_root / "a.txt", "aaaa");
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto restarted = scan->run_convergence_pass_or_throw(one_file);
++    require(
++        restarted.local_scan_epoch == first.local_scan_epoch &&
++            !restarted.completed_local_scan_epoch &&
++            restarted.restarted_local_scan_epoch &&
++            restarted.local_scan_seen_path_count == 0U &&
++            restarted.local_scan_resume_after_path.empty() &&
++            restarted.local_published_count == 0U &&
++            restarted.deferred_unadjudicated_local_absence_remote_file_count == 0U &&
++            read_file(fixture.shared_root / "a.txt") == "aaaa" &&
++            scan->snapshot_or_throw() == catalog_cutpoint &&
++            fixture.replica.snapshot_or_throw() == replica_cutpoint,
++        "completed traversal classified an unseen-but-present prefix as absent");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto stable = scan->run_convergence_pass_or_throw(
++        Fixture::pass_limits());
++    const auto stable_catalog = scan->snapshot_or_throw();
++    bool retained_value_authority =
++        stable_catalog.entries.size() == catalog_cutpoint.entries.size();
++    if (retained_value_authority) {
++        for (std::size_t index = 0U;
++             index < stable_catalog.entries.size(); ++index) {
++            const auto& before = catalog_cutpoint.entries[index];
++            const auto& after = stable_catalog.entries[index];
++            retained_value_authority =
++                before.canonical_path == after.canonical_path &&
++                before.kind == after.kind &&
++                before.size_bytes == after.size_bytes &&
++                before.content_sha256 == after.content_sha256 &&
++                before.operation_id == after.operation_id;
++            if (!retained_value_authority) break;
++        }
++    }
++    require(
++        stable.completed_local_scan_epoch &&
++            !stable.restarted_local_scan_epoch &&
++            stable.local_scan_epoch != first.local_scan_epoch &&
++            stable.local_published_count == 0U &&
++            stable.local_catalog_no_op_count +
++                    stable.local_catalog_refreshed_count ==
++                3U &&
++            retained_value_authority &&
++            fixture.replica.snapshot_or_throw() == replica_cutpoint,
++        "restarted epoch did not return to one stable complete observation without changing value authority");
++}
++
++void test_incomplete_epoch_defers_tombstone_behind_cursor() {
++    Fixture fixture("anonsync-folder-pass-tombstone-behind-cursor");
++    const std::string base_bytes = "aaaa";
++    const std::string edited_bytes = "EDIT";
++    write_file(fixture.shared_root / "a.txt", base_bytes);
++    write_file(fixture.shared_root / "z.txt", "zzzz");
++
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "tombstone-behind-cursor catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto base_entry = find_entry(scan->snapshot_or_throw(), "a.txt");
++    require(base_entry.has_value(),
++            "tombstone-behind-cursor fixture lost its catalog base");
++    const auto base_operation = restore_model(
++        fixture.replica.snapshot_or_throw())
++                                    .operation_by_id(base_entry->operation_id);
++    require(base_operation.has_value(),
++            "tombstone-behind-cursor fixture lost its replica base");
++
++    auto one_file = Fixture::pass_limits();
++    one_file.maximum_file_bytes = 4U;
++    one_file.maximum_total_file_bytes = 4U;
++    const auto prefix = scan->run_convergence_pass_or_throw(one_file);
++    require(
++        !prefix.completed_local_scan_epoch &&
++            prefix.local_scan_seen_path_count == 1U &&
++            prefix.local_scan_resume_after_path == "a.txt",
++        "tombstone-behind-cursor fixture did not persist its first path");
++
++    anonsync::SyncReplicaModel remote(
++        Fixture::folder_id, {"device-tombstone-behind-cursor", 38U});
++    (void)remote.accept_remote_or_throw(*base_operation);
++    const auto tombstone = remote.create_local_tombstone_or_throw("a.txt");
++    require(
++        fixture.replica.accept_remote_or_throw(tombstone) ==
++            anonsync::SyncReplicaAdmission::InsertedActive,
++        "tombstone-behind-cursor fixture did not admit its remote tombstone");
++    write_file(fixture.shared_root / "a.txt", edited_bytes);
++    const auto catalog_cutpoint = scan->snapshot_or_throw();
++    const auto replica_cutpoint = fixture.replica.snapshot_or_throw();
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto suffix = scan->run_convergence_pass_or_throw(one_file);
++    require(
++        suffix.completed_local_scan_epoch &&
++            suffix.skipped_tombstone_remote_path_count == 1U &&
++            suffix.remote_applied_count == 0U &&
++            read_file(fixture.shared_root / "a.txt") == edited_bytes &&
++            scan->snapshot_or_throw() == catalog_cutpoint &&
++            fixture.replica.snapshot_or_throw() == replica_cutpoint,
++        "generic remote planning applied or rejected a tombstone behind the durable cursor");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto revisited = scan->run_convergence_pass_or_throw(
++        Fixture::pass_limits());
++    require(
++        revisited.completed_local_scan_epoch &&
++            revisited.skipped_conflicted_remote_path_count == 1U &&
++            revisited.skipped_tombstone_remote_path_count == 1U &&
++            revisited.remote_applied_count == 0U &&
++            revisited.local_published_count == 0U &&
++            read_file(fixture.shared_root / "a.txt") == edited_bytes &&
++            scan->snapshot_or_throw() == catalog_cutpoint &&
++            fixture.replica.snapshot_or_throw() == replica_cutpoint,
++        "the next epoch did not preserve the local-edit/remote-delete conflict");
++}
++
++void test_scan_progress_tampering_fails_closed() {
++    Fixture fixture("anonsync-folder-pass-progress-tamper");
++    write_file(fixture.shared_root / "a.txt", "four");
++    write_file(fixture.shared_root / "z.txt", "eight888");
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "progress-tamper catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    auto bounded = Fixture::pass_limits();
++    bounded.maximum_file_bytes = 8U;
++    bounded.maximum_total_file_bytes = 8U;
++    const auto partial = scan->run_convergence_pass_or_throw(bounded);
++    require(
++        !partial.completed_local_scan_epoch &&
++            partial.local_scan_seen_path_count == 1U,
++        "progress-tamper fixture did not retain an incomplete epoch");
++    scan.reset();
++
++    anonsync::sqlite_exec_or_throw(
++        catalog_db.db,
++        "UPDATE sync_replica_folder_catalog_scan_seen "
++        "SET chain_digest='0000000000000000000000000000000000000000000000000000000000000000' "
++        "WHERE ordinal=1;",
++        "progress-tamper fixture mutation");
++    require_error(
++        [&] { (void)fixture.make_scan_owner(catalog_db); },
++        "scan-progress tail does not match its head",
++        "folder owner accepted a tampered durable continuation journal");
+ }
+ 
+ void test_bounded_whole_folder_pass_missing_payload_and_remote_limit() {
+@@ -1606,6 +2030,7 @@
+             fixture.catalog_path(), "folder-pass remote-byte-total catalog");
+         auto scan = fixture.make_scan_owner(catalog_db);
+         auto limits = Fixture::pass_limits();
++        limits.maximum_file_bytes = 10U;
+         limits.maximum_total_file_bytes = 10U;
+         require_error(
+             [&] { (void)scan->run_convergence_pass_or_throw(limits); },
+@@ -1729,6 +2154,19 @@
+     pass_limits = Fixture::pass_limits();
+     pass_limits.maximum_relative_path_bytes =
+         owner_limits.max_catalog_path_bytes;
++    pass_limits.maximum_file_bytes = 9U;
++    pass_limits.maximum_total_file_bytes = 8U;
++    require_error(
++        [&] { (void)scan.run_convergence_pass_or_throw(pass_limits); },
++        "file-byte limit exceeds its aggregate byte limit",
++        "composed pass admitted a file that no empty fair segment can fit");
++    require(
++        scan.snapshot_or_throw() == catalog_cutpoint,
++        "invalid file/aggregate byte composition touched the catalog");
++
++    pass_limits = Fixture::pass_limits();
++    pass_limits.maximum_relative_path_bytes =
++        owner_limits.max_catalog_path_bytes;
+     pass_limits.maximum_payload_batch_puts = 0U;
+     require_error(
+         [&] { (void)scan.run_convergence_pass_or_throw(pass_limits); },
+@@ -2741,6 +3179,163 @@
+ }
+ 
+ 
++void test_rev0946_catalog_migrates_to_fair_scan_schema_exactly_once() {
++    Fixture fixture("anonsync-folder-scan-v2-migration");
++    write_file(fixture.shared_root / "a.txt", "retained v2 file");
++    write_file(fixture.shared_root / "gone.txt", "deleted v2 file");
++    anonsync::SyncSqliteDb catalog_db = open_database(
++        fixture.catalog_path(), "v2 migration catalog database");
++    auto scan = fixture.make_scan_owner(catalog_db);
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    require(
++        fs::remove(fixture.shared_root / "gone.txt"),
++        "v2 migration fixture could not remove its tombstone predecessor");
++    (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
++    const auto v3_snapshot = scan->snapshot_or_throw();
++    const auto retained_file = find_entry(v3_snapshot, "a.txt");
++    const auto retained_tombstone = find_entry(v3_snapshot, "gone.txt");
++    require(
++        retained_file.has_value() &&
++            retained_file->kind == anonsync::SyncReplicaValueKind::File &&
++            retained_tombstone.has_value() &&
++            retained_tombstone->kind ==
++                anonsync::SyncReplicaValueKind::Tombstone,
++        "v2 migration fixture did not retain both catalog value kinds");
++    scan.reset();
++
++    const std::string v2_digest =
++        previous_catalog_digest_for_test(v3_snapshot);
++    anonsync::sqlite_exec_or_throw(
++        catalog_db.db,
++        "BEGIN IMMEDIATE;"
++        "DROP TABLE sync_replica_folder_catalog_scan_seen;"
++        "DROP TABLE sync_replica_folder_catalog_scan_progress;"
++        "ALTER TABLE sync_replica_folder_catalog_meta "
++        "RENAME TO sync_replica_folder_catalog_meta_v3_fixture;"
++        "ALTER TABLE sync_replica_folder_catalog_entries "
++        "RENAME TO sync_replica_folder_catalog_entries_v3_fixture;"
++        "CREATE TABLE sync_replica_folder_catalog_meta("
++        "id INTEGER PRIMARY KEY CHECK(id=1),"
++        "schema_version INTEGER NOT NULL CHECK(schema_version=2),"
++        "folder_id TEXT NOT NULL CHECK(length(folder_id) BETWEEN 1 AND 128),"
++        "absolute_root_path TEXT NOT NULL CHECK(length(absolute_root_path) BETWEEN 1 AND 16384),"
++        "root_attestation_digest TEXT NOT NULL CHECK(length(root_attestation_digest)=64),"
++        "state_generation INTEGER NOT NULL CHECK(state_generation>=0),"
++        "max_catalog_entries INTEGER NOT NULL CHECK(max_catalog_entries>0),"
++        "max_catalog_path_bytes INTEGER NOT NULL CHECK(max_catalog_path_bytes>0),"
++        "max_payload_bytes INTEGER NOT NULL CHECK(max_payload_bytes>0),"
++        "entry_count INTEGER NOT NULL CHECK(entry_count>=0),"
++        "catalog_path_bytes INTEGER NOT NULL CHECK(catalog_path_bytes>=0),"
++        "catalog_digest TEXT NOT NULL CHECK(length(catalog_digest)=64)) STRICT;"
++        "CREATE TABLE sync_replica_folder_catalog_entries("
++        "canonical_path TEXT PRIMARY KEY CHECK(length(canonical_path) BETWEEN 1 AND 4096),"
++        "value_kind INTEGER NOT NULL CHECK(value_kind IN (1,2)),"
++        "size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),"
++        "content_sha256 TEXT NOT NULL,"
++        "operation_id TEXT NOT NULL CHECK(length(operation_id)=64),"
++        "source_snapshot_sha256 TEXT NOT NULL,"
++        "last_seen_generation INTEGER NOT NULL CHECK(last_seen_generation>0),"
++        "CHECK((value_kind=1 AND length(content_sha256)=64 AND "
++        "length(source_snapshot_sha256)=64) OR (value_kind=2 AND size_bytes=0 AND "
++        "content_sha256='' AND source_snapshot_sha256=''))) STRICT;"
++        "INSERT INTO sync_replica_folder_catalog_entries("
++        "canonical_path,value_kind,size_bytes,content_sha256,operation_id,"
++        "source_snapshot_sha256,last_seen_generation) "
++        "SELECT canonical_path,value_kind,size_bytes,content_sha256,operation_id,"
++        "source_snapshot_sha256,last_seen_generation "
++        "FROM sync_replica_folder_catalog_entries_v3_fixture "
++        "ORDER BY canonical_path;",
++        "v2 migration fixture schema");
++    anonsync::SyncSqliteStmt insert = anonsync::sqlite_prepare_or_throw(
++        catalog_db.db,
++        "INSERT INTO sync_replica_folder_catalog_meta("
++        "id,schema_version,folder_id,absolute_root_path,"
++        "root_attestation_digest,state_generation,max_catalog_entries,"
++        "max_catalog_path_bytes,max_payload_bytes,entry_count,"
++        "catalog_path_bytes,catalog_digest) "
++        "VALUES(1,2,?,?,?,?,?,?,?,?,?,?);",
++        "v2 migration fixture metadata prepare");
++    anonsync::sqlite_bind_text_or_throw(
++        insert.stmt, 1, v3_snapshot.folder_id, "v2 migration fixture");
++    anonsync::sqlite_bind_text_or_throw(
++        insert.stmt, 2, v3_snapshot.absolute_root_path,
++        "v2 migration fixture");
++    anonsync::sqlite_bind_text_or_throw(
++        insert.stmt, 3, v3_snapshot.root_attestation_digest,
++        "v2 migration fixture");
++    anonsync::sqlite_bind_u64_or_throw(
++        insert.stmt, 4, v3_snapshot.state_generation,
++        "v2 migration fixture");
++    anonsync::sqlite_bind_u64_or_throw(
++        insert.stmt, 5, v3_snapshot.limits.max_catalog_entries,
++        "v2 migration fixture");
++    anonsync::sqlite_bind_u64_or_throw(
++        insert.stmt, 6, v3_snapshot.limits.max_catalog_path_bytes,
++        "v2 migration fixture");
++    anonsync::sqlite_bind_u64_or_throw(
++        insert.stmt, 7, v3_snapshot.limits.max_payload_bytes,
++        "v2 migration fixture");
++    anonsync::sqlite_bind_u64_or_throw(
++        insert.stmt, 8,
++        static_cast<std::uint64_t>(v3_snapshot.entries.size()),
++        "v2 migration fixture");
++    std::uint64_t path_bytes = 0U;
++    for (const auto& entry : v3_snapshot.entries) {
++        path_bytes += static_cast<std::uint64_t>(entry.canonical_path.size());
++    }
++    anonsync::sqlite_bind_u64_or_throw(
++        insert.stmt, 9, path_bytes, "v2 migration fixture");
++    anonsync::sqlite_bind_text_or_throw(
++        insert.stmt, 10, v2_digest, "v2 migration fixture");
++    anonsync::sqlite_step_done_or_throw(
++        insert.stmt, "v2 migration fixture metadata step");
++    anonsync::sqlite_exec_or_throw(
++        catalog_db.db,
++        "DROP TABLE sync_replica_folder_catalog_entries_v3_fixture;"
++        "DROP TABLE sync_replica_folder_catalog_meta_v3_fixture;"
++        "COMMIT;",
++        "v2 migration fixture commit");
++
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto migrated = scan->snapshot_or_throw();
++    auto expected = v3_snapshot;
++    expected.catalog_digest = migrated.catalog_digest;
++    require(
++        migrated == expected && migrated.catalog_digest != v2_digest,
++        "rev0946 catalog did not migrate without changing file/tombstone authority");
++
++    anonsync::SyncSqliteStmt version_and_progress =
++        anonsync::sqlite_prepare_or_throw(
++            catalog_db.db,
++            "SELECT m.schema_version,p.scan_epoch,p.resume_after_path,"
++            "p.seen_path_count,p.seen_path_bytes,length(p.seen_chain_digest) "
++            "FROM sync_replica_folder_catalog_meta AS m "
++            "JOIN sync_replica_folder_catalog_scan_progress AS p "
++            "ON m.id=p.id WHERE m.id=1;",
++            "v2 migrated catalog progress prepare");
++    require(
++        sqlite3_step(version_and_progress.stmt) == SQLITE_ROW &&
++            sqlite3_column_int64(version_and_progress.stmt, 0) == 3 &&
++            sqlite3_column_int64(version_and_progress.stmt, 1) == 1 &&
++            std::string_view(reinterpret_cast<const char*>(
++                sqlite3_column_text(version_and_progress.stmt, 2))).empty() &&
++            sqlite3_column_int64(version_and_progress.stmt, 3) == 0 &&
++            sqlite3_column_int64(version_and_progress.stmt, 4) == 0 &&
++            sqlite3_column_int64(version_and_progress.stmt, 5) == 64 &&
++            sqlite3_step(version_and_progress.stmt) == SQLITE_DONE,
++        "rev0946 migration did not create one exact fair-scan genesis cutpoint");
++
++    scan.reset();
++    scan = fixture.make_scan_owner(catalog_db);
++    const auto stable = scan->run_convergence_pass_or_throw(
++        Fixture::pass_limits());
++    require(
++        stable.used_idle_fast_path &&
++            stable.completed_local_scan_epoch &&
++            scan->snapshot_or_throw() == migrated,
++        "rev0946 migration was not a stable one-time upgrade");
++}
++
+ void test_rev0939_file_catalog_migrates_exactly_once() {
+     Fixture fixture("anonsync-folder-scan-v1-migration");
+     write_file(fixture.shared_root / "a.txt", "alpha migration");
+@@ -2749,18 +3344,20 @@
+         fixture.catalog_path(), "legacy migration catalog database");
+     auto scan = fixture.make_scan_owner(catalog_db);
+     (void)scan->run_convergence_pass_or_throw(Fixture::pass_limits());
+-    const auto v2_snapshot = scan->snapshot_or_throw();
++    const auto v3_snapshot = scan->snapshot_or_throw();
+     scan.reset();
+ 
+     const std::string legacy_digest =
+-        legacy_catalog_digest_for_test(v2_snapshot);
++        legacy_catalog_digest_for_test(v3_snapshot);
+     anonsync::sqlite_exec_or_throw(
+         catalog_db.db,
+         "BEGIN IMMEDIATE;"
++        "DROP TABLE sync_replica_folder_catalog_scan_seen;"
++        "DROP TABLE sync_replica_folder_catalog_scan_progress;"
+         "ALTER TABLE sync_replica_folder_catalog_meta "
+-        "RENAME TO sync_replica_folder_catalog_meta_v2_fixture;"
++        "RENAME TO sync_replica_folder_catalog_meta_v3_fixture;"
+         "ALTER TABLE sync_replica_folder_catalog_entries "
+-        "RENAME TO sync_replica_folder_catalog_entries_v2_fixture;"
++        "RENAME TO sync_replica_folder_catalog_entries_v3_fixture;"
+         "CREATE TABLE sync_replica_folder_catalog_meta("
+         "id INTEGER PRIMARY KEY CHECK(id=1),"
+         "schema_version INTEGER NOT NULL CHECK(schema_version=1),"
+@@ -2786,7 +3383,7 @@
+         "source_snapshot_sha256,last_seen_generation) "
+         "SELECT canonical_path,size_bytes,content_sha256,operation_id,"
+         "source_snapshot_sha256,last_seen_generation "
+-        "FROM sync_replica_folder_catalog_entries_v2_fixture "
++        "FROM sync_replica_folder_catalog_entries_v3_fixture "
+         "ORDER BY canonical_path;",
+         "legacy migration fixture schema");
+     anonsync::SyncSqliteStmt insert = anonsync::sqlite_prepare_or_throw(
+@@ -2799,32 +3396,32 @@
+         "VALUES(1,1,?,?,?,?,?,?,?,?,?,?);",
+         "legacy migration fixture metadata prepare");
+     anonsync::sqlite_bind_text_or_throw(
+-        insert.stmt, 1, v2_snapshot.folder_id,
++        insert.stmt, 1, v3_snapshot.folder_id,
+         "legacy migration fixture");
+     anonsync::sqlite_bind_text_or_throw(
+-        insert.stmt, 2, v2_snapshot.absolute_root_path,
++        insert.stmt, 2, v3_snapshot.absolute_root_path,
+         "legacy migration fixture");
+     anonsync::sqlite_bind_text_or_throw(
+-        insert.stmt, 3, v2_snapshot.root_attestation_digest,
++        insert.stmt, 3, v3_snapshot.root_attestation_digest,
+         "legacy migration fixture");
+     anonsync::sqlite_bind_u64_or_throw(
+-        insert.stmt, 4, v2_snapshot.state_generation,
++        insert.stmt, 4, v3_snapshot.state_generation,
+         "legacy migration fixture");
+     anonsync::sqlite_bind_u64_or_throw(
+-        insert.stmt, 5, v2_snapshot.limits.max_catalog_entries,
++        insert.stmt, 5, v3_snapshot.limits.max_catalog_entries,
+         "legacy migration fixture");
+     anonsync::sqlite_bind_u64_or_throw(
+-        insert.stmt, 6, v2_snapshot.limits.max_catalog_path_bytes,
++        insert.stmt, 6, v3_snapshot.limits.max_catalog_path_bytes,
+         "legacy migration fixture");
+     anonsync::sqlite_bind_u64_or_throw(
+-        insert.stmt, 7, v2_snapshot.limits.max_payload_bytes,
++        insert.stmt, 7, v3_snapshot.limits.max_payload_bytes,
+         "legacy migration fixture");
+     anonsync::sqlite_bind_u64_or_throw(
+         insert.stmt, 8,
+-        static_cast<std::uint64_t>(v2_snapshot.entries.size()),
++        static_cast<std::uint64_t>(v3_snapshot.entries.size()),
+         "legacy migration fixture");
+     std::uint64_t path_bytes = 0U;
+-    for (const auto& entry : v2_snapshot.entries) {
++    for (const auto& entry : v3_snapshot.entries) {
+         path_bytes += static_cast<std::uint64_t>(entry.canonical_path.size());
+     }
+     anonsync::sqlite_bind_u64_or_throw(
+@@ -2835,14 +3432,14 @@
+         insert.stmt, "legacy migration fixture metadata step");
+     anonsync::sqlite_exec_or_throw(
+         catalog_db.db,
+-        "DROP TABLE sync_replica_folder_catalog_entries_v2_fixture;"
+-        "DROP TABLE sync_replica_folder_catalog_meta_v2_fixture;"
++        "DROP TABLE sync_replica_folder_catalog_entries_v3_fixture;"
++        "DROP TABLE sync_replica_folder_catalog_meta_v3_fixture;"
+         "COMMIT;",
+         "legacy migration fixture commit");
+ 
+     scan = fixture.make_scan_owner(catalog_db);
+     const auto migrated = scan->snapshot_or_throw();
+-    auto expected = v2_snapshot;
++    auto expected = v3_snapshot;
+     expected.catalog_digest = migrated.catalog_digest;
+     require(
+         migrated == expected && migrated.catalog_digest != legacy_digest,
+@@ -2854,8 +3451,8 @@
+         "migrated catalog version prepare");
+     require(
+         sqlite3_step(version.stmt) == SQLITE_ROW &&
+-            sqlite3_column_int64(version.stmt, 0) == 2,
+-        "migrated folder catalog did not attest schema version 2");
++            sqlite3_column_int64(version.stmt, 0) == 3,
++        "migrated folder catalog did not attest schema version 3");
+     const auto stable = scan->run_convergence_pass_or_throw(
+         Fixture::pass_limits());
+     require(
+@@ -2977,6 +3574,7 @@
+         test_streaming_file_larger_than_legacy_frame_ceiling();
+         test_bounded_whole_folder_pass_local_tree_and_noop();
+         test_many_file_pass_amortizes_payload_store_mutation_authority();
++        test_scan_journal_batches_one_progress_publication_per_segment();
+         test_payload_batch_segments_bound_exclusive_lease_horizon();
+         test_local_batch_releases_for_remote_apply_and_reacquires();
+         test_bounded_whole_folder_pass_remote_catchup_and_divergence();
+@@ -2987,6 +3585,11 @@
+         test_reserved_internal_namespace_cannot_be_materialized();
+         test_incomplete_scan_cannot_infer_deletion();
+         test_bounded_whole_folder_pass_bound_stop_and_restart();
++        test_durable_scan_epoch_delays_deletion_until_complete_suffix();
++        test_completed_epoch_does_not_restore_deleted_seen_prefix();
++        test_scan_epoch_restarts_when_absent_prefix_reappears();
++        test_incomplete_epoch_defers_tombstone_behind_cursor();
++        test_scan_progress_tampering_fails_closed();
+         test_bounded_whole_folder_pass_missing_payload_and_remote_limit();
+         test_bounded_whole_folder_pass_remote_work_bounds();
+         test_bounded_whole_folder_pass_limit_contract();
+@@ -3001,6 +3604,7 @@
+         test_remote_apply_parent_chain_refuses_unsafe_components();
+         test_remote_apply_rejects_local_mutation_and_multihead();
+         test_remote_apply_path_fence_and_crash_recovery();
++        test_rev0946_catalog_migrates_to_fair_scan_schema_exactly_once();
+         test_rev0939_file_catalog_migrates_exactly_once();
+         test_catalog_schema_contamination_fails_closed();
+         test_catalog_identity_and_capacity_fail_closed();
+--- a/tools/test_anonsync_folder_cli.py
++++ b/tools/test_anonsync_folder_cli.py
+@@ -166,12 +166,24 @@
+         (files_root / "b.txt").write_bytes(b"bbbbb\n")
+         os.symlink("a.txt", files_root / "ignored-link")
+ 
+-        bounded = run_stopped([
++        bounded = run_ok([
+             str(folder), "run", "--manifest", str(manifest),
++            "--maximum-file-bytes", "6",
+             "--maximum-total-file-bytes", "6",
+         ], "bounded partial pass")
+-        if "total file-byte limit" not in str(bounded.get("message")):
+-            fail(f"bounded pass stopped for an unexpected reason: {bounded}")
++        expect(bounded, {
++            "command": "run", "terminal_class": "completed",
++            "catalog_generation_before": 0,
++            "catalog_generation_after": 1,
++            "catalog_entry_count_before": 0,
++            "catalog_entry_count_after": 1,
++            "regular_files": 1, "ignored_symbolic_links": 0,
++            "local_published": 1, "local_catalog_no_op": 0,
++            "completed_local_scan_epoch": False,
++            "restarted_local_scan_epoch": False,
++            "local_scan_seen_path_count": 1,
++            "local_scan_resume_after_path": "a.txt",
++        }, "bounded partial pass")
+ 
+         resumed = run_ok([
+             str(folder), "run", "--manifest", str(manifest),
+@@ -182,8 +194,12 @@
+             "catalog_generation_after": 2,
+             "catalog_entry_count_before": 1,
+             "catalog_entry_count_after": 2,
+-            "regular_files": 2, "ignored_symbolic_links": 1,
+-            "local_published": 1, "local_catalog_no_op": 1,
++            "regular_files": 1, "ignored_symbolic_links": 1,
++            "local_published": 1, "local_catalog_no_op": 0,
++            "completed_local_scan_epoch": True,
++            "restarted_local_scan_epoch": False,
++            "local_scan_seen_path_count": 0,
++            "local_scan_resume_after_path": "",
+         }, "restart completion")
+ 
+         no_op = run_ok([
+@@ -195,6 +211,10 @@
+             "catalog_entry_count_before": 2,
+             "catalog_entry_count_after": 2,
+             "local_published": 0, "local_catalog_no_op": 2,
++            "used_idle_fast_path": True,
++            "completed_local_scan_epoch": True,
++            "local_scan_seen_path_count": 0,
++            "local_scan_resume_after_path": "",
+             "catalog_digest_before": resumed["catalog_digest_after"],
+             "catalog_digest_after": resumed["catalog_digest_after"],
+             "replica_cutpoint_before": resumed["replica_cutpoint_after"],
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -1117,7 +1117,8 @@
+             "payload_batch.reset()",
+             "batch_would_cross_work",
+             "release_saturated_payload_batch",
+-            "report.traversal",
++            "const SyncReplicaFolderTraversalSegment local_segment",
++            "visit_sync_replica_folder_regular_file_paths_resumable_or_throw",
+             "const std::optional<SyncReplicaFolderCatalogEntry> prior_hint",
+             "classified_size_bytes == prior_hint->size_bytes",
+             "release_payload_batch();",
+@@ -1132,8 +1133,13 @@
+             "batch_would_cross_work(exact_size)",
+             "commit_prepared_regular_file_with_payload_batch_or_throw",
+             "release_saturated_payload_batch();",
++            "segment_seen_paths.push_back(canonical_path)",
++            "report.traversal = local_segment.traversal",
+             "release_payload_batch();",
+             "fallback payload cutpoint reproof",
++            "record_scan_seen_paths_or_throw",
++            "if (local_segment.completed)",
++            "load_complete_scan_seen_paths_or_throw",
+             "absence_snapshot",
+         )
+         and all(
+@@ -1160,7 +1166,7 @@
+             )
+         ),
+         "folder_pass_segments_payload_store_lease_by_puts_and_exact_work",
+-        "one exact append-only payload cutpoint proves unchanged local payloads, while genuinely new digests reuse a warm verified index only inside explicit put and exact-work segments; no-op, conflict, and remote paths release the exclusive lease before unrelated work",
++        "one exact append-only payload cutpoint proves unchanged local payloads, while genuinely new digests reuse a warm verified index only inside explicit put and exact-work segments; resumable traversal records successful path effects in one durable journal segment after directory reproof, and no-op, conflict, and remote paths release the exclusive lease before unrelated work",
+     )
+     lease = function_body(store, "acquire_store_lease_or_throw(")
+     require(

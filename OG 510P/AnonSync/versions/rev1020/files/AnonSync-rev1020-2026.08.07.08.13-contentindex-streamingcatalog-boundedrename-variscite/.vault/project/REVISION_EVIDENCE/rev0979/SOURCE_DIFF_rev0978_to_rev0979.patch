@@ -1,0 +1,2789 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 33f81fffe736ec8ea1678ca11ec5ac4090b4c74f..98faba7b891fa3de69608fc28584a693b8f73cba 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1362,6 +1362,20 @@ target_link_libraries(anonsync_sync_replica_file_payload_scrub_state
+ target_compile_options(anonsync_sync_replica_file_payload_scrub_state PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++# One fixed-width, checksum-framed retention mark preserves a deletion-free
++# candidate observation together with explicit conservative owner policy. It is
++# historical evidence only: no parser or caller gains collection authority.
++add_library(anonsync_sync_replica_file_payload_retention_mark STATIC
++  src/sync_replica_file_payload_retention_mark.cpp)
++target_include_directories(anonsync_sync_replica_file_payload_retention_mark PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_file_payload_retention_mark
++  PRIVATE
++    anonsync_sha256_digest
++    anonsync_sync_posix_regular_file_snapshot_codec)
++target_compile_options(anonsync_sync_replica_file_payload_retention_mark PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ # Sender payload bytes now have one durable, descriptor-relative content owner
+ # instead of requiring every dispatch caller to retain the complete working set
+ # in memory. The flat digest namespace remains deliberately bounded and is an
+@@ -1385,6 +1399,7 @@ target_link_libraries(anonsync_sync_replica_file_payload_store
+     anonsync_sync_bounded_regular_file
+     anonsync_sync_replica_file_payload_verification_index
+     anonsync_sync_replica_file_payload_scrub_state
++    anonsync_sync_replica_file_payload_retention_mark
+   PRIVATE
+     anonsync_sha256_digest
+     anonsync_resumable_sha256
+@@ -2429,6 +2444,16 @@ target_link_libraries(anonsync_sync_replica_file_payload_scrub_state_test PRIVAT
+ target_compile_options(anonsync_sync_replica_file_payload_scrub_state_test PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
++add_executable(anonsync_sync_replica_file_payload_retention_mark_test
++  tests/sync_replica_file_payload_retention_mark_test.cpp)
++target_include_directories(anonsync_sync_replica_file_payload_retention_mark_test PRIVATE
++  ${CMAKE_CURRENT_SOURCE_DIR}/src)
++target_link_libraries(anonsync_sync_replica_file_payload_retention_mark_test PRIVATE
++  anonsync_sha256_digest
++  anonsync_sync_replica_file_payload_retention_mark)
++target_compile_options(anonsync_sync_replica_file_payload_retention_mark_test PRIVATE
++  -Wall -Wextra -Wpedantic)
++
+ add_executable(anonsync_sync_replica_file_payload_store_test
+   tests/sync_replica_file_payload_store_test.cpp)
+ target_include_directories(anonsync_sync_replica_file_payload_store_test PRIVATE
+@@ -3927,6 +3952,8 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+     anonsync_sync_replica_file_payload_verification_index_test
+     anonsync_sync_replica_file_payload_scrub_state
+     anonsync_sync_replica_file_payload_scrub_state_test
++    anonsync_sync_replica_file_payload_retention_mark
++    anonsync_sync_replica_file_payload_retention_mark_test
+     anonsync_sync_posix_regular_file_snapshot_codec
+     anonsync_sync_replica_file_payload_store
+     anonsync_sync_replica_file_payload_store_test
+@@ -4043,6 +4070,7 @@ if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+       anonsync_resumable_sha256_test
+       anonsync_sync_replica_file_payload_verification_index_test
+       anonsync_sync_replica_file_payload_scrub_state_test
++      anonsync_sync_replica_file_payload_retention_mark_test
+       anonsync_sync_replica_file_payload_store_test
+       anonsync_sync_replica_deployment_manifest_test
+       anonsync_sync_replica_bootstrap_record_test
+@@ -4190,7 +4218,8 @@ add_custom_target(anonsync_product_lane
+     anonsync_sync_replica_file_delivery_service_test
+     anonsync_resumable_sha256_test
+     anonsync_sync_replica_file_payload_verification_index_test
+-    anonsync_sync_replica_file_payload_scrub_state_test)
++    anonsync_sync_replica_file_payload_scrub_state_test
++    anonsync_sync_replica_file_payload_retention_mark_test)
+ if(TARGET anonsync_sync_replica_folder_observer_race_test)
+   add_dependencies(anonsync_product_lane
+     anonsync_sync_replica_folder_observer_race_test)
+@@ -4425,6 +4454,10 @@ add_test(NAME anonsync_sync_replica_file_payload_scrub_state_test
+   COMMAND anonsync_sync_replica_file_payload_scrub_state_test)
+ set_tests_properties(anonsync_sync_replica_file_payload_scrub_state_test
+   PROPERTIES LABELS "product" TIMEOUT 30)
++add_test(NAME anonsync_sync_replica_file_payload_retention_mark_test
++  COMMAND anonsync_sync_replica_file_payload_retention_mark_test)
++set_tests_properties(anonsync_sync_replica_file_payload_retention_mark_test
++  PROPERTIES LABELS "product" TIMEOUT 30)
+ add_test(NAME anonsync_sync_replica_file_payload_store_test
+   COMMAND anonsync_sync_replica_file_payload_store_test)
+ set_tests_properties(anonsync_sync_replica_file_payload_store_test
+diff --git a/src/sync_replica_file_payload_retention_mark.cpp b/src/sync_replica_file_payload_retention_mark.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..65ce7cb0ebf7ccda8873222858407999b5d92048
+--- /dev/null
++++ b/src/sync_replica_file_payload_retention_mark.cpp
+@@ -0,0 +1,366 @@
++#include "sync_replica_file_payload_retention_mark.hpp"
++
++#if !defined(_WIN32)
++
++#include "sha256_digest.hpp"
++#include "sync_posix_regular_file_snapshot_codec.hpp"
++
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++#include <optional>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++
++namespace anonsync {
++namespace {
++
++constexpr std::string_view kMagic =
++    "anonsync:sync-replica-file-payload-retention-mark:v1\n";
++constexpr std::uint64_t kEncodedU64Bytes = 8U;
++constexpr std::uint64_t kDigestTextBytes = 64U;
++constexpr std::uint64_t kMetadataBytes =
++    kSyncPosixRegularFileSnapshotMetadataEncodedBytes;
++constexpr std::uint64_t kEncodedU64Count = 10U;
++constexpr std::uint64_t kSourceDigestCount = 8U;
++constexpr std::uint64_t kBodyBytes =
++    kDigestTextBytes + kMetadataBytes +
++    (kEncodedU64Count * kEncodedU64Bytes) +
++    (kSourceDigestCount * kDigestTextBytes);
++constexpr std::uint64_t kExactBytes =
++    static_cast<std::uint64_t>(kMagic.size()) + kBodyBytes +
++    kDigestTextBytes;
++
++[[noreturn]] void invalid(
++    std::string_view label,
++    std::string_view reason) {
++    throw std::invalid_argument(
++        std::string(label) + " payload retention mark " +
++        std::string(reason));
++}
++
++void append_u64(std::string& output, std::uint64_t value) {
++    for (unsigned shift = 56U;; shift -= 8U) {
++        output.push_back(static_cast<char>((value >> shift) & 0xffU));
++        if (shift == 0U) break;
++    }
++}
++
++void validate_digest(
++    std::string_view digest,
++    std::string_view field,
++    std::string_view label) {
++    if (!is_lowercase_sha256_hex(digest)) {
++        invalid(label, std::string(field) + " digest is invalid");
++    }
++}
++
++void validate_limits_or_throw(
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label) {
++    if (max_payload_entries == 0U) {
++        invalid(label, "configured payload entry ceiling is zero");
++    }
++    if (max_indexed_bytes == 0U) {
++        invalid(label, "configured indexed-byte ceiling is zero");
++    }
++}
++
++void validate_mark_or_throw(
++    const SyncReplicaFilePayloadRetentionMark& mark,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label) {
++    validate_digest(mark.store_identity_sha256, "store-identity", label);
++    validate_sync_posix_private_single_link_regular_file_snapshot_metadata_or_throw(
++        mark.store_identity_metadata, std::nullopt,
++        std::string(label) + " store identity");
++    if (mark.generation == 0U) {
++        invalid(label, "generation is zero");
++    }
++    validate_sync_replica_file_payload_retention_policy_for_store_or_throw(
++        mark.policy, mark.marked_at_unix_seconds, max_payload_entries,
++        max_indexed_bytes, label);
++
++    const auto& policy = mark.policy;
++
++    if (mark.source_replica_state_generation == 0U) {
++        invalid(label, "source replica generation is zero");
++    }
++    validate_digest(mark.source_operation_set_digest, "operation-set", label);
++    validate_digest(mark.source_evidence_set_digest, "evidence-set", label);
++    validate_digest(
++        mark.source_historical_version_pin_set_digest,
++        "historical-version-pin-set", label);
++    validate_digest(mark.source_visible_state_digest, "visible-state", label);
++    validate_digest(
++        mark.source_payload_snapshot_digest, "payload-snapshot", label);
++    validate_digest(
++        mark.source_payload_transient_namespace_digest,
++        "payload-transient-namespace", label);
++    validate_digest(
++        mark.unreferenced_candidate_set_digest, "candidate-set", label);
++    validate_digest(
++        mark.durable_candidate_witness_digest,
++        "durable-candidate-witness", label);
++
++    if (mark.unreferenced_candidate_payload_count == 0U) {
++        invalid(label, "contains no unreferenced payload candidates");
++    }
++    if (mark.unreferenced_candidate_payload_count > max_payload_entries ||
++        mark.unreferenced_candidate_payload_count >
++            policy.maximum_candidate_payload_count) {
++        invalid(label, "observed candidate count exceeds policy");
++    }
++    if (mark.unreferenced_candidate_payload_bytes > max_indexed_bytes ||
++        mark.unreferenced_candidate_payload_bytes >
++            policy.maximum_candidate_payload_bytes) {
++        invalid(label, "observed candidate bytes exceed policy");
++    }
++    if (policy.maximum_collection_payload_count >
++        mark.unreferenced_candidate_payload_count) {
++        invalid(label, "policy collection count exceeds candidates");
++    }
++    if (policy.maximum_collection_payload_bytes >
++        mark.unreferenced_candidate_payload_bytes) {
++        invalid(label, "policy collection bytes exceed candidates");
++    }
++    if (mark.unreferenced_candidate_payload_bytes != 0U &&
++        policy.maximum_collection_payload_bytes == 0U) {
++        invalid(label, "non-empty candidate bytes have zero collection bytes");
++    }
++}
++
++class Cursor final {
++public:
++    Cursor(std::string_view bytes, std::string_view label)
++        : bytes_(bytes), label_(label) {}
++
++    [[nodiscard]] std::string_view take(std::size_t count) {
++        if (count > bytes_.size() - position_) {
++            invalid(label_, "is truncated");
++        }
++        const std::string_view result = bytes_.substr(position_, count);
++        position_ += count;
++        return result;
++    }
++
++    [[nodiscard]] std::uint64_t take_u64() {
++        std::uint64_t value = 0U;
++        for (const unsigned char byte : take(8U)) {
++            value = (value << 8U) | static_cast<std::uint64_t>(byte);
++        }
++        return value;
++    }
++
++    [[nodiscard]] std::string take_digest(std::string_view field) {
++        const std::string value(take(64U));
++        if (!is_lowercase_sha256_hex(value)) {
++            invalid(label_, std::string(field) + " digest is invalid");
++        }
++        return value;
++    }
++
++    [[nodiscard]] SyncPosixRegularFileSnapshotMetadata take_metadata() {
++        return parse_sync_posix_regular_file_snapshot_metadata_binary_or_throw(
++            take(static_cast<std::size_t>(kMetadataBytes)),
++            std::string(label_) + " payload retention mark");
++    }
++
++    [[nodiscard]] bool exhausted() const noexcept {
++        return position_ == bytes_.size();
++    }
++
++private:
++    std::string_view bytes_;
++    std::string_view label_;
++    std::size_t position_ = 0U;
++};
++
++}  // namespace
++
++void validate_sync_replica_file_payload_retention_policy_or_throw(
++    const SyncReplicaFilePayloadRetentionPolicy& policy,
++    std::uint64_t marked_at_unix_seconds,
++    std::string_view label) {
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "payload retention policy label must not be empty");
++    }
++    if (marked_at_unix_seconds == 0U) {
++        invalid(label, "mark time is zero");
++    }
++    if (policy.minimum_grace_seconds == 0U ||
++        policy.minimum_grace_seconds >
++            kSyncReplicaFilePayloadRetentionMarkMaximumGraceSeconds) {
++        invalid(label, "policy grace seconds are invalid");
++    }
++    if (policy.minimum_grace_seconds >
++        std::numeric_limits<std::uint64_t>::max() -
++            marked_at_unix_seconds) {
++        invalid(label, "policy grace deadline overflows");
++    }
++    if (policy.maximum_candidate_payload_count == 0U) {
++        invalid(label, "policy candidate count frontier is zero");
++    }
++    if (policy.maximum_collection_payload_count == 0U ||
++        policy.maximum_collection_payload_count >
++            policy.maximum_candidate_payload_count) {
++        invalid(label, "policy collection count frontier is invalid");
++    }
++    if (policy.maximum_collection_payload_bytes >
++        policy.maximum_candidate_payload_bytes) {
++        invalid(label, "policy collection bytes frontier is invalid");
++    }
++    if (policy.maximum_candidate_payload_bytes != 0U &&
++        policy.maximum_collection_payload_bytes == 0U) {
++        invalid(label, "nonzero candidate bytes have zero collection bytes");
++    }
++}
++
++void validate_sync_replica_file_payload_retention_policy_for_store_or_throw(
++    const SyncReplicaFilePayloadRetentionPolicy& policy,
++    std::uint64_t marked_at_unix_seconds,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label) {
++    validate_sync_replica_file_payload_retention_policy_or_throw(
++        policy, marked_at_unix_seconds, label);
++    validate_limits_or_throw(max_payload_entries, max_indexed_bytes, label);
++    if (policy.maximum_candidate_payload_count > max_payload_entries) {
++        invalid(label, "policy candidate count exceeds store capacity");
++    }
++    if (policy.maximum_candidate_payload_bytes > max_indexed_bytes) {
++        invalid(label, "policy candidate bytes exceed store capacity");
++    }
++}
++
++std::uint64_t
++sync_replica_file_payload_retention_mark_exact_bytes() noexcept {
++    return kExactBytes;
++}
++
++std::string serialize_sync_replica_file_payload_retention_mark_or_throw(
++    const SyncReplicaFilePayloadRetentionMark& mark,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label) {
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "payload retention mark serialization label must not be empty");
++    }
++    validate_mark_or_throw(
++        mark, max_payload_entries, max_indexed_bytes, label);
++    if (kExactBytes > std::numeric_limits<std::size_t>::max()) {
++        throw std::length_error(
++            std::string(label) + " payload retention mark exceeds size_t");
++    }
++
++    std::string encoded;
++    encoded.reserve(static_cast<std::size_t>(kExactBytes));
++    encoded.append(kMagic);
++    encoded.append(mark.store_identity_sha256);
++    append_sync_posix_regular_file_snapshot_metadata_binary(
++        encoded, mark.store_identity_metadata);
++    append_u64(encoded, mark.generation);
++    append_u64(encoded, mark.marked_at_unix_seconds);
++    append_u64(encoded, mark.policy.minimum_grace_seconds);
++    append_u64(encoded, mark.policy.maximum_candidate_payload_count);
++    append_u64(encoded, mark.policy.maximum_candidate_payload_bytes);
++    append_u64(encoded, mark.policy.maximum_collection_payload_count);
++    append_u64(encoded, mark.policy.maximum_collection_payload_bytes);
++    append_u64(encoded, mark.unreferenced_candidate_payload_count);
++    append_u64(encoded, mark.unreferenced_candidate_payload_bytes);
++    append_u64(encoded, mark.source_replica_state_generation);
++    encoded.append(mark.source_operation_set_digest);
++    encoded.append(mark.source_evidence_set_digest);
++    encoded.append(mark.source_historical_version_pin_set_digest);
++    encoded.append(mark.source_visible_state_digest);
++    encoded.append(mark.source_payload_snapshot_digest);
++    encoded.append(mark.source_payload_transient_namespace_digest);
++    encoded.append(mark.unreferenced_candidate_set_digest);
++    encoded.append(mark.durable_candidate_witness_digest);
++    encoded.append(sha256_hex(encoded));
++    if (encoded.size() != kExactBytes) {
++        throw std::logic_error(
++            std::string(label) + " payload retention mark encoded size drifted");
++    }
++    return encoded;
++}
++
++SyncReplicaFilePayloadRetentionMark
++parse_sync_replica_file_payload_retention_mark_or_throw(
++    std::string_view bytes,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label) {
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "payload retention mark parsing label must not be empty");
++    }
++    validate_limits_or_throw(max_payload_entries, max_indexed_bytes, label);
++    if (bytes.size() != kExactBytes) {
++        invalid(label, "length is not the exact v1 size");
++    }
++    const std::size_t framed_size =
++        bytes.size() - static_cast<std::size_t>(kDigestTextBytes);
++    const std::string_view expected_checksum = bytes.substr(framed_size);
++    if (!is_lowercase_sha256_hex(expected_checksum) ||
++        sha256_hex(std::string(bytes.substr(0U, framed_size))) !=
++            expected_checksum) {
++        invalid(label, "checksum is invalid");
++    }
++
++    Cursor cursor(bytes.substr(0U, framed_size), label);
++    if (cursor.take(kMagic.size()) != kMagic) {
++        invalid(label, "magic is invalid");
++    }
++    SyncReplicaFilePayloadRetentionMark mark;
++    mark.store_identity_sha256 = cursor.take_digest("store-identity");
++    mark.store_identity_metadata = cursor.take_metadata();
++    mark.generation = cursor.take_u64();
++    mark.marked_at_unix_seconds = cursor.take_u64();
++    mark.policy.minimum_grace_seconds = cursor.take_u64();
++    mark.policy.maximum_candidate_payload_count = cursor.take_u64();
++    mark.policy.maximum_candidate_payload_bytes = cursor.take_u64();
++    mark.policy.maximum_collection_payload_count = cursor.take_u64();
++    mark.policy.maximum_collection_payload_bytes = cursor.take_u64();
++    mark.unreferenced_candidate_payload_count = cursor.take_u64();
++    mark.unreferenced_candidate_payload_bytes = cursor.take_u64();
++    mark.source_replica_state_generation = cursor.take_u64();
++    mark.source_operation_set_digest = cursor.take_digest("operation-set");
++    mark.source_evidence_set_digest = cursor.take_digest("evidence-set");
++    mark.source_historical_version_pin_set_digest =
++        cursor.take_digest("historical-version-pin-set");
++    mark.source_visible_state_digest = cursor.take_digest("visible-state");
++    mark.source_payload_snapshot_digest = cursor.take_digest("payload-snapshot");
++    mark.source_payload_transient_namespace_digest =
++        cursor.take_digest("payload-transient-namespace");
++    mark.unreferenced_candidate_set_digest = cursor.take_digest("candidate-set");
++    mark.durable_candidate_witness_digest =
++        cursor.take_digest("durable-candidate-witness");
++    if (!cursor.exhausted()) {
++        invalid(label, "contains trailing body bytes");
++    }
++    validate_mark_or_throw(
++        mark, max_payload_entries, max_indexed_bytes, label);
++    return mark;
++}
++
++std::string sync_replica_file_payload_retention_mark_digest_or_throw(
++    const SyncReplicaFilePayloadRetentionMark& mark,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label) {
++    const std::string encoded =
++        serialize_sync_replica_file_payload_retention_mark_or_throw(
++            mark, max_payload_entries, max_indexed_bytes, label);
++    return encoded.substr(
++        encoded.size() - static_cast<std::size_t>(kDigestTextBytes));
++}
++
++}  // namespace anonsync
++
++#endif
+diff --git a/src/sync_replica_file_payload_retention_mark.hpp b/src/sync_replica_file_payload_retention_mark.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..788bc15231f23fc0b4a8a8f83a89b57704d989cf
+--- /dev/null
++++ b/src/sync_replica_file_payload_retention_mark.hpp
+@@ -0,0 +1,114 @@
++#pragma once
++
++#if !defined(_WIN32)
++
++#include "sync_posix_descriptor_snapshot.hpp"
++
++#include <cstdint>
++#include <string>
++#include <string_view>
++
++namespace anonsync {
++
++inline constexpr std::string_view
++    kSyncReplicaFilePayloadRetentionMarkBasename =
++        ".anonsync-payload-retention-mark-v1";
++inline constexpr std::uint64_t
++    kSyncReplicaFilePayloadRetentionMarkMaximumGraceSeconds =
++        10ULL * 365ULL * 24ULL * 60ULL * 60ULL;
++
++// Explicit bounded operator policy attached to one deletion-free candidate
++// observation. This is not collection authority: a later collector must
++// reacquire all current causal, transient, live-capability, inode, byte, root,
++// elapsed-time, quota, and ENOSPC cutpoints before any rename or unlink.
++struct SyncReplicaFilePayloadRetentionPolicy final {
++    std::uint64_t minimum_grace_seconds = 0U;
++    std::uint64_t maximum_candidate_payload_count = 0U;
++    std::uint64_t maximum_candidate_payload_bytes = 0U;
++    std::uint64_t maximum_collection_payload_count = 0U;
++    std::uint64_t maximum_collection_payload_bytes = 0U;
++
++    bool operator==(
++        const SyncReplicaFilePayloadRetentionPolicy&) const = default;
++};
++
++// Validates the policy/time relationship without consulting one store's
++// configured capacity. This lets parsers and generic callers reject malformed
++// operator input independently of a live store owner.
++void validate_sync_replica_file_payload_retention_policy_or_throw(
++    const SyncReplicaFilePayloadRetentionPolicy& policy,
++    std::uint64_t marked_at_unix_seconds,
++    std::string_view label = "payload retention policy");
++
++// Adds the exact store-capacity frontier to the generic policy validation.
++// Higher owners call this before acquiring a writer fence or enumerating the
++// payload namespace, so a configuration-impossible policy cannot spend a
++// complete physical observation merely to fail during record serialization.
++void validate_sync_replica_file_payload_retention_policy_for_store_or_throw(
++    const SyncReplicaFilePayloadRetentionPolicy& policy,
++    std::uint64_t marked_at_unix_seconds,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label = "payload retention policy for store");
++
++// One checksum-framed, exact-store-identity-bound historical mark. It records
++// a restart-stable candidate witness and conservative policy, but deliberately
++// carries no reclaimable, quarantine, or unlink bit.
++struct SyncReplicaFilePayloadRetentionMark final {
++    std::string store_identity_sha256;
++    SyncPosixRegularFileSnapshotMetadata store_identity_metadata;
++    // Continuity evidence only while a structurally usable predecessor exists.
++    // Absence or unusable bytes restart at one, so this is not freshness,
++    // elapsed-time, or anti-rollback authority.
++    std::uint64_t generation = 1U;
++    std::uint64_t marked_at_unix_seconds = 0U;
++    SyncReplicaFilePayloadRetentionPolicy policy;
++
++    // Monotonic within one retained SQLite database lineage, this owner
++    // generation prevents a causal-root ABA from inheriting grace merely
++    // because all content digests later return to the same values. It is not an
++    // external anti-rollback counter: exact database restoration can recreate
++    // both generation and digests, and this mark grants no collection authority.
++    std::uint64_t source_replica_state_generation = 0U;
++    std::string source_operation_set_digest;
++    std::string source_evidence_set_digest;
++    std::string source_historical_version_pin_set_digest;
++    std::string source_visible_state_digest;
++    std::string source_payload_snapshot_digest;
++    std::string source_payload_transient_namespace_digest;
++    std::string unreferenced_candidate_set_digest;
++    std::string durable_candidate_witness_digest;
++    std::uint64_t unreferenced_candidate_payload_count = 0U;
++    std::uint64_t unreferenced_candidate_payload_bytes = 0U;
++
++    bool operator==(
++        const SyncReplicaFilePayloadRetentionMark&) const = default;
++};
++
++[[nodiscard]] std::uint64_t
++sync_replica_file_payload_retention_mark_exact_bytes() noexcept;
++
++[[nodiscard]] std::string
++serialize_sync_replica_file_payload_retention_mark_or_throw(
++    const SyncReplicaFilePayloadRetentionMark& mark,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label = "payload retention mark serialization");
++
++[[nodiscard]] SyncReplicaFilePayloadRetentionMark
++parse_sync_replica_file_payload_retention_mark_or_throw(
++    std::string_view bytes,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label = "payload retention mark parsing");
++
++[[nodiscard]] std::string
++sync_replica_file_payload_retention_mark_digest_or_throw(
++    const SyncReplicaFilePayloadRetentionMark& mark,
++    std::uint64_t max_payload_entries,
++    std::uint64_t max_indexed_bytes,
++    std::string_view label = "payload retention mark digest");
++
++}  // namespace anonsync
++
++#endif
+diff --git a/src/sync_replica_file_payload_store.cpp b/src/sync_replica_file_payload_store.cpp
+index 1d81f0e71f1f97193bb6a99ceda0778c65dcad2a..a3f5ff80695947df7bf04e8fbce3d4cdb526b233 100644
+--- a/src/sync_replica_file_payload_store.cpp
++++ b/src/sync_replica_file_payload_store.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "sync_replica_file_payload_verification_index.hpp"
+ #include "sync_replica_file_payload_scrub_state.hpp"
++#include "sync_replica_file_payload_retention_mark.hpp"
+ 
+ #if !defined(_WIN32)
+ 
+@@ -334,6 +335,15 @@ struct ScrubStateFileObservation final {
+     std::optional<SyncReplicaFilePayloadScrubState> state;
+ };
+ 
++struct RetentionMarkFileObservation final {
++    bool present = false;
++    bool usable = false;
++    struct stat status {};
++    std::optional<SyncPosixRegularFileSnapshotMetadata> metadata;
++    std::optional<SyncReplicaFilePayloadRetentionMark> mark;
++    std::optional<std::string> mark_digest;
++};
++
+ struct ScannedPayloadIndex final {
+     std::vector<PayloadIndexEntry> entries;
+     std::vector<StagedRangeEntry> staged_ranges;
+@@ -384,6 +394,17 @@ struct ScannedPayloadIndex final {
+     bool process_integrity_fault_reverified_good = false;
+     std::optional<SyncPosixRegularFileSnapshotMetadata> scrub_state_metadata;
+     std::optional<SyncReplicaFilePayloadScrubState> scrub_state;
++
++    // Historical retention policy evidence is recognized internal metadata. It
++    // is never payload content, a transient protocol obligation, or acceleration
++    // authority. Synchronized writable scans carry exact usability; byte-cold
++    // forensic inspection carries only namespace presence.
++    bool retention_mark_present = false;
++    bool retention_mark_contents_requested = false;
++    bool retention_mark_usable = false;
++    std::optional<SyncPosixRegularFileSnapshotMetadata> retention_mark_metadata;
++    std::optional<SyncReplicaFilePayloadRetentionMark> retention_mark;
++    std::optional<std::string> retention_mark_digest;
+     struct stat directory_status {};
+ };
+ 
+@@ -2833,6 +2854,105 @@ observe_scrub_state_file_or_throw(
+     return out;
+ }
+ 
++[[nodiscard]] RetentionMarkFileObservation
++observe_retention_mark_file_or_throw(
++    int directory_descriptor,
++    const fs::path& root_path,
++    SyncPosixDirectoryResolutionCapability capability,
++    const SyncPosixMountIdentity& mount_identity,
++    const SyncDirectoryAttestation& root_attestation,
++    const SyncReplicaFilePayloadStoreLimits& limits,
++    std::string_view expected_identity,
++    const struct stat* locked_identity_status,
++    bool read_contents,
++    const std::string& label) {
++    RetentionMarkFileObservation out;
++    const std::string basename(kSyncReplicaFilePayloadRetentionMarkBasename);
++    struct stat named{};
++    int result;
++    do {
++        result = ::fstatat(
++            directory_descriptor, basename.c_str(), &named,
++            AT_SYMLINK_NOFOLLOW);
++    } while (result != 0 && errno == EINTR);
++    if (result != 0) {
++        const int error = errno;
++        if (error == ENOENT) return out;
++        throw std::runtime_error(
++            label + " namespace inspection failed: " + error_text(error));
++    }
++
++    require_private_regular_file_or_throw(
++        named, root_attestation, label + " namespace entry");
++    const std::uint64_t exact_bytes =
++        sync_replica_file_payload_retention_mark_exact_bytes();
++    const bool encoded_size_admissible =
++        static_cast<std::uint64_t>(named.st_size) == exact_bytes;
++
++    SyncPosixOpenedRegularFile opened = open_store_file_or_throw(
++        directory_descriptor, basename, root_path, capability,
++        mount_identity, label);
++    OwnedFd file(opened.descriptor);
++    require_private_regular_file_or_throw(
++        opened.status, root_attestation, label);
++    if (!same_regular_file_observation(named, opened.status)) {
++        throw PayloadStoreObservationStaleError(
++            label + " changed between namespace inspection and open");
++    }
++
++    out.present = true;
++    out.status = opened.status;
++    out.metadata =
++        sync_posix_regular_file_snapshot_metadata_from_status_or_throw(
++            opened.status, SyncPosixDescriptorLinkPolicy::exactly_one,
++            label + " metadata");
++
++    if (read_contents && encoded_size_admissible) {
++        FrozenSyncPosixRegularFileSnapshot frozen =
++            FrozenSyncPosixRegularFileSnapshot::freeze_borrowed_descriptor_or_throw(
++                file.get(), exact_bytes,
++                SyncPosixDescriptorLinkPolicy::exactly_one,
++                label + " bytes");
++        if (!frozen.matches_status(opened.status)) {
++            throw PayloadStoreObservationStaleError(
++                label + " changed between open and byte snapshot");
++        }
++        try {
++            out.mark =
++                parse_sync_replica_file_payload_retention_mark_or_throw(
++                    frozen.bytes(), limits.max_entries,
++                    limits.max_indexed_bytes, label + " contents");
++        } catch (const std::invalid_argument&) {
++            // Malformed/torn/stale-policy evidence is recognized internal
++            // metadata but grants no collection authority. Exact file metadata
++            // remains available for a later conditional replacement.
++            out.mark.reset();
++        }
++        if (out.mark.has_value() && locked_identity_status != nullptr) {
++            const SyncPosixRegularFileSnapshotMetadata identity_metadata =
++                sync_posix_regular_file_snapshot_metadata_from_status_or_throw(
++                    *locked_identity_status,
++                    SyncPosixDescriptorLinkPolicy::exactly_one,
++                    label + " identity binding");
++            out.usable =
++                out.mark->store_identity_sha256 ==
++                    sha256_hex(std::string(expected_identity)) &&
++                out.mark->store_identity_metadata == identity_metadata;
++            if (out.usable) {
++                out.mark_digest =
++                    sync_replica_file_payload_retention_mark_digest_or_throw(
++                        *out.mark, limits.max_entries,
++                        limits.max_indexed_bytes, label + " digest");
++            }
++        }
++    }
++
++    verify_named_regular_file_or_throw(
++        directory_descriptor, basename, opened.status, root_attestation,
++        label + " final name proof");
++    return out;
++}
++
+ [[nodiscard]] bool verification_index_matches_scan(
+     const SyncReplicaFilePayloadVerificationIndex& index,
+     const ScannedPayloadIndex& scanned) {
+@@ -3473,6 +3593,26 @@ void acquire_exclusive_payload_use_lease_or_throw(
+     out.scrub_state_metadata = scrub_state.metadata;
+     if (scrub_state.usable) out.scrub_state = scrub_state.state;
+     bool scrub_state_seen = false;
++
++    const bool read_retention_mark =
++        locked_identity_status != nullptr &&
++        synchronizes_store_observation(durability);
++    RetentionMarkFileObservation retention_mark =
++        observe_retention_mark_file_or_throw(
++            directory_descriptor, scan_authority.path(),
++            descriptor_lease.resolution_capability(),
++            descriptor_lease.mount_identity(), root_attestation, limits,
++            expected_identity, locked_identity_status, read_retention_mark,
++            label + " retention mark");
++    out.retention_mark_present = retention_mark.present;
++    out.retention_mark_contents_requested = read_retention_mark;
++    out.retention_mark_usable = retention_mark.usable;
++    out.retention_mark_metadata = retention_mark.metadata;
++    if (retention_mark.usable) {
++        out.retention_mark = retention_mark.mark;
++        out.retention_mark_digest = retention_mark.mark_digest;
++    }
++    bool retention_mark_seen = false;
+     // A present but unusable record is not clean absence. It can be the damaged
+     // remains of Prepared/Progress, whose whole purpose is to revoke metadata
+     // acceleration after a payload was selected but before its bytes were
+@@ -3712,6 +3852,16 @@ void acquire_exclusive_payload_use_lease_or_throw(
+             continue;
+         }
+ 
++        if (basename == kSyncReplicaFilePayloadRetentionMarkBasename) {
++            if (!retention_mark.present || retention_mark_seen) {
++                throw std::runtime_error(
++                    label +
++                    " retention mark changed during namespace traversal");
++            }
++            retention_mark_seen = true;
++            continue;
++        }
++
+         if (const auto parsed = parse_quarantine_basename(basename);
+             parsed.has_value()) {
+             if (out.quarantines.size() >=
+@@ -3955,6 +4105,16 @@ void acquire_exclusive_payload_use_lease_or_throw(
+             scrub_state.status, root_attestation,
+             label + " scrub state traversal cutpoint");
+     }
++    if (retention_mark_seen != retention_mark.present) {
++        throw PayloadStoreObservationStaleError(
++            label + " retention mark changed during namespace traversal");
++    }
++    if (retention_mark.present) {
++        verify_named_regular_file_or_throw(
++            directory_descriptor, kSyncReplicaFilePayloadRetentionMarkBasename,
++            retention_mark.status, root_attestation,
++            label + " retention mark traversal cutpoint");
++    }
+ 
+     std::sort(
+         out.entries.begin(), out.entries.end(),
+@@ -4448,6 +4608,14 @@ observe_staged_prefix_namespace_under_lease_or_throw(
+             expected_identity, &lease.identity_status(), false,
+             label + " scrub state");
+     bool scrub_state_seen = false;
++    const RetentionMarkFileObservation retention_mark =
++        observe_retention_mark_file_or_throw(
++            directory_descriptor, scan_authority.path(),
++            descriptor_lease.resolution_capability(),
++            descriptor_lease.mount_identity(), root_attestation, limits,
++            expected_identity, &lease.identity_status(), false,
++            label + " retention mark");
++    bool retention_mark_seen = false;
+ 
+     for (;;) {
+         errno = 0;
+@@ -4506,6 +4674,15 @@ observe_staged_prefix_namespace_under_lease_or_throw(
+             scrub_state_seen = true;
+             continue;
+         }
++        if (basename == kSyncReplicaFilePayloadRetentionMarkBasename) {
++            if (!retention_mark.present || retention_mark_seen) {
++                throw std::runtime_error(
++                    label +
++                    " retention mark changed during namespace traversal");
++            }
++            retention_mark_seen = true;
++            continue;
++        }
+         if (parse_quarantine_basename(basename).has_value()) {
+             continue;
+         }
+@@ -4571,6 +4748,16 @@ observe_staged_prefix_namespace_under_lease_or_throw(
+             scrub_state.status, root_attestation,
+             label + " scrub state traversal cutpoint");
+     }
++    if (retention_mark_seen != retention_mark.present) {
++        throw std::runtime_error(
++            label + " retention mark changed during namespace traversal");
++    }
++    if (retention_mark.present) {
++        verify_named_regular_file_or_throw(
++            directory_descriptor, kSyncReplicaFilePayloadRetentionMarkBasename,
++            retention_mark.status, root_attestation,
++            label + " retention mark traversal cutpoint");
++    }
+ 
+     struct stat directory_after{};
+     if (::fstat(directory_descriptor, &directory_after) != 0) {
+@@ -4704,7 +4891,8 @@ void ensure_store_identity_or_throw(
+          bootstrap.transient_entry_count != 0U ||
+          bootstrap.transient_bytes != 0U ||
+          bootstrap.verification_index_present ||
+-         bootstrap.scrub_state_present)) {
++         bootstrap.scrub_state_present ||
++         bootstrap.retention_mark_present)) {
+         throw std::runtime_error(
+             label +
+             " product-bound bootstrap refuses adoption of pre-existing "
+@@ -5231,6 +5419,7 @@ observe_quarantine_namespace_under_lease_or_throw(
+         if (is_lowercase_sha256_hex(basename) ||
+             basename == kSyncReplicaFilePayloadVerificationIndexBasename ||
+             basename == kSyncReplicaFilePayloadScrubStateBasename ||
++            basename == kSyncReplicaFilePayloadRetentionMarkBasename ||
+             parse_staged_prefix_basename(basename).has_value() ||
+             parse_staged_range_basename(basename).has_value() ||
+             assembly_basename_is_exact(basename) ||
+@@ -5463,6 +5652,11 @@ struct SyncReplicaFilePayloadStoreSnapshot::State final {
+     bool scrub_failure_reverified_good = false;
+     std::optional<SyncPosixRegularFileSnapshotMetadata> scrub_state_metadata;
+     std::optional<SyncReplicaFilePayloadScrubState> scrub_state;
++    bool retention_mark_present = false;
++    bool retention_mark_observation_known = false;
++    bool retention_mark_usable = false;
++    std::optional<SyncReplicaFilePayloadRetentionMark> retention_mark;
++    std::optional<std::string> retention_mark_digest;
+     struct stat directory_status {};
+     std::string root_attestation_digest;
+     std::string snapshot_digest;
+@@ -7139,6 +7333,38 @@ SyncReplicaFilePayloadStoreSnapshot::limits() const {
+         .limits;
+ }
+ 
++bool SyncReplicaFilePayloadStoreSnapshot::retention_mark_present() const {
++    return require_state_or_throw(
++               "sync replica durable payload snapshot retention mark presence")
++        .retention_mark_present;
++}
++
++bool SyncReplicaFilePayloadStoreSnapshot::retention_mark_observation_known() const {
++    return require_state_or_throw(
++               "sync replica durable payload snapshot retention mark observation")
++        .retention_mark_observation_known;
++}
++
++bool SyncReplicaFilePayloadStoreSnapshot::retention_mark_usable() const {
++    return require_state_or_throw(
++               "sync replica durable payload snapshot retention mark usability")
++        .retention_mark_usable;
++}
++
++const std::optional<SyncReplicaFilePayloadRetentionMark>&
++SyncReplicaFilePayloadStoreSnapshot::retention_mark() const {
++    return require_state_or_throw(
++               "sync replica durable payload snapshot retention mark")
++        .retention_mark;
++}
++
++const std::optional<std::string>&
++SyncReplicaFilePayloadStoreSnapshot::retention_mark_digest() const {
++    return require_state_or_throw(
++               "sync replica durable payload snapshot retention mark digest")
++        .retention_mark_digest;
++}
++
+ SyncReplicaFileContentInventory
+ SyncReplicaFilePayloadStoreSnapshot::content_inventory() const {
+     return require_state_or_throw(
+@@ -7803,6 +8029,142 @@ SyncReplicaFilePayloadStore::snapshot_writer_fenced_for_retention_or_throw()
+     return snapshot_with_reuse_policy_or_throw(false, true);
+ }
+ 
++SyncReplicaFilePayloadRetentionMarkPublication
++SyncReplicaFilePayloadStore::publish_retention_mark_or_throw(
++    const SyncReplicaFilePayloadStoreSnapshot& writer_fenced_snapshot,
++    SyncReplicaFilePayloadRetentionMark mark) const {
++    if (!state_) throw std::logic_error("file payload store is inactive");
++    State& store = *state_;
++    const std::string label = store.label + " payload retention mark";
++    verify_writer_fenced_retention_snapshot_or_throw(
++        writer_fenced_snapshot, label + " source cutpoint");
++    const SyncReplicaFilePayloadStoreSnapshot::State& candidate =
++        writer_fenced_snapshot.require_state_or_throw(
++            label + " writer-fenced snapshot");
++    if (!candidate.retained_writer_fence) {
++        throw std::logic_error(
++            label + " writer-fenced snapshot lost its retained lease");
++    }
++    StoreLease& lease = *candidate.retained_writer_fence;
++
++    using Access = sync_directory_authority_detail::
++        SyncDirectoryAuthorityAccess;
++    auto descriptor_lease =
++        Access::duplicate_shared_open_description_or_throw(
++            candidate.root_authority, label + " retained root");
++    const SyncPosixDirectoryResolutionCapability resolution_capability =
++        descriptor_lease.resolution_capability();
++    const SyncPosixMountIdentity mount_identity =
++        descriptor_lease.mount_identity();
++    OwnedFd root_descriptor(descriptor_lease.release_descriptor());
++
++    const RetentionMarkFileObservation current =
++        observe_retention_mark_file_or_throw(
++            root_descriptor.get(), candidate.root_path,
++            resolution_capability, mount_identity,
++            candidate.root_authority.attestation(), candidate.limits,
++            candidate.expected_identity, &lease.identity_status(), true,
++            label + " current record");
++
++    mark.store_identity_sha256 =
++        sha256_hex(candidate.expected_identity);
++    mark.store_identity_metadata =
++        sync_posix_regular_file_snapshot_metadata_from_status_or_throw(
++            lease.identity_status(),
++            SyncPosixDescriptorLinkPolicy::exactly_one,
++            label + " identity metadata");
++    if (current.usable) {
++        if (!current.mark.has_value()) {
++            throw std::logic_error(
++                label + " usable current record lacks parsed contents");
++        }
++        if (current.mark->generation ==
++            std::numeric_limits<std::uint64_t>::max()) {
++            throw std::overflow_error(label + " generation is exhausted");
++        }
++        mark.generation = current.mark->generation + 1U;
++    } else {
++        mark.generation = 1U;
++    }
++
++    const std::string encoded =
++        serialize_sync_replica_file_payload_retention_mark_or_throw(
++            mark, candidate.limits.max_entries,
++            candidate.limits.max_indexed_bytes,
++            label + " encoding");
++    const std::string desired_digest =
++        sync_replica_file_payload_retention_mark_digest_or_throw(
++            mark, candidate.limits.max_entries,
++            candidate.limits.max_indexed_bytes,
++            label + " digest");
++
++    const auto observe_exact_committed = [&]()
++        -> std::optional<SyncReplicaFilePayloadRetentionMarkPublication> {
++        const RetentionMarkFileObservation observed =
++            observe_retention_mark_file_or_throw(
++                root_descriptor.get(), candidate.root_path,
++                resolution_capability, mount_identity,
++                candidate.root_authority.attestation(), candidate.limits,
++                candidate.expected_identity, &lease.identity_status(), true,
++                label + " committed record");
++        verify_writer_fenced_retention_snapshot_or_throw(
++            writer_fenced_snapshot, label + " committed cutpoint");
++        if (!observed.usable || !observed.mark.has_value() ||
++            !observed.mark_digest.has_value() ||
++            *observed.mark != mark ||
++            *observed.mark_digest != desired_digest) {
++            return std::nullopt;
++        }
++        return SyncReplicaFilePayloadRetentionMarkPublication{
++            .mark = mark,
++            .mark_digest = desired_digest,
++            .replaced_existing_file = current.present,
++            .replaced_usable_mark = current.usable,
++        };
++    };
++
++    verify_writer_fenced_retention_snapshot_or_throw(
++        writer_fenced_snapshot, label + " prepublication cutpoint");
++    try {
++        if (current.present) {
++            if (!current.metadata.has_value()) {
++                throw std::logic_error(
++                    label + " present current record lacks exact metadata");
++            }
++            write_sync_file_atomically_replace_expected_under_directory_or_throw(
++                candidate.root_authority,
++                fs::path(kSyncReplicaFilePayloadRetentionMarkBasename),
++                byte_span(encoded), *current.metadata,
++                label + " replacement");
++        } else {
++            write_sync_file_atomically_create_new_under_directory_or_throw(
++                candidate.root_authority,
++                fs::path(kSyncReplicaFilePayloadRetentionMarkBasename),
++                byte_span(encoded), label + " publication");
++        }
++    } catch (...) {
++        const std::exception_ptr original = std::current_exception();
++        try {
++            if (const auto committed = observe_exact_committed();
++                committed.has_value()) {
++                return *committed;
++            }
++        } catch (...) {
++            // Reconciliation is intentionally best effort. A secondary open,
++            // parse, allocation, or rooted-reproof failure must not replace the
++            // atomic publisher's primary exception with weaker diagnostic noise.
++        }
++        std::rethrow_exception(original);
++    }
++
++    if (const auto committed = observe_exact_committed();
++        committed.has_value()) {
++        return *committed;
++    }
++    throw std::runtime_error(
++        label + " publication did not settle to the exact requested record");
++}
++
+ SyncReplicaFilePayloadStoreQuarantineResult
+ SyncReplicaFilePayloadStore::quarantine_corrupt_payload_or_throw(
+     std::string expected_content_sha256,
+@@ -8454,6 +8816,13 @@ SyncReplicaFilePayloadStore::snapshot_with_reuse_policy_or_throw(
+             scanned.scrub_active_reverified_good;
+         snapshot->scrub_state_metadata = scanned.scrub_state_metadata;
+         snapshot->scrub_state = std::move(scanned.scrub_state);
++        snapshot->retention_mark_present = scanned.retention_mark_present;
++        snapshot->retention_mark_observation_known =
++            scanned.retention_mark_contents_requested;
++        snapshot->retention_mark_usable = scanned.retention_mark_usable;
++        snapshot->retention_mark = std::move(scanned.retention_mark);
++        snapshot->retention_mark_digest =
++            std::move(scanned.retention_mark_digest);
+         snapshot->directory_status = scanned.directory_status;
+         snapshot->root_attestation_digest = store.root_attestation_digest;
+ 
+diff --git a/src/sync_replica_file_payload_store.hpp b/src/sync_replica_file_payload_store.hpp
+index 959b065bd9d0ee2bf5b5b8681bc6aa2fc9839729..b3250155b66ad5a2a18b91171a641f766f6931a3 100644
+--- a/src/sync_replica_file_payload_store.hpp
++++ b/src/sync_replica_file_payload_store.hpp
+@@ -4,6 +4,7 @@
+ 
+ #include "sync_replica_deployment_identity.hpp"
+ #include "sync_replica_file_content_inventory.hpp"
++#include "sync_replica_file_payload_retention_mark.hpp"
+ #include "sync_replica_model.hpp"
+ #include "sync_posix_descriptor_snapshot.hpp"
+ 
+@@ -70,6 +71,20 @@ struct SyncReplicaFilePayloadStoreLimits final {
+ void validate_sync_replica_file_payload_store_limits_or_throw(
+     const SyncReplicaFilePayloadStoreLimits& limits);
+ 
++// Exact result of publishing one historical, deletion-free retention mark. The
++// record is durable and identity-bound but remains non-authoritative: a future
++// collection operation must re-prove every causal, transient, capability, inode,
++// byte, root, policy, and elapsed-time condition.
++struct SyncReplicaFilePayloadRetentionMarkPublication final {
++    SyncReplicaFilePayloadRetentionMark mark;
++    std::string mark_digest;
++    bool replaced_existing_file = false;
++    bool replaced_usable_mark = false;
++
++    bool operator==(
++        const SyncReplicaFilePayloadRetentionMarkPublication&) const = default;
++};
++
+ // Canonical production composition. New prefix-owner transfers need one
+ // whole-payload reservation. The retained rev0941 range-file compatibility
+ // owner can still hold its immutable ranges plus one private whole-file
+@@ -639,6 +654,23 @@ public:
+     [[nodiscard]] const std::string& snapshot_digest() const;
+     [[nodiscard]] const SyncReplicaFilePayloadStoreLimits& limits() const;
+ 
++    // Fixed-width historical mark observed during this complete namespace scan.
++    // Present-but-unusable distinguishes torn, malformed, stale-identity, or
++    // otherwise invalid evidence from clean absence. The file is deliberately
++    // excluded from snapshot_digest() and transient accounting so publication
++    // cannot self-invalidate the candidate witness it records.
++    [[nodiscard]] bool retention_mark_present() const;
++    // True only when this snapshot performed the synchronized byte observation
++    // needed to distinguish clean absence, a usable exact mark, and damaged or
++    // stale evidence. ReadOnlyInspect remains byte-cold and therefore reports
++    // this false even when the internal basename is present.
++    [[nodiscard]] bool retention_mark_observation_known() const;
++    [[nodiscard]] bool retention_mark_usable() const;
++    [[nodiscard]] const std::optional<SyncReplicaFilePayloadRetentionMark>&
++    retention_mark() const;
++    [[nodiscard]] const std::optional<std::string>&
++    retention_mark_digest() const;
++
+     [[nodiscard]] SyncReplicaFileContentInventory content_inventory() const;
+     [[nodiscard]] std::optional<std::uint64_t> payload_size_or_none(
+         std::string_view content_sha256) const;
+@@ -951,6 +983,17 @@ private:
+         const SyncReplicaFilePayloadStoreSnapshot& snapshot,
+         std::string_view label) const;
+ 
++    // Publishes one policy-bound historical mark while the caller still owns
++    // the exact complete writer-fenced payload snapshot that produced its
++    // candidate witness. The caller supplies source/candidate fields; this owner
++    // overwrites identity and generation fields, atomically replaces any
++    // recognized prior mark, and re-opens the exact committed record before
++    // returning. No second namespace scan, payload rename, or unlink occurs.
++    [[nodiscard]] SyncReplicaFilePayloadRetentionMarkPublication
++    publish_retention_mark_or_throw(
++        const SyncReplicaFilePayloadStoreSnapshot& writer_fenced_snapshot,
++        SyncReplicaFilePayloadRetentionMark mark) const;
++
+     // Exact-owner composition fence for a snapshot handed directly into the
+     // retained folder owner. Folder/root/limit equality is not enough: another
+     // independently opened handle to the same durable store owns a different
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index 397cfd7d44362a6148b38cab0a9dfa84e0ad51e5..6de17b21311db98890f58ab1b5df03a47d9e551d 100644
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -5457,12 +5457,94 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+ SyncReplicaRetentionPlan
+ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+     SyncReplicaRetentionPlanQuery query) {
++    return plan_payload_retention_impl_or_throw(
++        std::move(query), nullptr, nullptr);
++}
++
++SyncReplicaFilePayloadRetentionMarkPublication
++SyncReplicaFolderScanOwner::mark_payload_retention_or_throw(
++    SyncReplicaPayloadRetentionMarkRequest request) {
++    if (!state_) {
++        throw std::logic_error(
++            "sync replica folder scan owner is inactive");
++    }
++    validate_sync_replica_historical_version_source_cutpoint_or_throw(
++        request.expected_source_cutpoint,
++        state_->label + " payload retention mark source cutpoint");
++    if (request.expected_source_cutpoint.inspection_mode !=
++            SyncReplicaHistoricalVersionInspectionMode::
++                ExactPayloadAvailability ||
++        !request.expected_source_cutpoint.evidence_set_digest.has_value() ||
++        !request.expected_source_cutpoint
++            .historical_version_pin_set_digest.has_value() ||
++        !request.expected_source_cutpoint.payload_snapshot_digest.has_value()) {
++        throw std::invalid_argument(
++            state_->label +
++            " payload retention mark requires one current exact v4 cutpoint");
++    }
++    if (request.expected_source_replica_state_generation == 0U) {
++        throw std::invalid_argument(
++            state_->label +
++            " payload retention mark source generation is zero");
++    }
++    if (!is_lowercase_sha256_hex(
++            request.expected_durable_candidate_witness_digest)) {
++        throw std::invalid_argument(
++            state_->label +
++            " payload retention mark candidate witness is invalid");
++    }
++    const SyncReplicaFilePayloadStoreLimits& payload_store_limits =
++        state_->payload_store->limits();
++    validate_sync_replica_file_payload_retention_policy_for_store_or_throw(
++        request.policy, request.marked_at_unix_seconds,
++        payload_store_limits.max_entries,
++        payload_store_limits.max_indexed_bytes,
++        state_->label + " payload retention mark policy");
++
++    SyncReplicaRetentionPlanQuery query;
++    query.maximum_entries = 1U;
++    query.expected_source_cutpoint = request.expected_source_cutpoint;
++    SyncReplicaFilePayloadRetentionMarkPublication publication;
++    const SyncReplicaRetentionPlan plan =
++        plan_payload_retention_impl_or_throw(
++            std::move(query), &request, &publication);
++    if (publication.mark.source_replica_state_generation !=
++            plan.source_replica_state_generation ||
++        publication.mark.durable_candidate_witness_digest !=
++            plan.durable_candidate_witness_digest) {
++        throw std::logic_error(
++            state_->label +
++            " payload retention mark publication escaped its exact plan");
++    }
++    return publication;
++}
++
++SyncReplicaRetentionPlan
++SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(
++    SyncReplicaRetentionPlanQuery query,
++    const SyncReplicaPayloadRetentionMarkRequest* mark_request,
++    SyncReplicaFilePayloadRetentionMarkPublication* mark_publication) {
+     if (!state_) {
+         throw std::logic_error(
+             "sync replica folder scan owner is inactive");
+     }
+     validate_sync_replica_retention_plan_query_or_throw(
+         query, state_->label + " retention-plan inspection");
++    if ((mark_request == nullptr) != (mark_publication == nullptr)) {
++        throw std::logic_error(
++            state_->label +
++            " retention-plan mark request/publication pairing is invalid");
++    }
++    if (mark_request != nullptr &&
++        (query.maximum_entries != 1U ||
++         query.start_after_content_sha256.has_value() ||
++         !query.expected_source_cutpoint.has_value() ||
++         *query.expected_source_cutpoint !=
++             mark_request->expected_source_cutpoint)) {
++        throw std::logic_error(
++            state_->label +
++            " payload retention mark escaped its exact planner query");
++    }
+ 
+     // The planner consumes exactly the same four owners as exact historical
+     // reachability. A stale bound page is rejected before the payload scan
+@@ -5471,6 +5553,16 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+     // with physical objects from another.
+     const SyncReplicaSqliteSnapshot replica_snapshot =
+         state_->replica_owner->snapshot_or_throw();
++    if (mark_request != nullptr &&
++        mark_request->expected_source_replica_state_generation !=
++            replica_snapshot.state_generation) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                RetentionMarkPublication,
++            state_->label +
++                " payload retention mark source generation changed before "
++                "payload observation; recompute the mark");
++    }
+     if (query.expected_source_cutpoint.has_value() &&
+         query.expected_source_cutpoint->operation_set_digest !=
+             replica_snapshot.operation_set_digest) {
+@@ -6444,6 +6536,105 @@ SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(
+         plan.next_start_after_content_sha256 =
+             plan.entries.back().content_sha256;
+     }
++
++    if (mark_request != nullptr) {
++        if (mark_publication == nullptr) {
++            throw std::logic_error(
++                state_->label +
++                " payload retention mark lacks its publication result");
++        }
++        if (mark_request->expected_source_replica_state_generation !=
++                plan.source_replica_state_generation ||
++            replica_final.state_generation !=
++                plan.source_replica_state_generation) {
++            throw SyncReplicaHistoricalVersionSourceChangedError(
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    RetentionMarkPublication,
++                state_->label +
++                    " payload retention mark source generation changed before "
++                    "publication; recompute the mark");
++        }
++        if (mark_request->expected_durable_candidate_witness_digest !=
++                plan.durable_candidate_witness_digest) {
++            throw SyncReplicaHistoricalVersionSourceChangedError(
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    RetentionMarkPublication,
++                state_->label +
++                    " payload retention mark candidate witness changed before "
++                    "publication; recompute the mark");
++        }
++        if (reachability.unreferenced_payload_count == 0U) {
++            throw std::runtime_error(
++                state_->label +
++                " payload retention mark has no unreferenced candidates");
++        }
++
++        SyncReplicaFilePayloadRetentionMark mark;
++        mark.marked_at_unix_seconds =
++            mark_request->marked_at_unix_seconds;
++        mark.policy = mark_request->policy;
++        mark.source_replica_state_generation =
++            plan.source_replica_state_generation;
++        mark.source_operation_set_digest =
++            plan.source_operation_set_digest;
++        mark.source_evidence_set_digest =
++            plan.source_evidence_set_digest;
++        mark.source_historical_version_pin_set_digest =
++            plan.source_historical_version_pin_set_digest;
++        mark.source_visible_state_digest =
++            plan.source_visible_state_digest;
++        mark.source_payload_snapshot_digest =
++            plan.source_payload_snapshot_digest;
++        mark.source_payload_transient_namespace_digest =
++            plan.source_payload_transient_namespace_digest;
++        mark.unreferenced_candidate_set_digest =
++            plan.unreferenced_candidate_set_digest;
++        mark.durable_candidate_witness_digest =
++            plan.durable_candidate_witness_digest;
++        mark.unreferenced_candidate_payload_count =
++            reachability.unreferenced_payload_count;
++        mark.unreferenced_candidate_payload_bytes =
++            reachability.unreferenced_payload_bytes;
++        state_->payload_store->
++            verify_writer_fenced_retention_snapshot_or_throw(
++                payload_snapshot,
++                state_->label +
++                    " payload retention mark prepublication cutpoint");
++        const SyncReplicaFilePayloadRetentionMarkPublication publication =
++            state_->payload_store->publish_retention_mark_or_throw(
++                payload_snapshot, std::move(mark));
++
++        // SQLite is intentionally not held across the complete payload scan or
++        // the atomic metadata publication. A concurrent owner change therefore
++        // becomes a typed failure after publication. The committed record binds
++        // the earlier monotonic generation, so it remains visible historical
++        // evidence but can never inherit grace after that change.
++        const SyncReplicaSqliteSnapshot replica_after_mark =
++            state_->replica_owner->snapshot_or_throw();
++        if (replica_after_mark.state_generation !=
++                plan.source_replica_state_generation ||
++            replica_after_mark.operation_set_digest !=
++                plan.source_operation_set_digest ||
++            replica_after_mark.evidence_set_digest !=
++                plan.source_evidence_set_digest ||
++            replica_after_mark.historical_version_pin_set_digest !=
++                plan.source_historical_version_pin_set_digest ||
++            replica_after_mark.visible_state_digest !=
++                plan.source_visible_state_digest) {
++            throw SyncReplicaHistoricalVersionSourceChangedError(
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    RetentionMarkPublication,
++                state_->label +
++                    " payload retention mark source changed during durable "
++                    "publication; recompute the mark");
++        }
++        state_->payload_store->
++            verify_writer_fenced_retention_snapshot_or_throw(
++                payload_snapshot,
++                state_->label +
++                    " payload retention mark final writer-fence cutpoint");
++        *mark_publication = publication;
++    }
+     return plan;
+ }
+ 
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index 493f50ddc1d4614125d0fcfb725597be88c79aa6..7aea7000de3145e6bc4eac917834fdebb8750bc8 100644
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -444,6 +444,24 @@ struct SyncReplicaRetentionPlan final {
+     }
+ };
+ 
++// One explicit request to persist a deletion-free retention observation. The
++// request binds both the exact v4 causal/payload cutpoint and its complete
++// restart-stable candidate witness. The source generation prevents a stale
++// request from crossing a digest-level causal ABA within the retained SQLite
++// database lineage. It is not external database anti-rollback authority. The
++// supplied wall-clock value is historical operator evidence only; a future
++// collector must still bind a recovery epoch and re-prove trusted elapsed time.
++struct SyncReplicaPayloadRetentionMarkRequest final {
++    SyncReplicaHistoricalVersionSourceCutpoint expected_source_cutpoint;
++    std::uint64_t expected_source_replica_state_generation = 0U;
++    std::string expected_durable_candidate_witness_digest;
++    std::uint64_t marked_at_unix_seconds = 0U;
++    SyncReplicaFilePayloadRetentionPolicy policy;
++
++    bool operator==(
++        const SyncReplicaPayloadRetentionMarkRequest&) const = default;
++};
++
+ enum class SyncReplicaHistoricalVersionRestoreDisposition : std::uint8_t {
+     Published = 1U,
+     AdoptedVisibleOperation = 2U,
+@@ -890,6 +908,16 @@ public:
+     plan_payload_retention_or_throw(
+         SyncReplicaRetentionPlanQuery query = {});
+ 
++    // Persists one checksum-framed policy record while the exact complete
++    // payload snapshot used to recompute the caller's durable candidate witness
++    // still retains the store-global writer fence. Publication performs no
++    // second payload scan, payload rename, quarantine, or unlink. A final
++    // replica reproof makes concurrent source drift a typed failure; any record
++    // already committed at that cutpoint is permanently stale by generation.
++    [[nodiscard]] SyncReplicaFilePayloadRetentionMarkPublication
++    mark_payload_retention_or_throw(
++        SyncReplicaPayloadRetentionMarkRequest request);
++
+     // Mutates only the replica owner's exact local retention-root set. No
+     // payload bytes, catalog rows, rooted paths, or causal evidence are changed.
+     [[nodiscard]] SyncReplicaSqliteHistoricalVersionPinResult
+@@ -938,6 +966,12 @@ public:
+ private:
+     struct State;
+ 
++    [[nodiscard]] SyncReplicaRetentionPlan
++    plan_payload_retention_impl_or_throw(
++        SyncReplicaRetentionPlanQuery query,
++        const SyncReplicaPayloadRetentionMarkRequest* mark_request,
++        SyncReplicaFilePayloadRetentionMarkPublication* mark_publication);
++
+     [[nodiscard]] SyncReplicaFolderConvergencePassReport
+     run_convergence_pass_impl_or_throw(
+         const SyncReplicaFolderConvergencePassLimits& limits,
+diff --git a/src/sync_replica_historical_version_query.hpp b/src/sync_replica_historical_version_query.hpp
+index a668fe85af2d454b6356b4c04539b32a77b28012..e30169c8a67c9d4e233eeff1821d67ffa2e44157 100644
+--- a/src/sync_replica_historical_version_query.hpp
++++ b/src/sync_replica_historical_version_query.hpp
+@@ -327,6 +327,12 @@ enum class SyncReplicaHistoricalVersionSourceChangeStage : std::uint8_t {
+     // live same-store-owner payload capabilities at its final cutpoint. This
+     // includes capability registration identity, not merely aggregate counts.
+     RetentionLiveCapabilitySet = 9U,
++    // The exact durable candidate witness was proved and the payload mark was
++    // published beneath its retained writer fence, but the SQLite source
++    // generation or one of its bound digests changed before final settlement.
++    // The persisted record is therefore conservative stale evidence, not a
++    // successful grace-period mark.
++    RetentionMarkPublication = 10U,
+ };
+ 
+ [[nodiscard]] constexpr std::string_view
+@@ -359,6 +365,9 @@ sync_replica_historical_version_source_change_stage_name(
+         case SyncReplicaHistoricalVersionSourceChangeStage::
+                 RetentionLiveCapabilitySet:
+             return "retention_live_capability_set";
++        case SyncReplicaHistoricalVersionSourceChangeStage::
++                RetentionMarkPublication:
++            return "retention_mark_publication";
+     }
+     return "unknown";
+ }
+diff --git a/tests/sync_replica_file_payload_retention_mark_test.cpp b/tests/sync_replica_file_payload_retention_mark_test.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..97e9e4492500be5220f9cd594c9a9e8df105c138
+--- /dev/null
++++ b/tests/sync_replica_file_payload_retention_mark_test.cpp
+@@ -0,0 +1,412 @@
++#include "sha256_digest.hpp"
++#include "sync_replica_file_payload_retention_mark.hpp"
++
++#if !defined(_WIN32)
++
++#include <sys/stat.h>
++
++#include <cstdint>
++#include <functional>
++#include <iostream>
++#include <limits>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++
++namespace {
++
++std::uint64_t checks = 0U;
++
++void require(bool condition, std::string_view message) {
++    ++checks;
++    if (!condition) throw std::runtime_error(std::string(message));
++}
++
++template <typename Function>
++void require_invalid(
++    Function&& function,
++    std::string_view expected,
++    std::string_view message) {
++    ++checks;
++    try {
++        function();
++    } catch (const std::invalid_argument& error) {
++        if (std::string_view(error.what()).find(expected) ==
++            std::string_view::npos) {
++            throw std::runtime_error(
++                std::string(message) + ": unexpected diagnostic: " +
++                error.what());
++        }
++        return;
++    }
++    throw std::runtime_error(std::string(message) + ": no error was thrown");
++}
++
++anonsync::SyncPosixRegularFileSnapshotMetadata identity_metadata() {
++    return {
++        17U,
++        31U,
++        211U,
++        1U,
++        1000U,
++        1000U,
++        static_cast<std::uint32_t>(S_IFREG | S_IRUSR | S_IWUSR),
++        9000,
++        123456789U,
++        9001,
++        987654321U};
++}
++
++anonsync::SyncReplicaFilePayloadRetentionMark fixture() {
++    anonsync::SyncReplicaFilePayloadRetentionMark mark;
++    mark.store_identity_sha256 = anonsync::sha256_hex("store identity");
++    mark.store_identity_metadata = identity_metadata();
++    mark.generation = 7U;
++    mark.marked_at_unix_seconds = 1'800'000'000U;
++    mark.source_replica_state_generation = 41U;
++    mark.policy = {
++        .minimum_grace_seconds = 86'400U,
++        .maximum_candidate_payload_count = 100U,
++        .maximum_candidate_payload_bytes = 1'000'000U,
++        .maximum_collection_payload_count = 8U,
++        .maximum_collection_payload_bytes = 65'536U,
++    };
++    mark.source_operation_set_digest = anonsync::sha256_hex("operations");
++    mark.source_evidence_set_digest = anonsync::sha256_hex("evidence");
++    mark.source_historical_version_pin_set_digest =
++        anonsync::sha256_hex("pins");
++    mark.source_visible_state_digest = anonsync::sha256_hex("visible");
++    mark.source_payload_snapshot_digest = anonsync::sha256_hex("payloads");
++    mark.source_payload_transient_namespace_digest =
++        anonsync::sha256_hex("transients");
++    mark.unreferenced_candidate_set_digest =
++        anonsync::sha256_hex("candidates");
++    mark.durable_candidate_witness_digest =
++        anonsync::sha256_hex("witness");
++    mark.unreferenced_candidate_payload_count = 12U;
++    mark.unreferenced_candidate_payload_bytes = 987'654U;
++    return mark;
++}
++
++void test_round_trip_and_digest() {
++    const auto mark = fixture();
++    const std::string encoded =
++        anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++            mark, 1000U, 2'000'000U, "retention-mark fixture");
++    require(
++        encoded.size() ==
++            anonsync::sync_replica_file_payload_retention_mark_exact_bytes(),
++        "retention-mark exact byte count drifted");
++    require(
++        anonsync::parse_sync_replica_file_payload_retention_mark_or_throw(
++            encoded, 1000U, 2'000'000U, "retention-mark fixture") == mark,
++        "retention-mark round trip changed fields");
++    require(
++        anonsync::sync_replica_file_payload_retention_mark_digest_or_throw(
++            mark, 1000U, 2'000'000U, "retention-mark fixture") ==
++            encoded.substr(encoded.size() - 64U),
++        "retention-mark digest did not equal framed checksum");
++    require(
++        anonsync::kSyncReplicaFilePayloadRetentionMarkBasename ==
++            ".anonsync-payload-retention-mark-v1",
++        "retention-mark basename drifted");
++}
++
++void test_checksum_and_framing_rejection() {
++    const std::string encoded =
++        anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++            fixture(), 1000U, 2'000'000U, "retention-mark corruption");
++    std::string corrupted = encoded;
++    corrupted[23U] = static_cast<char>(corrupted[23U] ^ 0x01);
++    require_invalid(
++        [&] {
++            (void)anonsync::parse_sync_replica_file_payload_retention_mark_or_throw(
++                corrupted, 1000U, 2'000'000U,
++                "retention-mark corruption");
++        },
++        "checksum",
++        "retention-mark checksum corruption was accepted");
++    require_invalid(
++        [&] {
++            (void)anonsync::parse_sync_replica_file_payload_retention_mark_or_throw(
++                std::string_view(encoded).substr(0U, encoded.size() - 1U),
++                1000U, 2'000'000U, "retention-mark truncation");
++        },
++        "exact v1 size",
++        "truncated retention mark was accepted");
++    std::string extended = encoded;
++    extended.push_back('x');
++    require_invalid(
++        [&] {
++            (void)anonsync::parse_sync_replica_file_payload_retention_mark_or_throw(
++                extended, 1000U, 2'000'000U,
++                "retention-mark extension");
++        },
++        "exact v1 size",
++        "extended retention mark was accepted");
++}
++
++void test_policy_and_candidate_rejection() {
++    {
++        const auto valid = fixture();
++        anonsync::validate_sync_replica_file_payload_retention_policy_for_store_or_throw(
++            valid.policy, valid.marked_at_unix_seconds, 100U, 1'000'000U,
++            "direct store policy");
++        require(true, "valid store-aware retention policy was rejected");
++    }
++
++    {
++        auto invalid_count = fixture();
++        invalid_count.policy.maximum_candidate_payload_count = 101U;
++        require_invalid(
++            [&] {
++                anonsync::validate_sync_replica_file_payload_retention_policy_for_store_or_throw(
++                    invalid_count.policy,
++                    invalid_count.marked_at_unix_seconds, 100U, 1'000'000U,
++                    "direct store count policy");
++            },
++            "candidate count exceeds store capacity",
++            "store-aware retention policy accepted an impossible candidate count");
++    }
++
++    {
++        auto invalid_bytes = fixture();
++        invalid_bytes.policy.maximum_candidate_payload_bytes = 1'000'001U;
++        require_invalid(
++            [&] {
++                anonsync::validate_sync_replica_file_payload_retention_policy_for_store_or_throw(
++                    invalid_bytes.policy,
++                    invalid_bytes.marked_at_unix_seconds, 100U, 1'000'000U,
++                    "direct store byte policy");
++            },
++            "candidate bytes exceed store capacity",
++            "store-aware retention policy accepted an impossible byte frontier");
++    }
++
++    auto mark = fixture();
++    mark.policy.minimum_grace_seconds = 0U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "zero grace");
++        },
++        "grace seconds",
++        "zero retention grace was accepted");
++
++    mark = fixture();
++    mark.policy.maximum_collection_payload_count = 101U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "collection count");
++        },
++        "collection count",
++        "collection count above candidate cap was accepted");
++
++    mark = fixture();
++    mark.unreferenced_candidate_payload_count = 101U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "candidate count");
++        },
++        "candidate count",
++        "observed candidate count above policy was accepted");
++
++    mark = fixture();
++    mark.unreferenced_candidate_payload_bytes = 1'000'001U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "candidate bytes");
++        },
++        "candidate bytes",
++        "observed candidate bytes above policy were accepted");
++
++    mark = fixture();
++    mark.unreferenced_candidate_payload_count = 0U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "empty candidates");
++        },
++        "no unreferenced",
++        "empty retention mark was accepted");
++
++    mark = fixture();
++    mark.marked_at_unix_seconds = 0U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "zero mark time");
++        },
++        "mark time",
++        "zero retention mark time was accepted");
++
++    mark = fixture();
++    mark.policy.minimum_grace_seconds =
++        anonsync::kSyncReplicaFilePayloadRetentionMarkMaximumGraceSeconds + 1U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "excess grace");
++        },
++        "grace seconds",
++        "retention grace above the fixed horizon was accepted");
++
++    mark = fixture();
++    mark.marked_at_unix_seconds =
++        std::numeric_limits<std::uint64_t>::max();
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "deadline overflow");
++        },
++        "deadline overflows",
++        "retention grace deadline overflow was accepted");
++
++    mark = fixture();
++    mark.policy.maximum_candidate_payload_count = 0U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "zero candidate frontier");
++        },
++        "candidate count frontier is zero",
++        "zero candidate-count policy frontier was accepted");
++
++    mark = fixture();
++    mark.policy.maximum_collection_payload_count = 0U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "zero collection frontier");
++        },
++        "collection count",
++        "zero collection-count policy frontier was accepted");
++
++    mark = fixture();
++    mark.policy.maximum_collection_payload_bytes =
++        mark.policy.maximum_candidate_payload_bytes + 1U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "collection byte frontier");
++        },
++        "collection bytes",
++        "collection-byte frontier above candidate bytes was accepted");
++
++    mark = fixture();
++    mark.policy.maximum_collection_payload_bytes = 0U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "zero collection bytes");
++        },
++        "zero collection bytes",
++        "nonzero candidate bytes with zero collection bytes were accepted");
++
++    mark = fixture();
++    mark.policy.maximum_candidate_payload_count = 1001U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "store count capacity");
++        },
++        "store capacity",
++        "policy candidate count above store capacity was accepted");
++
++    mark = fixture();
++    mark.policy.maximum_candidate_payload_bytes = 2'000'001U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "store byte capacity");
++        },
++        "store capacity",
++        "policy candidate bytes above store capacity were accepted");
++
++    mark = fixture();
++    mark.policy.maximum_collection_payload_count = 13U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "collection observed count");
++        },
++        "candidates",
++        "collection count above the observed candidate set was accepted");
++
++    mark = fixture();
++    mark.policy.maximum_collection_payload_bytes = 987'655U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "collection observed bytes");
++        },
++        "candidates",
++        "collection bytes above the observed candidate set were accepted");
++
++    mark = fixture();
++    mark.source_replica_state_generation = 0U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "zero source generation");
++        },
++        "source replica generation",
++        "zero replica source generation was accepted");
++
++    mark = fixture();
++    mark.durable_candidate_witness_digest[0] = 'X';
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "invalid witness digest");
++        },
++        "durable-candidate-witness",
++        "noncanonical candidate witness digest was accepted");
++
++    mark = fixture();
++    mark.store_identity_metadata.link_count = 2U;
++    require_invalid(
++        [&] {
++            (void)anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "linked identity");
++        },
++        "link",
++        "multiply linked store identity metadata was accepted");
++
++    mark = fixture();
++    mark.policy.maximum_candidate_payload_bytes = 0U;
++    mark.policy.maximum_collection_payload_bytes = 0U;
++    mark.unreferenced_candidate_payload_bytes = 0U;
++    require(
++        anonsync::parse_sync_replica_file_payload_retention_mark_or_throw(
++            anonsync::serialize_sync_replica_file_payload_retention_mark_or_throw(
++                mark, 1000U, 2'000'000U, "zero-byte candidates"),
++            1000U, 2'000'000U, "zero-byte candidates") == mark,
++        "valid nonempty zero-byte candidate set did not round trip");
++}
++
++}  // namespace
++
++int main() {
++    try {
++        test_round_trip_and_digest();
++        test_checksum_and_framing_rejection();
++        test_policy_and_candidate_rejection();
++        std::cout << "sync replica payload retention mark: " << checks
++                  << " checks passed\n";
++        return 0;
++    } catch (const std::exception& error) {
++        std::cerr << "sync replica payload retention mark failure after "
++                  << checks << " checks: " << error.what() << '\n';
++        return 1;
++    }
++}
++
++#else
++
++int main() { return 0; }
++
++#endif
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index c02725f829ac064318d28501a1ac45b102c6da81..384c510a1395ec5ce381e5ee311fd42289dab106 100644
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -116,6 +116,15 @@ struct SyncReplicaFilePayloadStoreTestAccess final {
+         return store.writer_fenced_payload_use_exclusive_available_or_throw(
+             snapshot, content_sha256, size_bytes, label);
+     }
++
++    [[nodiscard]] static SyncReplicaFilePayloadRetentionMarkPublication
++    publish_retention_mark_or_throw(
++        const SyncReplicaFilePayloadStore& store,
++        const SyncReplicaFilePayloadStoreSnapshot& writer_fenced_snapshot,
++        SyncReplicaFilePayloadRetentionMark mark) {
++        return store.publish_retention_mark_or_throw(
++            writer_fenced_snapshot, std::move(mark));
++    }
+ };
+ 
+ }  // namespace anonsync
+@@ -6460,6 +6469,190 @@ void test_product_bound_identity_and_fresh_adoption_policy() {
+         "product authority adopted a standalone v2 payload root");
+ }
+ 
++anonsync::SyncReplicaFilePayloadRetentionMark
++retention_mark_fixture(std::uint64_t marked_at_unix_seconds) {
++    anonsync::SyncReplicaFilePayloadRetentionMark mark;
++    mark.marked_at_unix_seconds = marked_at_unix_seconds;
++    mark.source_replica_state_generation = 41U;
++    mark.policy = {
++        .minimum_grace_seconds = 86'400U,
++        .maximum_candidate_payload_count = 8U,
++        .maximum_candidate_payload_bytes = 1'024U,
++        .maximum_collection_payload_count = 2U,
++        .maximum_collection_payload_bytes = 128U,
++    };
++    mark.source_operation_set_digest =
++        anonsync::sha256_hex("retention operations");
++    mark.source_evidence_set_digest =
++        anonsync::sha256_hex("retention evidence");
++    mark.source_historical_version_pin_set_digest =
++        anonsync::sha256_hex("retention pins");
++    mark.source_visible_state_digest =
++        anonsync::sha256_hex("retention visible");
++    mark.source_payload_snapshot_digest =
++        anonsync::sha256_hex("retention payload snapshot");
++    mark.source_payload_transient_namespace_digest =
++        anonsync::sha256_hex("retention transient namespace");
++    mark.unreferenced_candidate_set_digest =
++        anonsync::sha256_hex("retention candidates");
++    mark.durable_candidate_witness_digest =
++        anonsync::sha256_hex("retention durable witness");
++    mark.unreferenced_candidate_payload_count = 3U;
++    mark.unreferenced_candidate_payload_bytes = 256U;
++    return mark;
++}
++
++void test_retention_mark_is_durable_identity_bound_and_snapshot_cold() {
++    TemporaryDirectory temporary;
++    const fs::path root = temporary.make_store_root("retention-mark");
++    const std::string folder = "folder-payload-retention-mark";
++    const fs::path mark_path =
++        root / std::string(
++            anonsync::kSyncReplicaFilePayloadRetentionMarkBasename);
++
++    std::string empty_snapshot_digest;
++    anonsync::SyncReplicaFilePayloadRetentionMark first_mark;
++    std::string first_mark_digest;
++    {
++        anonsync::SyncReplicaFilePayloadStore store(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::CreateIfMissing,
++            {}, "retention-mark store");
++        {
++            const auto before = store.snapshot_or_throw();
++            require(
++                !before.retention_mark_present() &&
++                    before.retention_mark_observation_known() &&
++                    !before.retention_mark_usable() &&
++                    !before.retention_mark().has_value() &&
++                    !before.retention_mark_digest().has_value(),
++                "fresh payload store fabricated retention evidence");
++            empty_snapshot_digest = before.snapshot_digest();
++        }
++
++        anonsync::SyncReplicaFilePayloadRetentionMarkPublication published;
++        {
++            const auto writer_fenced =
++                anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                    writer_fenced_retention_snapshot_or_throw(store);
++            published =
++                anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                    publish_retention_mark_or_throw(
++                        store, writer_fenced,
++                        retention_mark_fixture(1'800'000'000U));
++        }
++        require(
++            published.mark.generation == 1U &&
++                !published.replaced_existing_file &&
++                !published.replaced_usable_mark &&
++                anonsync::is_lowercase_sha256_hex(published.mark_digest),
++            "first retention-mark publication reported the wrong cutpoint");
++        require(
++            published.mark.store_identity_sha256 != std::string(64U, '0') &&
++                published.mark.store_identity_metadata.size_bytes != 0U,
++            "retention-mark publication did not bind the exact store identity");
++        first_mark = published.mark;
++        first_mark_digest = published.mark_digest;
++
++        const auto observed = store.snapshot_or_throw();
++        require(
++            observed.retention_mark_present() &&
++                observed.retention_mark_observation_known() &&
++                observed.retention_mark_usable() &&
++                observed.retention_mark().has_value() &&
++                *observed.retention_mark() == first_mark &&
++                observed.retention_mark_digest() == first_mark_digest,
++            "same-process complete scan did not return the exact durable mark");
++        require(
++            observed.entry_count() == 0U &&
++                observed.indexed_bytes() == 0U &&
++                observed.snapshot_digest() == empty_snapshot_digest &&
++                observed.transient_entry_count() == 0U &&
++                observed.transient_bytes() == 0U,
++            "retention metadata contaminated payload or transient accounting");
++    }
++
++    {
++        anonsync::SyncReplicaFilePayloadStore reopened(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            {}, "retention-mark reopened store");
++        const auto restarted = reopened.snapshot_or_throw();
++        require(
++            restarted.retention_mark_present() &&
++                restarted.retention_mark_observation_known() &&
++                restarted.retention_mark_usable() &&
++                restarted.retention_mark().has_value() &&
++                *restarted.retention_mark() == first_mark &&
++                restarted.retention_mark_digest() == first_mark_digest &&
++                restarted.snapshot_digest() == empty_snapshot_digest,
++            "fresh process owner did not rediscover the exact retention mark");
++
++        auto successor = retention_mark_fixture(1'800'000'100U);
++        successor.durable_candidate_witness_digest =
++            anonsync::sha256_hex("retention successor witness");
++        const auto writer_fenced =
++            anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                writer_fenced_retention_snapshot_or_throw(reopened);
++        const auto replaced =
++            anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                publish_retention_mark_or_throw(
++                    reopened, writer_fenced, std::move(successor));
++        require(
++            replaced.mark.generation == 2U &&
++                replaced.replaced_existing_file &&
++                replaced.replaced_usable_mark &&
++                replaced.mark.store_identity_sha256 ==
++                    first_mark.store_identity_sha256 &&
++                replaced.mark.store_identity_metadata ==
++                    first_mark.store_identity_metadata,
++            "retention-mark replacement lost generation or identity binding");
++    }
++
++    overwrite_private_file(mark_path, "torn retention intent");
++    {
++        anonsync::SyncReplicaFilePayloadStore damaged(
++            folder, root,
++            anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ExistingOnly,
++            {}, "damaged retention-mark store");
++        const auto observed = damaged.snapshot_or_throw();
++        require(
++            observed.retention_mark_present() &&
++                observed.retention_mark_observation_known() &&
++                !observed.retention_mark_usable() &&
++                !observed.retention_mark().has_value() &&
++                !observed.retention_mark_digest().has_value() &&
++                observed.snapshot_digest() == empty_snapshot_digest,
++            "damaged retention evidence was hidden or treated as authority");
++
++        const auto writer_fenced =
++            anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                writer_fenced_retention_snapshot_or_throw(damaged);
++        const auto repaired =
++            anonsync::SyncReplicaFilePayloadStoreTestAccess::
++                publish_retention_mark_or_throw(
++                    damaged, writer_fenced,
++                    retention_mark_fixture(1'800'000'200U));
++        require(
++            repaired.mark.generation == 1U &&
++                repaired.replaced_existing_file &&
++                !repaired.replaced_usable_mark,
++            "damaged retention evidence was not replaced conservatively");
++    }
++
++    anonsync::SyncReplicaFilePayloadStore forensic(
++        folder, root,
++        anonsync::SyncReplicaFilePayloadStoreOpenDisposition::ReadOnlyInspect,
++        {}, "retention-mark forensic store");
++    const auto forensic_snapshot = forensic.snapshot_or_throw();
++    require(
++        forensic_snapshot.retention_mark_present() &&
++            !forensic_snapshot.retention_mark_observation_known() &&
++            !forensic_snapshot.retention_mark_usable() &&
++            !forensic_snapshot.retention_mark().has_value(),
++        "byte-cold forensic inspection claimed retention-mark authority");
++}
++
+ void test_legacy_identity_generation_requires_offline_migration() {
+     TemporaryDirectory temporary;
+     const fs::path root = temporary.make_store_root("legacy-generation");
+@@ -6677,6 +6870,7 @@ int main() {
+         test_live_capability_scope_spans_independent_store_owners();
+         test_live_capability_scope_recreates_after_final_owner_release();
+         test_writer_fenced_retention_snapshot_excludes_namespace_work_and_probes_inode_use();
++        test_retention_mark_is_durable_identity_bound_and_snapshot_cold();
+         test_live_payload_descriptor_fences_quarantine_inode_mutation();
+         test_exact_corrupt_payload_quarantine_is_bounded_and_recoverable();
+         test_exact_quarantine_release_preserves_unrelated_byte_proof();
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index c0ab259ce6612c78ca178567e0bde3fe1dcbc939..f5fc4228272c336b3525954d213486f0c5e99c46 100644
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -31,6 +31,7 @@
+ 
+ #include <sqlite3.h>
+ #include <fcntl.h>
++#include <sys/file.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+ 
+@@ -6143,6 +6144,272 @@ void test_historical_version_payload_reachability_and_evidence_cutpoint() {
+                     UnreferencedByRetainedFileOperations,
+         "retention planner promoted an unreferenced physical object into a retained root");
+ 
++    // Persist the policy under the exact writer-fenced snapshot which recomputes
++    // the complete candidate witness. The metadata record must not enter either
++    // physical-payload or transient accounting, and a monotonic SQLite
++    // generation must reject a digest-level unpin/repin ABA.
++    anonsync::SyncReplicaPayloadRetentionMarkRequest retention_mark_request;
++    retention_mark_request.expected_source_cutpoint =
++        retention_plan.source_cutpoint();
++    retention_mark_request.expected_source_replica_state_generation =
++        retention_plan.source_replica_state_generation;
++    retention_mark_request.expected_durable_candidate_witness_digest =
++        retention_plan.durable_candidate_witness_digest;
++    retention_mark_request.marked_at_unix_seconds = 1'800'000'000U;
++    retention_mark_request.policy =
++        anonsync::SyncReplicaFilePayloadRetentionPolicy{
++            .minimum_grace_seconds = 86'400U,
++            .maximum_candidate_payload_count = 1U,
++            .maximum_candidate_payload_bytes = orphan_bytes.size(),
++            .maximum_collection_payload_count = 1U,
++            .maximum_collection_payload_bytes = orphan_bytes.size(),
++        };
++
++    // A policy outside this store's configured frontier is impossible before
++    // any namespace fact matters. Independently lock the exact identity inode
++    // while testing both invalid frontiers: the required capacity diagnostic
++    // proves the owner rejected them before attempting a writer-fenced payload
++    // scan. Unlike opening a mutation batch, this test lock performs no store
++    // reconciliation and therefore cannot alter transient evidence itself.
++    {
++        auto impossible_count = retention_mark_request;
++        impossible_count.policy.maximum_candidate_payload_count =
++            fixture.payload_store.limits().max_entries + 1U;
++        auto impossible_bytes = retention_mark_request;
++        impossible_bytes.policy.maximum_candidate_payload_bytes =
++            fixture.payload_store.limits().max_indexed_bytes + 1U;
++        const fs::path identity_path =
++            fixture.payload_root /
++            ".anonsync-payload-store-identity-v2-reader-fence-v1";
++        int identity_descriptor;
++        do {
++            identity_descriptor = ::open(
++                identity_path.c_str(),
++                O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
++        } while (identity_descriptor < 0 && errno == EINTR);
++        if (identity_descriptor < 0) {
++            fail("could not open retention capacity-preflight identity");
++        }
++        int lock_result;
++        do {
++            lock_result = ::flock(
++                identity_descriptor, LOCK_EX | LOCK_NB);
++        } while (lock_result != 0 && errno == EINTR);
++        if (lock_result != 0) {
++            (void)::close(identity_descriptor);
++            fail("could not hold retention capacity-preflight identity lease");
++        }
++        try {
++            require_error(
++                [&] {
++                    (void)scan->mark_payload_retention_or_throw(
++                        impossible_count);
++                },
++                "candidate count exceeds store capacity",
++                "retention policy spent payload-store work before rejecting an impossible count frontier");
++            require_error(
++                [&] {
++                    (void)scan->mark_payload_retention_or_throw(
++                        impossible_bytes);
++                },
++                "candidate bytes exceed store capacity",
++                "retention policy spent payload-store work before rejecting an impossible byte frontier");
++        } catch (...) {
++            (void)::close(identity_descriptor);
++            throw;
++        }
++        if (::close(identity_descriptor) != 0) {
++            fail("could not release retention capacity-preflight identity lease");
++        }
++    }
++    {
++        const auto after_impossible_policy =
++            fixture.payload_store.snapshot_or_throw();
++        require(
++            !after_impossible_policy.retention_mark_present(),
++            "impossible retention policy published a durable mark");
++        require(
++            after_impossible_policy.snapshot_digest() ==
++                retention_plan.source_payload_snapshot_digest,
++            "impossible retention policy changed the physical payload snapshot");
++        require(
++            after_impossible_policy.transient_namespace_digest() ==
++                retention_plan.source_payload_transient_namespace_digest,
++            "impossible retention policy changed the transient payload namespace");
++    }
++
++    const auto first_retention_mark =
++        scan->mark_payload_retention_or_throw(retention_mark_request);
++    {
++        const auto after_first_retention_mark =
++            fixture.payload_store.snapshot_or_throw();
++        require(
++        !first_retention_mark.replaced_existing_file &&
++            !first_retention_mark.replaced_usable_mark &&
++            first_retention_mark.mark.generation == 1U &&
++            first_retention_mark.mark.marked_at_unix_seconds ==
++                retention_mark_request.marked_at_unix_seconds &&
++            first_retention_mark.mark.policy ==
++                retention_mark_request.policy &&
++            first_retention_mark.mark.source_replica_state_generation ==
++                retention_plan.source_replica_state_generation &&
++            first_retention_mark.mark.source_operation_set_digest ==
++                retention_plan.source_operation_set_digest &&
++            first_retention_mark.mark.source_evidence_set_digest ==
++                retention_plan.source_evidence_set_digest &&
++            first_retention_mark.mark.
++                    source_historical_version_pin_set_digest ==
++                retention_plan.source_historical_version_pin_set_digest &&
++            first_retention_mark.mark.source_visible_state_digest ==
++                retention_plan.source_visible_state_digest &&
++            first_retention_mark.mark.source_payload_snapshot_digest ==
++                retention_plan.source_payload_snapshot_digest &&
++            first_retention_mark.mark.
++                    source_payload_transient_namespace_digest ==
++                retention_plan.source_payload_transient_namespace_digest &&
++            first_retention_mark.mark.unreferenced_candidate_set_digest ==
++                retention_plan.unreferenced_candidate_set_digest &&
++            first_retention_mark.mark.durable_candidate_witness_digest ==
++                retention_plan.durable_candidate_witness_digest &&
++            first_retention_mark.mark.
++                    unreferenced_candidate_payload_count == 1U &&
++            first_retention_mark.mark.
++                    unreferenced_candidate_payload_bytes ==
++                orphan_bytes.size() &&
++            anonsync::is_lowercase_sha256_hex(
++                first_retention_mark.mark.store_identity_sha256) &&
++            anonsync::is_lowercase_sha256_hex(
++                first_retention_mark.mark_digest) &&
++            after_first_retention_mark.retention_mark_present() &&
++            after_first_retention_mark.retention_mark_usable() &&
++            after_first_retention_mark.retention_mark() ==
++                std::optional(first_retention_mark.mark) &&
++            after_first_retention_mark.retention_mark_digest() ==
++                std::optional(first_retention_mark.mark_digest) &&
++            after_first_retention_mark.snapshot_digest() ==
++                retention_plan.source_payload_snapshot_digest &&
++            after_first_retention_mark.transient_namespace_digest() ==
++                retention_plan.source_payload_transient_namespace_digest &&
++            after_first_retention_mark.entry_count() == 2U &&
++            after_first_retention_mark.transient_entry_count() == 1U,
++            "writer-fenced retention mark did not preserve exact source, policy, or payload accounting");
++    }
++
++    const auto aba_unpin = scan->unpin_historical_version_or_throw(
++        predecessor_entry->operation_id);
++    const auto aba_repin = scan->pin_historical_version_or_throw(
++        predecessor_entry->operation_id);
++    const auto replica_after_pin_aba = fixture.replica.snapshot_or_throw();
++    require(
++        aba_unpin.disposition == anonsync::
++                SyncReplicaSqliteHistoricalVersionPinDisposition::Unpinned &&
++            aba_repin.disposition == anonsync::
++                SyncReplicaSqliteHistoricalVersionPinDisposition::Pinned &&
++            replica_after_pin_aba.state_generation >
++                retention_plan.source_replica_state_generation &&
++            replica_after_pin_aba.operation_set_digest ==
++                retention_plan.source_operation_set_digest &&
++            replica_after_pin_aba.evidence_set_digest ==
++                retention_plan.source_evidence_set_digest &&
++            replica_after_pin_aba.historical_version_pin_set_digest ==
++                retention_plan.source_historical_version_pin_set_digest &&
++            replica_after_pin_aba.visible_state_digest ==
++                retention_plan.source_visible_state_digest,
++        "retention-mark ABA fixture did not restore identical digests at a newer generation");
++
++    bool caught_retention_mark_generation_aba = false;
++    try {
++        (void)scan->mark_payload_retention_or_throw(
++            retention_mark_request);
++    } catch (const anonsync::SyncReplicaHistoricalVersionSourceChangedError&
++                 error) {
++        caught_retention_mark_generation_aba = true;
++        require(
++            error.stage() == anonsync::
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    RetentionMarkPublication,
++            "retention-mark generation ABA reported the wrong source-change stage");
++    }
++    {
++        const auto after_rejected_aba_mark =
++            fixture.payload_store.snapshot_or_throw();
++        require(
++        caught_retention_mark_generation_aba &&
++            after_rejected_aba_mark.retention_mark_usable() &&
++            after_rejected_aba_mark.retention_mark()->generation == 1U &&
++            after_rejected_aba_mark.retention_mark_digest() ==
++                std::optional(first_retention_mark.mark_digest),
++            "retention mark inherited grace across a digest-level replica ABA");
++    }
++
++    const auto current_retention_plan =
++        scan->plan_payload_retention_or_throw();
++    require(
++        current_retention_plan.source_cutpoint() ==
++                retention_plan.source_cutpoint() &&
++            current_retention_plan.source_replica_state_generation ==
++                replica_after_pin_aba.state_generation &&
++            current_retention_plan.durable_candidate_witness_digest ==
++                retention_plan.durable_candidate_witness_digest &&
++            current_retention_plan.unreferenced_candidate_set_digest ==
++                retention_plan.unreferenced_candidate_set_digest &&
++            current_retention_plan.source_payload_snapshot_digest ==
++                retention_plan.source_payload_snapshot_digest,
++        "retention-mark metadata changed the physical cutpoint or ABA candidate witness");
++
++    auto replacement_mark_request = retention_mark_request;
++    replacement_mark_request.expected_source_cutpoint =
++        current_retention_plan.source_cutpoint();
++    replacement_mark_request.expected_source_replica_state_generation =
++        current_retention_plan.source_replica_state_generation;
++    replacement_mark_request.expected_durable_candidate_witness_digest =
++        current_retention_plan.durable_candidate_witness_digest;
++    ++replacement_mark_request.marked_at_unix_seconds;
++    const auto replacement_retention_mark =
++        scan->mark_payload_retention_or_throw(replacement_mark_request);
++    require(
++        replacement_retention_mark.replaced_existing_file &&
++            replacement_retention_mark.replaced_usable_mark &&
++            replacement_retention_mark.mark.generation == 2U &&
++            replacement_retention_mark.mark.source_replica_state_generation ==
++                current_retention_plan.source_replica_state_generation &&
++            replacement_retention_mark.mark_digest !=
++                first_retention_mark.mark_digest,
++        "current retention mark did not conservatively replace the stale generation");
++
++    auto stale_witness_mark_request = replacement_mark_request;
++    stale_witness_mark_request.expected_durable_candidate_witness_digest[0] =
++        stale_witness_mark_request.
++                expected_durable_candidate_witness_digest[0] == '0'
++            ? '1'
++            : '0';
++    bool caught_stale_retention_witness = false;
++    try {
++        (void)scan->mark_payload_retention_or_throw(
++            stale_witness_mark_request);
++    } catch (const anonsync::SyncReplicaHistoricalVersionSourceChangedError&
++                 error) {
++        caught_stale_retention_witness = true;
++        require(
++            error.stage() == anonsync::
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    RetentionMarkPublication,
++            "stale retention candidate witness reported the wrong source-change stage");
++    }
++    {
++        const auto after_stale_witness =
++            fixture.payload_store.snapshot_or_throw();
++        require(
++        caught_stale_retention_witness &&
++            after_stale_witness.retention_mark_usable() &&
++            after_stale_witness.retention_mark()->generation == 2U &&
++            after_stale_witness.retention_mark_digest() ==
++                std::optional(replacement_retention_mark.mark_digest) &&
++            after_stale_witness.snapshot_digest() ==
++                retention_plan.source_payload_snapshot_digest,
++            "stale candidate witness replaced the current durable retention mark");
++    }
++
+     // A snapshot issued for this exact process/store scope can reopen any
+     // indexed payload after its construction lease is gone. The planner's own
+     // snapshot is excluded, but every independent live snapshot must root the
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index c19f0033754fbee591fd8d56a4edd5bbd298558f..36a81a1078c2fc305172df6947fd92efd85a8371 100644
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -37,6 +37,8 @@ REQUIRED = (
+     Path("src/resumable_sha256.cpp"),
+     Path("src/sync_replica_file_payload_scrub_state.hpp"),
+     Path("src/sync_replica_file_payload_scrub_state.cpp"),
++    Path("src/sync_replica_file_payload_retention_mark.hpp"),
++    Path("src/sync_replica_file_payload_retention_mark.cpp"),
+     Path("src/sync_replica_file_payload_verification_index.hpp"),
+     Path("src/sync_replica_file_payload_verification_index.cpp"),
+     Path("src/sync_replica_file_delivery_protocol.hpp"),
+@@ -86,6 +88,7 @@ REQUIRED = (
+     Path("tests/sync_replica_file_payload_store_test.cpp"),
+     Path("tests/resumable_sha256_test.cpp"),
+     Path("tests/sync_replica_file_payload_scrub_state_test.cpp"),
++    Path("tests/sync_replica_file_payload_retention_mark_test.cpp"),
+     Path("tests/sync_replica_file_payload_verification_index_test.cpp"),
+     Path("tests/sync_replica_file_delivery_protocol_test.cpp"),
+     Path("tests/sync_replica_reconciliation_service_test.cpp"),
+@@ -160,6 +163,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0977.md"),
+     Path("PROCESS_STORE_LIVE_CAPABILITY_AND_WRITER_FENCED_RETENTION_AUDIT_rev0978.md"),
+     Path("REVISION_NOTES_rev0978.md"),
++    Path("DURABLE_PAYLOAD_RETENTION_MARK_AND_POLICY_AUDIT_rev0979.md"),
++    Path("REVISION_NOTES_rev0979.md"),
+ )
+ 
+ 
+@@ -311,6 +316,12 @@ def main() -> int:
+     resumable = text["src/resumable_sha256.cpp"]
+     scrub_state_h = text["src/sync_replica_file_payload_scrub_state.hpp"]
+     scrub_state = text["src/sync_replica_file_payload_scrub_state.cpp"]
++    retention_mark_h = text[
++        "src/sync_replica_file_payload_retention_mark.hpp"
++    ]
++    retention_mark = text[
++        "src/sync_replica_file_payload_retention_mark.cpp"
++    ]
+     verification_index_h = text[
+         "src/sync_replica_file_payload_verification_index.hpp"
+     ]
+@@ -379,6 +390,9 @@ def main() -> int:
+     scrub_state_runtime = text[
+         "tests/sync_replica_file_payload_scrub_state_test.cpp"
+     ]
++    retention_mark_runtime = text[
++        "tests/sync_replica_file_payload_retention_mark_test.cpp"
++    ]
+     verification_index_runtime = text[
+         "tests/sync_replica_file_payload_verification_index_test.cpp"
+     ]
+@@ -527,6 +541,10 @@ def main() -> int:
+         "PROCESS_STORE_LIVE_CAPABILITY_AND_WRITER_FENCED_RETENTION_AUDIT_rev0978.md"
+     ]
+     rev0978_notes = text["REVISION_NOTES_rev0978.md"]
++    durable_retention_mark_design = text[
++        "DURABLE_PAYLOAD_RETENTION_MARK_AND_POLICY_AUDIT_rev0979.md"
++    ]
++    rev0979_notes = text["REVISION_NOTES_rev0979.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -747,6 +765,17 @@ def main() -> int:
+         if rev0978_verifier_start >= 0 and rev0978_verifier_end >= 0
+         else ""
+     )
++    rev0979_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 979:"
++    )
++    rev0979_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0979_verifier_start
++    )
++    rev0979_verifier_block = (
++        verifier[rev0979_verifier_start:rev0979_verifier_end]
++        if rev0979_verifier_start >= 0 and rev0979_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -759,7 +788,19 @@ def main() -> int:
+     )
+     retention_plan_owner = last_function_body(
+         folder_scan,
+-        "SyncReplicaFolderScanOwner::plan_payload_retention_or_throw(",
++        "SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(",
++    )
++    retention_mark_owner = last_function_body(
++        folder_scan,
++        "SyncReplicaFolderScanOwner::mark_payload_retention_or_throw(",
++    )
++    retention_plan_impl = last_function_body(
++        folder_scan,
++        "SyncReplicaFolderScanOwner::plan_payload_retention_impl_or_throw(",
++    )
++    retention_mark_publication = last_function_body(
++        store,
++        "SyncReplicaFilePayloadStore::publish_retention_mark_or_throw(",
+     )
+     historical_version_service_step = function_body(
+         peer_service, "operator_historical_version_step_or_throw()"
+@@ -1188,7 +1229,7 @@ def main() -> int:
+                 "root authority after descriptor duplication",
+             )
+         )
+-        and store.count("duplicate_shared_open_description_or_throw(") == 16
++        and store.count("duplicate_shared_open_description_or_throw(") == 17
+         and all(
+             "duplicate_shared_open_description_or_throw" in function_body(
+                 store, signature
+@@ -1209,6 +1250,7 @@ def main() -> int:
+                 "SyncReplicaFilePayloadStore::stage_payload_range_or_throw(",
+                 "SyncReplicaFilePayloadStore::stage_payload_prefix_or_throw(",
+                 "advance_payload_scrub_from_snapshot_or_throw(",
++                "SyncReplicaFilePayloadStore::publish_retention_mark_or_throw(",
+             )
+         )
+         and "duplicate_shared_open_description_or_throw(" in store[
+@@ -10725,6 +10767,248 @@ def main() -> int:
+         "release verification requires every implementation, renderer, schema, runtime oracle, audit, notes, and package-policy surface changed by rev0978",
+     )
+ 
++    retention_mark_link = cmake_call(
++        cmake,
++        "target_link_libraries(anonsync_sync_replica_file_payload_retention_mark",
++    )
++    require(
++        "add_library(anonsync_sync_replica_file_payload_retention_mark STATIC"
++        in cmake
++        and "src/sync_replica_file_payload_retention_mark.cpp" in cmake
++        and "anonsync_sha256_digest" in retention_mark_link
++        and "anonsync_sync_posix_regular_file_snapshot_codec"
++        in retention_mark_link
++        and "add_executable(anonsync_sync_replica_file_payload_retention_mark_test"
++        in cmake
++        and cmake.count(
++            "anonsync_sync_replica_file_payload_retention_mark_test"
++        ) >= 5,
++        "rev0979_retention_mark_codec_and_test_are_product_and_sanitizer_graph_members",
++        "the durable mark is one narrow library with an ordinary product test retained by compile, link, dependency, CTest, and product lanes",
++    )
++
++    require(
++        ".anonsync-payload-retention-mark-v1" in retention_mark_h
++        and "kSyncReplicaFilePayloadRetentionMarkMaximumGraceSeconds"
++        in retention_mark_h
++        and "kMagic" in retention_mark
++        and "kEncodedU64Count = 10U" in retention_mark
++        and "kSourceDigestCount = 8U" in retention_mark
++        and "encoded.append(sha256_hex(encoded))" in retention_mark
++        and "Continuity evidence only" in retention_mark_h
++        and "external anti-rollback counter" in retention_mark_h
++        and "length is not the exact v1 size" in retention_mark
++        and "checksum is invalid" in retention_mark,
++        "rev0979_mark_format_is_fixed_width_checksum_framed_and_versioned",
++        "the record has one fixed internal basename, exact geometry, canonical digest fields, and a checksum over the complete magic/body frame",
++    )
++
++    require(
++        "policy grace deadline overflows" in retention_mark
++        and "policy candidate count exceeds store capacity" in retention_mark
++        and "policy candidate bytes exceed store capacity" in retention_mark
++        and "observed candidate count exceeds policy" in retention_mark
++        and "observed candidate bytes exceed policy" in retention_mark
++        and "policy collection count exceeds candidates" in retention_mark
++        and "policy collection bytes exceed candidates" in retention_mark
++        and "contains no unreferenced payload candidates" in retention_mark,
++        "rev0979_mark_policy_and_candidate_frontiers_fail_closed",
++        "grace arithmetic, store capacity, policy capacity, collection capacity, and nonempty-candidate requirements are validated before evidence is usable",
++    )
++
++    require(
++        "retention_mark_present" in store
++        and "retention_mark_contents_requested" in store
++        and "retention_mark_observation_known" in store_h
++        and "retention_mark_observation_known" in store
++        and "scanned.retention_mark_contents_requested" in store
++        and "ReadOnlyInspect remains byte-cold" in store_h
++        and "retention_mark_observation_known()" in runtime,
++        "rev0979_mark_observation_distinguishes_synchronized_validity_from_byte_cold_forensics",
++        "clean absence, usable or damaged synchronized evidence, and deliberately uninspected forensic presence are separate snapshot states",
++    )
++
++    require(
++        "kSyncReplicaFilePayloadRetentionMarkBasename" in store
++        and "retention mark changed during namespace traversal" in store
++        and "bootstrap.retention_mark_present" in store
++        and "out.retention_mark_present = retention_mark.present" in store
++        and "snapshot->retention_mark_present = scanned.retention_mark_present"
++        in store
++        and "transient_namespace_digest_or_throw" in store,
++        "rev0979_mark_is_recognized_internal_metadata_with_rooted_traversal_reproof",
++        "the fixed basename is observed before and during complete scans, fresh bootstrap refuses adoption, and snapshots expose it without classifying it as payload content",
++    )
++
++    require(
++        "verify_writer_fenced_retention_snapshot_or_throw" in retention_mark_publication
++        and "retained_writer_fence" in retention_mark_publication
++        and "mark.store_identity_sha256" in retention_mark_publication
++        and "mark.store_identity_metadata" in retention_mark_publication
++        and "mark.generation = current.mark->generation + 1U"
++        in retention_mark_publication
++        and "write_sync_file_atomically_replace_expected_under_directory_or_throw"
++        in retention_mark_publication
++        and "write_sync_file_atomically_create_new_under_directory_or_throw"
++        in retention_mark_publication
++        and "observe_exact_committed" in retention_mark_publication
++        and "const std::exception_ptr original = std::current_exception()"
++        in retention_mark_publication
++        and "Reconciliation is intentionally best effort"
++        in retention_mark_publication
++        and retention_mark_publication.rfind("std::rethrow_exception(original)")
++        > retention_mark_publication.rfind(
++            "Reconciliation is intentionally best effort"
++        )
++        and "snapshot_with_reuse_policy_or_throw" not in retention_mark_publication,
++        "rev0979_mark_publication_reuses_the_exact_writer_fenced_snapshot_without_rescan",
++        "identity and generation are store-owned, publication is atomic and conditionally replaced, committed bytes are reopened, secondary reconciliation failure preserves the primary publication exception, and no second complete snapshot is acquired",
++    )
++
++    require(
++        "SyncReplicaPayloadRetentionMarkRequest" in folder_scan_h
++        and "expected_source_replica_state_generation" in folder_scan_h
++        and "expected_durable_candidate_witness_digest" in folder_scan_h
++        and "marked_at_unix_seconds" in folder_scan_h
++        and "SyncReplicaFilePayloadRetentionPolicy policy" in folder_scan_h
++        and "ExactPayloadAvailability" in retention_mark_owner
++        and "validate_sync_replica_file_payload_retention_policy_for_store_or_throw"
++        in retention_mark_owner
++        and retention_mark_owner.find(
++            "validate_sync_replica_file_payload_retention_policy_for_store_or_throw"
++        ) < retention_mark_owner.find("query.maximum_entries = 1U")
++        and "payload_store_limits.max_entries" in retention_mark_owner
++        and "payload_store_limits.max_indexed_bytes" in retention_mark_owner
++        and "query.maximum_entries = 1U" in retention_mark_owner
++        and "external database anti-rollback authority" in folder_scan_h
++        and "bind a recovery epoch" in folder_scan_h,
++        "rev0979_folder_owner_requires_exact_v4_source_generation_witness_and_policy",
++        "marking cannot start from metadata-only history, a cursor page, an unknown generation, a malformed witness, malformed policy, or a store-impossible capacity frontier; all fail before writer-fenced payload observation",
++    )
++
++    require(
++        "RetentionMarkPublication = 10U" in historical_query_h
++        and 'return "retention_mark_publication"' in historical_query_h
++        and retention_plan_impl.count(
++            "expected_source_replica_state_generation"
++        ) >= 2
++        and "candidate witness changed before" in retention_plan_impl
++        and "publish_retention_mark_or_throw" in retention_plan_impl
++        and "const SyncReplicaSqliteSnapshot replica_after_mark"
++        in retention_plan_impl
++        and "source changed during durable" in retention_plan_impl,
++        "rev0979_same_lineage_source_generation_and_final_sqlite_reproof_close_digest_aba",
++        "the mark is checked before observation, before publication, and after commit; same-lineage source drift is typed and leaves any committed older-generation record conservative without claiming database anti-rollback authority",
++    )
++
++    require(
++        "test_round_trip_and_digest" in retention_mark_runtime
++        and "test_checksum_and_framing_rejection" in retention_mark_runtime
++        and "test_policy_and_candidate_rejection" in retention_mark_runtime
++        and "deadline overflow" in retention_mark_runtime
++        and "linked identity" in retention_mark_runtime
++        and "zero-byte candidate" in retention_mark_runtime,
++        "rev0979_codec_runtime_covers_framing_overflow_capacity_identity_and_zero_byte_candidates",
++        "the focused codec regression exercises canonical round trip and malformed policy/record boundaries rather than only one happy path",
++    )
++
++    require(
++        "test_retention_mark_is_durable_identity_bound_and_snapshot_cold"
++        in runtime
++        and "fresh process owner did not rediscover the exact retention mark"
++        in runtime
++        and "damaged retention evidence was hidden or treated as authority"
++        in runtime
++        and "byte-cold forensic inspection claimed retention-mark authority"
++        in runtime
++        and "writer-fenced retention mark did not preserve exact source, policy, or payload accounting"
++        in folder_scan_runtime
++        and "caught_retention_mark_generation_aba" in folder_scan_runtime
++        and "stale candidate witness replaced the current durable retention mark"
++        in folder_scan_runtime
++        and "retention policy spent payload-store work before rejecting an impossible count frontier"
++        in folder_scan_runtime
++        and "retention policy spent payload-store work before rejecting an impossible byte frontier"
++        in folder_scan_runtime,
++        "rev0979_store_and_folder_runtime_prove_restart_damage_accounting_aba_and_stale_witness_boundaries",
++        "focused tests cover durable discovery, conservative damaged replacement, byte-cold forensics, capacity preflight ahead of a held writer lease, witness handoff, monotonic pin ABA, and no stale replacement",
++    )
++
++    require(
++        all(
++            token in normalized_prose(durable_retention_mark_design)
++            for token in (
++                "Fixed-width record",
++                "Exact writer-fenced publication handoff",
++                "Same-lineage causal ABA fence and rollback boundary",
++                "Metadata cannot invalidate its own witness",
++                "Observation-known refactor",
++                "Compatibility boundary",
++                "Next safe edge",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0979_notes)
++            for token in (
++                "Durable retention mark and policy",
++                "Exact publication handoff",
++                "Adjacent audit/refactor",
++                "deletion-free",
++            )
++        )
++        and all(
++            token in normalized_prose(durable_retention_mark_design)
++            for token in (
++                "does not add a second complete payload scan or hash pass",
++                "not an external anti-rollback counter",
++                "exact older image can recreate its generation",
++                "replacement generation is continuity evidence only",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0979_notes)
++            for token in (
++                "within one retained database lineage",
++                "future collection must bind a recovery epoch or reset age",
++                "overbroad claim that publication never rehashes",
++            )
++        )
++        and "## Rev0979: durable deletion-free retention mark and ABA fence"
++        in readme
++        and "not an external anti-rollback counter" in readme
++        and "replica-database incarnation or recovery epoch" in readme,
++        "rev0979_records_state_the_durable_evidence_authority_nonclaims_and_downgrade_boundary",
++        "audit, notes, README, and bootstrap distinguish same-lineage ABA protection from database rollback, mark-generation continuity from freshness, and no-added-scan publication from guaranteed byte-cold observation",
++    )
++
++    require(
++        rev0979_verifier_block.count(
++            "if revision_number is not None and revision_number >= 979:"
++        ) == 1
++        and all(
++            token in rev0979_verifier_block
++            for token in (
++                "DURABLE_PAYLOAD_RETENTION_MARK_AND_POLICY_AUDIT_rev0979.md",
++                "REVISION_NOTES_rev0979.md",
++                "CMakeLists.txt",
++                "src/sync_replica_file_payload_retention_mark.hpp",
++                "src/sync_replica_file_payload_retention_mark.cpp",
++                "src/sync_replica_file_payload_store.hpp",
++                "src/sync_replica_file_payload_store.cpp",
++                "src/sync_replica_historical_version_query.hpp",
++                "src/sync_replica_folder_scan_owner.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "tests/sync_replica_file_payload_retention_mark_test.cpp",
++                "tests/sync_replica_file_payload_store_test.cpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0979_package_policy_binds_codec_store_owner_tests_records_and_audit",
++        "release verification requires every implementation, runtime, record, structural-audit, and package-policy surface changed by rev0979",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -10879,6 +11163,17 @@ def main() -> int:
+         "the process-store live-capability scope and writer-fenced retention observation cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0978 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0979" not in rev0979_notes
++        and "VALIDATION_PENDING_REV0979" not in durable_retention_mark_design
++        and "VALIDATION_PENDING_REV0979" not in readme
++        and "ARCHIVE_PENDING_REV0979" not in bootstrap
++        and "CODENAME_PENDING_REV0979" not in bootstrap
++        and "VALIDATION_PENDING_REV0979" not in bootstrap,
++        "rev0979_final_validation_and_visible_release_cutpoint_are_sealed",
++        "the durable mark and policy cannot pass the structural audit until exact validation and the visible bootstrap bind the sealed rev0979 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 9de9df4e95dcecf34b55bc6e4dfeeaba96cdfbb5..039419f14ed2eee8c7624e88ccd5a8c9c1c3563b 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1630,6 +1630,25 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 979:
++        revision_scoped_required.update({
++            "DURABLE_PAYLOAD_RETENTION_MARK_AND_POLICY_AUDIT_rev0979.md",
++            "REVISION_NOTES_rev0979.md",
++            "README.md",
++            "CMakeLists.txt",
++            "src/sync_replica_file_payload_retention_mark.hpp",
++            "src/sync_replica_file_payload_retention_mark.cpp",
++            "src/sync_replica_file_payload_store.hpp",
++            "src/sync_replica_file_payload_store.cpp",
++            "src/sync_replica_historical_version_query.hpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "tests/sync_replica_file_payload_retention_mark_test.cpp",
++            "tests/sync_replica_file_payload_store_test.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

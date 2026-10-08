@@ -1,0 +1,2055 @@
+diff --git a/src/anonsync_sync.cpp b/src/anonsync_sync.cpp
+index 3710820..0ea2846 100755
+--- a/src/anonsync_sync.cpp
++++ b/src/anonsync_sync.cpp
+@@ -3404,7 +3404,8 @@ int command_recheck(const Options& options) {
+ 
+ int command_versions(const Options& options) {
+     options.require_only(
+-        {"socket", "path", "after", "limit", "timeout-milliseconds"});
++        {"socket", "path", "after", "limit", "source-cutpoint",
++         "timeout-milliseconds"});
+     const fs::path socket_path = require_absolute_path(
+         options.one("socket"), "--socket");
+     anonsync::SyncReplicaHistoricalVersionQuery query;
+@@ -3417,6 +3418,12 @@ int command_versions(const Options& options) {
+     if (options.has("after")) {
+         query.start_after_operation_id = options.one("after");
+     }
++    if (options.has("source-cutpoint")) {
++        query.expected_source_cutpoint = anonsync::
++            decode_sync_replica_historical_version_source_cutpoint_or_throw(
++                options.one("source-cutpoint"),
++                "anonsync_sync versions --source-cutpoint");
++    }
+     anonsync::validate_sync_replica_historical_version_query_or_throw(
+         query, "anonsync_sync versions");
+     const std::uint64_t timeout_milliseconds = option_uint64_or(
+@@ -3561,6 +3568,7 @@ void print_usage(std::ostream& output) {
+         << "  anonsync_sync versions --socket ABSOLUTE_SOCKET "
+            "[--path CANONICAL_RELATIVE_PATH] "
+            "[--after LOWERCASE_SHA256] [--limit 1..1024] "
++           "[--source-cutpoint v1:OPERATION_SET_SHA256:PAYLOAD_SHA256] "
+            "[--timeout-milliseconds N]\n"
+         << "  anonsync_sync restore --socket ABSOLUTE_SOCKET "
+            "--operation LOWERCASE_SHA256 [--timeout-milliseconds N]\n"
+@@ -3587,8 +3595,11 @@ void print_usage(std::ostream& output) {
+            "requested and completed generations. versions accepts one bounded "
+            "inspection page of active causal file predecessors whose immutable "
+            "payload bytes are still retained; an exact path, page limit, and "
+-           "active superseded operation cursor may select later pages, while "
+-           "status reports the query, source cutpoint, and next cursor. "
++           "active superseded operation cursor may select later pages. Copying "
++           "the first page's source_cutpoint into --source-cutpoint makes every "
++           "later page fail closed if the active operation set or retained "
++           "payload namespace changes; status reports the exact query, source "
++           "cutpoint, and next cursor. "
+            "restore accepts one exact operation ID from that inventory, re-proves "
+            "current catalog, replica, rooted-path, and payload authority, atomically "
+            "publishes those bytes, and mints a new causal successor through the "
+diff --git a/src/sync_local_status_socket.cpp b/src/sync_local_status_socket.cpp
+index 836170e..b2a7a3e 100644
+--- a/src/sync_local_status_socket.cpp
++++ b/src/sync_local_status_socket.cpp
+@@ -59,7 +59,7 @@ constexpr std::string_view kQuarantineResponseSchema =
+ constexpr std::string_view kQuarantineReleaseResponseSchema =
+     "anonsync.local-quarantine-release.response.v1";
+ constexpr std::string_view kHistoricalVersionsResponseSchema =
+-    "anonsync.local-historical-versions.response.v2";
++    "anonsync.local-historical-versions.response.v3";
+ constexpr std::string_view kHistoricalVersionRestoreResponseSchema =
+     "anonsync.local-historical-version-restore.response.v1";
+ constexpr std::string_view kUnsupportedResponse =
+@@ -224,14 +224,26 @@ parse_historical_version_request(std::string_view request) {
+         const std::size_t first_space = request.find(' ');
+         if (first_space == std::string_view::npos) return std::nullopt;
+         const std::size_t second_space = request.find(' ', first_space + 1U);
+-        if (second_space == std::string_view::npos ||
+-            request.find(' ', second_space + 1U) != std::string_view::npos) {
++        if (second_space == std::string_view::npos) {
++            return std::nullopt;
++        }
++        const std::size_t third_space = request.find(' ', second_space + 1U);
++        if (third_space != std::string_view::npos &&
++            request.find(' ', third_space + 1U) != std::string_view::npos) {
+             return std::nullopt;
+         }
+         const std::string_view maximum_text = request.substr(0U, first_space);
+         const std::string_view path_hex = request.substr(
+             first_space + 1U, second_space - first_space - 1U);
+-        const std::string_view cursor = request.substr(second_space + 1U);
++        const std::string_view cursor = third_space == std::string_view::npos
++            ? request.substr(second_space + 1U)
++            : request.substr(
++                  second_space + 1U,
++                  third_space - second_space - 1U);
++        const std::string_view source_cutpoint =
++            third_space == std::string_view::npos
++                ? std::string_view("-")
++                : request.substr(third_space + 1U);
+         const std::optional<std::uint64_t> maximum =
+             parse_decimal_uint64(maximum_text);
+         if (!maximum.has_value() ||
+@@ -252,6 +264,16 @@ parse_historical_version_request(std::string_view request) {
+             if (!is_lowercase_sha256_hex(cursor)) return std::nullopt;
+             parsed.query.start_after_operation_id = std::string(cursor);
+         }
++        if (source_cutpoint != "-") {
++            try {
++                parsed.query.expected_source_cutpoint =
++                    decode_sync_replica_historical_version_source_cutpoint_or_throw(
++                        source_cutpoint,
++                        "local historical-version source cutpoint");
++            } catch (const std::invalid_argument&) {
++                return std::nullopt;
++            }
++        }
+         try {
+             validate_sync_replica_historical_version_query_or_throw(
+                 parsed.query, "local historical-version query");
+@@ -969,7 +991,7 @@ void validate_historical_version_response_or_throw(
+         operation == SyncLocalStatusSocketHistoricalVersionOperation::Restore;
+     const std::size_t expected_fields = restoring
+         ? 6U + (rejected ? 1U : 0U)
+-        : 8U + (rejected ? 1U : 0U);
++        : 9U + (rejected ? 1U : 0U);
+     const std::string_view expected_schema = restoring
+         ? kHistoricalVersionRestoreResponseSchema
+         : kHistoricalVersionsResponseSchema;
+@@ -1023,6 +1045,23 @@ void validate_historical_version_response_or_throw(
+                 std::string(label) +
+                 " invented a requested historical cursor");
+         }
++        const Json& returned_source_cutpoint =
++            parsed.at("expected_source_cutpoint");
++        if (query.expected_source_cutpoint.has_value()) {
++            const std::string expected =
++                encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                    *query.expected_source_cutpoint, label);
++            if (returned_source_cutpoint.is_null() ||
++                returned_source_cutpoint.str() != expected) {
++                throw std::runtime_error(
++                    std::string(label) +
++                    " changed the requested historical source cutpoint");
++            }
++        } else if (!returned_source_cutpoint.is_null()) {
++            throw std::runtime_error(
++                std::string(label) +
++                " invented a requested historical source cutpoint");
++        }
+     }
+     const std::uint64_t generation = exact_nonnegative_uint64_or_throw(
+         parsed.at("request_generation"), label);
+@@ -1386,6 +1425,15 @@ struct SyncLocalStatusSocketServer::State final {
+             } else {
+                 response << "null";
+             }
++            response << ",\"expected_source_cutpoint\":";
++            if (query.expected_source_cutpoint.has_value()) {
++                response << json_quote(
++                    encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                        *query.expected_source_cutpoint,
++                        label + " historical-version response source cutpoint"));
++            } else {
++                response << "null";
++            }
+         }
+         response << ",\"server_pid\":"
+                  << static_cast<long long>(::getpid()) << '}';
+@@ -1879,15 +1927,25 @@ namespace {
+         const std::string cursor = query.start_after_operation_id.has_value()
+             ? *query.start_after_operation_id
+             : "-";
++        const std::string source_cutpoint =
++            query.expected_source_cutpoint.has_value()
++                ? encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                      *query.expected_source_cutpoint,
++                      std::string(label) +
++                          " historical-version request source cutpoint")
++                : "-";
+         request.reserve(
+             kHistoricalVersionsQueryRequestPrefix.size() + 24U + 1U +
+-            path_hex.size() + 1U + cursor.size() + 1U);
++            path_hex.size() + 1U + cursor.size() + 1U +
++            source_cutpoint.size() + 1U);
+         request.append(kHistoricalVersionsQueryRequestPrefix);
+         request.append(std::to_string(query.maximum_entries));
+         request.push_back(' ');
+         request.append(path_hex);
+         request.push_back(' ');
+         request.append(cursor);
++        request.push_back(' ');
++        request.append(source_cutpoint);
+         request.push_back('\n');
+     }
+     LocalSocketResponse response = request_local_socket_or_throw(
+diff --git a/src/sync_local_status_socket.hpp b/src/sync_local_status_socket.hpp
+index bb540d3..57dcd0a 100644
+--- a/src/sync_local_status_socket.hpp
++++ b/src/sync_local_status_socket.hpp
+@@ -93,7 +93,9 @@ struct SyncLocalStatusSocketActionSnapshot final {
+ // one exact corrupt image; "quarantine-release EXPECTED OBSERVED\n"
+ // releases one exact recovered diagnostic image; "versions\n" requests the
+ // default bounded causal-history projection; "versions-query LIMIT PATH_HEX
+-// CURSOR\n" requests one exact page; and "restore OPERATION_ID\n" requests one
++// CURSOR SOURCE_CUTPOINT_OR_DASH\n" requests one exact page (the rev0967
++// three-field form remains accepted without a source pin); and
++// "restore OPERATION_ID\n" requests one
+ // exact historical value through ordinary rooted publication. Quarantine
+ // operations share one lane and history operations share another. This is not
+ // a generic command dispatcher.
+diff --git a/src/sync_replica_folder_scan_owner.cpp b/src/sync_replica_folder_scan_owner.cpp
+index 1045dcc..e4c9e4c 100755
+--- a/src/sync_replica_folder_scan_owner.cpp
++++ b/src/sync_replica_folder_scan_owner.cpp
+@@ -4746,16 +4746,25 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+     validate_sync_replica_historical_version_query_or_throw(
+         query, state_->label + " historical-version inspection");
+ 
+-    // This explicit operator action pays for one complete payload observation.
+-    // It remains independent of ordinary service status polling and therefore
+-    // cannot turn every status publication into O(payload namespace) work.
+-    const SyncReplicaFilePayloadStoreSnapshot payload_snapshot =
+-        state_->payload_store->snapshot_or_throw();
+-    payload_snapshot.require_folder_or_throw(
+-        state_->folder_id,
+-        state_->label + " historical-version payload snapshot");
++    // Observe and validate the complete causal selector before touching the
++    // payload namespace. A stale bound continuation or stale cursor therefore
++    // cannot pay for an O(payload namespace) scan. The payload observation is
++    // later bracketed by a second replica snapshot so one returned page never
++    // combines a causal model with bytes observed across an intervening change
++    // to the exact active operation set. Unrelated liveness writes are not part
++    // of this browse authority and therefore do not manufacture false drift.
+     const SyncReplicaSqliteSnapshot replica_snapshot =
+         state_->replica_owner->snapshot_or_throw();
++    if (query.expected_source_cutpoint.has_value() &&
++        query.expected_source_cutpoint->operation_set_digest !=
++            replica_snapshot.operation_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                OperationSetBeforePayloadObservation,
++            state_->label +
++                " historical-version operation set changed before payload "
++                "observation; restart pagination");
++    }
+     const SyncReplicaModel model = SyncReplicaModel::restore_or_throw(
+         replica_snapshot.durable, replica_snapshot.limits.model);
+ 
+@@ -4817,10 +4826,41 @@ SyncReplicaFolderScanOwner::inspect_historical_versions_or_throw(
+         cursor_entry->counter = cursor_operation->dot.counter;
+     }
+ 
++    // This explicit operator action pays for one complete payload observation.
++    // It remains independent of ordinary service status polling and therefore
++    // cannot turn every status publication into O(payload namespace) work.
++    const SyncReplicaFilePayloadStoreSnapshot payload_snapshot =
++        state_->payload_store->snapshot_or_throw();
++    payload_snapshot.require_folder_or_throw(
++        state_->folder_id,
++        state_->label + " historical-version payload snapshot");
++    const SyncReplicaSqliteSnapshot replica_after_payload =
++        state_->replica_owner->snapshot_or_throw();
++    if (replica_snapshot.operation_set_digest !=
++        replica_after_payload.operation_set_digest) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::
++                OperationSetDuringPayloadObservation,
++            state_->label +
++                " historical-version operation set changed during payload "
++                "observation; restart pagination");
++    }
++    if (query.expected_source_cutpoint.has_value() &&
++        query.expected_source_cutpoint->payload_snapshot_digest !=
++            payload_snapshot.snapshot_digest()) {
++        throw SyncReplicaHistoricalVersionSourceChangedError(
++            SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot,
++            state_->label +
++                " historical-version payload snapshot changed; restart "
++                "pagination");
++    }
++
+     SyncReplicaHistoricalVersionInventory inventory;
+     inventory.query = query;
+     inventory.source_replica_state_generation =
+         replica_snapshot.state_generation;
++    inventory.source_operation_set_digest =
++        replica_snapshot.operation_set_digest;
+     inventory.source_visible_state_digest =
+         replica_snapshot.visible_state_digest;
+     inventory.source_payload_snapshot_digest =
+diff --git a/src/sync_replica_folder_scan_owner.hpp b/src/sync_replica_folder_scan_owner.hpp
+index d51450f..358341d 100755
+--- a/src/sync_replica_folder_scan_owner.hpp
++++ b/src/sync_replica_folder_scan_owner.hpp
+@@ -150,6 +150,7 @@ struct SyncReplicaHistoricalVersionEntry final {
+ struct SyncReplicaHistoricalVersionInventory final {
+     SyncReplicaHistoricalVersionQuery query;
+     std::uint64_t source_replica_state_generation = 0U;
++    std::string source_operation_set_digest;
+     std::string source_visible_state_digest;
+     std::string source_payload_snapshot_digest;
+     std::uint64_t payload_scan_hashed_entry_count = 0U;
+@@ -171,6 +172,14 @@ struct SyncReplicaHistoricalVersionInventory final {
+ 
+     bool operator==(const SyncReplicaHistoricalVersionInventory&) const =
+         default;
++
++    [[nodiscard]] SyncReplicaHistoricalVersionSourceCutpoint source_cutpoint()
++        const {
++        return {
++            .operation_set_digest = source_operation_set_digest,
++            .payload_snapshot_digest = source_payload_snapshot_digest,
++        };
++    }
+ };
+ 
+ enum class SyncReplicaHistoricalVersionRestoreDisposition : std::uint8_t {
+diff --git a/src/sync_replica_historical_version_query.hpp b/src/sync_replica_historical_version_query.hpp
+index 09cc6ae..c18a792 100644
+--- a/src/sync_replica_historical_version_query.hpp
++++ b/src/sync_replica_historical_version_query.hpp
+@@ -8,6 +8,7 @@
+ #include <stdexcept>
+ #include <string>
+ #include <string_view>
++#include <utility>
+ 
+ namespace anonsync {
+ 
+@@ -22,11 +23,125 @@ inline constexpr std::uint64_t
+ inline constexpr std::uint64_t
+     kSyncReplicaHistoricalVersionMaximumCanonicalPathBytes = 4096U;
+ 
++// Exact immutable inputs that determine one historical-version page. The
++// operation-set digest binds every active causal predecessor and its ordering;
++// the payload snapshot digest binds exact retained-byte availability. This is
++// browse consistency only. Restore still re-proves every mutable owner and the
++// rooted destination from scratch.
++struct SyncReplicaHistoricalVersionSourceCutpoint final {
++    std::string operation_set_digest;
++    std::string payload_snapshot_digest;
++
++    bool operator==(
++        const SyncReplicaHistoricalVersionSourceCutpoint&) const = default;
++};
++
++inline void validate_sync_replica_historical_version_source_cutpoint_or_throw(
++    const SyncReplicaHistoricalVersionSourceCutpoint& cutpoint,
++    std::string_view label =
++        "sync replica historical-version source cutpoint") {
++    if (!is_lowercase_sha256_hex(cutpoint.operation_set_digest)) {
++        throw std::invalid_argument(
++            std::string(label) + " operation-set digest is invalid");
++    }
++    if (!is_lowercase_sha256_hex(cutpoint.payload_snapshot_digest)) {
++        throw std::invalid_argument(
++            std::string(label) + " payload-snapshot digest is invalid");
++    }
++}
++
++// Canonical copy/paste token used by the CLI and owner-only local socket. The
++// explicit version prefix prevents a future token shape from being interpreted
++// permissively as this one.
++[[nodiscard]] inline std::string
++encode_sync_replica_historical_version_source_cutpoint_or_throw(
++    const SyncReplicaHistoricalVersionSourceCutpoint& cutpoint,
++    std::string_view label =
++        "sync replica historical-version source cutpoint") {
++    validate_sync_replica_historical_version_source_cutpoint_or_throw(
++        cutpoint, label);
++    return "v1:" + cutpoint.operation_set_digest + ':' +
++        cutpoint.payload_snapshot_digest;
++}
++
++[[nodiscard]] inline SyncReplicaHistoricalVersionSourceCutpoint
++decode_sync_replica_historical_version_source_cutpoint_or_throw(
++    std::string_view token,
++    std::string_view label =
++        "sync replica historical-version source cutpoint") {
++    constexpr std::string_view prefix = "v1:";
++    constexpr std::size_t digest_size = 64U;
++    constexpr std::size_t encoded_size =
++        prefix.size() + digest_size + 1U + digest_size;
++    if (token.size() != encoded_size || !token.starts_with(prefix) ||
++        token[prefix.size() + digest_size] != ':') {
++        throw std::invalid_argument(
++            std::string(label) + " token framing is invalid");
++    }
++
++    SyncReplicaHistoricalVersionSourceCutpoint cutpoint{
++        .operation_set_digest = std::string(
++            token.substr(prefix.size(), digest_size)),
++        .payload_snapshot_digest = std::string(token.substr(
++            prefix.size() + digest_size + 1U, digest_size)),
++    };
++    validate_sync_replica_historical_version_source_cutpoint_or_throw(
++        cutpoint, label);
++    return cutpoint;
++}
++
++enum class SyncReplicaHistoricalVersionSourceChangeStage : std::uint8_t {
++    OperationSetBeforePayloadObservation = 1U,
++    OperationSetDuringPayloadObservation = 2U,
++    PayloadSnapshot = 3U,
++};
++
++[[nodiscard]] constexpr std::string_view
++sync_replica_historical_version_source_change_stage_name(
++    SyncReplicaHistoricalVersionSourceChangeStage stage) noexcept {
++    switch (stage) {
++        case SyncReplicaHistoricalVersionSourceChangeStage::
++                OperationSetBeforePayloadObservation:
++            return "operation_set_before_payload_observation";
++        case SyncReplicaHistoricalVersionSourceChangeStage::
++                OperationSetDuringPayloadObservation:
++            return "operation_set_during_payload_observation";
++        case SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot:
++            return "payload_snapshot";
++    }
++    return "unknown";
++}
++
++// Typed drift lets the service report a restartable browse failure without
++// parsing diagnostic prose. It deliberately carries no fabricated replacement
++// token: a pre-scan operation mismatch has not observed the payload namespace.
++class SyncReplicaHistoricalVersionSourceChangedError final
++    : public std::runtime_error {
++public:
++    SyncReplicaHistoricalVersionSourceChangedError(
++        SyncReplicaHistoricalVersionSourceChangeStage stage,
++        std::string message)
++        : std::runtime_error(std::move(message)), stage_(stage) {}
++
++    [[nodiscard]] SyncReplicaHistoricalVersionSourceChangeStage stage()
++        const noexcept {
++        return stage_;
++    }
++
++private:
++    SyncReplicaHistoricalVersionSourceChangeStage stage_;
++};
++
+ struct SyncReplicaHistoricalVersionQuery final {
+     std::uint64_t maximum_entries =
+         kSyncReplicaHistoricalVersionDefaultMaximumEntries;
+     std::optional<std::string> canonical_path;
+     std::optional<std::string> start_after_operation_id;
++    // Optional fail-closed browse pin. A later page can copy the exact source
++    // token returned by its first page and will either observe the same active
++    // operation set and retained payload namespace or fail without omission.
++    std::optional<SyncReplicaHistoricalVersionSourceCutpoint>
++        expected_source_cutpoint;
+ 
+     bool operator==(const SyncReplicaHistoricalVersionQuery&) const = default;
+ };
+@@ -60,6 +175,11 @@ inline void validate_sync_replica_historical_version_query_or_throw(
+             std::string(label) +
+             " cursor is not one lowercase SHA-256 operation ID");
+     }
++    if (query.expected_source_cutpoint.has_value()) {
++        validate_sync_replica_historical_version_source_cutpoint_or_throw(
++            *query.expected_source_cutpoint,
++            std::string(label) + " expected source cutpoint");
++    }
+ }
+ 
+ }  // namespace anonsync
+diff --git a/src/sync_replica_peer_service.cpp b/src/sync_replica_peer_service.cpp
+index ccd890a..daedd7b 100644
+--- a/src/sync_replica_peer_service.cpp
++++ b/src/sync_replica_peer_service.cpp
+@@ -426,6 +426,21 @@ sync_replica_peer_service_historical_version_action_name(
+     return "unknown";
+ }
+ 
++std::string_view
++sync_replica_peer_service_historical_version_failure_class_name(
++    SyncReplicaPeerServiceHistoricalVersionFailureClass failure_class)
++    noexcept {
++    switch (failure_class) {
++        case SyncReplicaPeerServiceHistoricalVersionFailureClass::
++                OperationFailed:
++            return "operation_failed";
++        case SyncReplicaPeerServiceHistoricalVersionFailureClass::
++                SourceChanged:
++            return "source_changed";
++    }
++    return "unknown";
++}
++
+ std::string_view sync_replica_peer_service_step_disposition_name(
+     SyncReplicaPeerServiceStepDisposition disposition) noexcept {
+     switch (disposition) {
+@@ -551,6 +566,10 @@ struct SyncReplicaPeerServiceOwner::State final {
+         historical_version_last_inventory;
+     std::optional<SyncReplicaHistoricalVersionRestoreResult>
+         historical_version_last_restore;
++    std::optional<SyncReplicaPeerServiceHistoricalVersionFailureClass>
++        historical_version_last_failure_class;
++    std::optional<SyncReplicaHistoricalVersionSourceChangeStage>
++        historical_version_last_source_change_stage;
+     std::optional<std::string> historical_version_last_failure;
+     bool ingress_is_ready = false;
+     bool ingress_setup_in_progress = false;
+@@ -983,6 +1002,9 @@ struct SyncReplicaPeerServiceOwner::State final {
+             Clock::now(), next_payload_store_lease_retry_at);
+         status.last_inventory = historical_version_last_inventory;
+         status.last_restore = historical_version_last_restore;
++        status.last_failure_class = historical_version_last_failure_class;
++        status.last_source_change_stage =
++            historical_version_last_source_change_stage;
+         status.last_failure = historical_version_last_failure;
+         return status;
+     }
+@@ -1442,6 +1464,8 @@ struct SyncReplicaPeerServiceOwner::State final {
+                 OperatorHistoricalVersionCompleted);
+         result.historical_version_generation = target_generation;
+         result.historical_version_action = action;
++        historical_version_last_failure_class.reset();
++        historical_version_last_source_change_stage.reset();
+         historical_version_last_failure.reset();
+         try {
+             if (action ==
+@@ -1469,10 +1493,31 @@ struct SyncReplicaPeerServiceOwner::State final {
+             throw;
+         } catch (const SyncReplicaFilePayloadStoreLeaseBusyError&) {
+             throw;
++        } catch (const SyncReplicaHistoricalVersionSourceChangedError& error) {
++            historical_version_last_inventory.reset();
++            historical_version_last_restore.reset();
++            historical_version_last_failure_class =
++                SyncReplicaPeerServiceHistoricalVersionFailureClass::
++                    SourceChanged;
++            historical_version_last_source_change_stage = error.stage();
++            historical_version_last_failure = error.what();
++            result.historical_version_failure_class =
++                historical_version_last_failure_class;
++            result.historical_version_source_change_stage =
++                historical_version_last_source_change_stage;
++            result.historical_version_failure = error.what();
++            increment_saturating(counters.historical_version_failures);
+         } catch (const std::runtime_error& error) {
+             historical_version_last_inventory.reset();
+             historical_version_last_restore.reset();
++            historical_version_last_failure_class =
++                SyncReplicaPeerServiceHistoricalVersionFailureClass::
++                    OperationFailed;
++            historical_version_last_source_change_stage.reset();
+             historical_version_last_failure = error.what();
++            result.historical_version_failure_class =
++                historical_version_last_failure_class;
++            result.historical_version_source_change_stage.reset();
+             result.historical_version_failure = error.what();
+             increment_saturating(counters.historical_version_failures);
+         }
+diff --git a/src/sync_replica_peer_service.hpp b/src/sync_replica_peer_service.hpp
+index 5d5d092..f4bcb0d 100644
+--- a/src/sync_replica_peer_service.hpp
++++ b/src/sync_replica_peer_service.hpp
+@@ -267,6 +267,17 @@ enum class SyncReplicaPeerServiceHistoricalVersionAction : std::uint8_t {
+ sync_replica_peer_service_historical_version_action_name(
+     SyncReplicaPeerServiceHistoricalVersionAction action) noexcept;
+ 
++enum class SyncReplicaPeerServiceHistoricalVersionFailureClass
++    : std::uint8_t {
++    OperationFailed = 1U,
++    SourceChanged = 2U,
++};
++
++[[nodiscard]] std::string_view
++sync_replica_peer_service_historical_version_failure_class_name(
++    SyncReplicaPeerServiceHistoricalVersionFailureClass failure_class)
++    noexcept;
++
+ // One owner-thread projection of the bounded historical-version action lane.
+ // Inspection reports active superseded file evidence whose exact payload bytes
+ // are still retained. Restore publishes the selected bytes through the rooted
+@@ -286,6 +297,10 @@ struct SyncReplicaPeerServiceHistoricalVersionStatus final {
+     std::uint64_t retry_delay_milliseconds = 0U;
+     std::optional<SyncReplicaHistoricalVersionInventory> last_inventory;
+     std::optional<SyncReplicaHistoricalVersionRestoreResult> last_restore;
++    std::optional<SyncReplicaPeerServiceHistoricalVersionFailureClass>
++        last_failure_class;
++    std::optional<SyncReplicaHistoricalVersionSourceChangeStage>
++        last_source_change_stage;
+     std::optional<std::string> last_failure;
+ 
+     bool operator==(
+@@ -339,6 +354,10 @@ struct SyncReplicaPeerServiceStepResult final {
+         historical_version_inventory;
+     std::optional<SyncReplicaHistoricalVersionRestoreResult>
+         historical_version_restore;
++    std::optional<SyncReplicaPeerServiceHistoricalVersionFailureClass>
++        historical_version_failure_class;
++    std::optional<SyncReplicaHistoricalVersionSourceChangeStage>
++        historical_version_source_change_stage;
+     std::optional<std::string> historical_version_failure;
+     std::optional<SyncReplicaStreamConnectReport> ingress_report;
+     std::optional<std::string> ingress_error;
+diff --git a/src/sync_replica_peer_service_status.cpp b/src/sync_replica_peer_service_status.cpp
+index 08b4bb4..216024b 100644
+--- a/src/sync_replica_peer_service_status.cpp
++++ b/src/sync_replica_peer_service_status.cpp
+@@ -434,6 +434,15 @@ void append_historical_version_query(
+     } else {
+         output << "null";
+     }
++    output << ",\"expected_source_cutpoint\":";
++    if (query.expected_source_cutpoint.has_value()) {
++        output << json_quote(
++            encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                *query.expected_source_cutpoint,
++                "historical-version status query source cutpoint"));
++    } else {
++        output << "null";
++    }
+     output << '}';
+ }
+ 
+@@ -449,10 +458,17 @@ void append_historical_version_inventory(
+     output
+         << ",\"source_replica_state_generation\":"
+         << inventory->source_replica_state_generation
++        << ",\"source_operation_set_digest\":"
++        << json_quote(inventory->source_operation_set_digest)
+         << ",\"source_visible_state_digest\":"
+         << json_quote(inventory->source_visible_state_digest)
+         << ",\"source_payload_snapshot_digest\":"
+         << json_quote(inventory->source_payload_snapshot_digest)
++        << ",\"source_cutpoint\":"
++        << json_quote(
++               encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                   inventory->source_cutpoint(),
++                   "historical-version inventory source cutpoint"))
+         << ",\"payload_scan_hashed_entries\":"
+         << inventory->payload_scan_hashed_entry_count
+         << ",\"payload_scan_hashed_bytes\":"
+@@ -576,6 +592,22 @@ void append_historical_version_status(
+     append_historical_version_inventory(output, status.last_inventory);
+     output << ",\"last_restore\":";
+     append_historical_version_restore(output, status.last_restore);
++    output << ",\"last_failure_class\":";
++    if (status.last_failure_class.has_value()) {
++        output << json_quote(
++            sync_replica_peer_service_historical_version_failure_class_name(
++                *status.last_failure_class));
++    } else {
++        output << "null";
++    }
++    output << ",\"last_source_change_stage\":";
++    if (status.last_source_change_stage.has_value()) {
++        output << json_quote(
++            sync_replica_historical_version_source_change_stage_name(
++                *status.last_source_change_stage));
++    } else {
++        output << "null";
++    }
+     output << ",\"last_failure\":";
+     if (status.last_failure.has_value()) {
+         output << json_quote(*status.last_failure);
+@@ -1072,6 +1104,22 @@ std::string render_sync_replica_peer_service_status_json(
+         output << ",\"historical_version_restore\":";
+         append_historical_version_restore(
+             output, step.historical_version_restore);
++        output << ",\"historical_version_failure_class\":";
++        if (step.historical_version_failure_class.has_value()) {
++            output << json_quote(
++                sync_replica_peer_service_historical_version_failure_class_name(
++                    *step.historical_version_failure_class));
++        } else {
++            output << "null";
++        }
++        output << ",\"historical_version_source_change_stage\":";
++        if (step.historical_version_source_change_stage.has_value()) {
++            output << json_quote(
++                sync_replica_historical_version_source_change_stage_name(
++                    *step.historical_version_source_change_stage));
++        } else {
++            output << "null";
++        }
+         output << ",\"historical_version_failure\":";
+         if (step.historical_version_failure.has_value()) {
+             output << json_quote(*step.historical_version_failure);
+diff --git a/src/sync_replica_peer_service_status.hpp b/src/sync_replica_peer_service_status.hpp
+index df16b90..12c4d8b 100644
+--- a/src/sync_replica_peer_service_status.hpp
++++ b/src/sync_replica_peer_service_status.hpp
+@@ -14,7 +14,7 @@
+ namespace anonsync {
+ 
+ inline constexpr std::string_view kSyncReplicaPeerServiceStatusSchema =
+-    "anonsync.peer-service.status.v12";
++    "anonsync.peer-service.status.v13";
+ 
+ // Read-only accounting derived from completed bounded service steps. This is
+ // presentation state, never scheduling or durable authority.
+diff --git a/tests/sync_local_status_socket_test.cpp b/tests/sync_local_status_socket_test.cpp
+index 232d57a..d6b661a 100644
+--- a/tests/sync_local_status_socket_test.cpp
++++ b/tests/sync_local_status_socket_test.cpp
+@@ -105,6 +105,75 @@ void bind_stale_socket_or_throw(const fs::path& path) {
+     (void)::close(descriptor);
+ }
+ 
++std::string raw_local_request_or_throw(
++    const fs::path& path,
++    std::string_view request) {
++    const int descriptor = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
++    if (descriptor < 0) {
++        throw std::runtime_error("raw local request socket() failed");
++    }
++    const auto fail_after_close = [&](std::string message) -> void {
++        const int ignored = ::close(descriptor);
++        (void)ignored;
++        throw std::runtime_error(std::move(message));
++    };
++
++    sockaddr_un address{};
++    address.sun_family = AF_UNIX;
++    const std::string native = path.string();
++    if (native.size() >= sizeof(address.sun_path)) {
++        fail_after_close("raw local request socket path is too long");
++    }
++    std::copy(native.begin(), native.end(), address.sun_path);
++    address.sun_path[native.size()] = '\0';
++    if (::connect(
++            descriptor, reinterpret_cast<const sockaddr*>(&address),
++            sizeof(address)) != 0) {
++        fail_after_close(
++            "raw local request connect failed: " +
++            std::to_string(errno));
++    }
++
++    std::size_t written = 0U;
++    while (written < request.size()) {
++        const ssize_t count = ::write(
++            descriptor, request.data() + written, request.size() - written);
++        if (count < 0 && errno == EINTR) continue;
++        if (count <= 0) {
++            fail_after_close(
++                "raw local request write failed: " +
++                std::to_string(errno));
++        }
++        written += static_cast<std::size_t>(count);
++    }
++    if (::shutdown(descriptor, SHUT_WR) != 0) {
++        fail_after_close(
++            "raw local request shutdown failed: " +
++            std::to_string(errno));
++    }
++
++    std::string response;
++    char buffer[4096];
++    for (;;) {
++        const ssize_t count = ::read(descriptor, buffer, sizeof(buffer));
++        if (count < 0 && errno == EINTR) continue;
++        if (count < 0) {
++            fail_after_close(
++                "raw local request read failed: " +
++                std::to_string(errno));
++        }
++        if (count == 0) break;
++        response.append(buffer, static_cast<std::size_t>(count));
++        if (response.size() > 64U * 1024U) {
++            fail_after_close("raw local response exceeded test bound");
++        }
++    }
++    if (::close(descriptor) != 0) {
++        throw std::runtime_error("raw local request close failed");
++    }
++    return response;
++}
++
+ void require_socket_mode(const fs::path& path, mode_t mode) {
+     struct stat status {};
+     require(::lstat(path.c_str(), &status) == 0, "socket path must exist");
+@@ -132,6 +201,14 @@ int main() {
+         const std::string quarantine_other(64U, 'c');
+         const std::string historical_operation(64U, 'd');
+         const std::string historical_other(64U, 'e');
++        const anonsync::SyncReplicaHistoricalVersionSourceCutpoint
++            historical_source{
++                .operation_set_digest = historical_operation,
++                .payload_snapshot_digest = historical_other,
++            };
++        const std::string historical_source_token = anonsync::
++            encode_sync_replica_historical_version_source_cutpoint_or_throw(
++                historical_source, "local status test historical source");
+ 
+         {
+             anonsync::SyncLocalStatusSocketServer server(
+@@ -346,9 +423,9 @@ int main() {
+                     socket_path, quarantine_expected, quarantine_observed);
+             require(
+                 release_quarantine ==
+-                    "{\"schema\":\"anonsync.local-quarantine-release.response.v1\"," 
+-                    "\"command\":\"quarantine-release\"," 
+-                    "\"terminal_class\":\"accepted\"," 
++                    "{\"schema\":\"anonsync.local-quarantine-release.response.v1\","
++                    "\"command\":\"quarantine-release\","
++                    "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":3,"
+                     "\"expected_content_sha256\":\"" +
+                         quarantine_expected +
+@@ -371,10 +448,10 @@ int main() {
+                     socket_path, quarantine_expected, quarantine_observed);
+             require(
+                 preserve_during_release ==
+-                    "{\"schema\":\"anonsync.local-quarantine.response.v1\"," 
+-                    "\"command\":\"quarantine\"," 
+-                    "\"terminal_class\":\"rejected\"," 
+-                    "\"reason\":\"different_quarantine_pending\"," 
++                    "{\"schema\":\"anonsync.local-quarantine.response.v1\","
++                    "\"command\":\"quarantine\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"different_quarantine_pending\","
+                     "\"request_generation\":3,"
+                     "\"expected_content_sha256\":\"" +
+                         quarantine_expected +
+@@ -408,12 +485,12 @@ int main() {
+             versions_waiter.join();
+             require(
+                 first_versions ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
+-                    "\"command\":\"versions\"," 
+-                    "\"terminal_class\":\"accepted\"," 
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "\"command\":\"versions\","
++                    "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":1,\"maximum_entries\":64,"
+                     "\"canonical_path\":null,\"start_after_operation_id\":null,"
+-                    "\"server_pid\":" +
++                    "\"expected_source_cutpoint\":null,\"server_pid\":" +
+                         process_id + "}",
+                 "historical-version inspection must return exact acceptance");
+             require(
+@@ -439,18 +516,19 @@ int main() {
+                     socket_path);
+             require(
+                 versions_two ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
+-                    "\"command\":\"versions\"," 
+-                    "\"terminal_class\":\"accepted\"," 
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "\"command\":\"versions\","
++                    "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":2,\"maximum_entries\":64,"
+                     "\"canonical_path\":null,\"start_after_operation_id\":null,"
+-                    "\"server_pid\":" +
++                    "\"expected_source_cutpoint\":null,\"server_pid\":" +
+                         process_id + "}",
+                 "same historical inspection must coalesce by generation");
+             anonsync::SyncReplicaHistoricalVersionQuery page_query;
+             page_query.maximum_entries = 7U;
+             page_query.canonical_path = "folder/name with space";
+             page_query.start_after_operation_id = historical_other;
++            page_query.expected_source_cutpoint = historical_source;
+             anonsync::SyncReplicaHistoricalVersionQuery invalid_page =
+                 page_query;
+             invalid_page.maximum_entries = 0U;
+@@ -479,30 +557,65 @@ int main() {
+                             socket_path, invalid_page);
+                 },
+                 "historical query client accepted a malformed cursor");
++            invalid_page = page_query;
++            invalid_page.expected_source_cutpoint =
++                anonsync::SyncReplicaHistoricalVersionSourceCutpoint{
++                    .operation_set_digest = "not-a-digest",
++                    .payload_snapshot_digest = historical_other,
++                };
++            require_throws(
++                [&] {
++                    (void)anonsync::
++                        request_sync_local_status_historical_versions_query_or_throw(
++                            socket_path, invalid_page);
++                },
++                "historical query client accepted a malformed source cutpoint");
+             const std::string changed_page_while_inspection = anonsync::
+                 request_sync_local_status_historical_versions_query_or_throw(
+                     socket_path, page_query);
+             require(
+                 changed_page_while_inspection ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
+-                    "\"command\":\"versions\"," 
+-                    "\"terminal_class\":\"rejected\"," 
+-                    "\"reason\":\"different_historical_version_pending\"," 
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "\"command\":\"versions\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"different_historical_version_pending\","
+                     "\"request_generation\":2,\"maximum_entries\":7,"
+                     "\"canonical_path\":\"folder/name with space\","
+                     "\"start_after_operation_id\":\"" +
+-                        historical_other + "\",\"server_pid\":" +
++                        historical_other +
++                        "\",\"expected_source_cutpoint\":\"" +
++                        historical_source_token + "\",\"server_pid\":" +
+                         process_id + "}",
+                 "a different history page must not overwrite pending work");
++            const std::string legacy_page_while_inspection =
++                raw_local_request_or_throw(
++                    socket_path,
++                    "versions-query 7 "
++                    "666f6c6465722f6e616d652077697468207370616365 " +
++                        historical_other + "\n");
++            require(
++                legacy_page_while_inspection ==
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "\"command\":\"versions\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"different_historical_version_pending\","
++                    "\"request_generation\":2,\"maximum_entries\":7,"
++                    "\"canonical_path\":\"folder/name with space\","
++                    "\"start_after_operation_id\":\"" +
++                        historical_other +
++                        "\",\"expected_source_cutpoint\":null,\"server_pid\":" +
++                        process_id + "}\n",
++                "rev0967 three-field historical query frame was not retained");
++
+             const std::string restore_while_inspection = anonsync::
+                 request_sync_local_status_historical_version_restore_or_throw(
+                     socket_path, historical_operation);
+             require(
+                 restore_while_inspection ==
+-                    "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\"," 
+-                    "\"command\":\"restore\"," 
+-                    "\"terminal_class\":\"rejected\"," 
+-                    "\"reason\":\"different_historical_version_pending\"," 
++                    "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\","
++                    "\"command\":\"restore\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"different_historical_version_pending\","
+                     "\"request_generation\":2,\"operation_id\":\"" +
+                         historical_operation + "\",\"server_pid\":" +
+                         process_id + "}",
+@@ -525,13 +638,15 @@ int main() {
+                     socket_path, page_query);
+             require(
+                 accepted_page ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
+-                    "\"command\":\"versions\"," 
+-                    "\"terminal_class\":\"accepted\"," 
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "\"command\":\"versions\","
++                    "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":3,\"maximum_entries\":7,"
+                     "\"canonical_path\":\"folder/name with space\","
+                     "\"start_after_operation_id\":\"" +
+-                        historical_other + "\",\"server_pid\":" +
++                        historical_other +
++                        "\",\"expected_source_cutpoint\":\"" +
++                        historical_source_token + "\",\"server_pid\":" +
+                         process_id + "}",
+                 "path-scoped cursor page must return exact acceptance");
+             const auto accepted_page_snapshot = server.action_snapshot();
+@@ -549,9 +664,9 @@ int main() {
+                     socket_path, historical_operation);
+             require(
+                 first_restore ==
+-                    "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\"," 
+-                    "\"command\":\"restore\"," 
+-                    "\"terminal_class\":\"accepted\"," 
++                    "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\","
++                    "\"command\":\"restore\","
++                    "\"terminal_class\":\"accepted\","
+                     "\"request_generation\":4,\"operation_id\":\"" +
+                         historical_operation + "\",\"server_pid\":" +
+                         process_id + "}",
+@@ -561,10 +676,10 @@ int main() {
+                     socket_path, historical_other);
+             require(
+                 conflicting_restore ==
+-                    "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\"," 
+-                    "\"command\":\"restore\"," 
+-                    "\"terminal_class\":\"rejected\"," 
+-                    "\"reason\":\"different_historical_version_pending\"," 
++                    "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\","
++                    "\"command\":\"restore\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"different_historical_version_pending\","
+                     "\"request_generation\":4,\"operation_id\":\"" +
+                         historical_other + "\",\"server_pid\":" +
+                         process_id + "}",
+@@ -669,10 +784,10 @@ int main() {
+                     socket_path, quarantine_expected, quarantine_observed);
+             require(
+                 rejected_release ==
+-                    "{\"schema\":\"anonsync.local-quarantine-release.response.v1\"," 
+-                    "\"command\":\"quarantine-release\"," 
+-                    "\"terminal_class\":\"rejected\"," 
+-                    "\"reason\":\"drain_requested\"," 
++                    "{\"schema\":\"anonsync.local-quarantine-release.response.v1\","
++                    "\"command\":\"quarantine-release\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"drain_requested\","
+                     "\"request_generation\":3,"
+                     "\"expected_content_sha256\":\"" +
+                         quarantine_expected +
+@@ -685,13 +800,13 @@ int main() {
+                     socket_path);
+             require(
+                 rejected_versions ==
+-                    "{\"schema\":\"anonsync.local-historical-versions.response.v2\"," 
+-                    "\"command\":\"versions\"," 
+-                    "\"terminal_class\":\"rejected\"," 
+-                    "\"reason\":\"drain_requested\"," 
++                    "{\"schema\":\"anonsync.local-historical-versions.response.v3\","
++                    "\"command\":\"versions\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"drain_requested\","
+                     "\"request_generation\":4,\"maximum_entries\":64,"
+                     "\"canonical_path\":null,\"start_after_operation_id\":null,"
+-                    "\"server_pid\":" +
++                    "\"expected_source_cutpoint\":null,\"server_pid\":" +
+                         process_id + "}",
+                 "historical inspection serialized after drain must be rejected");
+             const std::string rejected_restore = anonsync::
+@@ -699,10 +814,10 @@ int main() {
+                     socket_path, historical_operation);
+             require(
+                 rejected_restore ==
+-                    "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\"," 
+-                    "\"command\":\"restore\"," 
+-                    "\"terminal_class\":\"rejected\"," 
+-                    "\"reason\":\"drain_requested\"," 
++                    "{\"schema\":\"anonsync.local-historical-version-restore.response.v1\","
++                    "\"command\":\"restore\","
++                    "\"terminal_class\":\"rejected\","
++                    "\"reason\":\"drain_requested\","
+                     "\"request_generation\":4,\"operation_id\":\"" +
+                         historical_operation + "\",\"server_pid\":" +
+                         process_id + "}",
+diff --git a/tests/sync_replica_file_payload_store_test.cpp b/tests/sync_replica_file_payload_store_test.cpp
+index edaed1c..ebd90a4 100755
+--- a/tests/sync_replica_file_payload_store_test.cpp
++++ b/tests/sync_replica_file_payload_store_test.cpp
+@@ -1240,7 +1240,7 @@ void test_complete_scan_restarts_one_stale_payload_observation() {
+                         const char original = payload.front();
+                         const char changed =
+                             static_cast<char>(original ^ 0x5AU);
+-                        const auto write_byte = [&](char value) {
++                        const auto write_byte_without_sync = [&](char value) {
+                             ssize_t written;
+                             do {
+                                 written = ::pwrite(
+@@ -1250,6 +1250,14 @@ void test_complete_scan_restarts_one_stale_payload_observation() {
+                                 throw std::runtime_error(
+                                     "stale complete-scan payload write failed");
+                             }
++                        };
++                        try {
++                            // Keep the transient changed byte inside the first
++                            // stale observation. Publishing it through a
++                            // durability cutpoint would permit the retry to
++                            // reject a genuinely current digest mismatch.
++                            write_byte_without_sync(changed);
++                            write_byte_without_sync(original);
+                             int sync_result;
+                             do {
+                                 sync_result = ::fsync(payload_descriptor);
+@@ -1258,10 +1266,6 @@ void test_complete_scan_restarts_one_stale_payload_observation() {
+                                 throw std::runtime_error(
+                                     "stale complete-scan payload fsync failed");
+                             }
+-                        };
+-                        try {
+-                            write_byte(changed);
+-                            write_byte(original);
+                         } catch (...) {
+                             (void)::close(payload_descriptor);
+                             throw;
+diff --git a/tests/sync_replica_folder_scan_owner_test.cpp b/tests/sync_replica_folder_scan_owner_test.cpp
+index 281b3aa..5568c63 100755
+--- a/tests/sync_replica_folder_scan_owner_test.cpp
++++ b/tests/sync_replica_folder_scan_owner_test.cpp
+@@ -5145,6 +5145,8 @@ void test_historical_version_inspection_and_causal_restore() {
+     require(
+         before_restore.source_replica_state_generation ==
+                 fixture.replica.snapshot_or_throw().state_generation &&
++            before_restore.source_operation_set_digest ==
++                fixture.replica.snapshot_or_throw().operation_set_digest &&
+             before_restore.source_visible_state_digest.size() == 64U &&
+             before_restore.source_payload_snapshot_digest.size() == 64U &&
+             before_restore.historical_file_operation_count == 1U &&
+@@ -5221,7 +5223,8 @@ void test_historical_version_inspection_and_causal_restore() {
+         bounded_after.query == anonsync::SyncReplicaHistoricalVersionQuery{
+             .maximum_entries = 1U,
+             .canonical_path = std::nullopt,
+-            .start_after_operation_id = std::nullopt} &&
++            .start_after_operation_id = std::nullopt,
++            .expected_source_cutpoint = std::nullopt} &&
+             bounded_after.historical_file_operation_count == 2U &&
+             bounded_after.historical_file_operation_count_after_cursor == 2U &&
+             bounded_after.payload_present_count == 2U &&
+@@ -5234,10 +5237,31 @@ void test_historical_version_inspection_and_causal_restore() {
+                 std::optional<std::string>(second_operation->operation_id),
+         "historical-version inspection did not bound, order, or cursor superseded causal values deterministically");
+ 
++    const auto bounded_source = bounded_after.source_cutpoint();
++    const std::string bounded_source_token = anonsync::
++        encode_sync_replica_historical_version_source_cutpoint_or_throw(
++            bounded_source, "historical-version test source cutpoint");
++    require(
++        anonsync::
++            decode_sync_replica_historical_version_source_cutpoint_or_throw(
++                bounded_source_token,
++                "historical-version test source cutpoint") == bounded_source &&
++            bounded_source_token.size() == 132U,
++        "historical-version source cutpoint did not round-trip canonically");
++    require_error(
++        [&] {
++            (void)anonsync::
++                decode_sync_replica_historical_version_source_cutpoint_or_throw(
++                    "v1:not-a-source", "historical-version malformed source");
++        },
++        "token framing is invalid",
++        "historical-version source cutpoint accepted malformed framing");
++
+     anonsync::SyncReplicaHistoricalVersionQuery second_page_query;
+     second_page_query.maximum_entries = 1U;
+     second_page_query.start_after_operation_id =
+         *bounded_after.next_start_after_operation_id;
++    second_page_query.expected_source_cutpoint = bounded_source;
+     const auto second_page =
+         scan->inspect_historical_versions_or_throw(second_page_query);
+     require(
+@@ -5254,6 +5278,24 @@ void test_historical_version_inspection_and_causal_restore() {
+             !second_page.entries.front().restore_ready,
+         "historical-version cursor did not expose the exact deterministic second page");
+ 
++    (void)fixture.payload_store.put_payload_or_throw(
++        "unreferenced retained payload");
++    bool caught_payload_source_change = false;
++    try {
++        (void)scan->inspect_historical_versions_or_throw(second_page_query);
++    } catch (const anonsync::SyncReplicaHistoricalVersionSourceChangedError&
++                 error) {
++        caught_payload_source_change = true;
++        require(
++            error.stage() == anonsync::
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    PayloadSnapshot,
++            "changed historical payload namespace reported the wrong failure stage");
++    }
++    require(
++        caught_payload_source_change,
++        "changed historical payload namespace did not fail a bound continuation");
++
+     anonsync::SyncReplicaHistoricalVersionQuery path_query;
+     path_query.maximum_entries = 2U;
+     path_query.canonical_path = std::string(path);
+@@ -5339,6 +5381,28 @@ void test_historical_version_inspection_and_causal_restore() {
+         },
+         "would not change current file bytes",
+         "historical-version restore minted a duplicate value over identical current bytes");
++
++    write_file(fixture.shared_root / path, "version three\n");
++    const auto changed_source_pass = scan->run_convergence_pass_or_throw(
++        Fixture::pass_limits());
++    require(
++        changed_source_pass.local_published_count == 1U,
++        "historical-version source-change fixture did not publish a successor");
++    bool caught_source_change = false;
++    try {
++        (void)scan->inspect_historical_versions_or_throw(second_page_query);
++    } catch (const anonsync::SyncReplicaHistoricalVersionSourceChangedError&
++                 error) {
++        caught_source_change = true;
++        require(
++            error.stage() == anonsync::
++                SyncReplicaHistoricalVersionSourceChangeStage::
++                    OperationSetBeforePayloadObservation,
++            "stale historical-version source pin reported the wrong failure stage");
++    }
++    require(
++        caught_source_change,
++        "stale historical-version source pin did not fail closed before payload observation");
+ }
+ 
+ void test_historical_version_restore_from_tombstone() {
+diff --git a/tools/audit_sync_file_payload_store.py b/tools/audit_sync_file_payload_store.py
+index 69bd679..32bfcd1 100755
+--- a/tools/audit_sync_file_payload_store.py
++++ b/tools/audit_sync_file_payload_store.py
+@@ -134,6 +134,8 @@ REQUIRED = (
+     Path("REVISION_NOTES_rev0966.md"),
+     Path("PAGED_CAUSAL_VERSION_QUERY_AND_GROUPED_PROJECTION_AUDIT_rev0967.md"),
+     Path("REVISION_NOTES_rev0967.md"),
++    Path("EXACT_CAUSAL_HISTORY_SOURCE_CUTPOINT_AUDIT_rev0968.md"),
++    Path("REVISION_NOTES_rev0968.md"),
+ )
+ 
+ 
+@@ -423,6 +425,10 @@ def main() -> int:
+         "PAGED_CAUSAL_VERSION_QUERY_AND_GROUPED_PROJECTION_AUDIT_rev0967.md"
+     ]
+     rev0967_notes = text["REVISION_NOTES_rev0967.md"]
++    source_cutpoint_design = text[
++        "EXACT_CAUSAL_HISTORY_SOURCE_CUTPOINT_AUDIT_rev0968.md"
++    ]
++    rev0968_notes = text["REVISION_NOTES_rev0968.md"]
+     rev0959_verifier_start = verifier.find(
+         "if revision_number is not None and revision_number >= 959:"
+     )
+@@ -522,6 +528,17 @@ def main() -> int:
+         if rev0967_verifier_start >= 0 and rev0967_verifier_end >= 0
+         else ""
+     )
++    rev0968_verifier_start = verifier.find(
++        "if revision_number is not None and revision_number >= 968:"
++    )
++    rev0968_verifier_end = verifier.find(
++        "missing_revision_scoped =", rev0968_verifier_start
++    )
++    rev0968_verifier_block = (
++        verifier[rev0968_verifier_start:rev0968_verifier_end]
++        if rev0968_verifier_start >= 0 and rev0968_verifier_end >= 0
++        else ""
++    )
+     self_text = text["tools/audit_sync_file_payload_store.py"]
+ 
+     historical_version_inspection = last_function_body(
+@@ -4412,7 +4429,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v12"' in peer_status_h
++        '"anonsync.peer-service.status.v13"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -4826,12 +4843,12 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v12"' in peer_status_h
++        '"anonsync.peer-service.status.v13"' in peer_status_h
+         and "observed_content_change_count" in peer_service_h
+         and peer_status.count("observed_content_change_count") >= 2
+-        and '"anonsync.peer-service.status.v12"'
++        and '"anonsync.peer-service.status.v13"'
+         in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v12"'
++        and '"anonsync.peer-service.status.v13"'
+         in service_i2p_ingress_runtime,
+         "status_v10_binds_checkpoint_recheck_quarantine_inventory_and_all_process_oracles",
+         "the schema change prevents older clients or tests from silently missing zero-read active-checkpoint settlement or interpreting pair-scoped persistence as rev0956 target-scoped evidence",
+@@ -5377,8 +5394,8 @@ def main() -> int:
+                 "inotify_init1(IN_CLOEXEC | IN_NONBLOCK)",
+                 "IN_ACCESS",
+                 "32U * 1024U * 1024U",
+-                "write_byte(changed)",
+-                "write_byte(original)",
++                "write_byte_without_sync(changed)",
++                "write_byte_without_sync(original)",
+                 "snapshot.scan_hashed_entry_count() == 1U",
+                 "snapshot.scan_reused_entry_count() == 0U",
+                 "read_file_bytes(payload_path) == payload",
+@@ -6317,7 +6334,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v12"' in peer_status_h
++        '"anonsync.peer-service.status.v13"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -6528,7 +6545,7 @@ def main() -> int:
+                 "payload_quarantine_images_released",
+             )
+         )
+-        and '"anonsync.peer-service.status.v12"' in peer_status_h
++        and '"anonsync.peer-service.status.v13"' in peer_status_h
+         and all(
+             token in peer_status + sync_cli + service_configuration_runtime
+             for token in (
+@@ -6738,7 +6755,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v12"' in peer_status_h
++        '"anonsync.peer-service.status.v13"' in peer_status_h
+         and "SyncReplicaFilePayloadStoreQuarantineInventoryStatus inventory" in peer_service_h
+         and all(
+             token in peer_status
+@@ -6754,8 +6771,8 @@ def main() -> int:
+             )
+         )
+         and "require_payload_quarantine_inventory" in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v12"' in service_configuration_runtime
+-        and '"anonsync.peer-service.status.v12"' in service_i2p_ingress_runtime,
++        and '"anonsync.peer-service.status.v13"' in service_configuration_runtime
++        and '"anonsync.peer-service.status.v13"' in service_i2p_ingress_runtime,
+         "status_v10_exposes_complete_quarantine_inventory_separately_from_last_action_history",
+         "canonical live, terminal, direct, and I2P process surfaces carry bounded observation truth while preserving the existing typed preserve/release result domain",
+     )
+@@ -7448,7 +7465,7 @@ def main() -> int:
+                 "historical_version_completed_generation = target_generation",
+             )
+         )
+-        and '"anonsync.peer-service.status.v12"' in peer_status_h
++        and '"anonsync.peer-service.status.v13"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7506,7 +7523,7 @@ def main() -> int:
+                 "historical-version restore did not converge exact v1 bytes",
+                 '"historical_version_inspections": 3',
+                 '"historical_version_restores": 1',
+-                '"historical_version_failures": 0',
++                '"historical_version_failures": 1',
+             )
+         ),
+         "rev0966_compiled_and_process_regressions_bind_exact_discovery_restore_and_peer_convergence",
+@@ -7664,7 +7681,7 @@ def main() -> int:
+             for token in (
+                 "versions-query LIMIT PATH_HEX",
+                 "kHistoricalVersionsQueryRequestPrefix",
+-                "anonsync.local-historical-versions.response.v2",
++                "anonsync.local-historical-versions.response.v3",
+                 "kMaximumRequestBytes = 16U * 1024U",
+                 "historical_version_pending->query != query",
+                 "request_sync_local_status_historical_versions_query_or_throw",
+@@ -7687,7 +7704,7 @@ def main() -> int:
+     )
+ 
+     require(
+-        '"anonsync.peer-service.status.v12"' in peer_status_h
++        '"anonsync.peer-service.status.v13"' in peer_status_h
+         and all(
+             token in peer_status
+             for token in (
+@@ -7779,6 +7796,253 @@ def main() -> int:
+         "the release verifier requires the query, model, folder owner, socket, service/status, tests, process oracle, audit, records, and package policy from rev0967 onward",
+     )
+ 
++    require(
++        all(
++            token in historical_query_h
++            for token in (
++                "struct SyncReplicaHistoricalVersionSourceCutpoint final",
++                "operation_set_digest",
++                "payload_snapshot_digest",
++                'return "v1:" + cutpoint.operation_set_digest',
++                "constexpr std::size_t encoded_size",
++                "token.starts_with(prefix)",
++                "enum class SyncReplicaHistoricalVersionSourceChangeStage",
++                "OperationSetBeforePayloadObservation",
++                "OperationSetDuringPayloadObservation",
++                "PayloadSnapshot",
++                "class SyncReplicaHistoricalVersionSourceChangedError final",
++                "expected_source_cutpoint",
++            )
++        )
++        and historical_query_h.count(
++            "validate_sync_replica_historical_version_source_cutpoint_or_throw"
++        ) >= 3,
++        "rev0968_source_cutpoint_is_one_strict_versioned_causal_and_payload_token",
++        "one canonical 132-byte v1 token binds exact operation-set and payload-snapshot digests, validates at the shared query boundary, and carries typed drift stages",
++    )
++
++    require(
++        ordered(
++            historical_version_inspection,
++            "state_->replica_owner->snapshot_or_throw()",
++            "expected_source_cutpoint->operation_set_digest",
++            "SyncReplicaModel::restore_or_throw",
++            "cursor is no longer superseded",
++            "state_->payload_store->snapshot_or_throw()",
++            "state_->replica_owner->snapshot_or_throw()",
++            "OperationSetDuringPayloadObservation",
++            "expected_source_cutpoint->payload_snapshot_digest",
++            "SyncReplicaHistoricalVersionSourceChangeStage::PayloadSnapshot",
++            "inventory.source_operation_set_digest",
++        )
++        and "replica_snapshot.state_generation !=" not in historical_version_inspection
++        and "replica_snapshot.state_generation ==" not in historical_version_inspection,
++        "rev0968_bound_pagination_rejects_known_stale_sources_before_payload_work_and_brackets_the_scan",
++        "the exact operation-set pin and semantic cursor are checked before the complete payload observation, a second operation-set digest fences intervening causal change, and unrelated state-generation writes cannot manufacture drift",
++    )
++
++    require(
++        all(
++            token in folder_scan_h + peer_status
++            for token in (
++                "source_operation_set_digest",
++                "source_cutpoint()",
++                "source_payload_snapshot_digest",
++                r'\"source_cutpoint\"',
++                r'\"expected_source_cutpoint\"',
++            )
++        )
++        and '"anonsync.peer-service.status.v13"' in peer_status_h
++        and all(
++            token in peer_status
++            for token in (
++                "last_failure_class",
++                "last_source_change_stage",
++                "sync_replica_peer_service_historical_version_failure_class_name",
++                "sync_replica_historical_version_source_change_stage_name",
++                "historical_version_failure_class",
++                "historical_version_source_change_stage",
++            )
++        ),
++        "rev0968_status_v13_projects_exact_source_identity_and_typed_drift_without_filesystem_work",
++        "live and terminal status render the bound query, canonical source token, exact causal digest, failure class, and source-change stage from cached owner state",
++    )
++
++    require(
++        ordered(
++            historical_version_service_step,
++            "historical_version_last_failure_class.reset()",
++            "inspect_historical_versions_or_throw(",
++            "catch (const SyncReplicaHistoricalVersionSourceChangedError& error)",
++            "SourceChanged",
++            "historical_version_last_source_change_stage = error.stage()",
++            "catch (const std::runtime_error& error)",
++            "OperationFailed",
++        )
++        and all(
++            token in peer_service_h
++            for token in (
++                "SyncReplicaPeerServiceHistoricalVersionFailureClass",
++                "OperationFailed",
++                "SourceChanged",
++                "last_failure_class",
++                "last_source_change_stage",
++            )
++        ),
++        "rev0968_service_classifies_source_drift_without_parsing_prose_or_terminating",
++        "typed source change clears stale results, records its exact stage, and remains distinct from ordinary operator failure in the existing serialized action lane",
++    )
++
++    require(
++        all(
++            token in local_status
++            for token in (
++                "anonsync.local-historical-versions.response.v3",
++                "third_space",
++                "decode_sync_replica_historical_version_source_cutpoint_or_throw",
++                'response << ",\\\"expected_source_cutpoint\\\":"',
++                "source_cutpoint.size()",
++            )
++        )
++        and 'third_space == std::string_view::npos' in local_status
++        and all(
++            token in sync_cli
++            for token in (
++                '"source-cutpoint"',
++                "decode_sync_replica_historical_version_source_cutpoint_or_throw",
++                "--source-cutpoint v1:OPERATION_SET_SHA256:PAYLOAD_SHA256",
++            )
++        ),
++        "rev0968_owner_socket_and_cli_carry_the_exact_token_with_rev0967_request_compatibility",
++        "the strict frame accepts either the old three-field form or one canonical fourth source token, echoes it in v3, and exposes it through the shipping versions command",
++    )
++
++    stale_scan_oracle = function_body(
++        runtime,
++        "void test_complete_scan_restarts_one_stale_payload_observation()",
++    )
++    require(
++        ordered(
++            stale_scan_oracle,
++            "write_byte_without_sync(changed)",
++            "write_byte_without_sync(original)",
++            "::fsync(payload_descriptor)",
++        )
++        and stale_scan_oracle.count("::fsync(payload_descriptor)") == 1,
++        "rev0968_stale_scan_oracle_does_not_publish_a_transient_corrupt_retry_input",
++        "the deterministic race restores byte zero before its sole local durability cutpoint, retaining metadata drift without asking production to ignore a current digest mismatch",
++    )
++
++    require(
++        all(
++            token in folder_scan_runtime
++            for token in (
++                "historical-version source cutpoint did not round-trip canonically",
++                "changed historical payload namespace did not fail a bound continuation",
++                "stale historical-version source pin did not fail closed before payload observation",
++                "OperationSetBeforePayloadObservation",
++                "PayloadSnapshot",
++            )
++        )
++        and all(
++            token in local_status_runtime
++            for token in (
++                "historical_source_token",
++                "expected_source_cutpoint",
++                "historical query client accepted a malformed source cutpoint",
++                "path-scoped cursor page must return exact acceptance",
++            )
++        )
++        and all(
++            token in service_configuration_runtime
++            for token in (
++                "is_canonical_historical_source_cutpoint",
++                "source_operation_set_digest",
++                "historical-version first page omitted its exact source cutpoint",
++                '"--source-cutpoint", page_source_cutpoint',
++                "owner-only stale historical source cutpoint",
++                "operation_set_before_payload_observation",
++                '"historical_version_failures": 1',
++                "typed historical source drift terminated the service",
++                "matching historical step omitted exact ",
++                "source drift:",
++                "historical_version_generation",
++                "historical_version_failure_class",
++                "historical_version_source_change_stage",
++                '"schema": "anonsync.peer-service.status.v13"',
++                '"schema": "anonsync.local-historical-versions.response.v3"',
++            )
++        )
++        and '"anonsync.peer-service.status.v13"' in service_i2p_ingress_runtime,
++        "rev0968_regressions_bind_token_codec_payload_drift_causal_drift_and_real_service_continuation",
++        "focused C++ tests and real process oracles cover canonical framing, both externally inducible drift classes, exact page-token reuse, stable retained failure evidence, transient matching-step coherence, current schemas, and route status compatibility",
++    )
++
++    require(
++        all(
++            token in normalized_prose(source_cutpoint_design)
++            for token in (
++                "Defect found",
++                "Source-cutpoint contract",
++                "Why these two digests",
++                "Observation order and wasted-work correction",
++                "Typed source drift",
++                "Research context",
++                "What this does not prove",
++            )
++        )
++        and all(
++            token in normalized_prose(rev0968_notes)
++            for token in (
++                "--source-cutpoint",
++                "anonsync.peer-service.status.v13",
++                "anonsync.local-historical-versions.response.v3",
++                "state_generation",
++                "Nonclaims",
++            )
++        )
++        and all(
++            token in normalized_prose(readme)
++            for token in (
++                "## Rev0968: exact causal-history page source",
++                "source_cutpoint",
++                "operation_set_digest",
++                "source_changed",
++                "exact browse consistency",
++            )
++        ),
++        "rev0968_records_the_consistency_hole_cost_correction_and_product_nonclaims",
++        "the design audit, revision notes, and README explain why the token binds operation and payload inputs, why stale causal sources fail before the payload scan, and why this is not retention or a cross-owner transaction",
++    )
++
++    require(
++        verifier.count(
++            "if revision_number is not None and revision_number >= 968:"
++        ) == 1
++        and all(
++            token in rev0968_verifier_block
++            for token in (
++                "EXACT_CAUSAL_HISTORY_SOURCE_CUTPOINT_AUDIT_rev0968.md",
++                "REVISION_NOTES_rev0968.md",
++                "src/anonsync_sync.cpp",
++                "src/sync_local_status_socket.cpp",
++                "src/sync_replica_historical_version_query.hpp",
++                "src/sync_replica_folder_scan_owner.cpp",
++                "src/sync_replica_peer_service.cpp",
++                "src/sync_replica_peer_service_status.cpp",
++                "tests/sync_local_status_socket_test.cpp",
++                "tests/sync_replica_file_payload_store_test.cpp",
++                "tests/sync_replica_folder_scan_owner_test.cpp",
++                "tools/test_anonsync_service_configuration_status.py",
++                "tools/test_anonsync_service_i2p_ingress.py",
++                "tools/audit_sync_file_payload_store.py",
++                "tools/verify_release_package.py",
++            )
++        ),
++        "rev0968_package_policy_binds_every_source_cutpoint_surface",
++        "the release verifier requires the token contract, owner implementation, service/status, CLI/socket, regressions, process oracles, audit, records, and package policy from rev0968 onward",
++    )
++
+     bootstrap = (root.parent.parent / "BOOTSTRAPROSE.md").read_text(
+         encoding="utf-8"
+     )
+@@ -7812,6 +8076,16 @@ def main() -> int:
+         "paging and projection changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final rev0967 archive",
+     )
+ 
++    require(
++        "VALIDATION_PENDING_REV0968" not in rev0968_notes
++        and "VALIDATION_PENDING_REV0968" not in readme
++        and "ARCHIVE_PENDING_REV0968" not in bootstrap
++        and "CODENAME_PENDING_REV0968" not in bootstrap
++        and "VALIDATION_PENDING_REV0968" not in bootstrap,
++        "rev0968_final_validation_and_visible_release_cutpoint_are_sealed",
++        "source-cutpoint changes cannot pass the structural audit until exact validation and the visible bootstrap bind the final rev0968 archive",
++    )
++
+     require(
+         "lexical-hygiene-not-semantic-proof" in self_text
+         and "not a semantic proof" in self_text
+diff --git a/tools/test_anonsync_service_configuration_status.py b/tools/test_anonsync_service_configuration_status.py
+index d53f127..891e90e 100644
+--- a/tools/test_anonsync_service_configuration_status.py
++++ b/tools/test_anonsync_service_configuration_status.py
+@@ -321,9 +321,20 @@ def is_canonical_sha256(value: Any) -> bool:
+     )
+ 
+ 
++def is_canonical_historical_source_cutpoint(value: Any) -> bool:
++    if not isinstance(value, str) or len(value) != 132 or not value.startswith("v1:"):
++        return False
++    return (
++        value[67] == ":"
++        and is_canonical_sha256(value[3:67])
++        and is_canonical_sha256(value[68:132])
++    )
++
++
+ def require_historical_version_query(query: Any, label: str) -> None:
+     if not isinstance(query, dict) or set(query) != {
+-        "maximum_entries", "canonical_path", "start_after_operation_id"
++        "maximum_entries", "canonical_path", "start_after_operation_id",
++        "expected_source_cutpoint",
+     }:
+         fail(f"{label} historical query was not canonical")
+     maximum_entries = query.get("maximum_entries")
+@@ -337,6 +348,11 @@ def require_historical_version_query(query: Any, label: str) -> None:
+     cursor = query.get("start_after_operation_id")
+     if cursor is not None and not is_canonical_sha256(cursor):
+         fail(f"{label} historical query cursor was neither digest nor null")
++    source_cutpoint = query.get("expected_source_cutpoint")
++    if source_cutpoint is not None and not is_canonical_historical_source_cutpoint(
++        source_cutpoint
++    ):
++        fail(f"{label} historical query source cutpoint was not canonical")
+ 
+ 
+ def require_historical_version_inventory(
+@@ -347,11 +363,21 @@ def require_historical_version_inventory(
+     query = inventory.get("query")
+     require_historical_version_query(query, label)
+     for digest_field in (
++        "source_operation_set_digest",
+         "source_visible_state_digest",
+         "source_payload_snapshot_digest",
+     ):
+         if not is_canonical_sha256(inventory.get(digest_field)):
+             fail(f"{label} historical inventory omitted {digest_field}")
++    source_cutpoint = inventory.get("source_cutpoint")
++    if not is_canonical_historical_source_cutpoint(source_cutpoint):
++        fail(f"{label} historical inventory omitted canonical source_cutpoint")
++    expected_source_cutpoint = (
++        "v1:" + inventory["source_operation_set_digest"] + ":" +
++        inventory["source_payload_snapshot_digest"]
++    )
++    if source_cutpoint != expected_source_cutpoint:
++        fail(f"{label} historical inventory source token disagreed with digests")
+     for integer_field in (
+         "source_replica_state_generation",
+         "payload_scan_hashed_entries",
+@@ -539,8 +565,25 @@ def require_historical_version_status(
+     if restored is not None:
+         require_historical_version_restore(restored, label)
+     failure = history.get("last_failure")
++    failure_class = history.get("last_failure_class")
++    source_change_stage = history.get("last_source_change_stage")
+     if failure is not None and not isinstance(failure, str):
+         fail(f"{label} historical-version failure was neither string nor null")
++    if failure is None:
++        if failure_class is not None or source_change_stage is not None:
++            fail(f"{label} historical-version status classified no failure")
++    elif failure_class == "operation_failed":
++        if source_change_stage is not None:
++            fail(f"{label} ordinary historical failure invented source drift")
++    elif failure_class == "source_changed":
++        if source_change_stage not in {
++            "operation_set_before_payload_observation",
++            "operation_set_during_payload_observation",
++            "payload_snapshot",
++        }:
++            fail(f"{label} historical source drift omitted its exact stage")
++    else:
++        fail(f"{label} historical-version failure class was invalid")
+ 
+ 
+ def require_payload_operator_status(
+@@ -654,6 +697,33 @@ def require_payload_operator_status(
+             require_payload_quarantine_result(
+                 quarantine_result, f"{label} last-step payload quarantine"
+             )
++        historical_failure = last_step.get("historical_version_failure")
++        historical_failure_class = last_step.get(
++            "historical_version_failure_class"
++        )
++        historical_source_stage = last_step.get(
++            "historical_version_source_change_stage"
++        )
++        if historical_failure is None:
++            if (
++                historical_failure_class is not None
++                or historical_source_stage is not None
++            ):
++                fail(f"{label} last step classified no historical failure")
++        elif not isinstance(historical_failure, str):
++            fail(f"{label} last step historical failure was not a string")
++        elif historical_failure_class == "operation_failed":
++            if historical_source_stage is not None:
++                fail(f"{label} last step ordinary failure invented source drift")
++        elif historical_failure_class == "source_changed":
++            if historical_source_stage not in {
++                "operation_set_before_payload_observation",
++                "operation_set_during_payload_observation",
++                "payload_snapshot",
++            }:
++                fail(f"{label} last step source drift omitted its exact stage")
++        else:
++            fail(f"{label} last step historical failure class was invalid")
+ 
+     recheck = value.get("payload_recheck")
+     if not isinstance(recheck, dict):
+@@ -1044,6 +1114,88 @@ def wait_for_historical_version_completion(
+     fail(f"{label} did not complete: {last_error}{suffix}")
+ 
+ 
++def wait_for_historical_version_source_change(
++    sync: Path,
++    process: subprocess.Popen[str],
++    socket_path: Path,
++    generation: int,
++    expected_stage: str,
++    label: str,
++    *,
++    timeout_seconds: float = 15.0,
++) -> dict[str, Any]:
++    deadline = time.monotonic() + timeout_seconds
++    last_value: dict[str, Any] | None = None
++    last_error = "no status response"
++    while time.monotonic() < deadline:
++        if process.poll() is not None:
++            stdout, stderr = process.communicate(timeout=1.0)
++            fail(
++                f"{label} service exited while waiting for historical source "
++                f"failure generation {generation} with {process.returncode}\n"
++                f"stdout:\n{stdout}\nstderr:\n{stderr}"
++            )
++        try:
++            value = run_json(
++                [
++                    str(sync), "status", "--socket", str(socket_path),
++                    "--timeout-milliseconds", "1000",
++                ],
++                label=f"{label} status query",
++            )
++            last_value = value
++            require_payload_operator_status(value, label)
++            history = value["historical_versions"]
++            if (
++                history.get("completed_generation") == generation
++                and history.get("pending") is False
++                and history.get("action") == "inspect"
++                and history.get("last_inventory") is None
++                and history.get("last_restore") is None
++                and history.get("last_failure_class") == "source_changed"
++                and history.get("last_source_change_stage") == expected_stage
++                and isinstance(history.get("last_failure"), str)
++            ):
++                # Generic last_step is deliberately transient: a completed
++                # history action can be followed immediately by an inbound or
++                # outbound network step. Validate the per-step projection only
++                # when this poll actually catches the matching action generation;
++                # the retained historical_versions object is the stable result.
++                last_step = value.get("last_step")
++                if (
++                    isinstance(last_step, dict)
++                    and last_step.get("historical_version_generation")
++                    == generation
++                    and (
++                        last_step.get("historical_version_failure_class")
++                        != "source_changed"
++                        or last_step.get(
++                            "historical_version_source_change_stage"
++                        ) != expected_stage
++                        or last_step.get("historical_version_failure")
++                        != history.get("last_failure")
++                    )
++                ):
++                    fail(
++                        f"{label} matching historical step omitted exact "
++                        f"source drift: {json.dumps(last_step, sort_keys=True)}"
++                    )
++                return value
++            last_error = (
++                "historical-version state was "
++                f"{json.dumps(history, sort_keys=True)}"
++            )
++        except (FileNotFoundError, OSError, RuntimeError) as error:
++            last_error = str(error)
++        time.sleep(0.02)
++    suffix = (
++        ""
++        if last_value is None
++        else f"; last status={json.dumps(last_value, sort_keys=True)}"
++    )
++    fail(f"{label} did not complete: {last_error}{suffix}")
++
++
+ def receive_notify_until_ready(
+     receiver: socket.socket,
+     process: subprocess.Popen[str],
+@@ -1168,7 +1320,7 @@ def wait_for_status(
+                     label=f"{label} status query",
+                 )
+                 expected = {
+-                    "schema": "anonsync.peer-service.status.v12",
++                    "schema": "anonsync.peer-service.status.v13",
+                     "service_state": "running",
+                     "ready": True,
+                     "configuration_path": str(config_path),
+@@ -2142,13 +2294,14 @@ def main() -> int:
+                 label="owner-only historical-version inspection",
+             )
+             expected_versions_response = {
+-                "schema": "anonsync.local-historical-versions.response.v2",
++                "schema": "anonsync.local-historical-versions.response.v3",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": history_inspection_generation,
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": None,
++                "expected_source_cutpoint": None,
+                 "server_pid": source.pid,
+             }
+             if versions_response != expected_versions_response:
+@@ -2170,6 +2323,7 @@ def main() -> int:
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": None,
++                "expected_source_cutpoint": None,
+             }
+             if inventory.get("query") != expected_initial_history_query:
+                 fail(
+@@ -2284,13 +2438,14 @@ def main() -> int:
+                 label="owner-only historical-version first page",
+             )
+             expected_first_page_response = {
+-                "schema": "anonsync.local-historical-versions.response.v2",
++                "schema": "anonsync.local-historical-versions.response.v3",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": first_page_generation,
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": None,
++                "expected_source_cutpoint": None,
+                 "server_pid": source.pid,
+             }
+             if first_page_response != expected_first_page_response:
+@@ -2312,6 +2467,7 @@ def main() -> int:
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": None,
++                "expected_source_cutpoint": None,
+             }
+             if first_page.get("query") != expected_first_page_query or (
+                 first_page.get("historical_file_operation_count") != 2
+@@ -2330,6 +2486,9 @@ def main() -> int:
+                 first_page["entries"][0]["operation_id"]
+             ):
+                 fail("historical-version first page omitted its exact tail cursor")
++            page_source_cutpoint = first_page.get("source_cutpoint")
++            if not is_canonical_historical_source_cutpoint(page_source_cutpoint):
++                fail("historical-version first page omitted its exact source cutpoint")
+ 
+             second_page_generation = first_page_generation + 1
+             second_page_response = run_json(
+@@ -2337,19 +2496,21 @@ def main() -> int:
+                     str(sync), "versions", "--socket", str(source_status),
+                     "--path", historical_relative_path,
+                     "--after", page_cursor,
++                    "--source-cutpoint", page_source_cutpoint,
+                     "--limit", "1",
+                     "--timeout-milliseconds", "1000",
+                 ],
+                 label="owner-only historical-version second page",
+             )
+             expected_second_page_response = {
+-                "schema": "anonsync.local-historical-versions.response.v2",
++                "schema": "anonsync.local-historical-versions.response.v3",
+                 "command": "versions",
+                 "terminal_class": "accepted",
+                 "request_generation": second_page_generation,
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": page_cursor,
++                "expected_source_cutpoint": page_source_cutpoint,
+                 "server_pid": source.pid,
+             }
+             if second_page_response != expected_second_page_response:
+@@ -2371,6 +2532,7 @@ def main() -> int:
+                 "maximum_entries": 1,
+                 "canonical_path": historical_relative_path,
+                 "start_after_operation_id": page_cursor,
++                "expected_source_cutpoint": page_source_cutpoint,
+             }
+             if second_page.get("query") != expected_second_page_query or (
+                 second_page.get("historical_file_operation_count") != 2
+@@ -2398,16 +2560,89 @@ def main() -> int:
+                     f"{sorted(paged_operation_ids)!r}"
+                 )
+ 
+-            history_counters = second_page_status.get("counters")
++            # The page cursor still names one valid superseded operation, but
++            # another causal successor changes the complete active operation set.
++            # Reusing the old source token must fail before payload observation,
++            # preserve the same daemon, clear stale result objects, and expose
++            # the typed source-change stage through ordinary status.
++            unrelated_drift_relative_path = (
++                "source-side/source-cutpoint-drift.txt"
++            )
++            unrelated_drift_bytes = b"unrelated causal source drift\n"
++            unrelated_drift_path = source_files / unrelated_drift_relative_path
++            if unrelated_drift_path.exists():
++                fail("unrelated historical source-drift fixture already existed")
++            unrelated_drift_path.write_bytes(unrelated_drift_bytes)
++            wait_for_tree_convergence(
++                source_files, receiver_files, unrelated_drift_relative_path,
++                "historical-version unrelated source-cutpoint convergence",
++            )
++            if unrelated_drift_path.read_bytes() != unrelated_drift_bytes or (
++                receiver_files / unrelated_drift_relative_path
++            ).read_bytes() != unrelated_drift_bytes:
++                fail("unrelated historical source drift did not converge exactly")
++
++            stale_source_generation = second_page_generation + 1
++            stale_source_response = run_json(
++                [
++                    str(sync), "versions", "--socket", str(source_status),
++                    "--path", historical_relative_path,
++                    "--after", page_cursor,
++                    "--source-cutpoint", page_source_cutpoint,
++                    "--limit", "1",
++                    "--timeout-milliseconds", "1000",
++                ],
++                label="owner-only stale historical source cutpoint",
++            )
++            expected_stale_source_response = {
++                "schema": "anonsync.local-historical-versions.response.v3",
++                "command": "versions",
++                "terminal_class": "accepted",
++                "request_generation": stale_source_generation,
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": page_cursor,
++                "expected_source_cutpoint": page_source_cutpoint,
++                "server_pid": source.pid,
++            }
++            if stale_source_response != expected_stale_source_response:
++                fail(
++                    "stale historical source acceptance was not exact: "
++                    f"{json.dumps(stale_source_response, sort_keys=True)}"
++                )
++            stale_source_status = wait_for_historical_version_source_change(
++                sync, source, source_status, stale_source_generation,
++                "operation_set_before_payload_observation",
++                "stale historical source cutpoint",
++            )
++            stale_history = stale_source_status["historical_versions"]
++            expected_stale_query = {
++                "maximum_entries": 1,
++                "canonical_path": historical_relative_path,
++                "start_after_operation_id": page_cursor,
++                "expected_source_cutpoint": page_source_cutpoint,
++            }
++            if stale_history.get("query") != expected_stale_query or (
++                "operation set changed before payload observation"
++                not in stale_history.get("last_failure", "")
++            ):
++                fail(
++                    "stale historical source did not preserve exact query and "
++                    f"failure evidence: {json.dumps(stale_history, sort_keys=True)}"
++                )
++            if source.poll() is not None:
++                fail("typed historical source drift terminated the service")
++
++            history_counters = stale_source_status.get("counters")
+             if not isinstance(history_counters, dict):
+                 fail("historical-version restore status omitted counters")
+             expected_history_counters = {
+-                "historical_version_requests_observed": 4,
+-                "historical_version_attempts": 4,
+-                "historical_version_completions": 4,
++                "historical_version_requests_observed": 5,
++                "historical_version_attempts": 5,
++                "historical_version_completions": 5,
+                 "historical_version_inspections": 3,
+                 "historical_version_restores": 1,
+-                "historical_version_failures": 0,
++                "historical_version_failures": 1,
+             }
+             for field, wanted in expected_history_counters.items():
+                 if history_counters.get(field) != wanted:
+@@ -3218,7 +3453,11 @@ def main() -> int:
+             fail("graceful service stop left a status socket behind")
+         source_tree = tree_snapshot(source_files)
+         receiver_tree = tree_snapshot(receiver_files)
+-        if source_tree != receiver_tree or len(source_tree) != 2:
++        if (
++            source_tree != receiver_tree
++            or len(source_tree) != 3
++            or "source-side/source-cutpoint-drift.txt" not in source_tree
++        ):
+             fail(
+                 "config-driven services did not converge exact trees: "
+                 f"source={source_tree}, receiver={receiver_tree}"
+diff --git a/tools/test_anonsync_service_i2p_ingress.py b/tools/test_anonsync_service_i2p_ingress.py
+index 40cdd92..bac6dba 100644
+--- a/tools/test_anonsync_service_i2p_ingress.py
++++ b/tools/test_anonsync_service_i2p_ingress.py
+@@ -559,7 +559,7 @@ def main() -> int:
+                 source,
+                 status_socket,
+                 lambda value: (
+-                    value.get("schema") == "anonsync.peer-service.status.v12"
++                    value.get("schema") == "anonsync.peer-service.status.v13"
+                     and value.get("service_state") == "degraded"
+                     and value.get("ready") is False
+                     and value.get("ingress_transport") == "i2p_sam_accept"
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 7c61dd4..afd825d 100755
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -1387,6 +1387,29 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sync_file_payload_store.py",
+             "tools/verify_release_package.py",
+         })
++    if revision_number is not None and revision_number >= 968:
++        revision_scoped_required.update({
++            "EXACT_CAUSAL_HISTORY_SOURCE_CUTPOINT_AUDIT_rev0968.md",
++            "REVISION_NOTES_rev0968.md",
++            "README.md",
++            "src/anonsync_sync.cpp",
++            "src/sync_local_status_socket.hpp",
++            "src/sync_local_status_socket.cpp",
++            "src/sync_replica_historical_version_query.hpp",
++            "src/sync_replica_folder_scan_owner.hpp",
++            "src/sync_replica_folder_scan_owner.cpp",
++            "src/sync_replica_peer_service.hpp",
++            "src/sync_replica_peer_service.cpp",
++            "src/sync_replica_peer_service_status.hpp",
++            "src/sync_replica_peer_service_status.cpp",
++            "tests/sync_local_status_socket_test.cpp",
++            "tests/sync_replica_file_payload_store_test.cpp",
++            "tests/sync_replica_folder_scan_owner_test.cpp",
++            "tools/test_anonsync_service_configuration_status.py",
++            "tools/test_anonsync_service_i2p_ingress.py",
++            "tools/audit_sync_file_payload_store.py",
++            "tools/verify_release_package.py",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,

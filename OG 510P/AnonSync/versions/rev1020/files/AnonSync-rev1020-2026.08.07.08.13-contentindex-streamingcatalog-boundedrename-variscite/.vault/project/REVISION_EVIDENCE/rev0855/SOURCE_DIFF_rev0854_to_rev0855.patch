@@ -1,0 +1,1026 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 7cf3446..96f2207 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -216,14 +216,22 @@ target_compile_options(anonsync_sqlite_live_backup PRIVATE
+   -Wall -Wextra -Wpedantic)
+ 
+ 
+-# One process- and exact-thread-bound owner now mediates every scoped entry of
+-# sqlite3_db_mutex(). Keeping it independent eliminates divergent local guards
+-# and lets callback-slot claim/install transitions share one recursive mutex
+-# protocol across support, authorizer, busy, and verification owners.
++# SQLite scoped mutation has two deliberately disjoint capabilities. The strict
++# database-mutex witness is FULLMUTEX-only and authorizes retained callback
++# claim/install transitions. The raw busy-timeout gateway receives a separate
++# non-authorizing owner that may admit an externally single-user NOMUTEX handle
++# but still enforces process and exact-thread teardown affinity. Both owners use
++# one shared process-then-thread fail-stop validator.
++set(ANONSYNC_SQLITE_EXECUTION_AFFINITY_SOURCE
++  src/sync_sqlite_execution_affinity.cpp)
+ set(ANONSYNC_SQLITE_DATABASE_MUTEX_GUARD_SOURCE
+   src/sync_sqlite_database_mutex_guard.cpp)
++set(ANONSYNC_SQLITE_BUSY_TIMEOUT_MUTATION_GUARD_SOURCE
++  src/sync_sqlite_busy_timeout_mutation_guard.cpp)
+ add_library(anonsync_sqlite_database_mutex_guard STATIC
+-  ${ANONSYNC_SQLITE_DATABASE_MUTEX_GUARD_SOURCE})
++  ${ANONSYNC_SQLITE_EXECUTION_AFFINITY_SOURCE}
++  ${ANONSYNC_SQLITE_DATABASE_MUTEX_GUARD_SOURCE}
++  ${ANONSYNC_SQLITE_BUSY_TIMEOUT_MUTATION_GUARD_SOURCE})
+ target_include_directories(anonsync_sqlite_database_mutex_guard PUBLIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+ target_link_libraries(anonsync_sqlite_database_mutex_guard PUBLIC
+@@ -853,7 +861,9 @@ foreach(ANONSYNC_INVARIANT_OWNED_SOURCE
+     "${ANONSYNC_SQLITE_SNAPSHOT_MANIFEST_PUBLICATION_SOURCE}"
+     "${ANONSYNC_CANONICAL_PROJECTION_VERIFIER_SOURCE}"
+     "${ANONSYNC_SQLITE_PROJECTION_DECODER_SOURCE}"
++    "${ANONSYNC_SQLITE_EXECUTION_AFFINITY_SOURCE}"
+     "${ANONSYNC_SQLITE_DATABASE_MUTEX_GUARD_SOURCE}"
++    "${ANONSYNC_SQLITE_BUSY_TIMEOUT_MUTATION_GUARD_SOURCE}"
+     "${ANONSYNC_SHA256_DIGEST_SOURCE}"
+     "${ANONSYNC_SQLITE_REPLAY_LEDGER_WRITE_GATE_SOURCE}"
+     "${ANONSYNC_SQLITE_REPLAY_LEDGER_RESTORE_LOCK_SOURCE}"
+diff --git a/src/sync_sqlite_busy_timeout_mutation_guard.cpp b/src/sync_sqlite_busy_timeout_mutation_guard.cpp
+new file mode 100644
+index 0000000..cfdd51e
+--- /dev/null
++++ b/src/sync_sqlite_busy_timeout_mutation_guard.cpp
+@@ -0,0 +1,42 @@
++#include "sync_sqlite_busy_timeout_mutation_guard.hpp"
++
++#include "sync_sqlite_execution_affinity.hpp"
++
++#include <sqlite3.h>
++
++#include <stdexcept>
++#include <string>
++
++namespace anonsync {
++
++SyncSqliteBusyTimeoutMutationGuard::SyncSqliteBusyTimeoutMutationGuard(
++    sqlite3* database,
++    std::string_view label)
++    : process_id_(current_sync_process_incarnation_noexcept()),
++      thread_id_(current_sync_thread_incarnation_noexcept()) {
++    if (database == nullptr) {
++        throw std::invalid_argument(
++            std::string(label) + " database handle is null");
++    }
++    if (label.empty()) {
++        throw std::invalid_argument(
++            "SQLite busy-timeout mutation guard requires a nonempty "
++            "diagnostic label");
++    }
++
++    mutex_ = sqlite3_db_mutex(database);
++    if (mutex_ != nullptr) {
++        sqlite3_mutex_enter(mutex_);
++    }
++}
++
++SyncSqliteBusyTimeoutMutationGuard::~SyncSqliteBusyTimeoutMutationGuard()
++    noexcept {
++    require_current_sync_sqlite_execution_noexcept(process_id_, thread_id_);
++    if (mutex_ != nullptr) {
++        sqlite3_mutex_leave(mutex_);
++        mutex_ = nullptr;
++    }
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_sqlite_busy_timeout_mutation_guard.hpp b/src/sync_sqlite_busy_timeout_mutation_guard.hpp
+new file mode 100644
+index 0000000..14d4ab9
+--- /dev/null
++++ b/src/sync_sqlite_busy_timeout_mutation_guard.hpp
+@@ -0,0 +1,43 @@
++#pragma once
++
++#include "sync_process_incarnation.hpp"
++#include "sync_thread_incarnation.hpp"
++
++#include <string_view>
++
++struct sqlite3;
++struct sqlite3_mutex;
++
++namespace anonsync {
++
++// Narrow process- and exact-thread-bound fence for the raw
++// sqlite3_busy_timeout() compatibility gateway. A FULLMUTEX connection is
++// serialized through its recursive database mutex. A NOMUTEX connection owns
++// no SQLite mutex and is admitted only under SQLite's external single-user
++// contract, but the guard's C++ lifetime remains process/thread affine.
++//
++// This type intentionally exposes no authorizes(), mutex identity, or transfer
++// operation. It cannot satisfy the retained-callback claim interface and must
++// not be confused with SyncSqliteDatabaseMutexGuard authority.
++class SyncSqliteBusyTimeoutMutationGuard final {
++public:
++    SyncSqliteBusyTimeoutMutationGuard(sqlite3* database,
++                                       std::string_view label);
++    ~SyncSqliteBusyTimeoutMutationGuard() noexcept;
++
++    SyncSqliteBusyTimeoutMutationGuard(
++        const SyncSqliteBusyTimeoutMutationGuard&) = delete;
++    SyncSqliteBusyTimeoutMutationGuard& operator=(
++        const SyncSqliteBusyTimeoutMutationGuard&) = delete;
++    SyncSqliteBusyTimeoutMutationGuard(
++        SyncSqliteBusyTimeoutMutationGuard&&) = delete;
++    SyncSqliteBusyTimeoutMutationGuard& operator=(
++        SyncSqliteBusyTimeoutMutationGuard&&) = delete;
++
++private:
++    sqlite3_mutex* mutex_ = nullptr;
++    SyncProcessIncarnation process_id_;
++    SyncThreadIncarnation thread_id_;
++};
++
++}  // namespace anonsync
+diff --git a/src/sync_sqlite_database_mutex_guard.cpp b/src/sync_sqlite_database_mutex_guard.cpp
+index 0d70444..f306453 100644
+--- a/src/sync_sqlite_database_mutex_guard.cpp
++++ b/src/sync_sqlite_database_mutex_guard.cpp
+@@ -1,5 +1,7 @@
+ #include "sync_sqlite_database_mutex_guard.hpp"
+ 
++#include "sync_sqlite_execution_affinity.hpp"
++
+ #include <sqlite3.h>
+ 
+ #include <stdexcept>
+@@ -17,8 +19,7 @@ namespace {
+ 
+ SyncSqliteDatabaseMutexGuard::SyncSqliteDatabaseMutexGuard(
+     sqlite3* database,
+-    std::string_view label,
+-    SyncSqliteDatabaseMutexRequirement requirement)
++    std::string_view label)
+     : database_(database),
+       process_id_(current_sync_process_incarnation_noexcept()),
+       thread_id_(current_sync_thread_incarnation_noexcept()) {
+@@ -33,13 +34,9 @@ SyncSqliteDatabaseMutexGuard::SyncSqliteDatabaseMutexGuard(
+ 
+     mutex_ = sqlite3_db_mutex(database);
+     if (mutex_ == nullptr) {
+-        if (requirement ==
+-            SyncSqliteDatabaseMutexRequirement::RequireSerialized) {
+-            throw std::runtime_error(
+-                std::string(label) +
+-                " requires a serialized/FULLMUTEX SQLite connection");
+-        }
+-        return;
++        throw std::runtime_error(
++            std::string(label) +
++            " requires a serialized/FULLMUTEX SQLite connection");
+     }
+ 
+     // SQLite's per-connection mutex is recursive in serialized mode, so an
+@@ -65,10 +62,11 @@ SyncSqliteDatabaseMutexGuard::SyncSqliteDatabaseMutexGuard(
+ }
+ 
+ SyncSqliteDatabaseMutexGuard::~SyncSqliteDatabaseMutexGuard() noexcept {
+-    if (mutex_ == nullptr) return;
+     require_current_execution_noexcept();
+-    sqlite3_mutex_leave(mutex_);
+-    mutex_ = nullptr;
++    if (mutex_ != nullptr) {
++        sqlite3_mutex_leave(mutex_);
++        mutex_ = nullptr;
++    }
+     database_ = nullptr;
+ }
+ 
+@@ -100,14 +98,7 @@ sqlite3_mutex* SyncSqliteDatabaseMutexGuard::release() noexcept {
+ 
+ void SyncSqliteDatabaseMutexGuard::require_current_execution_noexcept() const
+     noexcept {
+-    if (!process_id_.valid() ||
+-        !sync_process_incarnation_is_current(process_id_)) {
+-        fail_stop_on_sync_process_capability_violation_noexcept();
+-    }
+-    if (!thread_id_.valid() ||
+-        !sync_thread_incarnation_is_current(thread_id_)) {
+-        fail_stop_on_sync_thread_capability_violation_noexcept();
+-    }
++    require_current_sync_sqlite_execution_noexcept(process_id_, thread_id_);
+ }
+ 
+ }  // namespace anonsync
+diff --git a/src/sync_sqlite_database_mutex_guard.hpp b/src/sync_sqlite_database_mutex_guard.hpp
+index 60651d3..c67b3c5 100644
+--- a/src/sync_sqlite_database_mutex_guard.hpp
++++ b/src/sync_sqlite_database_mutex_guard.hpp
+@@ -10,16 +10,6 @@ struct sqlite3_mutex;
+ 
+ namespace anonsync {
+ 
+-// Whether a scoped SQLite operation requires the per-connection recursive
+-// mutex. Retained callback owners and connection authority always require a
+-// serialized/FULLMUTEX handle. The raw busy-timeout compatibility gateway also
+-// admits SQLite's documented single-user NOMUTEX lane, where the mutex pointer
+-// is absent and this guard intentionally owns no entry.
+-enum class SyncSqliteDatabaseMutexRequirement {
+-    RequireSerialized,
+-    PermitUnserialized,
+-};
+-
+ // Selects the allocation-free destructor/teardown lane. Invalid input or a
+ // missing serialized mutex is a lifetime-protocol violation and fails stopped
+ // rather than throwing across a noexcept boundary.
+@@ -33,17 +23,18 @@ inline constexpr SyncSqliteDatabaseMutexFailStopTag
+ // or thread boundary; the typed database-generation owners remain responsible
+ // for rejecting an inherited raw sqlite3* before constructing a new guard.
+ //
++// This owner is deliberately serialized/FULLMUTEX-only. The narrow raw
++// busy-timeout compatibility lane has a separate type that cannot authorize a
++// retained callback claim or transfer a mutex entry.
++//
+ // The throwing constructor is used at ordinary API boundaries. The fail-stop
+ // constructor is reserved for noexcept teardown after a live owner has already
+ // proved that its database is serialized. release() transfers the exact mutex
+ // entry to a longer-lived typed lease; every other path leaves it on scope exit.
+ class SyncSqliteDatabaseMutexGuard final {
+ public:
+-    SyncSqliteDatabaseMutexGuard(
+-        sqlite3* database,
+-        std::string_view label,
+-        SyncSqliteDatabaseMutexRequirement requirement =
+-            SyncSqliteDatabaseMutexRequirement::RequireSerialized);
++    SyncSqliteDatabaseMutexGuard(sqlite3* database,
++                                 std::string_view label);
+ 
+     SyncSqliteDatabaseMutexGuard(
+         sqlite3* database,
+@@ -64,12 +55,10 @@ public:
+ 
+     // True only while this object owns the serialized mutex entry for the
+     // exact database handle. This is the compile-time witness consumed by
+-    // singleton callback-claim mutations. The explicit NOMUTEX compatibility
+-    // lane never authorizes retained callback publication.
++    // singleton callback-claim mutations.
+     [[nodiscard]] bool authorizes(sqlite3* database) const noexcept;
+ 
+-    // Transfer the entered recursive mutex to a typed retained lease. Calling
+-    // this on the NOMUTEX compatibility lane is a fatal protocol error.
++    // Transfer the entered recursive mutex to a typed retained lease.
+     [[nodiscard]] sqlite3_mutex* release() noexcept;
+ 
+ private:
+diff --git a/src/sync_sqlite_execution_affinity.cpp b/src/sync_sqlite_execution_affinity.cpp
+new file mode 100644
+index 0000000..4bea1d2
+--- /dev/null
++++ b/src/sync_sqlite_execution_affinity.cpp
+@@ -0,0 +1,18 @@
++#include "sync_sqlite_execution_affinity.hpp"
++
++namespace anonsync {
++
++void require_current_sync_sqlite_execution_noexcept(
++    SyncProcessIncarnation process_id,
++    SyncThreadIncarnation thread_id) noexcept {
++    if (!process_id.valid() ||
++        !sync_process_incarnation_is_current(process_id)) {
++        fail_stop_on_sync_process_capability_violation_noexcept();
++    }
++    if (!thread_id.valid() ||
++        !sync_thread_incarnation_is_current(thread_id)) {
++        fail_stop_on_sync_thread_capability_violation_noexcept();
++    }
++}
++
++}  // namespace anonsync
+diff --git a/src/sync_sqlite_execution_affinity.hpp b/src/sync_sqlite_execution_affinity.hpp
+new file mode 100644
+index 0000000..7ea82fc
+--- /dev/null
++++ b/src/sync_sqlite_execution_affinity.hpp
+@@ -0,0 +1,16 @@
++#pragma once
++
++#include "sync_process_incarnation.hpp"
++#include "sync_thread_incarnation.hpp"
++
++namespace anonsync {
++
++// Shared fail-stop validation for SQLite owners whose lifetime is bound to the
++// process and exact C++ thread that acquired an SQLite-owned resource. Process
++// lineage is checked first because a fork descendant must reject copied thread
++// storage before interpreting it as a live thread capability.
++void require_current_sync_sqlite_execution_noexcept(
++    SyncProcessIncarnation process_id,
++    SyncThreadIncarnation thread_id) noexcept;
++
++}  // namespace anonsync
+diff --git a/src/sync_sqlite_support.cpp b/src/sync_sqlite_support.cpp
+index b3cb8a5..dedf3db 100644
+--- a/src/sync_sqlite_support.cpp
++++ b/src/sync_sqlite_support.cpp
+@@ -1,6 +1,7 @@
+ #include "sync_sqlite_support.hpp"
+ 
+ #include "persistence/sqlite_retained_callback_slots.hpp"
++#include "sync_sqlite_busy_timeout_mutation_guard.hpp"
+ #include "sync_sqlite_database_mutex_guard.hpp"
+ #include "sqlite_exact_value.hpp"
+ 
+@@ -204,10 +205,8 @@ void sqlite_set_busy_timeout_or_throw(sqlite3* db,
+             label + ": busy timeout must be nonnegative milliseconds");
+     }
+ 
+-    SyncSqliteDatabaseMutexGuard database_mutex(
+-        db,
+-        label + " busy-timeout replacement fence",
+-        SyncSqliteDatabaseMutexRequirement::PermitUnserialized);
++    SyncSqliteBusyTimeoutMutationGuard mutation_guard(
++        db, label + " busy-timeout replacement fence");
+     if (sqlite3_get_clientdata(
+             db,
+             persistence::kSqliteBusyHandlerOwnerClientDataName) != nullptr) {
+diff --git a/tests/sqlite_process_authority_fork_test.cpp b/tests/sqlite_process_authority_fork_test.cpp
+index 6a278c7..92332ec 100644
+--- a/tests/sqlite_process_authority_fork_test.cpp
++++ b/tests/sqlite_process_authority_fork_test.cpp
+@@ -1,7 +1,9 @@
+ #if !defined(_WIN32)
+ #include "inherited_test_process.hpp"
+ #endif
++#include "sync_sqlite_busy_timeout_mutation_guard.hpp"
+ #include "sync_sqlite_connection_authority.hpp"
++#include "sync_sqlite_database_mutex_guard.hpp"
+ #include "sync_sqlite_support.hpp"
+ 
+ #include <chrono>
+@@ -12,6 +14,7 @@
+ #include <memory>
+ #include <stdexcept>
+ #include <string>
++#include <thread>
+ #include <type_traits>
+ #include <utility>
+ 
+@@ -149,6 +152,74 @@ void require_child_success(TestState& test,
+         test, 0, std::forward<Function>(function), label);
+ }
+ 
++void test_busy_timeout_mutation_guard_execution_affinity(TestState& test) {
++    require_child_fail_stop(
++        test,
++        [] {
++            sqlite3* raw_database = nullptr;
++            const int result = sqlite3_open_v2(
++                ":memory:",
++                &raw_database,
++                SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
++                    SQLITE_OPEN_NOMUTEX,
++                nullptr);
++            if (result != SQLITE_OK || raw_database == nullptr) {
++                if (raw_database != nullptr) sqlite3_close(raw_database);
++                throw std::runtime_error(
++                    "foreign-thread NOMUTEX fixture open failed");
++            }
++            std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database(
++                raw_database, sqlite3_close);
++            auto* guard = new SyncSqliteBusyTimeoutMutationGuard(
++                database.get(),
++                "foreign-thread NOMUTEX busy-timeout mutation");
++            std::thread worker([guard] { delete guard; });
++            worker.join();
++        },
++        "foreign-thread NOMUTEX busy-timeout guard destruction fails stopped");
++
++    sqlite3* raw_database = nullptr;
++    const int result = sqlite3_open_v2(
++        ":memory:",
++        &raw_database,
++        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
++        nullptr);
++    if (result != SQLITE_OK || raw_database == nullptr) {
++        if (raw_database != nullptr) sqlite3_close(raw_database);
++        throw std::runtime_error(
++            "inherited NOMUTEX fixture open failed");
++    }
++    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> database(
++        raw_database, sqlite3_close);
++    auto guard = std::make_unique<SyncSqliteBusyTimeoutMutationGuard>(
++        database.get(), "inherited NOMUTEX busy-timeout mutation");
++    require_child_fail_stop(
++        test,
++        [&] { guard.reset(); },
++        "inherited NOMUTEX busy-timeout guard destruction fails stopped");
++    guard.reset();
++    test.require(true,
++                 "parent destroys its NOMUTEX busy-timeout guard normally");
++
++    require_child_fail_stop(
++        test,
++        [] {
++            SyncSqliteDb child_database =
++                open_memory_database_or_throw("released mutex guard fixture");
++            auto* released_guard = new SyncSqliteDatabaseMutexGuard(
++                child_database.db, "released mutex guard affinity");
++            sqlite3_mutex* const retained_mutex = released_guard->release();
++            if (retained_mutex == nullptr) {
++                throw std::runtime_error(
++                    "released mutex guard returned a null mutex");
++            }
++            std::thread worker([released_guard] { delete released_guard; });
++            worker.join();
++            sqlite3_mutex_leave(retained_mutex);
++        },
++        "released database-mutex guard destruction remains thread affine");
++}
++
+ void test_process_bound_handle_slots(TestState& test) {
+     SyncSqliteDb database = open_memory_database_or_throw("owner fixture");
+     sqlite_exec_or_throw(database.db,
+@@ -470,6 +541,12 @@ void test_process_bound_authority_and_transaction(TestState& test) {
+ 
+ #else
+ 
++void test_busy_timeout_mutation_guard_execution_affinity(TestState& test) {
++    test.require(
++        true,
++        "SQLite mutation-guard affinity tests are not supported on this platform");
++}
++
+ void test_process_bound_handle_slots(TestState& test) {
+     test.require(true, "fork handle-slot tests are not supported on this platform");
+ }
+@@ -489,6 +566,7 @@ void test_process_bound_authority_and_transaction(TestState& test) {
+ int main() {
+     TestState test;
+     try {
++        test_busy_timeout_mutation_guard_execution_affinity(test);
+         test_process_bound_handle_slots(test);
+         test_strict_owner_generation_close(test);
+         test_process_bound_authority_and_transaction(test);
+diff --git a/tests/sqlite_support_test.cpp b/tests/sqlite_support_test.cpp
+index 413ea21..bb32698 100644
+--- a/tests/sqlite_support_test.cpp
++++ b/tests/sqlite_support_test.cpp
+@@ -1,8 +1,10 @@
++#include "sync_sqlite_busy_timeout_mutation_guard.hpp"
+ #include "sync_sqlite_database_mutex_guard.hpp"
+ #include "sync_sqlite_support.hpp"
+ 
+ #include <atomic>
+ #include <chrono>
++#include <concepts>
+ #include <cstdint>
+ #include <iostream>
+ #include <limits>
+@@ -15,6 +17,25 @@
+ 
+ namespace {
+ 
++template <typename T>
++concept RetainedCallbackMutexWitness = requires(const T& value, sqlite3* db) {
++    { value.authorizes(db) } -> std::same_as<bool>;
++};
++
++template <typename T>
++concept TransferableSqliteMutexEntry = requires(T& value) {
++    { value.release() } -> std::same_as<sqlite3_mutex*>;
++};
++
++static_assert(RetainedCallbackMutexWitness<
++              anonsync::SyncSqliteDatabaseMutexGuard>);
++static_assert(TransferableSqliteMutexEntry<
++              anonsync::SyncSqliteDatabaseMutexGuard>);
++static_assert(!RetainedCallbackMutexWitness<
++              anonsync::SyncSqliteBusyTimeoutMutationGuard>);
++static_assert(!TransferableSqliteMutexEntry<
++              anonsync::SyncSqliteBusyTimeoutMutationGuard>);
++
+ struct TestState {
+     std::uint64_t passed = 0;
+     std::uint64_t failed = 0;
+@@ -91,6 +112,12 @@ int main() {
+         static_assert(
+             !std::is_move_constructible_v<
+                 anonsync::SyncSqliteDatabaseMutexGuard>);
++        static_assert(
++            !std::is_copy_constructible_v<
++                anonsync::SyncSqliteBusyTimeoutMutationGuard>);
++        static_assert(
++            !std::is_move_constructible_v<
++                anonsync::SyncSqliteBusyTimeoutMutationGuard>);
+         test.require_throws(
+             [] {
+                 anonsync::SyncSqliteDatabaseMutexGuard guard(
+@@ -102,6 +129,17 @@ int main() {
+                 anonsync::SyncSqliteDatabaseMutexGuard guard(db.db, "");
+             },
+             "database mutex guard requires a diagnostic label");
++        test.require_throws(
++            [] {
++                anonsync::SyncSqliteBusyTimeoutMutationGuard guard(
++                    nullptr, "sqlite support null busy-timeout mutation");
++            },
++            "busy-timeout mutation guard rejects a null database");
++        test.require_throws(
++            [&] {
++                anonsync::SyncSqliteBusyTimeoutMutationGuard guard(db.db, "");
++            },
++            "busy-timeout mutation guard requires a diagnostic label");
+         {
+             anonsync::SyncSqliteDatabaseMutexGuard outer(
+                 db.db, "sqlite support outer database mutex");
+@@ -210,15 +248,12 @@ int main() {
+                 },
+                 "strict database mutex guard rejects a NOMUTEX connection");
+             {
+-                anonsync::SyncSqliteDatabaseMutexGuard compatibility(
++                anonsync::SyncSqliteBusyTimeoutMutationGuard compatibility(
+                     nomutex.get(),
+-                    "sqlite support permitted NOMUTEX database mutex",
+-                    anonsync::SyncSqliteDatabaseMutexRequirement::
+-                        PermitUnserialized);
++                    "sqlite support permitted NOMUTEX busy-timeout mutation");
+                 test.require(
+-                    !compatibility.owns_mutex() &&
+-                        compatibility.mutex_identity() == nullptr,
+-                    "explicit NOMUTEX compatibility guard owns no mutex entry");
++                    true,
++                    "narrow NOMUTEX busy-timeout mutation guard remains usable");
+             }
+             anonsync::sqlite_set_busy_timeout_or_throw(
+                 nomutex.get(), 19, "sqlite support NOMUTEX busy timeout");
+diff --git a/tools/audit_sqlite_busy_handler_owner.py b/tools/audit_sqlite_busy_handler_owner.py
+index cd343d4..c4ce3ff 100755
+--- a/tools/audit_sqlite_busy_handler_owner.py
++++ b/tools/audit_sqlite_busy_handler_owner.py
+@@ -30,7 +30,11 @@ def inventory(root: Path, token: str) -> dict[str, int]:
+     for path in sorted((root / "src").rglob("*")):
+         if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
+             continue
+-        count = path.read_text(encoding="utf-8", errors="strict").count(token)
++        text = path.read_text(encoding="utf-8", errors="strict")
++        # Function-call inventories are code-shape checks. Documentation must
++        # not create a false production call site merely by naming the API.
++        code = "\n".join(line.split("//", 1)[0] for line in text.splitlines())
++        count = code.count(token)
+         if count:
+             result[path.relative_to(root).as_posix()] = count
+     return result
+@@ -83,11 +87,16 @@ def main() -> int:
+         Path("tools/verify_release_package.py"),
+         Path("src/persistence/sqlite_verification_budget.cpp"),
+         Path("src/persistence/sqlite_authorizer_owner.cpp"),
++        Path("src/sync_sqlite_busy_timeout_mutation_guard.hpp"),
++        Path("src/sync_sqlite_busy_timeout_mutation_guard.cpp"),
++        Path("src/sync_sqlite_execution_affinity.hpp"),
++        Path("src/sync_sqlite_execution_affinity.cpp"),
++        Path("tests/sqlite_process_authority_fork_test.cpp"),
+     ]
+     missing = [path.as_posix() for path in required if not (root / path).is_file()]
+     if missing:
+         payload = {
+-            "format": "anonsync-sqlite-busy-handler-owner-audit-v4",
++            "format": "anonsync-sqlite-busy-handler-owner-audit-v5",
+             "passed": False,
+             "missing": missing,
+         }
+@@ -114,6 +123,18 @@ def main() -> int:
+     verifier = (root / required[13]).read_text(encoding="utf-8")
+     verification_owner = (root / required[14]).read_text(encoding="utf-8")
+     authorizer_owner = (root / required[15]).read_text(encoding="utf-8")
++    timeout_guard_header = (
++        root / "src/sync_sqlite_busy_timeout_mutation_guard.hpp"
++    ).read_text(encoding="utf-8")
++    timeout_guard_owner = (
++        root / "src/sync_sqlite_busy_timeout_mutation_guard.cpp"
++    ).read_text(encoding="utf-8")
++    execution_affinity = (
++        root / "src/sync_sqlite_execution_affinity.cpp"
++    ).read_text(encoding="utf-8")
++    shared_process_test = (
++        root / "tests/sqlite_process_authority_fork_test.cpp"
++    ).read_text(encoding="utf-8")
+ 
+     sanitizer_block = cmake.split(
+         'if(ANONSYNC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")',
+@@ -198,7 +219,14 @@ def main() -> int:
+             '"tools/audit_sqlite_busy_handler_owner.py"',
+         ))
+         and "revision_number >= 849" in verifier
+-        and "revision_number >= 853" in verifier,
++        and "revision_number >= 853" in verifier
++        and "revision_number >= 855" in verifier
++        and all(token in verifier for token in (
++            '"src/sync_sqlite_busy_timeout_mutation_guard.hpp"',
++            '"src/sync_sqlite_busy_timeout_mutation_guard.cpp"',
++            '"src/sync_sqlite_execution_affinity.hpp"',
++            '"src/sync_sqlite_execution_affinity.cpp"',
++        )),
+         "release_verifier_requires_owner_and_proofs",
+         "rev0849+ retains the owner proof set and rev0853+ also requires the shared callback-slot protocol while older parents remain verifiable",
+     )
+@@ -347,20 +375,47 @@ def main() -> int:
+             "void sqlite_set_busy_timeout_or_throw(SyncSqliteDbHandleSlot& db",
+         ))
+         and all(token in support_owner for token in (
+-            '#include "sync_sqlite_database_mutex_guard.hpp"',
+-            "SyncSqliteDatabaseMutexGuard database_mutex(",
+-            "SyncSqliteDatabaseMutexRequirement::PermitUnserialized",
++            '#include "sync_sqlite_busy_timeout_mutation_guard.hpp"',
++            "SyncSqliteBusyTimeoutMutationGuard mutation_guard(",
+         ))
+         and ordered(
+             support_owner,
+             "void sqlite_set_busy_timeout_or_throw(sqlite3* db",
+-            "SyncSqliteDatabaseMutexGuard database_mutex(",
++            "SyncSqliteBusyTimeoutMutationGuard mutation_guard(",
+             "sqlite3_get_clientdata(",
+             "persistence::kSqliteBusyHandlerOwnerClientDataName",
+             "sqlite3_busy_timeout(db, milliseconds)",
+         ),
+-        "alternate_setter_probe_and_mutation_share_connection_mutex",
+-        "a serialized caller cannot interleave owner attachment between the claim probe and timeout replacement",
++        "alternate_setter_probe_and_mutation_share_narrow_fence",
++        "the ownership probe and timeout replacement share one non-authorizing process/thread-bound mutation fence",
++    )
++    add(
++        checks,
++        all(token in timeout_guard_header for token in (
++            "class SyncSqliteBusyTimeoutMutationGuard final",
++            "SyncSqliteBusyTimeoutMutationGuard&&) = delete",
++            "SyncProcessIncarnation process_id_",
++            "SyncThreadIncarnation thread_id_",
++        ))
++        and "bool authorizes" not in timeout_guard_header
++        and "sqlite3_mutex* release" not in timeout_guard_header
++        and ordered(
++            timeout_guard_owner,
++            "SyncSqliteBusyTimeoutMutationGuard::~SyncSqliteBusyTimeoutMutationGuard()",
++            "require_current_sync_sqlite_execution_noexcept",
++            "sqlite3_mutex_leave",
++        )
++        and ordered(
++            execution_affinity,
++            "sync_process_incarnation_is_current",
++            "sync_thread_incarnation_is_current",
++        )
++        and all(marker in shared_process_test for marker in (
++            "foreign-thread NOMUTEX busy-timeout guard destruction fails stopped",
++            "inherited NOMUTEX busy-timeout guard destruction fails stopped",
++        )),
++        "busy_timeout_compatibility_guard_is_narrow_and_affine",
++        "NOMUTEX compatibility carries no callback or transfer authority and cannot cross a process or exact-thread lifetime",
+     )
+     add(
+         checks,
+@@ -541,7 +596,7 @@ def main() -> int:
+ 
+     passed = all(check.passed for check in checks)
+     payload = {
+-        "format": "anonsync-sqlite-busy-handler-owner-audit-v4",
++        "format": "anonsync-sqlite-busy-handler-owner-audit-v5",
+         "passed": passed,
+         "check_count": len(checks),
+         "passed_check_count": sum(check.passed for check in checks),
+diff --git a/tools/audit_sqlite_mutex_capability.py b/tools/audit_sqlite_mutex_capability.py
+index 7f7b620..891914e 100644
+--- a/tools/audit_sqlite_mutex_capability.py
++++ b/tools/audit_sqlite_mutex_capability.py
+@@ -23,8 +23,12 @@ SENSITIVE_FILES = (
+     Path("src/sync_thread_incarnation.cpp"),
+     Path("src/sync_sqlite_mutex_capability.hpp"),
+     Path("src/sync_sqlite_mutex_capability.cpp"),
++    Path("src/sync_sqlite_execution_affinity.hpp"),
++    Path("src/sync_sqlite_execution_affinity.cpp"),
+     Path("src/sync_sqlite_database_mutex_guard.hpp"),
+     Path("src/sync_sqlite_database_mutex_guard.cpp"),
++    Path("src/sync_sqlite_busy_timeout_mutation_guard.hpp"),
++    Path("src/sync_sqlite_busy_timeout_mutation_guard.cpp"),
+     Path("src/persistence/sqlite_retained_callback_claim.hpp"),
+     Path("src/persistence/sqlite_retained_callback_claim.cpp"),
+     Path("src/persistence/sqlite_retained_callback_slots.hpp"),
+@@ -42,6 +46,7 @@ SENSITIVE_FILES = (
+     Path("src/sync_sqlite_support.cpp"),
+     Path("tests/thread_incarnation_tests.cpp"),
+     Path("tests/sqlite_connection_authority_test.cpp"),
++    Path("tests/sqlite_process_authority_fork_test.cpp"),
+     Path("tests/sqlite_support_test.cpp"),
+     Path("tests/persistence/sqlite_busy_handler_owner_tests.cpp"),
+     Path("tests/persistence/sqlite_verification_budget_tests.cpp"),
+@@ -161,7 +166,7 @@ def main() -> int:
+     missing = [path.as_posix() for path in SENSITIVE_FILES if not (root / path).is_file()]
+     if missing:
+         report = {
+-            "format": "anonsync-sqlite-mutex-capability-audit-v4",
++            "format": "anonsync-sqlite-mutex-capability-audit-v5",
+             "passed": False,
+             "violations": [f"missing sensitive file: {path}" for path in missing],
+         }
+@@ -181,8 +186,16 @@ def main() -> int:
+     thread_cpp = texts[Path("src/sync_thread_incarnation.cpp")]
+     capability_hpp = texts[Path("src/sync_sqlite_mutex_capability.hpp")]
+     capability_cpp = texts[Path("src/sync_sqlite_mutex_capability.cpp")]
++    execution_hpp = texts[Path("src/sync_sqlite_execution_affinity.hpp")]
++    execution_cpp = texts[Path("src/sync_sqlite_execution_affinity.cpp")]
+     guard_hpp = texts[Path("src/sync_sqlite_database_mutex_guard.hpp")]
+     guard_cpp = texts[Path("src/sync_sqlite_database_mutex_guard.cpp")]
++    timeout_guard_hpp = texts[
++        Path("src/sync_sqlite_busy_timeout_mutation_guard.hpp")
++    ]
++    timeout_guard_cpp = texts[
++        Path("src/sync_sqlite_busy_timeout_mutation_guard.cpp")
++    ]
+     claim_hpp = texts[Path("src/persistence/sqlite_retained_callback_claim.hpp")]
+     claim_cpp = texts[Path("src/persistence/sqlite_retained_callback_claim.cpp")]
+     busy_cpp = texts[Path("src/persistence/sqlite_busy_handler_owner.cpp")]
+@@ -200,6 +213,7 @@ def main() -> int:
+     ]
+     thread_test = texts[Path("tests/thread_incarnation_tests.cpp")]
+     authority_test = texts[Path("tests/sqlite_connection_authority_test.cpp")]
++    process_test = texts[Path("tests/sqlite_process_authority_fork_test.cpp")]
+     support_test = texts[Path("tests/sqlite_support_test.cpp")]
+     busy_test = texts[Path("tests/persistence/sqlite_busy_handler_owner_tests.cpp")]
+     verification_test = texts[
+@@ -221,7 +235,9 @@ def main() -> int:
+     require(
+         checks,
+         "add_library(anonsync_sqlite_database_mutex_guard STATIC" in cmake
++        and "${ANONSYNC_SQLITE_EXECUTION_AFFINITY_SOURCE}" in cmake
+         and "${ANONSYNC_SQLITE_DATABASE_MUTEX_GUARD_SOURCE}" in cmake
++        and "${ANONSYNC_SQLITE_BUSY_TIMEOUT_MUTATION_GUARD_SOURCE}" in cmake
+         and "anonsync_sqlite_database_mutex_guard" in cmake.split(
+             "target_link_libraries(anonsync_sqlite_retained_callback_claim PUBLIC",
+             1,
+@@ -247,6 +263,22 @@ def main() -> int:
+         "release_verifier_requires_database_mutex_guard_from_rev0854",
+         "sealed rev0854+ packages must carry the typed guard, its direct runtime proof, and its structural audit without invalidating older parents",
+     )
++    require(
++        checks,
++        "revision_number >= 855" in release_verifier
++        and all(
++            f'"{path}"' in release_verifier
++            for path in (
++                "src/sync_sqlite_execution_affinity.hpp",
++                "src/sync_sqlite_execution_affinity.cpp",
++                "src/sync_sqlite_busy_timeout_mutation_guard.hpp",
++                "src/sync_sqlite_busy_timeout_mutation_guard.cpp",
++                "tests/sqlite_process_authority_fork_test.cpp",
++            )
++        ),
++        "release_verifier_requires_split_mutation_guards_from_rev0855",
++        "sealed rev0855+ packages must carry the shared affinity validator, narrow timeout guard, and fail-stop process proof",
++    )
+ 
+     require(
+         checks,
+@@ -521,8 +553,16 @@ def main() -> int:
+         guard_cpp, "sqlite3_mutex* SyncSqliteDatabaseMutexGuard::release() noexcept"
+     )
+     guard_execution = function_body(
+-        guard_cpp,
+-        "void SyncSqliteDatabaseMutexGuard::require_current_execution_noexcept()",
++        execution_cpp,
++        "void require_current_sync_sqlite_execution_noexcept(",
++    )
++    timeout_guard_constructor = function_body(
++        timeout_guard_cpp,
++        "SyncSqliteBusyTimeoutMutationGuard::SyncSqliteBusyTimeoutMutationGuard(",
++    )
++    timeout_guard_destructor = function_body(
++        timeout_guard_cpp,
++        "SyncSqliteBusyTimeoutMutationGuard::~SyncSqliteBusyTimeoutMutationGuard()",
+     )
+     guard_authorizes = function_body(
+         guard_cpp,
+@@ -539,9 +579,15 @@ def main() -> int:
+             guard_destructor,
+             "require_current_execution_noexcept",
+             "sqlite3_mutex_leave",
++        )
++        and "require_current_sync_sqlite_execution_noexcept" in guard_cpp
++        and ordered(
++            timeout_guard_destructor,
++            "require_current_sync_sqlite_execution_noexcept",
++            "sqlite3_mutex_leave",
+         ),
+-        "shared_mutex_guard_destructor_checks_process_and_thread_first",
+-        "every scoped database-mutex entry must reject fork/thread transfer before leaving SQLite-owned state",
++        "scoped_sqlite_guards_share_process_then_thread_teardown",
++        "strict and NOMUTEX-compatible scoped owners reject fork/thread transfer before leaving SQLite-owned state",
+     )
+     require(
+         checks,
+@@ -561,7 +607,6 @@ def main() -> int:
+             marker in guard_hpp
+             for marker in (
+                 "class SyncSqliteDatabaseMutexGuard final",
+-                "SyncSqliteDatabaseMutexRequirement::RequireSerialized",
+                 "SyncSqliteDatabaseMutexGuard(SyncSqliteDatabaseMutexGuard&&) = delete",
+                 "bool authorizes(sqlite3* database) const noexcept",
+                 "sqlite3* database_ = nullptr",
+@@ -569,7 +614,8 @@ def main() -> int:
+                 "SyncThreadIncarnation thread_id_",
+             )
+         )
+-        and "PermitUnserialized" in guard_hpp
++        and "SyncSqliteDatabaseMutexRequirement" not in guard_hpp
++        and "PermitUnserialized" not in guard_hpp
+         and ordered(
+             guard_cpp,
+             "mutex_ = sqlite3_db_mutex(database)",
+@@ -583,8 +629,40 @@ def main() -> int:
+                 "mutex_ != nullptr",
+             )
+         ),
+-        "shared_mutex_guard_binds_exact_database_and_serialized_entry",
+-        "retained callback mutation must consume a nonmovable exact-database FULLMUTEX witness, while the explicit NOMUTEX lane authorizes no claim",
++        "strict_mutex_guard_binds_exact_database_and_serialized_entry",
++        "retained callback mutation consumes only a nonmovable exact-database FULLMUTEX witness",
++    )
++    require(
++        checks,
++        all(
++            marker in timeout_guard_hpp
++            for marker in (
++                "class SyncSqliteBusyTimeoutMutationGuard final",
++                "SyncSqliteBusyTimeoutMutationGuard&&) = delete",
++                "SyncProcessIncarnation process_id_",
++                "SyncThreadIncarnation thread_id_",
++            )
++        )
++        and "bool authorizes" not in timeout_guard_hpp
++        and "sqlite3_mutex* release" not in timeout_guard_hpp
++        and ordered(
++            timeout_guard_constructor,
++            "mutex_ = sqlite3_db_mutex(database)",
++            "if (mutex_ != nullptr)",
++            "sqlite3_mutex_enter(mutex_)",
++        )
++        and all(marker in support_test for marker in (
++            "!RetainedCallbackMutexWitness<",
++            "!TransferableSqliteMutexEntry<",
++            "narrow NOMUTEX busy-timeout mutation guard remains usable",
++        ))
++        and all(marker in process_test for marker in (
++            "foreign-thread NOMUTEX busy-timeout guard destruction fails stopped",
++            "inherited NOMUTEX busy-timeout guard destruction fails stopped",
++            "released database-mutex guard destruction remains thread affine",
++        )),
++        "timeout_mutation_guard_is_narrow_non_authorizing_and_affine",
++        "the raw NOMUTEX compatibility lane has no callback or transfer surface and carries executable fork/thread teardown proofs",
+     )
+     require(
+         checks,
+@@ -854,12 +932,13 @@ def main() -> int:
+         mutex_owners == {
+             "src/sync_sqlite_connection_authority.cpp",
+             "src/sync_sqlite_database_mutex_guard.cpp",
++            "src/sync_sqlite_busy_timeout_mutation_guard.cpp",
+         }
+         and "class DbMutexGuard" not in authority_cpp
+         and "class SqliteDatabaseMutexScope" not in support_cpp
+-        and "SyncSqliteDatabaseMutexGuard database_mutex" in support_cpp,
+-        "direct_sqlite_mutex_calls_have_two_reviewed_owners",
+-        "manual retained leases stay in connection authority while every scoped entry is centralized in the shared guard",
++        and "SyncSqliteBusyTimeoutMutationGuard mutation_guard" in support_cpp,
++        "direct_sqlite_mutex_calls_have_three_reviewed_owners",
++        "manual retained leases, strict callback witnesses, and the non-authorizing timeout fence are the only SQLite mutex owners",
+     )
+     require(
+         checks,
+@@ -945,7 +1024,7 @@ def main() -> int:
+     checks_data = [asdict(check) for check in checks]
+     violations = [check.detail for check in checks if not check.passed]
+     report = {
+-        "format": "anonsync-sqlite-mutex-capability-audit-v4",
++        "format": "anonsync-sqlite-mutex-capability-audit-v5",
+         "passed": not violations,
+         "check_count": len(checks),
+         "passed_check_count": sum(1 for check in checks if check.passed),
+diff --git a/tools/audit_sqlite_process_authority.py b/tools/audit_sqlite_process_authority.py
+index 70bab2f..36d23c4 100644
+--- a/tools/audit_sqlite_process_authority.py
++++ b/tools/audit_sqlite_process_authority.py
+@@ -129,8 +129,12 @@ def main() -> int:
+         Path("src/sync_sqlite_connection_authority.cpp"),
+         Path("src/sync_sqlite_connection_authority_internal.hpp"),
+         Path("src/sync_sqlite_mutex_capability.cpp"),
++        Path("src/sync_sqlite_execution_affinity.hpp"),
++        Path("src/sync_sqlite_execution_affinity.cpp"),
+         Path("src/sync_sqlite_database_mutex_guard.hpp"),
+         Path("src/sync_sqlite_database_mutex_guard.cpp"),
++        Path("src/sync_sqlite_busy_timeout_mutation_guard.hpp"),
++        Path("src/sync_sqlite_busy_timeout_mutation_guard.cpp"),
+         Path("src/sync_sqlite_transaction.cpp"),
+         Path("src/sync_peer_ingress_payload_store.cpp"),
+         Path("src/sync_peer_ingress_payload_store_schema.cpp"),
+@@ -143,7 +147,7 @@ def main() -> int:
+     missing = [rel.as_posix() for rel in sensitive if not (root / rel).is_file()]
+     if missing:
+         report = {
+-            "format": "anonsync-sqlite-process-authority-audit-v7",
++            "format": "anonsync-sqlite-process-authority-audit-v8",
+             "passed": False,
+             "violations": [f"missing sensitive file: {path}" for path in missing],
+         }
+@@ -191,12 +195,21 @@ def main() -> int:
+     authority_cpp = texts[Path("src/sync_sqlite_connection_authority.cpp")]
+     authority_internal = texts[Path("src/sync_sqlite_connection_authority_internal.hpp")]
+     mutex_cpp = texts[Path("src/sync_sqlite_mutex_capability.cpp")]
++    execution_affinity_cpp = texts[
++        Path("src/sync_sqlite_execution_affinity.cpp")
++    ]
+     database_mutex_guard_hpp = texts[
+         Path("src/sync_sqlite_database_mutex_guard.hpp")
+     ]
+     database_mutex_guard_cpp = texts[
+         Path("src/sync_sqlite_database_mutex_guard.cpp")
+     ]
++    busy_timeout_guard_hpp = texts[
++        Path("src/sync_sqlite_busy_timeout_mutation_guard.hpp")
++    ]
++    busy_timeout_guard_cpp = texts[
++        Path("src/sync_sqlite_busy_timeout_mutation_guard.cpp")
++    ]
+     transaction_cpp = texts[Path("src/sync_sqlite_transaction.cpp")]
+     payload_cpp = texts[Path("src/sync_peer_ingress_payload_store.cpp")]
+     payload_schema_cpp = texts[
+@@ -219,7 +232,9 @@ def main() -> int:
+         "src/sync_process_incarnation.cpp",
+         "src/sync_sqlite_handle_slot.cpp",
+         "src/sync_sqlite_mutex_capability.cpp",
++        "src/sync_sqlite_execution_affinity.cpp",
+         "src/sync_sqlite_database_mutex_guard.cpp",
++        "src/sync_sqlite_busy_timeout_mutation_guard.cpp",
+         "src/sync_sqlite_transaction.cpp",
+         "src/sync_sqlite_connection_authority.cpp",
+     ):
+@@ -391,19 +406,35 @@ def main() -> int:
+         "SyncProcessIncarnation process_id_;" in database_mutex_guard_hpp
+         and "SyncThreadIncarnation thread_id_;" in database_mutex_guard_hpp
+         and ordered(
+-            database_mutex_guard_cpp,
+-            "void SyncSqliteDatabaseMutexGuard::require_current_execution_noexcept()",
++            execution_affinity_cpp,
+             "sync_process_incarnation_is_current",
+             "sync_thread_incarnation_is_current",
+         )
++        and "require_current_sync_sqlite_execution_noexcept"
++            in database_mutex_guard_cpp
+         and ordered(
+             database_mutex_guard_cpp,
+             "SyncSqliteDatabaseMutexGuard::~SyncSqliteDatabaseMutexGuard()",
+             "require_current_execution_noexcept",
+             "sqlite3_mutex_leave",
+-        ),
+-        "database_mutex_guard_is_process_then_thread_bound",
+-        "a scoped SQLite mutex entry may not cross either a fork boundary or its exact entering thread",
++        )
++        and all(marker in busy_timeout_guard_hpp for marker in (
++            "SyncProcessIncarnation process_id_",
++            "SyncThreadIncarnation thread_id_",
++        ))
++        and ordered(
++            busy_timeout_guard_cpp,
++            "SyncSqliteBusyTimeoutMutationGuard::~SyncSqliteBusyTimeoutMutationGuard()",
++            "require_current_sync_sqlite_execution_noexcept",
++            "sqlite3_mutex_leave",
++        )
++        and all(marker in fork_test for marker in (
++            "foreign-thread NOMUTEX busy-timeout guard destruction fails stopped",
++            "inherited NOMUTEX busy-timeout guard destruction fails stopped",
++            "released database-mutex guard destruction remains thread affine",
++        )),
++        "sqlite_scoped_mutation_guards_are_process_then_thread_bound",
++        "strict and NOMUTEX-compatible scoped SQLite owners may not cross either a fork boundary or their exact entering thread",
+     )
+     require(
+         all(
+@@ -650,7 +681,7 @@ def main() -> int:
+ 
+     passed = all(check.passed for check in checks)
+     report = {
+-        "format": "anonsync-sqlite-process-authority-audit-v7",
++        "format": "anonsync-sqlite-process-authority-audit-v8",
+         "passed": passed,
+         "check_count": len(checks),
+         "passed_check_count": sum(check.passed for check in checks),
+diff --git a/tools/verify_release_package.py b/tools/verify_release_package.py
+index 1b37b65..6f48461 100644
+--- a/tools/verify_release_package.py
++++ b/tools/verify_release_package.py
+@@ -326,6 +326,14 @@ def package_checks(names: set[str], read: Callable[[str], bytes], expected_revis
+             "tools/audit_sqlite_authorizer_owner.py",
+             "tools/audit_sqlite_process_authority.py",
+         })
++    if revision_number is not None and revision_number >= 855:
++        revision_scoped_required.update({
++            "src/sync_sqlite_execution_affinity.hpp",
++            "src/sync_sqlite_execution_affinity.cpp",
++            "src/sync_sqlite_busy_timeout_mutation_guard.hpp",
++            "src/sync_sqlite_busy_timeout_mutation_guard.cpp",
++            "tests/sqlite_process_authority_fork_test.cpp",
++        })
+     missing_revision_scoped = sorted(revision_scoped_required - names)
+     require(
+         not missing_revision_scoped,
