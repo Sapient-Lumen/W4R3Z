@@ -1,8 +1,30 @@
-# DeriveBSD: selected design and runtime snapshots
+# DeriveBSD
 
-Eight supplied snapshots of a FreeBSD-first, proof-carrying system-control-plane project, preserved for the W4R3Z / OG 510P historical showcase.
+## Make the path from intention to system inspectable
 
-DeriveBSD's central idea is to turn declarative intent into verified, reproducible and rollbackable host/workload artifacts, with typed evidence explaining privileged transitions. The early sources present a design archive; the latest supplied snapshot carries a local dry-run runtime and its recorded evidence. The [early core design](versions/rev0185/contents/docs/02-derive-core.md) and [latest runtime account](versions/rev0605/contents/docs/current/runtime-golden-thread.md) make that progression readable.
+DeriveBSD’s early design describes a FreeBSD-first, hypervisor-centered system whose sequence runs from specification through a lock and plan to an artifact. It wants immutable inputs and outputs, explicit impurity, atomic changes and a way back when a change fails.
+
+The prose is about more than declarative syntax. It asks which transitions deserve trust and what evidence a privileged change should leave behind.
+
+## Read ambition and implementation at different scales
+
+1. Begin with [the early design overview](versions/rev0185/contents/README.md). Its links to vision, glossary and the small typed core give the vocabulary needed for the later records.
+2. Follow the selected version guides below for the growth of the control plane and evidence machinery.
+3. Read [the latest supplied status](versions/rev0605/contents/README.md). The internal cut is named separately from the upload revision. It describes a byte-bound fixture repository snapshot used before package catalog resolution.
+
+## A fixture can answer a real question without becoming a host
+
+The later executable dry-run can test relationships among supplied fixture material, catalogs, dependency closure and recorded evidence. That is a narrower achievement than admitting an authoritative FreeBSD package index, activating a boot environment, launching a virtual machine or importing proof from a real host. The source explicitly keeps those gaps open.
+
+A reader can therefore examine two things at once: whether the proposed system gives a coherent account of derivation and rollback, and whether the implementation evidence actually reaches the point at which the system would affect a computer.
+
+The collection retains eight supplied packages, including differing internal release labels. The guide does not repair those identities into one invented lineage or run the historical tooling.
+
+Read beside [Monsternix](../../guides/Monsternix.md), a separately maintained artifact also concerned with exact candidates and system change. Their conceptual relationship does not make their implementations, platforms or evidence interchangeable.
+
+*Reading introduction by Lumen, 8 October 2026. These are selected historical works; their software, experiments and maintenance instructions have not been activated by this edition.*
+
+## Version shelf and preservation
 
 ## Start here
 

@@ -1,6 +1,28 @@
 # bzip4
 
-Two historical snapshots of an experimental C++20 compression project derived from bzip3 1.5.3, contributed by h0p3 for OG 510P.
+## A performance claim needs a fair comparison
+
+bzip4 explores a speed-first, resource-bounded C++20 implementation derived from bzip3 1.5.3. The supplied later snapshot is valuable partly because it narrows the comparison: block-level compatibility is not the same as an identical high-level frame, and compiler choice can materially affect the performance story.
+
+This is engineering prose about what an improvement means, not just a package of benchmark numbers.
+
+## Read the comparison contract first
+
+1. Read [the later overview](versions/rev0034/contents/bzip4-rev0034/README.md). It distinguishes block records, a frame containing an explicit block count, compression ratio and elapsed time.
+2. Compare [the baseline snapshot](versions/rev0001/contents/bzip4/README.md) for the earlier compatibility stance.
+3. Follow the effectiveness scorecard, matched-compiler audit and profile-policy links retained below. Read a speed/balanced profile as a choice among resource and timing tradeoffs, not as an abstract ranking independent of workload.
+
+## What the stored evidence can support
+
+The reported timings are single-host directional results, tied to supplied workloads and compiler conditions. The archive does not claim a new intrinsic compression ratio, a new BZ4 format or completed admission into Datacube. Its forecasts for later cohorts are forecasts, not measurements that this edition has supplied.
+
+The two snapshots retain source, documentation, tests and convenience binaries. No binary or benchmark was executed for this reading entrance. Reuse also requires reading the component notices: the derived codec, carried upstream material, libsais and the bundled literary fixture do not all share one license.
+
+Read beside [CloudtainerML](../CloudtainerML/README.md) for another account of what a small performance experiment can justify, and [Rust](../Rust/README.md) for the usefulness of handing downstream readers an explicit failure boundary.
+
+*Reading introduction by Lumen, 8 October 2026. These are selected historical works; their software, experiments and maintenance instructions have not been activated by this edition.*
+
+## Version shelf and preservation
 
 ## Read the development
 

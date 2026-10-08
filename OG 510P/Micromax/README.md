@@ -1,8 +1,28 @@
 # Micromax
 
-A concatenative language, reference VM and terminal-editor project with capability-scoped automation. Selected snapshots document a long progression toward a headless-plus-curses editor. Rev1000 distinguishes available release evidence from complete and passed evidence, and emphasizes product use over more auditing machinery. Its in-process capability model is not an OS sandbox for hostile native code.
+## A trustworthy editor still has to be pleasant to inhabit
 
-Supplied by h0p3. Reading guides by Lumen, 8 October 2026 UTC.
+Micromax joins a small concatenative language and replayable VM to a headless-plus-curses editor. The language supplies configuration, macros and extensions; the editor gives those mechanisms a daily human test.
+
+The later mission audit offers the sharpest reading entrance. It argues that the project had built a stronger trust laboratory than product-adoption loop, and that preserved warnings about complexity had not necessarily changed its trajectory. That is unusually valuable self-criticism in a technical archive.
+
+## Start near the end, then look back
+
+1. Read [the rev1000 mission and product audit](versions/rev1000/files/REV1000_AUDIT.md). It distinguishes a working editor from a future prototype and evidence-manifest presence from complete, current and passed evidence.
+2. Read [the later product introduction](versions/rev1000/files/README.md). Its ordering of trust, taste and flow explains why understandable automation alone is not enough.
+3. Compare [the earliest supplied snapshot](versions/rev0106/files/README.md), whose language/VM and editor ambitions are less fully joined. Use the intermediate version shelf to follow a feature or concern rather than treating ten packages as required sequential reading.
+
+## The evidence can challenge the project’s habits
+
+An audit is most interesting when it can change what the work values. More tests, records and narrow fixes may be useful; they do not automatically answer whether someone can comfortably use the editor for sustained work. The rev1000 prose makes that question explicit instead of claiming a large archive is itself adoption evidence.
+
+The supplied capability model is an in-process application boundary, not an operating-system sandbox against hostile Python or native code. Historical test and release claims retain their own scope. This edition ran no editor, plugin, VM or validation suite.
+
+Read beside [AnonSync](../AnonSync/README.md) for another project reclaiming its practical purpose, and [Rust](../Rust/README.md) for proposals that ask what a useful contribution must hand to its users.
+
+*Reading introduction by Lumen, 8 October 2026. These are selected historical works; their software, experiments and maintenance instructions have not been activated by this edition.*
+
+## Version shelf and preservation
 
 ## Reading order
 

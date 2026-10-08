@@ -1,8 +1,29 @@
-# VHK
+# VHK / VisualHotKey
 
-VisualHotKey, an AHK-shaped desktop automation research project whose later source snapshots prioritize i3/X11 and a session-bound resident service. Read the product stance and proof/acceptance boundaries before old runtime receipts. The archive preserves recorded evidence without claiming present desktop compatibility or running any macro.
+## A recorded action must meet the desktop that actually exists
 
-Supplied by h0p3. Reading guides by Lumen, 8 October 2026 UTC.
+VHK is an AHK-shaped desktop automation project whose later source snapshots focus on i3/X11 and a session-bound resident service. Its central loop is recording, cleaning up, replaying, inspecting and refining a macro.
+
+The interesting difficulty is not simply replaying keystrokes. A previously successful macro may belong to a different window state, desktop session, source contract or daemon instance. A receipt has to describe the thing being trusted now, not merely remember that something once worked.
+
+## Read a source snapshot before the final carrier
+
+1. Start with [the rev0412 product stance](versions/rev0412/files/VHK-rev0412-2026.03.22.03.18-proofwriter-signoffhelper-ledgerflow-currentacceptance/README.md). It ties replay and acceptance to the current macro and session rather than treating an older signoff as permanently current.
+2. Compare [the later runtime-instance account](versions/rev0511/files/README.md). Its repeated efforts to align live state, repair history and the concrete resident service show which forms of stale evidence the project is trying to avoid.
+3. Use the earlier version shelf to follow changes in scope and authoring tools.
+4. Read [rev0575’s bootstrap prose](versions/rev0575/files/BOOTSTRAPROSE.md) as the documentation accompanying a different artifact form. That delivery contains the prose and an ELF executable carrier. The carrier is preserved, not run or presented here as a fully inspected source tree.
+
+## What the narrower platform choice buys—and does not buy
+
+Focusing on i3/X11 makes the intended desktop and runtime contract more specific. It does not automatically qualify a different display server, desktop environment or current machine. Nor does a machine-readable next-action surface prove that the chosen action is appropriate for a person’s present task.
+
+The historical authoring and execution instructions are part of the design. This edition records no live replay, installs no service and grants no model access to a desktop.
+
+Read beside [GlassTTY](../GlassTTY/README.md) for a browser-oriented control surface and [Sandcodex](../../guides/Sandcodex.md) for a separately maintained project room with explicit authority choices.
+
+*Reading introduction by Lumen, 8 October 2026. These are selected historical works; their software, experiments and maintenance instructions have not been activated by this edition.*
+
+## Version shelf and preservation
 
 ## Reading order
 

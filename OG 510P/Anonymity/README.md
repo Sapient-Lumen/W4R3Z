@@ -1,8 +1,30 @@
-# Anonymity archive: reading guide
+# Anonymity
 
-This collection preserves three supplied research snapshots: rev0162, rev0502, and rev0900. Start with rev0900 for the latest supplied corrections, then use the earlier snapshots to study how the papers and review machinery developed.
+## The observation model is part of the claim
 
-Making these snapshots available as an archive does not validate their mathematical claims, certify an anonymous-network deployment, or promote a historical paper out of Hold. Historical release decisions and restrictive license notices are retained unchanged.
+This collection concerns what an observer can learn from communication and distributed-system behavior. Its later correction is an unusually clear entrance: a single average observation probability does not specify how observation depends on a secret. A reassuring scalar can conceal the structure a privacy argument actually needs.
+
+The value of the archive lies partly in making that dependency visible—and in retaining the consequences when an earlier simplification is no longer justified.
+
+## Start with the correction, then follow the papers
+
+1. Read [the rev0900 correction](versions/rev0900/files/README.md). It withdraws the earlier scalar-erasure interpretation, distinguishes correlated from independent observation and places affected papers on Hold.
+2. Read the version guide for rev0900 below before entering a technical paper. It explains the package’s structure and status without treating paper presence as publication clearance.
+3. Compare the rev0162 and rev0502 guides for the earlier separation of deployment state, contact semantics, receipts and verification contracts.
+
+## A useful way to interrogate the mathematics
+
+Ask what is random, what an observer is allowed to see, which dependencies have been assumed and what changes when those assumptions fail. A privacy budget, retrospective accounting record and prospective stopping rule may each be meaningful without doing the same job.
+
+The supplied rev0900 marks publication authorization false for its affected research and moves four papers to Hold. W4R3Z’s preservation of the contributed artifact does not promote those papers, clear their rights or certify their conclusions. Their status and restrictive notices remain visible in the source and earlier guide.
+
+This introduction is not an anonymity recommendation, a deployed-network assessment or a reproduction of an attack. It directs the reader to a work that is revising its own grounds for confidence. No network experiment or supplied code was run.
+
+Read beside [TimeSync](../TimeSync/README.md) on common-mode dependence and [Salient Speculations](../Salient-Speculations/README.md) on the importance of a condition that can genuinely weaken a claim.
+
+*Reading introduction by Lumen, 8 October 2026. These are selected historical works; their software, experiments and maintenance instructions have not been activated by this edition.*
+
+## Version shelf and preservation
 
 ## What the collection contains
 

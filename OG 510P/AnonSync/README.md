@@ -1,8 +1,30 @@
 # AnonSync
 
-Selected snapshots of a privacy-oriented file-synchronization project whose mission and implementation change substantially across this history. The early archive is design-stage; rev0648 emphasizes a local authorization/idempotency kernel; later revisions return to practical C++ folder convergence for chosen peers. Read the entry point of each snapshot rather than applying one revision’s claims to all of them. The latest supplied rev1020 calls itself Linux/headless pre-alpha and explicitly says it is not yet a Resilio replacement. It retains incomplete directory/conflict/storage-pressure semantics, unqualified public Tor/I2P operation, Android limitations and unmeasured dense million-file/multi-terabyte performance. Stored tests and audits were not rerun, and publication does not certify anonymity, hostile-root protection or deployment readiness.
+## A synchronization project remembers what it is for
 
-Supplied by h0p3. Reading guides by Lumen, 8 October 2026 UTC.
+AnonSync’s supplied history contains a revealing change of emphasis. An early design archive imagines a private peer-to-peer file-sync appliance. A later snapshot concentrates on a local authorization and idempotency kernel. The final supplied source then insists that those mechanisms must serve a practical product: useful folders converging across a person’s machines and chosen peers.
+
+That history is worth reading as a struggle over the meaning of progress. More exact evidence can protect a product; it can also become a second product that displaces ordinary use.
+
+## Read three different statements of purpose
+
+1. [Rev0004’s design stance](versions/rev0004/files/AnonSync-rev0004-2026.03.08.01.18-resiliouimirrorkeepingwatch/README.md) sets out the invite-only, Tor/I2P-oriented appliance ambition and distinguishes watching files from knowing their durable state.
+2. [Rev0648’s local-kernel account](versions/rev0648/files/README.md) focuses on authorization at the boundary of an effect, one-time reservation and recovery after interruption. Read its explicit local-only ceiling with that ambition.
+3. [Rev1020’s product statement](versions/rev1020/files/AnonSync-rev1020-2026.08.07.08.13-contentindex-streamingcatalog-boundedrename-variscite/BOOTSTRAPROSE.md) restores folder synchronization as the governing aim. Its forceful opening belongs to the historical project; it is not a command to the curator or reader.
+
+## What the latest source actually claims
+
+The final supplied snapshot calls itself Linux/headless pre-alpha and says it is not yet a Resilio replacement. It describes bounded regular-file rename planning and streamed catalog work while retaining substantial costs and incomplete directory, conflict, storage-pressure, public-network and Android qualifications. A sparse scale exercise does not qualify dense real-world throughput.
+
+Read those limitations as product questions rather than an appendix to a success claim. Can someone understand a conflict? What happens under ordinary failure? Which exact workflow could be entrusted to it? The archive’s own mission makes those questions unavoidable.
+
+The multipart original and verified contained ZIP remain preserved with the source. No peer service, route, synchronization experiment or recovery routine was run here.
+
+Read beside [Micromax](../Micromax/README.md), whose later audit also asks whether a powerful trust apparatus has outrun the user experience, and [IoTox](../../IoTox/W4R3Z.md), separately identified by h0p3 as living software.
+
+*Reading introduction by Lumen, 8 October 2026. These are selected historical works; their software, experiments and maintenance instructions have not been activated by this edition.*
+
+## Version shelf and preservation
 
 ## Reading order
 

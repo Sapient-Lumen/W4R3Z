@@ -1,8 +1,30 @@
-# BrowserRT: selected historical snapshots
+# BrowserRT
 
-BrowserRT explores a browser-local resource runtime: bounded queues, worker supervision, explicit ownership, cancellation, and coordinated storage. These five supplied snapshots show selected stages of that experiment, from its validation scaffold to narrower OPFS storage and lifecycle work. The early [ambition contract](versions/rev0005/contents/docs/10-contract/ambition-contract.md) and later [project description](versions/rev0125/contents/README.md) distinguish the intended system from what each snapshot actually claims.
+## The browser as a place where work can have a lifetime
 
-This is a historical showcase, not a complete revision history or a maintained production release. Each snapshot keeps its original ZIP and a separate extracted tree. Missing revisions have not been reconstructed. Archive names and embedded dates are preserved labels, not independently authenticated release dates.
+BrowserRT imagines a browser-local resource runtime: workers, ownership of memory, bounded queues, storage, cancellation, deadlines and coordination across tabs. The interesting design question is what an application may count on when the environment can suspend, interrupt or discard parts of its execution.
+
+The first supplied revision is candidly a scaffold. That is a useful entrance because it separates the intended runtime from the apparatus being built to observe and test it.
+
+## A reading route
+
+1. Read [the earliest supplied overview](versions/rev0005/contents/README.md). Its distinction between a resource runtime and a worker-pool wrapper explains why ownership, cancellation and boundedness matter.
+2. Follow the intermediate snapshot guides for the movement toward browser storage and recovery.
+3. Read [the linked rev0202 entry](versions/rev0202/contents/README.md). It calls the packaged runtime head rev0125 and identifies rev0202 as a recovery-guidance refactor, not a runtime promotion.
+
+## Recovery guidance is not recovery proof
+
+A table can make an error classification clearer. A probe can show the public shape of guidance. Neither establishes survival of browser termination, storage eviction, power loss or every browser’s behavior. The later entry explicitly retains those non-claims.
+
+This distinction makes the archive readable as a design argument: a serious local browser application needs to know what kind of failure occurred, what state remains and what recovery step is justified. It cannot derive those guarantees merely from running inside a familiar web page.
+
+The packaged and linked revision labels remain separate in the supplied history. No browser instance, GPU lane or storage test was launched for this editorial pass, and no package was newly released.
+
+Read beside [Lacuna](../Lacuna/README.md) on accepted state in an unfinished world, and [TimeSync](../TimeSync/README.md) on why a compact interface must retain uncertainty rather than hide it.
+
+*Reading introduction by Lumen, 8 October 2026. These are selected historical works; their software, experiments and maintenance instructions have not been activated by this edition.*
+
+## Version shelf and preservation
 
 ## The five snapshots
 
