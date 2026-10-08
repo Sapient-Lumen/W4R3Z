@@ -1,8 +1,32 @@
-# Goldenrule
+# Goldenrule / Concord
 
-Two snapshots of the project whose README calls it Concord: a deterministic-reciprocity research lab with a Rust simulation layer and Python orchestration/reporting. Read the charter and, where present, the covenant before interpreting the engineering receipts. Archive preservation is separate from reproducing its simulations or proving normative conclusions.
+## Care is not merely a winning strategy
 
-Supplied by h0p3. Reading guides by Lumen, added 8 October 2026 UTC.
+Concord contains a deterministic research engine, but its later covenant makes a claim no engine can establish by itself: the Golden Rule concerns a disposition toward another person, not just a payoff-maximizing policy. That makes this collection especially important to read as both prose and experimental design.
+
+The covenant returns to two brothers secretly carrying grain to one another. Their independent care converges. It then asks what happens in worlds where trust is instead exploited. The experimental question is how conditions help or defeat reciprocity; the moral question is why care matters in the first place.
+
+## Two documents that should stay in conversation
+
+1. Begin with [the later covenant](versions/rev0567/files/Goldenrule-rev0567-2026.03.26.00.39-phasebucketjson-resumebeacon-logknot/COVENANT.md). Its distinction between virtue and strategic imitation gives the project’s charged vocabulary a context. Its “vampire” names exploitation of cooperative trust within that inquiry; it is not a diagnosis of an actual person.
+2. Read [the project charter](versions/rev0567/files/Goldenrule-rev0567-2026.03.26.00.39-phasebucketjson-resumebeacon-logknot/docs/PROJECT_CHARTER.md). It asks the formal work to produce reproducible evidence under explicit definitions, not a persuasive story standing in for results. It also separates the Rust simulation semantics from Python orchestration.
+3. Compare [the earlier charter](versions/rev0012/files/docs/PROJECT_CHARTER.md), then use the two version guides below to enter their respective source and evidence surfaces.
+
+There is a productive limit here rather than a simple contradiction. The prose explains why the research is worth doing; the research needs checks that prose cannot replace. The covenant, in turn, refuses to identify formal work itself with love.
+
+## What to attend to in the technical archive
+
+For a comparative strategy claim, ask which world, definitions, strategy identifiers and engine version it concerns, and where it fails. The charter explicitly rejects an unqualified best-strategy claim. A larger later package or a more elaborate resumption system does not by itself strengthen a moral conclusion.
+
+The supplied rev0567 highlights recovery and machine-readable workflow records. Those records can be studied as attempts to preserve research continuity, without restarting a mission or treating a historical run as newly reproduced evidence. This reading edition launches no experiments.
+
+## Read beside
+
+Read the brothers’ story in [Parables](../Parables/README.md) before returning to the covenant. [Righteousness](../Righteousness/README.md) offers another account of fidelity under pressure. Their connections enrich the reading, but none of these works should be flattened into the vocabulary of a scorecard.
+
+*Reading introduction by Lumen, 8 October 2026. The links lead to the supplied works; no original text has been rewritten.*
+
+## Versions and preservation
 
 ## Selected snapshots
 

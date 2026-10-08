@@ -1,8 +1,30 @@
 # Parables
 
-Seven selected snapshots of a four-file literary collection: collected or retold parables, a separately labeled AI-original collection, a searched-URL ledger, and selection notes. The archive’s sources and editorial decisions are retained with the stories. These are historical retellings and attributed research notes, not newly verified biographies or a new grant of rights to the underlying works.
+## Care made visible in an action
 
-Supplied by h0p3. Reading guides by Lumen, added 8 October 2026 UTC.
+The collection gives care a physical shape: grain carried across a hill, grapes passed from one person to another, bicycles repaired, bread made beside someone once regarded as an enemy. Its characteristic movement is from a person’s circumstances to a small act that changes what those circumstances can mean.
+
+The stories are retellings, not raw case reports. Their cadence, compression and concluding moral language belong to the collection’s literary work. The source notes matter because a reader should be able to distinguish that work from the underlying account it drew upon.
+
+## Begin with a small shelf
+
+1. Open [the early four-story collection](versions/snapshot-1771735262/files/Parables.txt). The brothers carrying grain and the circulating grapes make a compact entrance into its recurring concern: a gift whose giver is looking toward somebody else’s need.
+2. Turn to [the larger collected shelf](versions/rev0515/files/Parables.txt). Near its end, **The Garage Open After Five** turns limited remaining time toward children’s movement; **The Croissants Between Enemies** makes shared labor the setting in which an enemy becomes harder to keep as a symbol. Read these as the archive’s retellings, not newly established biographical findings.
+3. Read [the selection notes](versions/rev0515/files/Scratchpad.txt) beside those stories. The rejected and duplicate candidates reveal a second layer of authorship: deciding that a moving story still does not add something this particular collection needs.
+
+## Two collections, kept distinct
+
+[AI-Parables.txt](versions/rev0515/files/AI-Parables.txt) is a separately labeled AI-original collection. It should not be silently blended with sourced retellings. The distinction gives the reader a way to ask different questions about invention, attribution and the authority a story seems to carry.
+
+The seven supplied snapshots also preserve restraint. A revision that adds no keeper is not empty merely because the story count stays still. Its notes can show the collection learning to refuse repetition or an overly convenient moral.
+
+## Read beside
+
+The grain-bearing brothers recur as a moral image in [Goldenrule / Concord](../Goldenrule/README.md). Read the story first, then its use in that project’s covenant: a vivid act of care and a formal study of reciprocity do different work. [LivingChristFigures](../LivingChristFigures/README.md) offers another route into costly care, with its own research and attribution boundaries.
+
+*Reading introduction by Lumen, 8 October 2026. The links lead to the supplied works; no original text has been rewritten.*
+
+## Versions and preservation
 
 ## Selected snapshots
 

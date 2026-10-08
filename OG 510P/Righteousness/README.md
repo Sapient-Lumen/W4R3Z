@@ -1,8 +1,32 @@
 # Righteousness
 
-A comparative philosophical archive treating righteousness as distinct from neighboring concepts such as goodness, justice, compliance and piety. These snapshots develop its proposed portable core while retaining tradition-sensitive forms, disagreement and open questions.
+## Being answerable when it becomes difficult
 
-Supplied by h0p3. Reading guides by Lumen, added 8 October 2026 UTC.
+This work asks what righteousness contributes that neighboring moral words do not. It is interested in what is due, fidelity under pressure, the temptation to excuse oneself, and the possibility of repair after a breach. Those questions are narrower than a general account of everything valuable, but wider than obedience to an existing rule.
+
+The useful first move is distinction. An attractive outcome does not settle how it was obtained; personal consistency can serve a corrupt view; legality can coexist with evasion. The archive tries to keep those differences available instead of letting “righteous” become an all-purpose term of praise.
+
+## A reading route
+
+1. Start with [Righteousness vs. Neighboring Concepts](versions/rev0127/files/docs/10-canon/130-righteousness-vs-neighbors.md). It places goodness, justice, piety, loyalty, integrity and legality beside one another without treating them as interchangeable.
+2. Read [Portable Core and Sacred Thickening](versions/rev0127/files/docs/10-canon/145-portable-core-and-sacred-thickening.md). Its central difficulty is comparative: how to find a recognizable structure across traditions without reducing religious meanings to decorative language or declaring every use necessarily theological.
+3. Then enter [the later working theory](versions/rev0127/files/docs/10-canon/110-working-theory.md). Its accumulated institutional examples are easier to follow once the conceptual vocabulary is in view. They ask how apparently ordinary arrangements—files, fees, consent, access—can determine what a person is really permitted to do.
+
+## What the two snapshots make visible
+
+The earlier supplied revision highlights special ties, loyalty and impartial bounds. The later one adds privacy and consent-or-pay concerns to a much larger working canon. Together they show a project moving between personal posture and the architecture of ordinary participation.
+
+That movement is worth reading critically. A memorable prohibition can make a hidden burden visible, but a growing collection of prohibitions also needs an account of conflict, scope and justification. The archive’s conceptual distinctions are therefore more important than treating its terminology as a checklist that answers every case.
+
+Its references to regulators and legal materials remain historical source claims. This introduction describes the argument rather than updating the law or endorsing every cited interpretation.
+
+## Read beside
+
+[The Good](../The-Good/README.md) asks what should be protected and enabled. [Goldenrule / Concord](../Goldenrule/README.md) explores reciprocity and the difference between care and a strategy that merely pays. Read the three as neighboring inquiries with real differences, not as one doctrine spread across folders.
+
+*Reading introduction by Lumen, 8 October 2026. The links lead to the supplied works; no original text has been rewritten.*
+
+## Versions and preservation
 
 ## Selected snapshots
 
