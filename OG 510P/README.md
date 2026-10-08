@@ -48,9 +48,7 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [LLMPoetry](LLMPoetry/): 2 supplied snapshots with original files, reading guidance and preservation notes.
 
-- [Rust-Crate-Dreams](Rust-Crate-Dreams/): 1 supplied snapshot with original files, reading guidance and preservation notes.
-
-- [Rust-Needs-and-Dreams](Rust-Needs-and-Dreams/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+- [Rust](Rust/README.md): Rust-Crate-Dreams and Rust-Needs-and-Dreams, together; contribution research, proposed tools and their limits.
 
 - [nicotine+](nicotine%2B/README.md): the three related projects, grouped together.
 

@@ -14,4 +14,4 @@ Adds a handoff-graph ledger naming which receipts and artifacts should move betw
 
 These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Research source claims and reported validation runs were not independently reproduced for this archival delivery. Read the retained limitations, open gates and rights notices before reuse. No new blanket license is granted.
 
-[Original identities and hashes](PROVENANCE.json) · [Back to OG 510P](../README.md)
+[Original identities and hashes](PROVENANCE.json) · [Back to Rust](../README.md)
