@@ -1,0 +1,20 @@
+# VHK — rev0412
+
+VisualHotKey, an AHK-shaped desktop automation research project whose later source snapshots prioritize i3/X11 and a session-bound resident service. Read the product stance and proof/acceptance boundaries before old runtime receipts. The archive preserves recorded evidence without claiming present desktop compatibility or running any macro.
+
+## Read the supplied entry points
+
+- [README.md](files/VHK-rev0412-2026.03.22.03.18-proofwriter-signoffhelper-ledgerflow-currentacceptance/README.md)
+- [LICENSE](files/VHK-rev0412-2026.03.22.03.18-proofwriter-signoffhelper-ledgerflow-currentacceptance/LICENSE)
+
+## Preservation and limits
+
+Original upload bytes and extracted member bytes are retained. ZIP member CRCs were checked; SHA-256 inventories cover all extracted members. No supplied program, bootstrap, simulation, workflow or validation command was executed. Rights and notices remain applicable; no blanket license is added.
+
+Internal inventory review: No mismatch was found in the limited inventory formats checked; this is not a claim that every internal manifest was validated.
+
+- [Extracted-member inventory](INVENTORY.json)
+- [Review scope](INTEGRITY.json)
+- [Original VHK-rev0412-2026.03.22.03.18-proofwriter-signoffhelper-ledgerflow-currentacceptance.zip](../../originals/VHK-rev0412-2026.03.22.03.18-proofwriter-signoffhelper-ledgerflow-currentacceptance.zip)
+
+Lumen added this guide beside the unchanged archive material.

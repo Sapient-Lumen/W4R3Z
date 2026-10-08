@@ -1,0 +1,163 @@
+# Ledger row-count parity audit (generated)
+
+Generated from `LEDGER-FAMILY-REGISTRY.json` and route-local ledgers. Do not edit directly; run `make index` after changing registered route-support families.
+
+- Registry revision: `rev0378`
+- Route rows: `13`
+- Expected route-local-plus-wrapper row count: `14`
+
+| Family | Policy | Ledger | Rows | Expected | Pass |
+|---|---|---|---:|---:|---:|
+| `measurement-systematics-calibration` | `route-local-plus-wrapper` | `MEASUREMENT-MODEL-LEDGER.json` | `14` | `14` | `1` |
+| `measurement-systematics-calibration` | `route-local-plus-wrapper` | `SYSTEMATIC-UNCERTAINTY-LEDGER.json` | `14` | `14` | `1` |
+| `measurement-systematics-calibration` | `route-local-plus-wrapper` | `CALIBRATION-TRACEABILITY-LEDGER.json` | `14` | `14` | `1` |
+| `validity-transport-extrapolation` | `route-local-plus-wrapper` | `DOMAIN-OF-VALIDITY-LEDGER.json` | `14` | `14` | `1` |
+| `validity-transport-extrapolation` | `route-local-plus-wrapper` | `TRANSPORTABILITY-LEDGER.json` | `14` | `14` | `1` |
+| `validity-transport-extrapolation` | `route-local-plus-wrapper` | `EXTRAPOLATION-FENCE-LEDGER.json` | `14` | `14` | `1` |
+| `causal-intervention-counterfactual` | `route-local-plus-wrapper` | `CAUSAL-MECHANISM-LEDGER.json` | `14` | `14` | `1` |
+| `causal-intervention-counterfactual` | `route-local-plus-wrapper` | `INTERVENTION-PROTOCOL-LEDGER.json` | `14` | `14` | `1` |
+| `causal-intervention-counterfactual` | `route-local-plus-wrapper` | `COUNTERFACTUAL-ROBUSTNESS-LEDGER.json` | `14` | `14` | `1` |
+| `selection-multiplicity-reporting` | `route-local-plus-wrapper` | `SELECTION-FUNCTION-LEDGER.json` | `14` | `14` | `1` |
+| `selection-multiplicity-reporting` | `route-local-plus-wrapper` | `MULTIPLICITY-CONTROL-LEDGER.json` | `14` | `14` | `1` |
+| `selection-multiplicity-reporting` | `route-local-plus-wrapper` | `REPORTING-BIAS-LEDGER.json` | `14` | `14` | `1` |
+| `capacity-complexity-generalization` | `route-local-plus-wrapper` | `MODEL-CAPACITY-LEDGER.json` | `14` | `14` | `1` |
+| `capacity-complexity-generalization` | `route-local-plus-wrapper` | `COMPLEXITY-PENALTY-LEDGER.json` | `14` | `14` | `1` |
+| `capacity-complexity-generalization` | `route-local-plus-wrapper` | `PREDICTIVE-GENERALIZATION-LEDGER.json` | `14` | `14` | `1` |
+| `semantic-ontology-language` | `route-local-plus-wrapper` | `SEMANTIC-TERM-LEDGER.json` | `14` | `14` | `1` |
+| `semantic-ontology-language` | `route-local-plus-wrapper` | `ONTOLOGY-COMMITMENT-LEDGER.json` | `14` | `14` | `1` |
+| `semantic-ontology-language` | `route-local-plus-wrapper` | `CLAIM-LANGUAGE-PERMISSION-LEDGER.json` | `14` | `14` | `1` |
+| `social-review-consensus` | `route-local-plus-wrapper` | `SOCIAL-AUTHORITY-LEDGER.json` | `14` | `14` | `1` |
+| `social-review-consensus` | `route-local-plus-wrapper` | `REVIEW-REPLICATION-LEDGER.json` | `14` | `14` | `1` |
+| `social-review-consensus` | `route-local-plus-wrapper` | `CONSENSUS-ELICITATION-LEDGER.json` | `14` | `14` | `1` |
+| `computational-numerical-software` | `route-local-plus-wrapper` | `COMPUTATIONAL-REPRODUCIBILITY-LEDGER.json` | `14` | `14` | `1` |
+| `computational-numerical-software` | `route-local-plus-wrapper` | `NUMERICAL-STABILITY-LEDGER.json` | `14` | `14` | `1` |
+| `computational-numerical-software` | `route-local-plus-wrapper` | `SOFTWARE-SUPPLY-CHAIN-LEDGER.json` | `14` | `14` | `1` |
+| `formal-proof-assumption-coverage` | `route-local-plus-wrapper` | `PROOF-OBLIGATION-LEDGER.json` | `14` | `14` | `1` |
+| `formal-proof-assumption-coverage` | `route-local-plus-wrapper` | `ASSUMPTION-DISCHARGE-LEDGER.json` | `14` | `14` | `1` |
+| `formal-proof-assumption-coverage` | `route-local-plus-wrapper` | `FORMALIZATION-COVERAGE-LEDGER.json` | `14` | `14` | `1` |
+| `idealization-approximation-limit` | `route-local-plus-wrapper` | `IDEALIZATION-LEDGER.json` | `14` | `14` | `1` |
+| `idealization-approximation-limit` | `route-local-plus-wrapper` | `APPROXIMATION-ERROR-LEDGER.json` | `14` | `14` | `1` |
+| `idealization-approximation-limit` | `route-local-plus-wrapper` | `LIMIT-INTERCHANGE-LEDGER.json` | `14` | `14` | `1` |
+| `boundary-initial-sector` | `route-local-plus-wrapper` | `BOUNDARY-CONDITION-LEDGER.json` | `14` | `14` | `1` |
+| `boundary-initial-sector` | `route-local-plus-wrapper` | `INITIAL-DATA-LEDGER.json` | `14` | `14` | `1` |
+| `boundary-initial-sector` | `route-local-plus-wrapper` | `SECTOR-SELECTION-LEDGER.json` | `14` | `14` | `1` |
+| `gauge-constraint-observable` | `route-local-plus-wrapper` | `GAUGE-SYMMETRY-LEDGER.json` | `14` | `14` | `1` |
+| `gauge-constraint-observable` | `route-local-plus-wrapper` | `CONSTRAINT-CLOSURE-LEDGER.json` | `14` | `14` | `1` |
+| `gauge-constraint-observable` | `route-local-plus-wrapper` | `OBSERVABLE-QUOTIENT-LEDGER.json` | `14` | `14` | `1` |
+| `regularization-renormalization-matching` | `route-local-plus-wrapper` | `REGULARIZATION-SCHEME-LEDGER.json` | `14` | `14` | `1` |
+| `regularization-renormalization-matching` | `route-local-plus-wrapper` | `RENORMALIZATION-FLOW-LEDGER.json` | `14` | `14` | `1` |
+| `regularization-renormalization-matching` | `route-local-plus-wrapper` | `MATCHING-CONDITION-LEDGER.json` | `14` | `14` | `1` |
+| `composition-interface-global` | `route-local-plus-wrapper` | `COMPOSITION-LAW-LEDGER.json` | `14` | `14` | `1` |
+| `composition-interface-global` | `route-local-plus-wrapper` | `INTERFACE-COMPATIBILITY-LEDGER.json` | `14` | `14` | `1` |
+| `composition-interface-global` | `route-local-plus-wrapper` | `GLOBAL-CONSISTENCY-LEDGER.json` | `14` | `14` | `1` |
+| `unitarity-causality-stability` | `route-local-plus-wrapper` | `UNITARITY-CHECK-LEDGER.json` | `14` | `14` | `1` |
+| `unitarity-causality-stability` | `route-local-plus-wrapper` | `CAUSALITY-CONE-LEDGER.json` | `14` | `14` | `1` |
+| `unitarity-causality-stability` | `route-local-plus-wrapper` | `STABILITY-POSITIVITY-LEDGER.json` | `14` | `14` | `1` |
+| `quantization-classical-semiclassical` | `route-local-plus-wrapper` | `QUANTIZATION-MAP-LEDGER.json` | `14` | `14` | `1` |
+| `quantization-classical-semiclassical` | `route-local-plus-wrapper` | `CLASSICAL-LIMIT-LEDGER.json` | `14` | `14` | `1` |
+| `quantization-classical-semiclassical` | `route-local-plus-wrapper` | `SEMICLASSICAL-CORRESPONDENCE-LEDGER.json` | `14` | `14` | `1` |
+| `information-entropy-no-go` | `route-local-plus-wrapper` | `INFORMATION-FLOW-LEDGER.json` | `14` | `14` | `1` |
+| `information-entropy-no-go` | `route-local-plus-wrapper` | `ENTROPY-ACCOUNTING-LEDGER.json` | `14` | `14` | `1` |
+| `information-entropy-no-go` | `route-local-plus-wrapper` | `NO-GO-COMPLIANCE-LEDGER.json` | `14` | `14` | `1` |
+| `symmetry-anomaly-conservation` | `route-local-plus-wrapper` | `SYMMETRY-REALIZATION-LEDGER.json` | `14` | `14` | `1` |
+| `symmetry-anomaly-conservation` | `route-local-plus-wrapper` | `ANOMALY-MATCHING-LEDGER.json` | `14` | `14` | `1` |
+| `symmetry-anomaly-conservation` | `route-local-plus-wrapper` | `CONSERVATION-LAW-LEDGER.json` | `14` | `14` | `1` |
+| `topology-dimension-signature` | `route-local-plus-wrapper` | `SPACETIME-TOPOLOGY-LEDGER.json` | `14` | `14` | `1` |
+| `topology-dimension-signature` | `route-local-plus-wrapper` | `DIMENSION-REALIZATION-LEDGER.json` | `14` | `14` | `1` |
+| `topology-dimension-signature` | `route-local-plus-wrapper` | `SIGNATURE-STRUCTURE-LEDGER.json` | `14` | `14` | `1` |
+| `subsystem-algebra-edge-center` | `route-local-plus-wrapper` | `ALGEBRAIC-LOCALITY-LEDGER.json` | `14` | `14` | `1` |
+| `subsystem-algebra-edge-center` | `route-local-plus-wrapper` | `SUBSYSTEM-FACTORIZATION-LEDGER.json` | `14` | `14` | `1` |
+| `subsystem-algebra-edge-center` | `route-local-plus-wrapper` | `EDGE-MODE-CENTER-LEDGER.json` | `14` | `14` | `1` |
+| `measure-ensemble-typicality` | `route-local-plus-wrapper` | `MEASURE-DEFINITION-LEDGER.json` | `14` | `14` | `1` |
+| `measure-ensemble-typicality` | `route-local-plus-wrapper` | `ENSEMBLE-SAMPLING-LEDGER.json` | `14` | `14` | `1` |
+| `measure-ensemble-typicality` | `route-local-plus-wrapper` | `TYPICALITY-WEIGHTING-LEDGER.json` | `14` | `14` | `1` |
+| `matter-spectrum-coupling-mass` | `route-local-plus-wrapper` | `PARTICLE-SPECTRUM-LEDGER.json` | `14` | `14` | `1` |
+| `matter-spectrum-coupling-mass` | `route-local-plus-wrapper` | `INTERACTION-COUPLING-LEDGER.json` | `14` | `14` | `1` |
+| `matter-spectrum-coupling-mass` | `route-local-plus-wrapper` | `MASS-HIERARCHY-LEDGER.json` | `14` | `14` | `1` |
+| `cosmological-background-vacuum-history` | `route-local-plus-wrapper` | `COSMOLOGICAL-BACKGROUND-LEDGER.json` | `14` | `14` | `1` |
+| `cosmological-background-vacuum-history` | `route-local-plus-wrapper` | `VACUUM-ENERGY-LEDGER.json` | `14` | `14` | `1` |
+| `cosmological-background-vacuum-history` | `route-local-plus-wrapper` | `THERMAL-HISTORY-LEDGER.json` | `14` | `14` | `1` |
+| `black-hole-horizon-thermodynamics-evaporation` | `route-local-plus-wrapper` | `HORIZON-STRUCTURE-LEDGER.json` | `14` | `14` | `1` |
+| `black-hole-horizon-thermodynamics-evaporation` | `route-local-plus-wrapper` | `BLACK-HOLE-THERMODYNAMICS-LEDGER.json` | `14` | `14` | `1` |
+| `black-hole-horizon-thermodynamics-evaporation` | `route-local-plus-wrapper` | `EVAPORATION-RADIATION-LEDGER.json` | `14` | `14` | `1` |
+| `singularity-censorship-hyperbolicity` | `route-local-plus-wrapper` | `CURVATURE-REGIME-LEDGER.json` | `14` | `14` | `1` |
+| `singularity-censorship-hyperbolicity` | `route-local-plus-wrapper` | `SINGULARITY-RESOLUTION-LEDGER.json` | `14` | `14` | `1` |
+| `singularity-censorship-hyperbolicity` | `route-local-plus-wrapper` | `CENSORSHIP-HYPERBOLICITY-LEDGER.json` | `14` | `14` | `1` |
+| `stress-energy-backreaction-conditions` | `route-local-plus-wrapper` | `STRESS-ENERGY-SOURCE-LEDGER.json` | `14` | `14` | `1` |
+| `stress-energy-backreaction-conditions` | `route-local-plus-wrapper` | `SEMICLASSICAL-BACKREACTION-LEDGER.json` | `14` | `14` | `1` |
+| `stress-energy-backreaction-conditions` | `route-local-plus-wrapper` | `ENERGY-CONDITION-LEDGER.json` | `14` | `14` | `1` |
+| `classical-gr-recovery` | `route-local-plus-wrapper` | `EQUIVALENCE-PRINCIPLE-LEDGER.json` | `14` | `14` | `1` |
+| `classical-gr-recovery` | `route-local-plus-wrapper` | `WEAK-FIELD-PPN-LEDGER.json` | `14` | `14` | `1` |
+| `classical-gr-recovery` | `route-local-plus-wrapper` | `GRAVITATIONAL-RADIATION-LEDGER.json` | `14` | `14` | `1` |
+| `state-preparation-detector-decoherence` | `route-local-plus-wrapper` | `STATE-PREPARATION-LEDGER.json` | `14` | `14` | `1` |
+| `state-preparation-detector-decoherence` | `route-local-plus-wrapper` | `DETECTOR-RESPONSE-LEDGER.json` | `14` | `14` | `1` |
+| `state-preparation-detector-decoherence` | `route-local-plus-wrapper` | `DECOHERENCE-POINTER-LEDGER.json` | `14` | `14` | `1` |
+| `asymptotic-ir-scattering` | `route-local-plus-wrapper` | `ASYMPTOTIC-STATE-LEDGER.json` | `14` | `14` | `1` |
+| `asymptotic-ir-scattering` | `route-local-plus-wrapper` | `INFRARED-DRESSING-LEDGER.json` | `14` | `14` | `1` |
+| `asymptotic-ir-scattering` | `route-local-plus-wrapper` | `SCATTERING-OBSERVABLE-LEDGER.json` | `14` | `14` | `1` |
+| `discretization-finite-volume-continuum` | `route-local-plus-wrapper` | `DISCRETIZATION-REGIME-LEDGER.json` | `14` | `14` | `1` |
+| `discretization-finite-volume-continuum` | `route-local-plus-wrapper` | `FINITE-VOLUME-SCALING-LEDGER.json` | `14` | `14` | `1` |
+| `discretization-finite-volume-continuum` | `route-local-plus-wrapper` | `CONTINUUM-EXTRAPOLATION-LEDGER.json` | `14` | `14` | `1` |
+| `correlation-operator-bootstrap` | `route-local-plus-wrapper` | `CORRELATION-FUNCTION-LEDGER.json` | `14` | `14` | `1` |
+| `correlation-operator-bootstrap` | `route-local-plus-wrapper` | `OPERATOR-INSERTION-LEDGER.json` | `14` | `14` | `1` |
+| `correlation-operator-bootstrap` | `route-local-plus-wrapper` | `BOOTSTRAP-DATA-LEDGER.json` | `14` | `14` | `1` |
+| `phase-order-universality` | `route-local-plus-wrapper` | `PHASE-STRUCTURE-LEDGER.json` | `14` | `14` | `1` |
+| `phase-order-universality` | `route-local-plus-wrapper` | `ORDER-PARAMETER-LEDGER.json` | `14` | `14` | `1` |
+| `phase-order-universality` | `route-local-plus-wrapper` | `UNIVERSALITY-CLASS-LEDGER.json` | `14` | `14` | `1` |
+| `hilbert-representation-spectrum` | `route-local-plus-wrapper` | `HILBERT-SPACE-LEDGER.json` | `14` | `14` | `1` |
+| `hilbert-representation-spectrum` | `route-local-plus-wrapper` | `REPRESENTATION-MAP-LEDGER.json` | `14` | `14` | `1` |
+| `hilbert-representation-spectrum` | `route-local-plus-wrapper` | `SPECTRAL-RECONSTRUCTION-LEDGER.json` | `14` | `14` | `1` |
+| `defect-instanton-vacuum-decay` | `route-local-plus-wrapper` | `TOPOLOGICAL-DEFECT-LEDGER.json` | `14` | `14` | `1` |
+| `defect-instanton-vacuum-decay` | `route-local-plus-wrapper` | `INSTANTON-SADDLE-LEDGER.json` | `14` | `14` | `1` |
+| `defect-instanton-vacuum-decay` | `route-local-plus-wrapper` | `VACUUM-DECAY-TUNNELING-LEDGER.json` | `14` | `14` | `1` |
+| `compactification-moduli-swampland` | `route-local-plus-wrapper` | `COMPACTIFICATION-GEOMETRY-LEDGER.json` | `14` | `14` | `1` |
+| `compactification-moduli-swampland` | `route-local-plus-wrapper` | `MODULI-STABILIZATION-LEDGER.json` | `14` | `14` | `1` |
+| `compactification-moduli-swampland` | `route-local-plus-wrapper` | `SWAMPLAND-COMPATIBILITY-LEDGER.json` | `14` | `14` | `1` |
+| `lorentz-cpt-spin-statistics` | `route-local-plus-wrapper` | `LORENTZ-COVARIANCE-LEDGER.json` | `14` | `14` | `1` |
+| `lorentz-cpt-spin-statistics` | `route-local-plus-wrapper` | `SPIN-STATISTICS-LEDGER.json` | `14` | `14` | `1` |
+| `lorentz-cpt-spin-statistics` | `route-local-plus-wrapper` | `CPT-DISCRETE-SYMMETRY-LEDGER.json` | `14` | `14` | `1` |
+| `locality-microcausality-cluster` | `route-local-plus-wrapper` | `MICROCAUSALITY-LOCALITY-LEDGER.json` | `14` | `14` | `1` |
+| `locality-microcausality-cluster` | `route-local-plus-wrapper` | `CLUSTER-DECOMPOSITION-LEDGER.json` | `14` | `14` | `1` |
+| `locality-microcausality-cluster` | `route-local-plus-wrapper` | `LOCAL-QFT-RECOVERY-LEDGER.json` | `14` | `14` | `1` |
+| `entanglement-modular-relative-entropy` | `route-local-plus-wrapper` | `ENTANGLEMENT-STRUCTURE-LEDGER.json` | `14` | `14` | `1` |
+| `entanglement-modular-relative-entropy` | `route-local-plus-wrapper` | `MODULAR-FLOW-LEDGER.json` | `14` | `14` | `1` |
+| `entanglement-modular-relative-entropy` | `route-local-plus-wrapper` | `RELATIVE-ENTROPY-RECOVERY-LEDGER.json` | `14` | `14` | `1` |
+| `qec-logical-decoder` | `route-local-plus-wrapper` | `QEC-CODE-SUBSPACE-LEDGER.json` | `14` | `14` | `1` |
+| `qec-logical-decoder` | `route-local-plus-wrapper` | `LOGICAL-OPERATOR-RECONSTRUCTION-LEDGER.json` | `14` | `14` | `1` |
+| `qec-logical-decoder` | `route-local-plus-wrapper` | `DECODER-CERTIFICATION-LEDGER.json` | `14` | `14` | `1` |
+| `circuit-holographic-complexity` | `route-local-plus-wrapper` | `CIRCUIT-COMPLEXITY-LEDGER.json` | `14` | `14` | `1` |
+| `circuit-holographic-complexity` | `route-local-plus-wrapper` | `HOLOGRAPHIC-COMPLEXITY-LEDGER.json` | `14` | `14` | `1` |
+| `circuit-holographic-complexity` | `route-local-plus-wrapper` | `COMPUTATIONAL-HARDNESS-LEDGER.json` | `14` | `14` | `1` |
+| `equation-transport-fluctuation` | `route-local-plus-wrapper` | `EQUATION-OF-STATE-LEDGER.json` | `14` | `14` | `1` |
+| `equation-transport-fluctuation` | `route-local-plus-wrapper` | `TRANSPORT-COEFFICIENT-LEDGER.json` | `14` | `14` | `1` |
+| `equation-transport-fluctuation` | `route-local-plus-wrapper` | `FLUCTUATION-DISSIPATION-LEDGER.json` | `14` | `14` | `1` |
+| `perturbative-loop-resummation` | `route-local-plus-wrapper` | `PERTURBATIVE-EXPANSION-LEDGER.json` | `14` | `14` | `1` |
+| `perturbative-loop-resummation` | `route-local-plus-wrapper` | `LOOP-ORDER-COUNTERTERM-LEDGER.json` | `14` | `14` | `1` |
+| `perturbative-loop-resummation` | `route-local-plus-wrapper` | `RESUMMATION-BOREL-LEDGER.json` | `14` | `14` | `1` |
+| `stochastic-estimator-convergence` | `route-local-plus-wrapper` | `STOCHASTIC-SAMPLER-LEDGER.json` | `14` | `14` | `1` |
+| `stochastic-estimator-convergence` | `route-local-plus-wrapper` | `ESTIMATOR-VARIANCE-LEDGER.json` | `14` | `14` | `1` |
+| `stochastic-estimator-convergence` | `route-local-plus-wrapper` | `CONVERGENCE-DIAGNOSTIC-LEDGER.json` | `14` | `14` | `1` |
+| `data-reduction-feature-sufficiency` | `route-local-plus-wrapper` | `DATA-REDUCTION-LEDGER.json` | `14` | `14` | `1` |
+| `data-reduction-feature-sufficiency` | `route-local-plus-wrapper` | `FEATURE-EXTRACTION-LEDGER.json` | `14` | `14` | `1` |
+| `data-reduction-feature-sufficiency` | `route-local-plus-wrapper` | `SUMMARY-STATISTIC-SUFFICIENCY-LEDGER.json` | `14` | `14` | `1` |
+| `simulator-emulator-transfer` | `route-local-plus-wrapper` | `SIMULATOR-FIDELITY-LEDGER.json` | `14` | `14` | `1` |
+| `simulator-emulator-transfer` | `route-local-plus-wrapper` | `SURROGATE-EMULATOR-LEDGER.json` | `14` | `14` | `1` |
+| `simulator-emulator-transfer` | `route-local-plus-wrapper` | `SIM-TO-REAL-TRANSFER-LEDGER.json` | `14` | `14` | `1` |
+| `benchmark-suite-metric-evaluation` | `route-local-plus-wrapper` | `BENCHMARK-SUITE-LEDGER.json` | `14` | `14` | `1` |
+| `benchmark-suite-metric-evaluation` | `route-local-plus-wrapper` | `BENCHMARK-METRIC-LEDGER.json` | `14` | `14` | `1` |
+| `benchmark-suite-metric-evaluation` | `route-local-plus-wrapper` | `EVALUATION-PROTOCOL-LEDGER.json` | `14` | `14` | `1` |
+| `prospective-preregistration-blinding` | `route-local-plus-wrapper` | `PROSPECTIVE-PREDICTION-LEDGER.json` | `14` | `14` | `1` |
+| `prospective-preregistration-blinding` | `route-local-plus-wrapper` | `PREREGISTRATION-PROTOCOL-LEDGER.json` | `14` | `14` | `1` |
+| `prospective-preregistration-blinding` | `route-local-plus-wrapper` | `BLINDING-DEVIATION-LEDGER.json` | `14` | `14` | `1` |
+| `unit-constant-scale-setting` | `route-local-plus-wrapper` | `UNIT-CONVENTION-LEDGER.json` | `14` | `14` | `1` |
+| `unit-constant-scale-setting` | `route-local-plus-wrapper` | `FUNDAMENTAL-CONSTANT-LEDGER.json` | `14` | `14` | `1` |
+| `unit-constant-scale-setting` | `route-local-plus-wrapper` | `SCALE-SETTING-LEDGER.json` | `14` | `14` | `1` |
+| `uncertainty-significance-coverage` | `route-local-plus-wrapper` | `UNCERTAINTY-INTERVAL-LEDGER.json` | `14` | `14` | `1` |
+| `uncertainty-significance-coverage` | `route-local-plus-wrapper` | `SIGNIFICANCE-THRESHOLD-LEDGER.json` | `14` | `14` | `1` |
+| `uncertainty-significance-coverage` | `route-local-plus-wrapper` | `COVERAGE-CALIBRATION-LEDGER.json` | `14` | `14` | `1` |
+
+- Parity failures: `0`
+
+## Audit rule
+
+Route-local-plus-wrapper ledger families should have one row per route plus one metadata/provenance wrapper row in each ledger. A parity failure does not change scientific authority by itself, but it signals a hidden route-row or wrapper omission that must be repaired before wording from that family can be trusted.

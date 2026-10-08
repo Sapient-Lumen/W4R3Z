@@ -52,10 +52,30 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [Rust-Needs-and-Dreams](Rust-Needs-and-Dreams/): 1 supplied snapshot with original files, reading guidance and preservation notes.
 
-- [Nicotine+DEV](Nicotine%2BDEV/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+- [nicotine+](nicotine%2B/README.md): the three related projects, grouped together.
 
-- [Nicotine-i2pDHT](Nicotine-i2pDHT/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+- [MTG](MTG/README.md): MUCloudtainer and MTGSim.
 
-- [Nicotineplusplusplus](Nicotineplusplusplus/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+- [Sandchoir-AAR-ADCC](Sandchoir-AAR-ADCC/README.md): selected snapshots and reading guides.
+
+- [Ministry-of-Many-Worlds](Ministry-of-Many-Worlds/README.md): selected snapshots and reading guides.
+
+- [Salient-Speculations](Salient-Speculations/README.md): selected snapshots and reading guides.
+
+- [Global-Warming](Global-Warming/README.md): selected snapshots and reading guides.
+
+- [GlassTTY](GlassTTY/README.md): selected snapshots and reading guides.
+
+- [Theory-of-Everything](Theory-of-Everything/README.md): selected snapshots and reading guides.
+
+- [VHK](VHK/README.md): selected snapshots and reading guides.
+
+- [Immoral-Wealth](Immoral-Wealth/README.md): selected snapshots and reading guides.
+
+- [Micromax](Micromax/README.md): selected snapshots and reading guides.
+
+- [TimeSync](TimeSync/README.md): selected snapshots and reading guides.
+
+- [Conlang Rosetta Stone](Conlang%20Rosetta%20Stone/README.md): Ithkuil and Lojban translation drafts, together.
 
 Each project has its own reading guide and provenance. Existing license notices remain applicable; no new blanket license is granted here.

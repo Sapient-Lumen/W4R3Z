@@ -1,0 +1,41 @@
+-- rev0304 nuclear radiological monitoring, dose, effluent and public-health query views
+DROP VIEW IF EXISTS v_rev0304_nuclear_radiological_monitoring_service_floors;
+DROP VIEW IF EXISTS v_rev0304_radiological_monitoring_gap_backlog;
+DROP VIEW IF EXISTS v_rev0304_public_dose_effluent_controls;
+DROP VIEW IF EXISTS v_rev0304_tritium_groundwater_surveillance;
+DROP VIEW IF EXISTS v_rev0304_emergency_monitoring_public_notification;
+DROP VIEW IF EXISTS v_rev0304_independent_monitoring_public_health;
+DROP VIEW IF EXISTS v_rev0304_radiological_publication_controls;
+DROP VIEW IF EXISTS v_rev0304_radiological_source_authority;
+
+CREATE VIEW v_rev0304_nuclear_radiological_monitoring_service_floors AS
+SELECT service_floor_id, scorecard_family, radiological_monitoring_gate_count, radiological_monitoring_specific_gap_count, maturity_ceiling, next_required_action
+FROM cube__nuclear_radiological_monitoring_scorecard_csv;
+
+CREATE VIEW v_rev0304_radiological_monitoring_gap_backlog AS
+SELECT service_floor_id, nuclear_gate_id, gate_family, priority, required_action, maturity_cap_if_unclosed
+FROM cube__nuclear_radiological_monitoring_gap_backlog_csv;
+
+CREATE VIEW v_rev0304_public_dose_effluent_controls AS
+SELECT service_floor_id, discharge_family, authorization_required, alara_review_required, annual_report_required, public_dose_boundary, status
+FROM cube__nuclear_radioactive_effluent_discharge_control_csv;
+
+CREATE VIEW v_rev0304_tritium_groundwater_surveillance AS
+SELECT service_floor_id, surveillance_family, monitoring_wells_required, response_trigger_required, public_status_required, status
+FROM cube__nuclear_tritium_groundwater_surveillance_csv;
+
+CREATE VIEW v_rev0304_emergency_monitoring_public_notification AS
+SELECT service_floor_id, emergency_monitoring_element, exercise_required, plain_language_required, language_disability_access_required, status
+FROM cube__nuclear_emergency_radiation_monitoring_public_notification_csv;
+
+CREATE VIEW v_rev0304_independent_monitoring_public_health AS
+SELECT service_floor_id, independence_element, conflict_of_interest_screen_required, chain_of_custody_required, health_registry_readiness_required, status
+FROM cube__nuclear_independent_monitoring_public_health_ledger_csv;
+
+CREATE VIEW v_rev0304_radiological_publication_controls AS
+SELECT service_floor_id, dashboard_element, public_release, redaction_boundary, uncertainty_required, status
+FROM cube__nuclear_radiological_dashboard_publication_control_csv;
+
+CREATE VIEW v_rev0304_radiological_source_authority AS
+SELECT source_id, source_title, authority_tier, use_boundary, radiological_or_context_limit
+FROM cube__nuclear_radiological_monitoring_source_authority_audit_csv;

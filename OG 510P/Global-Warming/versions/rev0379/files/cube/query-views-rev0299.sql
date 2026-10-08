@@ -1,0 +1,21 @@
+
+-- rev0299 nuclear financial-assurance query views
+CREATE VIEW IF NOT EXISTS v_rev0299_nuclear_financial_assurance_floors AS
+SELECT service_floor_id, financial_assurance_family, maturity_cap_if_missing, public_challenge_path, status
+FROM nuclear_liability_financial_assurance;
+
+CREATE VIEW IF NOT EXISTS v_rev0299_liability_gap_backlog AS
+SELECT service_floor_id, nuclear_gate_id, priority, required_action, maturity_cap_if_unclosed
+FROM nuclear_liability_gap_backlog;
+
+CREATE VIEW IF NOT EXISTS v_rev0299_decommissioning_trust_controls AS
+SELECT service_floor_id, financial_assurance_family, minimum_public_evidence, maturity_cap_if_missing
+FROM nuclear_decommissioning_trust_oversight;
+
+CREATE VIEW IF NOT EXISTS v_rev0299_public_risk_transfer AS
+SELECT service_floor_id, financial_assurance_family, liability_or_funding_regime, public_challenge_path
+FROM nuclear_public_risk_transfer_ledger;
+
+CREATE VIEW IF NOT EXISTS v_rev0299_financial_assurance_maturity_caps AS
+SELECT service_floor_id, maturity_cap, cap_reason, required_closure_tables
+FROM nuclear_financial_assurance_maturity_cap_execution;

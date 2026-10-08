@@ -1,0 +1,36 @@
+-- rev0303 nuclear physical security, insider, drone/perimeter and transport-security query views
+DROP VIEW IF EXISTS v_rev0303_nuclear_physical_security_service_floors;
+DROP VIEW IF EXISTS v_rev0303_physical_security_gap_backlog;
+DROP VIEW IF EXISTS v_rev0303_security_publication_controls;
+DROP VIEW IF EXISTS v_rev0303_force_on_force_readiness;
+DROP VIEW IF EXISTS v_rev0303_insider_access_controls;
+DROP VIEW IF EXISTS v_rev0303_transport_security_interface;
+DROP VIEW IF EXISTS v_rev0303_physical_security_source_authority;
+
+CREATE VIEW v_rev0303_nuclear_physical_security_service_floors AS
+SELECT service_floor_id, scorecard_family, physical_security_gate_count, physical_security_specific_gap_count, maturity_ceiling, next_required_action
+FROM cube__nuclear_physical_security_scorecard_csv;
+
+CREATE VIEW v_rev0303_physical_security_gap_backlog AS
+SELECT service_floor_id, nuclear_gate_id, gate_family, priority, required_action, maturity_cap_if_unclosed
+FROM cube__nuclear_physical_security_gap_backlog_csv;
+
+CREATE VIEW v_rev0303_security_publication_controls AS
+SELECT resource_or_evidence_type, classification, public_release_allowed, redaction_rule
+FROM cube__nuclear_physical_security_sensitive_publication_control_csv;
+
+CREATE VIEW v_rev0303_force_on_force_readiness AS
+SELECT service_floor_id, exercise_type, public_release, security_limit, status
+FROM cube__nuclear_force_on_force_readiness_csv;
+
+CREATE VIEW v_rev0303_insider_access_controls AS
+SELECT service_floor_id, program_element, owner_role, publication_control, status
+FROM cube__nuclear_insider_access_authorization_csv;
+
+CREATE VIEW v_rev0303_transport_security_interface AS
+SELECT service_floor_id, transport_or_interface_family, owner_role, publication_control, status
+FROM cube__nuclear_transport_security_law_enforcement_interface_csv;
+
+CREATE VIEW v_rev0303_physical_security_source_authority AS
+SELECT source_id, source_title, authority_tier, use_boundary, security_or_context_limit
+FROM cube__nuclear_physical_security_source_authority_audit_csv;

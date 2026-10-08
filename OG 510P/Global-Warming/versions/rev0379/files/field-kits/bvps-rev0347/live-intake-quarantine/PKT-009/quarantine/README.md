@@ -1,0 +1,7 @@
+# PKT-009 quarantine
+
+Live/anonymized evidence quarantine lane. This folder is not evidence by itself and cannot close readiness.
+
+Packet: PKT-009
+Branch: CAP-LINEAGE
+Packet name: update/cancel lineage

@@ -1,0 +1,127 @@
+# Claim-route binding field audit (generated)
+
+Generated from `CLAIM-ROUTE-BINDING-LEDGER.json` plus `LEDGER-FAMILY-REGISTRY.json`. Do not edit directly; run `make index` after changing route-layer families or bindings.
+
+- Registry revision: `rev0298`
+- Registered layer families: `38`
+- Registered route fields: `111`
+- Claim-route binding rows: `42`
+- Missing binding-field cells: `0`
+
+## Registered fields
+
+- `promotion_gate_ids`
+- `public_record_carrier_ids`
+- `acquisition_protocol_ids`
+- `defeater_ids`
+- `rollback_rule_ids`
+- `severity_test_ids`
+- `evidence_unit_ids`
+- `independence_assumption_ids`
+- `credit_allocation_ids`
+- `contrast_class_ids`
+- `likelihood_update_ids`
+- `prior_sensitivity_ids`
+- `measurement_model_ids`
+- `systematic_uncertainty_ids`
+- `calibration_traceability_ids`
+- `validity_domain_ids`
+- `transportability_ids`
+- `extrapolation_fence_ids`
+- `causal_mechanism_ids`
+- `intervention_protocol_ids`
+- `counterfactual_robustness_ids`
+- `selection_function_ids`
+- `multiplicity_control_ids`
+- `reporting_bias_ids`
+- `model_capacity_ids`
+- `complexity_penalty_ids`
+- `generalization_validation_ids`
+- `semantic_term_ids`
+- `ontology_commitment_ids`
+- `claim_language_permission_ids`
+- `social_authority_ids`
+- `review_replication_ids`
+- `consensus_elicitation_ids`
+- `computational_reproducibility_ids`
+- `numerical_stability_ids`
+- `software_supply_chain_ids`
+- `proof_obligation_ids`
+- `assumption_discharge_ids`
+- `formalization_coverage_ids`
+- `idealization_ids`
+- `approximation_error_ids`
+- `limit_interchange_ids`
+- `boundary_condition_ids`
+- `initial_data_ids`
+- `sector_selection_ids`
+- `gauge_symmetry_ids`
+- `constraint_closure_ids`
+- `observable_quotient_ids`
+- `regularization_scheme_ids`
+- `renormalization_flow_ids`
+- `matching_condition_ids`
+- `composition_law_ids`
+- `interface_compatibility_ids`
+- `global_consistency_ids`
+- `unitarity_check_ids`
+- `causality_cone_ids`
+- `stability_positivity_ids`
+- `quantization_map_ids`
+- `classical_limit_ids`
+- `semiclassical_correspondence_ids`
+- `information_flow_ids`
+- `entropy_accounting_ids`
+- `no_go_compliance_ids`
+- `symmetry_realization_ids`
+- `anomaly_matching_ids`
+- `conservation_law_ids`
+- `spacetime_topology_ids`
+- `dimension_realization_ids`
+- `signature_structure_ids`
+- `measure_definition_ids`
+- `ensemble_sampling_ids`
+- `typicality_weighting_ids`
+- `algebraic_locality_ids`
+- `subsystem_factorization_ids`
+- `edge_mode_center_ids`
+- `particle_spectrum_ids`
+- `interaction_coupling_ids`
+- `mass_hierarchy_ids`
+- `cosmological_background_ids`
+- `vacuum_energy_ids`
+- `thermal_history_ids`
+- `horizon_structure_ids`
+- `black_hole_thermodynamics_ids`
+- `evaporation_radiation_ids`
+- `curvature_regime_ids`
+- `singularity_resolution_ids`
+- `censorship_hyperbolicity_ids`
+- `stress_energy_source_ids`
+- `backreaction_consistency_ids`
+- `energy_condition_ids`
+- `equivalence_principle_ids`
+- `weak_field_ppn_ids`
+- `gravitational_radiation_ids`
+- `state_preparation_ids`
+- `detector_response_ids`
+- `decoherence_pointer_ids`
+- `asymptotic_state_ids`
+- `infrared_dressing_ids`
+- `scattering_observable_ids`
+- `discretization_regime_ids`
+- `finite_volume_scaling_ids`
+- `continuum_extrapolation_ids`
+- `correlation_function_ids`
+- `operator_insertion_ids`
+- `bootstrap_data_ids`
+- `phase_structure_ids`
+- `order_parameter_ids`
+- `universality_class_ids`
+- `hilbert_space_ids`
+- `representation_map_ids`
+- `spectral_reconstruction_ids`
+
+## Normalization rule
+
+Every binding row must expose every registered route-layer field. Empty lists are allowed when a binding does not spend that layer, but missing fields are no longer allowed because they hide late-added route-support families from authority propagation review.

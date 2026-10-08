@@ -1,0 +1,91 @@
+# operator handoff summary
+
+- captured_at: 2026-03-21T22:05:01Z
+- readiness_grade: blocked-by-validation
+- primary_next_kind: resume_validate_release
+- primary_next_command: `python scripts/validate-release.py --out-dir validation/latest --resume`
+- validation_complete: False
+- validation_running_step_name: pytest_cli
+- smoke_report_timestamp: 2026-03-08T01:28:01Z
+- best_profile: None
+- artifact_count: 73
+- copied_artifact_count: 66
+- missing_required_artifact_count: 0
+- history_count: 86
+- comparison_summary: operator handoff matches the previous one on tracked fields
+
+## commands
+
+- operator_handoff_report: `python scripts/operator-handoff.py --pretty`
+- operator_handoff_capture: `python scripts/operator-handoff.py capture --output-dir validation/latest/operator-handoff`
+- operator_handoff_history: `python scripts/operator-handoff.py history --pretty`
+- primary_next_command: `python scripts/validate-release.py --out-dir validation/latest --resume`
+
+## copied artifacts
+
+- static:README.md: `artifacts/README.md`
+- static:ROADMAP.md: `artifacts/ROADMAP.md`
+- static:PROJECT_MAP.md: `artifacts/PROJECT_MAP.md`
+- static:STATUS.md: `artifacts/STATUS.md`
+- static:TASKS.md: `artifacts/TASKS.md`
+- static:DECISIONS.md: `artifacts/DECISIONS.md`
+- static:MEMORY.md: `artifacts/MEMORY.md`
+- static:OPENING-CONTRACT.json: `artifacts/OPENING-CONTRACT.json`
+- static:OPENING-SURFACE-CONFORMANCE.json: `artifacts/OPENING-SURFACE-CONFORMANCE.json`
+- static:REVISION-RECEIPT.json: `artifacts/REVISION-RECEIPT.json`
+- static:REVISION-RECEIPT-CONFORMANCE.json: `artifacts/REVISION-RECEIPT-CONFORMANCE.json`
+- static:SUPPORT-PUBLISH-GATE.json: `artifacts/SUPPORT-PUBLISH-GATE.json`
+- static:SUPPORT-SOURCE-LOCK.json: `artifacts/SUPPORT-SOURCE-LOCK.json`
+- static:SUPPORT-SOURCE-BASELINE.json: `artifacts/SUPPORT-SOURCE-BASELINE.json`
+- static:.llm/README.md: `artifacts/.llm/README.md`
+- static:.llm/SESSION_START.md: `artifacts/.llm/SESSION_START.md`
+- static:.llm/SESSION_END.md: `artifacts/.llm/SESSION_END.md`
+- static:.llm/WORKLOG.jsonl: `artifacts/.llm/WORKLOG.jsonl`
+- docs:latest-handoff: `artifacts/docs/handoff-rev0149-2026-03-21.md`
+- validation:latest-report: `artifacts/validation/latest/report.json`
+- validation:latest-summary: `artifacts/validation/latest/SUMMARY.md`
+- validation:current-step: `artifacts/validation/latest/current_step.json`
+- smoke:latest-report: `artifacts/validation/latest/e2e-fixturelab.json`
+- readiness:capture-history: `artifacts/validation/readiness-report-captures.json`
+- readiness:latest-capture-bundle: `artifacts/validation/latest/readiness-report-capture`
+- install-receipt:history: `artifacts/validation/install-receipts.json`
+- install-receipt:latest-capture-bundle: `artifacts/validation/latest/install-receipt-capture`
+- install-receipt:latest-summary: `artifacts/validation/latest/install-receipt-capture/SUMMARY.md`
+- support-surface:history: `artifacts/validation/support-surface-captures.json`
+- support-surface:latest-capture-bundle: `artifacts/validation/latest/support-surface-capture`
+- support-surface:latest-summary: `artifacts/validation/latest/support-surface-capture/SUMMARY.md`
+- support-surface:latest-contract: `artifacts/validation/latest/support-surface-capture/record-contract.json`
+- opening-surface:history: `artifacts/validation/opening-surface-captures.json`
+- opening-surface:latest-capture-bundle: `artifacts/validation/latest/opening-surface-capture`
+- opening-surface:latest-summary: `artifacts/validation/latest/opening-surface-capture/SUMMARY.md`
+- truth-surface:latest-register-dir: `artifacts/validation/latest/truth-surface-register`
+- truth-surface:latest-register-json: `artifacts/validation/latest/truth-surface-register/truth-surface-register.json`
+- truth-surface:latest-summary: `artifacts/validation/latest/truth-surface-register/SUMMARY.md`
+- truth-surface:latest-warning-dir: `artifacts/validation/latest/truth-surface-warnings`
+- truth-surface:latest-warning-json: `artifacts/validation/latest/truth-surface-warnings/truth-surface-warnings.json`
+- truth-surface:latest-warning-summary: `artifacts/validation/latest/truth-surface-warnings/SUMMARY.md`
+- validation:artifact-inventory-dir: `artifacts/validation/latest/validation-artifact-inventory`
+- validation:artifact-buckets-json: `artifacts/validation/latest/validation-artifact-inventory/artifact-buckets.json`
+- validation:artifact-buckets-summary: `artifacts/validation/latest/validation-artifact-inventory/SUMMARY.md`
+- support-bundles:history: `artifacts/validation/support-bundle-queue-captures.json`
+- published-support:history: `artifacts/validation/published-support-surface-captures.json`
+- support-publish-gate:history: `artifacts/validation/support-publish-gate-captures.json`
+- support-source-baseline:history: `artifacts/validation/support-source-baseline-captures.json`
+- support-publish-gate:root-json: `artifacts/SUPPORT-PUBLISH-GATE.json`
+- support-source-lock:root-json: `artifacts/SUPPORT-SOURCE-LOCK.json`
+- support-source-baseline:root-json: `artifacts/SUPPORT-SOURCE-BASELINE.json`
+- support-publish-gate:latest-capture-bundle: `artifacts/validation/latest/support-publish-gate`
+- support-publish-gate:latest-json: `artifacts/validation/latest/support-publish-gate/support-publish-gate.json`
+- support-publish-gate:latest-summary: `artifacts/validation/latest/support-publish-gate/SUMMARY.md`
+- support-source-baseline:latest-capture-bundle: `artifacts/validation/latest/support-source-baseline`
+- support-source-baseline:latest-json: `artifacts/validation/latest/support-source-baseline/support-source-baseline.json`
+- support-source-baseline:latest-summary: `artifacts/validation/latest/support-source-baseline/SUMMARY.md`
+- support-bundles:latest-capture-bundle: `artifacts/validation/latest/support-bundle-queue`
+- support-bundles:latest-queue-json: `artifacts/validation/latest/support-bundle-queue/support-bundle-queue.json`
+- support-bundles:latest-summary: `artifacts/validation/latest/support-bundle-queue/SUMMARY.md`
+- published-support:latest-capture-bundle: `artifacts/validation/latest/published-support-surface`
+- published-support:latest-snapshot: `artifacts/validation/latest/published-support-surface/support-public-surface.json`
+- published-support:latest-summary: `artifacts/validation/latest/published-support-surface/SUMMARY.md`
+- support-bundles:contract-root: `artifacts/SUPPORT-BUNDLE-CONTRACT.json`
+- published-support:root-snapshot: `artifacts/SUPPORT-PUBLIC-SURFACE.json`
+- support-bundles:manifests-dir: `artifacts/docs/support-bundles`

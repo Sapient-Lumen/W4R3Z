@@ -1,0 +1,5 @@
+# Rev683 - normalize older macro docs to the current default-slot dialect
+
+Micromax's macro surface has picked up a much clearer default-slot language over the recent revs: step-aware `default=last (N step[s])` summaries, `[default]` badges on exact `last` rows, explicit `default slot empty` playback failures, and action-shaped root rows for bare `play` / `run` / `record` commands. But a few older explainer docs and copied worklist notes still quoted the earlier shorthand examples like `idle · default=last · 0 macros` or `last (default slot)`, which made the archive teach two slightly different macro dialects at once.
+
+Rev683 keeps the follow-up deliberately small and documentation-only. The older rev564/rev565 explainer pages and their copied note blocks now use the same step-aware, badge-aware examples as the current code and newer docs. Nothing changes in the editor core here; the goal is simply to make the archive easier for future humans and LLMs to trust when they learn the macro surface from older narrative docs.

@@ -1,0 +1,5 @@
+# Rev682 - let bare `macro record` roots preview the default-slot outcome
+
+Micromax already kept the default replay/record slot visible in idle `macro record` / `macro rec` / `macro start` root rows, but those rows still stopped at a broad inventory summary. That meant the command bar could preview `idle · default=last (0 steps) · 0 macros` without saying that Enter would actually start recording into the default slot, or preview a saved `last` inventory tail without saying that the same Enter path would overwrite the default slot on save.
+
+Rev682 keeps the follow-up deliberately tiny and action-shaped. Bare idle record-root rows now splice one exact action witness into the existing default-slot summary: fresh rows say `record default slot`, while saved rows say `overwrite default slot on save`. The broader saved-count/sample tail stays intact, and runtime/default-slot behavior remains unchanged. The goal is simple: just like play/run roots, record roots should preview the action Enter would actually take instead of only the surrounding macro inventory.

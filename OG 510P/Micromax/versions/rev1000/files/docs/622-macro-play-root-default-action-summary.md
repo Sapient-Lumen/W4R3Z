@@ -1,0 +1,5 @@
+# Rev681 - let bare `macro play` / `macro run` preview the default-slot outcome
+
+Micromax already kept the default replay slot visible in idle `macro play` / `macro run` root rows, but those rows still stopped at the broad inventory summary. That meant a fresh editor could preview `idle · default=last (0 steps) · 0 macros` even though pressing Enter on bare `macro play` would immediately fail with `default slot is empty`, and a saved `last` row could preview inventory without ever saying that Enter would replay the default slot.
+
+Rev681 keeps the follow-up deliberately tiny and action-shaped. Bare idle `macro play` / `macro run` rows now splice one exact action witness into the existing default-slot summary: fresh rows say `default slot empty`, while saved rows say `play default slot`. The broader saved-count/sample tail stays intact, and raw `macro`, `macro status`, and `showmacro` summaries stay unchanged because they are still inventory/inspection surfaces rather than immediate playback actions. The goal is simple: action rows should preview the action Enter would actually take, not just the surrounding inventory.

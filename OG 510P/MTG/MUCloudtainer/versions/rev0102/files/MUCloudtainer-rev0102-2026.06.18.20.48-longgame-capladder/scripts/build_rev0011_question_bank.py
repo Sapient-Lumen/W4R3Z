@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+QUESTIONS = [
+    {
+        "id": "q001_constructor_method_comparison",
+        "question": "When the construction space is enumerable, which methods find strong deck+mulligan+pilot bundles fastest: enumeration, evolutionary search, neural policy search, PSRO-style response generation, or hybrids?",
+        "why_it_matters": "Enumeration gives a truth-ish baseline for deck vectors, but not for pilots. Learned/evolved methods must justify themselves by sample efficiency, robustness, or discovering non-obvious bundles.",
+        "first_test": "Restrict to top-N probe decks; build payoff tables for heuristic/counter_happy/threat_rush pilots; add an evolutionary constructor loop as a response oracle.",
+        "status": "planned",
+        "risk": "Simulator exploitation or overfitting to weak heuristic opponents.",
+    },
+    {
+        "id": "q002_mulligan_policy_agency",
+        "question": "Does an agent learn a different keep/mulligan/bottom policy for 20 life vs 40 life, 40-card vs 60-card decks, and Force-heavy vs Jace-heavy construction?",
+        "why_it_matters": "Mulligan policy is part of the strategy bundle and can hide large construction advantages.",
+        "first_test": "Train or evolve a tiny policy over MULLIGAN_KEEP, MULLIGAN_TAKE, and MULLIGAN_BOTTOM(card); compare against keep_always/land_band baselines.",
+        "status": "scaffolded",
+        "risk": "Reward noise from small game counts may favor overly aggressive mulligans.",
+    },
+    {
+        "id": "q003_truncation_stall_hack",
+        "question": "Can an agent learn to stall into max_decisions because draw-half scoring is beneficial in bad positions?",
+        "why_it_matters": "This is the cleanest MUC-5 reward-hack trap; it must be isolated before RL.",
+        "first_test": "Track truncation rate by strategy and use terminal-only reward for training unless truncation reward is explicitly enabled.",
+        "status": "guarded_rev0011",
+        "risk": "Long Jace mirrors can be legitimate; not every long game is a hack.",
+    },
+    {
+        "id": "q004_public_vs_omniscient_gap",
+        "question": "How much stronger is an omniscient pilot than a public-observation pilot on the same deck?",
+        "why_it_matters": "This quantifies the value of hidden information and catches accidental leakage.",
+        "first_test": "Play trusted-state heuristics against public DecisionFrame equivalents; add a deliberate omniscient oracle only as an upper-bound benchmark.",
+        "status": "planned",
+        "risk": "Heuristic differences may reflect implementation style rather than information value.",
+    },
+    {
+        "id": "q005_alpha_rank_population",
+        "question": "Once we have strategy-bundle payoff tables, does Alpha-Rank/PSRO-style population analysis tell a better story than single champion win rate?",
+        "why_it_matters": "MUC-5 may have rock-paper-scissors bundles: Force-heavy, Jace-heavy, Overlord-heavy, and deck-size gambits.",
+        "first_test": "Build a small empirical payoff matrix and compute simple stationary/population rankings before importing heavier solvers.",
+        "status": "planned",
+        "risk": "Sparse payoff estimates can make rankings unstable.",
+    },
+    {
+        "id": "q006_life_total_construction_context",
+        "question": "Can a constructor exploit knowing 20 vs 40 life, and how much does robust unknown-life construction give up?",
+        "why_it_matters": "Life total changes Force cost, Overlord clocks, and Jace/decking pressure.",
+        "first_test": "Compare known_20, known_40, and unknown_robust shortlists across the same pilot population.",
+        "status": "scaffolded",
+        "risk": "40 life may mostly be a red herring if Jace/decking dominates.",
+    },
+    {
+        "id": "q007_replayable_surprises",
+        "question": "Can every surprising result be replayed exactly from an archived trace?",
+        "why_it_matters": "Without replay, strange learned behavior is just noise; with replay, we can inspect it and play against it.",
+        "first_test": "Record JSONL traces with state fingerprints and require replay pass before promoting payoff data.",
+        "status": "built_rev0011",
+        "risk": "Future simulator revisions may intentionally invalidate old traces; manifests must record revision.",
+    },
+    {
+        "id": "q008_determinized_search",
+        "question": "Does sampling plausible opponent hands/libraries improve play enough to justify information-set search?",
+        "why_it_matters": "MUC-5 is small but hidden-information; search should reason over beliefs, not true state.",
+        "first_test": "Build a shallow rollout agent that samples hidden states consistent with public observations and scores legal actions by rollouts.",
+        "status": "planned",
+        "risk": "Belief sampling can be biased if decklists are unknown or construction priors are wrong.",
+    },
+    {
+        "id": "q009_constructor_leak",
+        "question": "Are constructors being evaluated with information they would not have at registration time?",
+        "why_it_matters": "Known vs unknown life, open vs closed decklists, and opponent pool access are separate tournament contexts.",
+        "first_test": "Make ConstructionContext part of every strategy-bundle metadata row and reject unlabeled rows.",
+        "status": "partially_scaffolded",
+        "risk": "Convenience scripts may accidentally mix contexts.",
+    },
+    {
+        "id": "q010_minimal_neural_policy",
+        "question": "Can a tiny masked neural policy beat heuristic pilots without seeing hidden state?",
+        "why_it_matters": "This is the first true ML pilot milestone after simulator confidence.",
+        "first_test": "Behavior-clone heuristic games or train REINFORCE/PPO-style on public DecisionFrames using action masks.",
+        "status": "planned",
+        "risk": "Sparse terminal rewards and slow CPU-only rollouts can make naive RL look worse than it is.",
+    },
+]
+
+
+def main() -> None:
+    out = {
+        "revision": "rev0011",
+        "purpose": "Question bank for MUC-5 experiments that are small enough for the cloudtainer but interesting enough to shape later ML work.",
+        "questions": QUESTIONS,
+    }
+    path = ROOT / "data" / "rev0011_question_bank.json"
+    path.write_text(json.dumps(out, indent=2))
+    print(json.dumps({"revision": out["revision"], "question_count": len(QUESTIONS), "path": str(path.relative_to(ROOT))}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

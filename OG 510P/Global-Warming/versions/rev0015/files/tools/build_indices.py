@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ARCHIVE = ROOT / "archive"
+PROJECT = json.loads((ROOT / "PROJECT.json").read_text(encoding="utf-8"))
+
+SOURCE_GROUPS = {
+    "archive/001-mission-guardrails-and-success-criteria.md": [
+        {"title": "IPCC WGIII Summary for Policymakers", "publisher": "IPCC", "url": "https://www.ipcc.ch/report/ar6/wg3/chapter/summary-for-policymakers/"},
+        {"title": "Emissions Gap Report 2025", "publisher": "UNEP", "url": "https://www.unep.org/resources/emissions-gap-report-2025"},
+        {"title": "Key Targets 2025", "publisher": "Global Carbon Budget", "url": "https://globalcarbonbudget.org/key-targets-2025/"},
+        {"title": "Global Landscape of Climate Finance 2025: EMDE Spotlight", "publisher": "Climate Policy Initiative", "url": "https://www.climatepolicyinitiative.org/publication/global-landscape-of-climate-finance-2025-emde-spotlight/"},
+    ],
+    "archive/002-the-fast-stack-clean-power-electrification-and-efficiency.md": [
+        {"title": "IPCC WGIII Summary for Policymakers", "publisher": "IPCC", "url": "https://www.ipcc.ch/report/ar6/wg3/chapter/summary-for-policymakers/"},
+        {"title": "Electricity 2026 executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/electricity-2026/executive-summary"},
+        {"title": "Renewables 2025", "publisher": "IEA", "url": "https://www.iea.org/reports/renewables-2025/renewable-electricity"},
+        {"title": "Electricity 2026 grids", "publisher": "IEA", "url": "https://www.iea.org/reports/electricity-2026/grids"},
+    ],
+    "archive/003-hard-sectors-industry-freight-shipping-and-aviation.md": [
+        {"title": "IPCC WGIII Summary for Policymakers", "publisher": "IPCC", "url": "https://www.ipcc.ch/report/ar6/wg3/chapter/summary-for-policymakers/"},
+        {"title": "Net Zero Roadmap 2023 update", "publisher": "IEA", "url": "https://www.iea.org/reports/net-zero-roadmap-a-global-pathway-to-keep-the-15-c-goal-in-reach"},
+    ],
+    "archive/004-methane-land-food-and-forest-systems.md": [
+        {"title": "Global Methane Tracker 2025 key findings", "publisher": "IEA", "url": "https://www.iea.org/reports/global-methane-tracker-2025/key-findings"},
+        {"title": "Methane abatement overview", "publisher": "IEA", "url": "https://www.iea.org/energy-system/fossil-fuels/methane-abatement"},
+        {"title": "Halting Deforestation", "publisher": "FAO", "url": "https://www.fao.org/haltingdeforestation/en"},
+        {"title": "IPCC WGIII Summary for Policymakers", "publisher": "IPCC", "url": "https://www.ipcc.ch/report/ar6/wg3/chapter/summary-for-policymakers/"},
+    ],
+    "archive/005-policy-finance-state-capacity-and-just-transition.md": [
+        {"title": "Global Landscape of Climate Finance 2025 data dashboard", "publisher": "Climate Policy Initiative", "url": "https://www.climatepolicyinitiative.org/resources/data-visualizations/global-landscape-of-climate-finance-data-dashboard/"},
+        {"title": "Global Landscape of Climate Finance 2025: EMDE Spotlight", "publisher": "Climate Policy Initiative", "url": "https://www.climatepolicyinitiative.org/publication/global-landscape-of-climate-finance-2025-emde-spotlight/"},
+        {"title": "World Energy Investment 2025 executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/world-energy-investment-2025/executive-summary"},
+        {"title": "Health co-benefits of climate action", "publisher": "WHO", "url": "https://www.who.int/teams/environment-climate-change-and-health/climate-change-and-health/capacity-building/toolkit-on-climate-change-and-health/cobenefits"},
+        {"title": "United Arab Emirates Just Transition Work Programme", "publisher": "UNFCCC", "url": "https://unfccc.int/topics/just-transition/united-arab-emirates-just-transition-work-programme"},
+    ],
+    "archive/006-carbon-removal-overshoot-and-the-research-frontier.md": [
+        {"title": "IPCC WGIII Summary for Policymakers", "publisher": "IPCC", "url": "https://www.ipcc.ch/report/ar6/wg3/chapter/summary-for-policymakers/"},
+        {"title": "Emissions Gap Report 2025", "publisher": "UNEP", "url": "https://www.unep.org/resources/emissions-gap-report-2025"},
+        {"title": "The State of Energy Innovation 2026", "publisher": "IEA", "url": "https://www.iea.org/reports/the-state-of-energy-innovation-2026/executive-summary"},
+        {"title": "Net Zero Roadmap 2023 update", "publisher": "IEA", "url": "https://www.iea.org/reports/net-zero-roadmap-a-global-pathway-to-keep-the-15-c-goal-in-reach"},
+    ],
+    "archive/007-delivery-architecture-abundance-retirement-and-development.md": [
+        {"title": "COP28 Agreement Signals Beginning of the End of the Fossil Fuel Era", "publisher": "UNFCCC", "url": "https://unfccc.int/news/cop28-agreement-signals-beginning-of-the-end-of-the-fossil-fuel-era"},
+        {"title": "Electricity 2026 executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/electricity-2026/executive-summary"},
+        {"title": "Electricity 2026 grids", "publisher": "IEA", "url": "https://www.iea.org/reports/electricity-2026/grids"},
+        {"title": "Global Landscape of Climate Finance 2025: EMDE Spotlight", "publisher": "Climate Policy Initiative", "url": "https://www.climatepolicyinitiative.org/publication/global-landscape-of-climate-finance-2025-emde-spotlight/"},
+        {"title": "Energy Access Has Improved, Yet International Financial Support Still Needed to Boost Progress and Address Disparities", "publisher": "World Bank / SDG 7 custodian agencies", "url": "https://www.worldbank.org/en/news/press-release/2025/06/25/energy-access-has-improved-yet-international-financial-support-still-needed-to-boost-progress-and-address-disparities"},
+    ],
+    "archive/008-managed-fossil-decline-retirement-sequencing-and-subsidy-reform.md": [
+        {"title": "Global Energy Review 2025, CO2 emissions", "publisher": "IEA", "url": "https://www.iea.org/reports/global-energy-review-2025/co2-emissions"},
+        {"title": "World Energy Investment 2025 executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/world-energy-investment-2025/executive-summary"},
+        {"title": "OECD Inventory of Support Measures for Fossil Fuels 2025", "publisher": "OECD", "url": "https://www.oecd.org/en/publications/oecd-inventory-of-support-measures-for-fossil-fuels-2025_6fff0cb7-en.html"},
+        {"title": "Net Zero Roadmap 2023 update, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/net-zero-roadmap-a-global-pathway-to-keep-the-15-c-goal-in-reach/executive-summary"},
+    ],
+    "archive/009-outcome-metrics-absolute-cuts-displacement-and-access.md": [
+        {"title": "Emissions Gap Report 2025", "publisher": "UNEP", "url": "https://www.unep.org/resources/emissions-gap-report-2025"},
+        {"title": "Fossil fuel CO2 emissions hit record high in 2025", "publisher": "Global Carbon Budget", "url": "https://globalcarbonbudget.org/fossil-fuel-co2-emissions-hit-record-high-in-2025/"},
+        {"title": "Global Energy Review 2025, CO2 emissions", "publisher": "IEA", "url": "https://www.iea.org/reports/global-energy-review-2025/co2-emissions"},
+        {"title": "Global Energy Review 2025, global trends", "publisher": "IEA", "url": "https://www.iea.org/reports/global-energy-review-2025/global-trends"},
+        {"title": "Electricity", "publisher": "IEA", "url": "https://www.iea.org/energy-system/electricity"},
+        {"title": "Global Methane Tracker 2025 key findings", "publisher": "IEA", "url": "https://www.iea.org/reports/global-methane-tracker-2025/key-findings"},
+        {"title": "Energy Access Has Improved, Yet International Financial Support Still Needed to Boost Progress and Address Disparities", "publisher": "World Bank / SDG 7 custodian agencies", "url": "https://www.worldbank.org/en/news/press-release/2025/06/25/energy-access-has-improved-yet-international-financial-support-still-needed-to-boost-progress-and-address-disparities"},
+        {"title": "Global energy investment set to rise to $3.3 trillion in 2025 amid economic uncertainty and energy security concerns", "publisher": "IEA", "url": "https://www.iea.org/news/global-energy-investment-set-to-rise-to-33-trillion-in-2025-amid-economic-uncertainty-and-energy-security-concerns"},
+    ],
+    "archive/010-throughput-constraints-grids-permitting-supply-chains-and-local-legitimacy.md": [
+        {"title": "Electricity 2026, grids", "publisher": "IEA", "url": "https://www.iea.org/reports/electricity-2026/grids"},
+        {"title": "Building the Future Transmission Grid", "publisher": "IEA", "url": "https://www.iea.org/reports/building-the-future-transmission-grid/executive-summary"},
+        {"title": "Global Critical Minerals Outlook 2025", "publisher": "IEA", "url": "https://www.iea.org/reports/global-critical-minerals-outlook-2025/executive-summary"},
+        {"title": "Diagnostic Toolkit for Reducing Regulatory Barriers to Solar, Wind and Pumped Hydro Storage in the European Union", "publisher": "OECD", "url": "https://www.oecd.org/en/publications/diagnostic-toolkit-for-reducing-regulatory-barriers-to-solar-wind-and-pumped-hydro-storage-in-the-european-union_15f4aed4-en/full-report/spatial-planning-and-permitting_279bc96f.html"},
+        {"title": "Renewables 2025, renewable electricity", "publisher": "IEA", "url": "https://www.iea.org/reports/renewables-2025/renewable-electricity"},
+    ],
+    "archive/011-climate-observability-mrv-open-data-and-public-proof.md": [
+        {"title": "Biennial Transparency Reports", "publisher": "UNFCCC", "url": "https://unfccc.int/biennial-transparency-reports"},
+        {"title": "Global Methane Tracker 2025 key findings", "publisher": "IEA", "url": "https://www.iea.org/reports/global-methane-tracker-2025/key-findings"},
+        {"title": "Methane Alert and Response System (MARS)", "publisher": "UNEP", "url": "https://www.unep.org/topics/energy/methane/methane-alert-and-response-system-mars"},
+        {"title": "New report tracks and informs global data-driven methane reductions", "publisher": "UNEP", "url": "https://www.unep.org/technical-highlight/new-report-tracks-and-informs-global-data-driven-methane-reductions"},
+        {"title": "Global Forest Watch", "publisher": "Global Forest Watch", "url": "https://www.globalforestwatch.org/"},
+        {"title": "Fires Drove Record-breaking Tropical Forest Loss in 2024", "publisher": "World Resources Institute", "url": "https://gfr.wri.org/latest-analysis-deforestation-trends"},
+        {"title": "About the Coalition", "publisher": "Climate TRACE", "url": "https://climatetrace.org/about"},
+    ],
+    "archive/012-time-discipline-first-decade-sequencing-lock-in-and-earned-residuals.md": [
+        {"title": "Fossil fuel CO2 emissions hit record high in 2025", "publisher": "Global Carbon Budget", "url": "https://globalcarbonbudget.org/fossil-fuel-co2-emissions-hit-record-high-in-2025/"},
+        {"title": "Emissions Gap Report 2025", "publisher": "UNEP", "url": "https://www.unep.org/resources/emissions-gap-report-2025"},
+        {"title": "Summary for Policymakers", "publisher": "IPCC", "url": "https://www.ipcc.ch/report/ar6/wg3/chapter/summary-for-policymakers/"},
+        {"title": "Net Zero Roadmap 2023 update, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/net-zero-roadmap-a-global-pathway-to-keep-the-15-c-goal-in-reach/executive-summary"},
+        {"title": "COP28 Agreement Signals Beginning of the End of the Fossil Fuel Era", "publisher": "UNFCCC", "url": "https://unfccc.int/news/cop28-agreement-signals-beginning-of-the-end-of-the-fossil-fuel-era"},
+        {"title": "Electricity 2026, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/electricity-2026/executive-summary"},
+        {"title": "Electricity 2026, grids", "publisher": "IEA", "url": "https://www.iea.org/reports/electricity-2026/grids"},
+        {"title": "COP28: Tracking the Energy Outcomes", "publisher": "IEA", "url": "https://www.iea.org/topics/cop28-tracking-the-energy-outcomes"},
+        {"title": "Global Methane Tracker 2025 key findings", "publisher": "IEA", "url": "https://www.iea.org/reports/global-methane-tracker-2025/key-findings"},
+    ],
+    "archive/013-reliability-architecture-flexibility-storage-demand-response-and-clean-firming.md": [
+        {"title": "Renewables 2025, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/renewables-2025/executive-summary"},
+        {"title": "Electricity 2026, flexibility", "publisher": "IEA", "url": "https://www.iea.org/reports/electricity-2026/flexibility"},
+        {"title": "The Value of Demand Flexibility, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/the-value-of-demand-flexibility/executive-summary"},
+        {"title": "World Energy Outlook 2025, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/world-energy-outlook-2025/executive-summary"},
+        {"title": "The Iberian blackout has highlighted the critical importance of electricity security", "publisher": "IEA", "url": "https://www.iea.org/commentaries/the-iberian-blackout-has-highlighted-the-critical-importance-of-electricity-security"},
+    ],
+    "archive/014-adoption-architecture-defaults-zero-upfront-finance-installers-and-low-friction-switching.md": [
+        {"title": "Strategies for Affordable and Fair Clean Energy Transitions, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/strategies-for-affordable-and-fair-clean-energy-transitions/executive-summary"},
+        {"title": "Global EV Outlook 2025, trends in electric car markets", "publisher": "IEA", "url": "https://www.iea.org/reports/global-ev-outlook-2025/trends-in-electric-car-markets-2"},
+        {"title": "Global EV Outlook 2025, electric vehicle charging", "publisher": "IEA", "url": "https://www.iea.org/reports/global-ev-outlook-2025/electric-vehicle-charging"},
+        {"title": "Global Energy Review 2025, electricity", "publisher": "IEA", "url": "https://www.iea.org/reports/global-energy-review-2025/electricity"},
+        {"title": "The Future of Heat Pumps, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/the-future-of-heat-pumps/executive-summary"},
+        {"title": "Brick by Brick (Volume 2)", "publisher": "OECD", "url": "https://www.oecd.org/en/publications/brick-by-brick-volume-2_e91cb19d-en.html"},
+        {"title": "Building envelopes", "publisher": "IEA", "url": "https://www.iea.org/energy-system/buildings/building-envelopes"},
+        {"title": "Slow efficiency progress is a wasted opportunity", "publisher": "IEA", "url": "https://www.iea.org/commentaries/slow-efficiency-progress-is-a-wasted-opportunity"},
+        {"title": "Cooling", "publisher": "IEA", "url": "https://www.iea.org/energy-system/buildings/space-cooling"},
+    ],
+    "archive/015-lead-markets-standards-procurement-and-coordinated-trade-rules.md": [
+        {"title": "Demand and Supply Measures for the Steel and Cement Transition, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/demand-and-supply-measures-for-the-steel-and-cement-transition/executive-summary"},
+        {"title": "Breakthrough Agenda Report 2025, steel", "publisher": "IEA", "url": "https://www.iea.org/reports/breakthrough-agenda-report-2025/steel"},
+        {"title": "Breakthrough Agenda Report 2025, cement and concrete", "publisher": "IEA", "url": "https://www.iea.org/reports/breakthrough-agenda-report-2025/cement-and-concrete"},
+        {"title": "Government at a Glance 2025, size of public procurement", "publisher": "OECD", "url": "https://www.oecd.org/en/publications/government-at-a-glance-2025_0efd0bcd-en/full-report/size-of-public-procurement_6979cd47.html"},
+        {"title": "Government at a Glance 2025, governing for the green transition", "publisher": "OECD", "url": "https://www.oecd.org/en/publications/government-at-a-glance-2025_0efd0bcd-en/full-report/governing-for-the-green-transition_075e9a83.html"},
+        {"title": "Effective Carbon Rates 2025, developments in carbon pricing in 2024 and 2025", "publisher": "OECD", "url": "https://www.oecd.org/en/publications/effective-carbon-rates-2025_a5a5d71f-en/full-report/developments-in-carbon-pricing-in-2024-and-2025_f8abf7ab.html"},
+        {"title": "Inclusive Forum on Carbon Mitigation Approaches", "publisher": "OECD", "url": "https://www.oecd.org/en/about/programmes/inclusive-forum-on-carbon-mitigation-approaches.html"},
+    ],
+    "archive/016-innovation-discipline-demonstrations-first-of-a-kind-projects-and-no-delay-learning.md": [
+        {"title": "The State of Energy Innovation 2025, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/the-state-of-energy-innovation-2025/executive-summary"},
+        {"title": "The State of Energy Innovation 2026, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/the-state-of-energy-innovation-2026/executive-summary"},
+        {"title": "Races to First in Energy Innovation", "publisher": "IEA", "url": "https://www.iea.org/data-and-statistics/data-tools/races-to-first-in-energy-innovation"},
+        {"title": "Achieving Net Zero Heavy Industry Sectors in G7 Members, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/achieving-net-zero-heavy-industry-sectors-in-g7-members/executive-summary"},
+        {"title": "Global Hydrogen Review 2025, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/global-hydrogen-review-2025/executive-summary"},
+    ],
+    "archive/017-spatial-systems-compact-cities-transit-retrofit-first-growth-and-structural-demand-reduction.md": [
+        {"title": "Empowering Urban Energy Transitions, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/empowering-urban-energy-transitions/executive-summary"},
+        {"title": "Energy Efficiency Policy Toolkit 2025, transport", "publisher": "IEA", "url": "https://www.iea.org/reports/energy-efficiency-policy-toolkit-2025/transport"},
+        {"title": "Energy Efficiency 2025, transport", "publisher": "IEA", "url": "https://www.iea.org/reports/energy-efficiency-2025/transport"},
+        {"title": "Global Status Report for Buildings and Construction 2024/2025", "publisher": "UNEP / GlobalABC", "url": "https://www.unep.org/resources/report/global-status-report-buildings-and-construction-20242025"},
+        {"title": "Here's how buildings contribute to climate change – and what can be done about it", "publisher": "UNEP", "url": "https://www.unep.org/news-and-stories/story/heres-how-buildings-contribute-climate-change-and-what-can-be-done-about-it"},
+        {"title": "Climate Mitigation in Intermediary Cities, overview chapter", "publisher": "OECD", "url": "https://www.oecd.org/en/publications/climate-mitigation-in-intermediary-cities_3bdd564f-en/full-report/overview-systems-innovation-in-intermediary-cities-in-kenya-and-mozambique_0e4930aa.html"},
+        {"title": "Fast-tracking Net Zero by Building Climate and Economic Resilience, demand-side action section", "publisher": "OECD", "url": "https://www.oecd.org/en/publications/fast-tracking-net-zero-by-building-climate-and-economic-resilience_f2c22c96-en/full-report/component-5.html"},
+    ],
+    "archive/018-material-throughput-circularity-reuse-repair-and-long-life-design.md": [
+        {"title": "Global Resources Outlook 2024", "publisher": "UNEP / International Resource Panel", "url": "https://www.unep.org/resources/Global-Resource-Outlook-2024"},
+        {"title": "Rich countries use six times more resources, generate 10 times the climate impacts than low-income ones", "publisher": "UNEP", "url": "https://www.unep.org/news-and-stories/press-release/rich-countries-use-six-times-more-resources-generate-10-times"},
+        {"title": "Achieving Net Zero Heavy Industry Sectors in G7 Members, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/achieving-net-zero-heavy-industry-sectors-in-g7-members/executive-summary"},
+        {"title": "Demand and Supply Measures for the Steel and Cement Transition, executive summary", "publisher": "IEA", "url": "https://www.iea.org/reports/demand-and-supply-measures-for-the-steel-and-cement-transition/executive-summary"},
+        {"title": "Breakthrough Agenda Report 2025, building", "publisher": "IEA", "url": "https://www.iea.org/reports/breakthrough-agenda-report-2025/building"},
+        {"title": "Global Waste Management Outlook 2024", "publisher": "UNEP", "url": "https://www.unep.org/resources/global-waste-management-outlook-2024"},
+    ],
+    "archive/019-non-co2-completion-nitrous-oxide-refrigerants-and-sustainable-cooling.md": [
+        {"title": "Global Nitrous Oxide Assessment", "publisher": "UNEP", "url": "https://www.unep.org/resources/report/global-nitrous-oxide-assessment"},
+        {"title": "Rise in nitrous oxide emissions endangers pathway to 1.5°C, the ozone layer, and human health", "publisher": "UNEP", "url": "https://www.unep.org/news-and-stories/press-release/rise-nitrous-oxide-emissions-endangers-pathway-15degc-ozone-layer"},
+        {"title": "As heat records fall, experts call for reductions in this often-overlooked greenhouse gas", "publisher": "UNEP", "url": "https://www.unep.org/news-and-stories/story/heat-records-fall-experts-call-reductions-often-overlooked-greenhouse-gas"},
+        {"title": "Global Cooling Watch 2025", "publisher": "UNEP", "url": "https://www.unep.org/resources/global-cooling-watch-2025"},
+        {"title": "In warming world, new report charts how to expand cooling access to all without spiking emissions", "publisher": "UNEP", "url": "https://www.unep.org/news-and-stories/story/warming-world-new-report-charts-how-expand-cooling-access-all-without"},
+        {"title": "Staying cool without overheating the energy system", "publisher": "IEA", "url": "https://www.iea.org/commentaries/staying-cool-without-overheating-the-energy-system"},
+        {"title": "About Montreal Protocol", "publisher": "UNEP OzonAction", "url": "https://www.unep.org/ozonaction/who-we-are/about-montreal-protocol"},
+        {"title": "Space cooling", "publisher": "IEA", "url": "https://www.iea.org/energy-system/buildings/space-cooling"},
+    ],
+    "archive/020-workforce-architecture-skills-apprenticeships-reskilling-and-service-capacity.md": [
+        {"title": "World Energy Employment 2025", "publisher": "IEA", "url": "https://www.iea.org/reports/world-energy-employment-2025/executive-summary"},
+        {"title": "The Future of Heat Pumps", "publisher": "IEA", "url": "https://www.iea.org/reports/the-future-of-heat-pumps/executive-summary"},
+        {"title": "Renewables Jobs See First Slowdown Amid Global Deployment Growth", "publisher": "IRENA / ILO", "url": "https://www.irena.org/News/pressreleases/2026/Jan/Renewables-Jobs-See-First-Slowdown-Amid-Global-Deployment-Growth"},
+        {"title": "Energy and Gender", "publisher": "IEA", "url": "https://www.iea.org/topics/energy-and-gender"},
+    ],
+}
+
+
+def parse_note(path: Path) -> dict:
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    heading = next((line[2:].strip() for line in lines if line.startswith("# ")), path.name)
+    tags_line = next((line for line in lines if line.startswith("Tags:")), "Tags:")
+    tags = [part.strip() for part in tags_line.split(":", 1)[1].split(",") if part.strip()]
+    thesis = ""
+    capture = False
+    for line in lines:
+        if line.strip() == "## One-line thesis":
+            capture = True
+            continue
+        if capture and line.startswith("## "):
+            break
+        if capture and line.strip():
+            thesis = line.strip()
+            break
+    return {
+        "file": str(path.relative_to(ROOT)),
+        "title": heading,
+        "thesis": thesis,
+        "tags": tags,
+    }
+
+
+def main() -> None:
+    notes = [parse_note(p) for p in sorted(ARCHIVE.glob("[0-9][0-9][0-9]-*.md"))]
+    revision = PROJECT["revision"]
+    date = PROJECT["release_date"]
+    summary = PROJECT["release_summary"]
+    (ROOT / "ARCHIVE_INDEX.json").write_text(
+        json.dumps({"revision": revision, "notes": notes}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (ROOT / "SOURCES.json").write_text(
+        json.dumps({"revision": revision, "notes": {k: {"groups": v} for k, v in SOURCE_GROUPS.items()}}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    releases_path = ROOT / "RELEASES.json"
+    existing = {"revision": revision, "releases": []}
+    if releases_path.exists():
+        existing = json.loads(releases_path.read_text(encoding="utf-8"))
+    prior = [r for r in existing.get("releases", []) if r.get("revision") != revision]
+    current = {
+        "revision": revision,
+        "date": date,
+        "notes": [n["file"] for n in notes],
+        "summary": summary,
+    }
+    (ROOT / "RELEASES.json").write_text(
+        json.dumps({"revision": revision, "releases": [current, *prior]}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print("OK: wrote ARCHIVE_INDEX.json, SOURCES.json, RELEASES.json")
+
+
+if __name__ == "__main__":
+    main()

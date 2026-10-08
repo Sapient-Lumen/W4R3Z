@@ -1,0 +1,7 @@
+# PKT-002 accepted_for_adjudication
+
+Live/anonymized evidence quarantine lane. This folder is not evidence by itself and cannot close readiness.
+
+Packet: PKT-002
+Branch: ALERT-AUTH
+Packet name: user role export

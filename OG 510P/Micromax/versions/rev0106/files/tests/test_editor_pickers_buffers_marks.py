@@ -1,0 +1,91 @@
+from micromax_editor.editor import Editor
+from micromax_editor.micromax_bridge import install_editor_hostcalls
+from micromax_editor.buffer import Cursor
+
+
+def _set_primary_cursor(ed: Editor, *, line: int, col: int) -> None:
+    eb = ed.cur()
+    ed._normalize_cursor_lists(eb)
+    eb.cursors[eb.primary] = eb.buf.clamp(Cursor(int(line), int(col)))
+
+
+def _primary_cursor(ed: Editor) -> tuple[int, int]:
+    eb = ed.cur()
+    ed._normalize_cursor_lists(eb)
+    c = eb.cursors[eb.primary]
+    return (int(c.line), int(c.col))
+
+
+def test_bufferpick_switches_active_buffer() -> None:
+    ed = Editor()
+    install_editor_hostcalls(ed)
+
+    ed.new_buffer("a", "hello\nworld\n")
+    ed.new_buffer("b", "x\n")
+    assert ed.active == "b"
+
+    ed.exec_command_line("bufferpick")
+    assert ed.prompt is not None
+    assert ed.prompt.kind == "buffer"
+    assert ed.prompt.suggestions
+    assert "a" in ed.prompt.suggestions
+
+    # Pick buffer 'a' by selecting its suggestion row.
+    ed.prompt.suggest_index = ed.prompt.suggestions.index("a")
+    assert ed.submit_prompt()
+    assert ed.active == "a"
+
+
+def test_markpick_jumps_to_mark_and_buffer() -> None:
+    ed = Editor()
+    install_editor_hostcalls(ed)
+
+    ed.new_buffer("a", "one\ntwo\nthree\n")
+    ed.new_buffer("b", "zzz\n")
+    # Set a mark in buffer a at line 2 col 1 (0-based).
+    ed.switch_buffer("a")
+    _set_primary_cursor(ed, line=2, col=1)
+    assert ed.mark_set("m")
+    ed.switch_buffer("b")
+    assert ed.active == "b"
+
+    ed.exec_command_line("markpick")
+    assert ed.prompt is not None
+    assert ed.prompt.kind == "mark"
+    assert ed.prompt.suggestions
+    assert "m" in ed.prompt.suggestions
+
+    ed.prompt.suggest_index = ed.prompt.suggestions.index("m")
+    assert ed.submit_prompt()
+
+    assert ed.active == "a"
+    assert _primary_cursor(ed) == (2, 1)
+
+
+def test_command_prompt_completion_for_buffer_and_markjump() -> None:
+    ed = Editor()
+    install_editor_hostcalls(ed)
+
+    ed.new_buffer("alpha", "a\n")
+    ed.new_buffer("beta", "b\n")
+    ed.switch_buffer("alpha")
+    _set_primary_cursor(ed, line=0, col=0)
+    ed.mark_set("here")
+    ed.switch_buffer("beta")
+    _set_primary_cursor(ed, line=0, col=0)
+    ed.mark_set("there")
+    ed.switch_buffer("alpha")
+
+    # buffer NAME completion
+    ed.enter_prompt("command", prefill="buffer ")
+    assert ed.prompt is not None
+    assert ed.prompt_complete(direction=1)
+    rows = ed.prompt_suggestion_rows()
+    assert any(r[1] == "buffer" for r in rows)
+
+    # markjump NAME completion
+    ed.enter_prompt("command", prefill="markjump ")
+    assert ed.prompt is not None
+    assert ed.prompt_complete(direction=1)
+    rows = ed.prompt_suggestion_rows()
+    assert any(r[1] == "mark" for r in rows)

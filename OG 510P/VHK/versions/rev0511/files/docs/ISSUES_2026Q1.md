@@ -1,0 +1,2375 @@
+[rev0511] Repair-history triage no longer stops at abstract post-repair witness data: the newest reload/restart receipt now carries the current runtime-instance receipt so repair, live witness, and instance identity can be compared on one lane.
+[rev0510] Live runtime witness no longer stops at abstract warm-lane posture: it now carries the concrete warm user-service instance receipt, keeping live witness and instance-proof on one resident surface.
+[rev0509] Resident observability no longer stops at abstract warm-lane posture: a compact runtime-instance receipt now exposes the concrete user-service instance, cache witness, and thin unit state in one read.
+[rev0508] Resident triage no longer checks repair truth and review-loop truth in isolation: the warm ticket, runtime witness, next action, and one-read LLM ticket are now locked to one fused snapshot.
+[rev0507] Review-loop observability no longer relies on pairwise helper checks alone: the warm ticket, live runtime witness, and one-read LLM ticket are now locked to one fused resident snapshot.
+[rev0506] The smallest warm-lane repair/ready ticket no longer drops recorder/cleanup/replay posture; its compact digest is now manifest-locked to the rest of the resident control plane.
+[rev0505] Live resident witness and fused stack no longer undersurface recorder/cleanup/replay posture, and the generated runtime witness no longer references an undefined review-loop context.
+[rev0503] The one-read private-LLM lane no longer has to infer recorder/cleanup/replay posture from the selected-macro ticket: both compact surfaces now share one manifest-locked review-loop receipt digest.
+[rev0502] The one-read private-LLM lane no longer lags behind live runtime and repair-history surfaces: `llm_session_ticket*` now carries the newest post-repair witness directly.
+[rev0501] Live resident triage no longer lags behind repair history: `runtime_witness*` and `warm_runtime_ticket*` now expose the newest post-repair witness directly instead of forcing callers back through latest-repair or next-action helpers.
+[rev0500] Bounded next-step selection no longer has to infer repair history from coarse status alone: `next_action_json.sh` now preserves the newest post-repair runtime witness directly on the chosen action and in its recommendation trace.
+[rev0499] Repair-history triage no longer lags behind the live/status surfaces: `latest_runtime_repair_json.sh` now carries the newest receipt's compact post-repair runtime witness, and `latest_runtime_repair.sh` exposes that witness inline for quick operator/LLM comparison.
+- rev0498: lock reload/restart receipt outputs to the resident runtime witness family by persisting post-repair runtime cache witnesses after bounded probes.
+## 2026-03-28: fused stack still advertised the larger helper pack before the one-read LLM ticket
+
+Revision 0485 introduced `llm_session_ticket_json.sh` and `llm_session_ticket.sh`, but one control-plane inconsistency remained: the fused `stack_state_json.sh` payload still published `recommended_entrypoints` in the older bigger-helper order. That meant the generated resident stack, the explicit LLM contract, and the top-level fused snapshot could all describe the same X11/i3 lane while disagreeing about which helper should open first.
+
+Revision 0487 closes that remaining reliability gap from the other side too: the repo now executes `llm_session_ticket_json.sh` and `llm_session_ticket.sh` against a stubbed fused stack snapshot, so the one-read private-LLM fast path is locked as a runnable generated surface instead of only a documented projection contract.
+Revision 0488 extends that same executable coverage to `warm_runtime_ticket_json.sh` / `warm_runtime_ticket.sh` and `primary_macro_work_ticket_json.sh` / `primary_macro_work_ticket.sh`, so the compact resident-runtime repair/ready ticket and the compact selected-macro work ticket are both verified as runnable generated surfaces instead of only contract prose.
+Revision 0489 closes the manifest-drift angle of that same problem: the repo now loads `control-plane.json` inside the generated-stack test and proves that the compact helper summaries emit the same projection field paths, rules, and digest field sets that the manifest helper-surface contracts declare.
+Revision 0490 closes the same drift on the private-LLM fast path: `llm_session_ticket.sh` now emits the advertised `llm_session_`-prefixed digest keys, and the generated-stack test proves that the one-read LLM ticket helpers reflect the same digest contract and entry-flow ordering that `control-plane.json` declares.
+Revision 0491 closes the recorder/cleanup visibility gap on the selected-macro ticket: the human summary now emits an `authoring_boundary_` digest for recorder review, cleanup review, cleanup apply, and bounded execution surfaces, and the manifest-backed generated-stack test proves those entrypoints stay aligned with the declared authoring-boundary contract.
+Revision 0492 closes that shape drift on the one-read LLM ticket: the helper now consumes the same `canonical_edit_surface` / `inspect_surfaces` / `actuation_surfaces` authoring boundary that the selected-macro work ticket emits, and the generated-stack test proves the one-read digest still matches the manifest contract while surfacing recorder/cleanup entrypoints directly.
+
+Revision 0486 closes that gap. The fused control plane now leads with the one-read LLM session ticket pair, the active product contract and i3/X11 runtime-stack docs now do the same, and the generated-stack tests lock the new ordering in place. Concrete win: shell operators and a private LLM now see the same first-open surface whether they start from the compact ticket, the fused stack snapshot, or the docs.
+
+
+## 2026-03-23: forced current receipts still reused the generic current-receipt workflow
+
+Revision 0477 made forced checked-dispatch receipts visibly provisional, but one smaller control-plane gap remained: the newest forced receipt could still flow through generic current-receipt completion/cutover language. That made the resident lane more honest about *state* than about *next action*, which is exactly the sort of ambiguity a private LLM should not have to resolve by implication.
+
+Revision 0478 closes that gap. Current forced checked-dispatch evidence now gets its own receipt-stage completion/cutover/handoff: `forced_receipt_disposition_and_clean_replacement_explicit` and `inspect_forced_receipt_before_clean_replacement`. Concrete win: `macro_latest_dispatch_json.sh <macro>`, the author loop, and the selected-macro work ticket now all say the same thing — inspect the forced receipt first, then make the clean replacement lane explicit instead of treating it like ordinary current receipt reuse.
+
+
+## 2026-03-23: forced checked-dispatch receipts still looked too much like clean current receipts
+
+Revision 0476 made forced runtime signoff stay visibly provisional, but one adjacent gap remained: a newest checked-dispatch receipt emitted with `--force` could still surface as ordinary current receipt truth. That meant the resident control plane could correctly say “current receipt exists” while underweighting the more important fact that the receipt still depended on an unresolved forced emit.
+
+Revision 0477 closes that gap. `latest_dispatch_json.sh` and the receipt-history lane now classify that case as `current_forced_dispatch_evidence`, the selected-macro author/runtime/work-ticket surfaces now preserve `force_override` plus `clean_replacement_required`, and durable runtime signoff now blocks with `blocked_by_forced_dispatch_receipt` until a newer clean checked-dispatch receipt replaces the forced one.
+
+## 2026-03-23: forced runtime signoff could age into fake clean acceptance
+
+Revision 0475 introduced `--force` as an explicit escape hatch for `macro-runtime-accept`, but one auditability gap remained: once the current proof contract later matched again, that forced row could look indistinguishable from a clean durable signoff. That was too optimistic for the flagship i3/X11 lane because an override-backed signoff should stay visibly provisional until it is replaced by one recorded from a genuinely signoff-ready resident session.
+
+Revision 0476 closes that gap. Forced runtime acceptances now persist `force_override` plus the readiness blocker they bypassed, the normalized runtime-signoff view reports `forced_review` / `force_review_required`, and the acceptance ledger summary counts those rows separately from current clean signoff. Concrete win: the private-LLM/operator control plane can tell the difference between “accepted cleanly” and “accepted under explicit override, replace this later” without reopening raw ledger YAML.
+
+
+## 2026-03-23: durable runtime signoff still over-trusted healthy-but-target-unproven replay
+
+Revision 0474 made replay-time target-proof debt explicit, but one adjacent acceptance gap still remained: a macro with a healthy latest run, a current warm receipt, and an explicit X11/i3 selector contract could still be treated as signoff-ready even when that latest run only had weak target proof. That was the wrong default for the flagship lane because durable signoff is supposed to freeze a *fully current* replay/receipt/runtime story, not a healthy-but-partial one.
+
+Revision 0475 closes that gap. The author/runtime surfaces now emit `runtime_signoff_readiness`, durable signoff only becomes ready when replay proof is actually `verified_recent` and the current receipt/runtime lane agrees, and `macro-runtime-accept` now blocks by default when the blocker is still `blocked_by_replay_target_authority`, `blocked_by_dispatch_receipt`, or a sibling proof gap. Concrete win: a private LLM can no longer confuse “healthy replay” with “signoff-ready replay” on selector-bound macros, but an operator still has an explicit `--force` override when they intentionally want to carry that risk.
+
+
+## 2026-03-23: replay ticket still flattened target-unproven healthy runs into generic history review
+
+Revision 0473 made replay-time target authority visible, but one selected-macro lane still lagged: `primary_macro_replay_ticket` could still reduce a healthy run with explicit selector debt to generic replay-history advice. That was too soft for the flagship lane because a private LLM or operator could see that replay truth was incomplete without getting the sharper answer that the next step is to re-open the X11/i3 target-proof lane itself.
+
+Revision 0474 closes that gap. The replay ticket now carries a compact `target_handoff`, routes to `inspect_replay_target_authority` when the newest replay is healthy-but-target-unproven, the replay board now points that posture at the bounded target-proof command, and the fused helper metadata / stack summary preserve the same handoff.
+
+
+## 2026-03-23: replay surfaces still over-trusted healthy runs without explicit target proof
+
+Revision 0472 made the checked-dispatch receipt lane honest about stored X11/i3 target proof, but one adjacent gap remained: replay-time surfaces still tended to flatten a clean latest run into generic `verified_recent` even when the macro had an explicit window/workspace selector and the newest run had not preserved a bounded target-authority witness for that selector. That was the wrong bias for the flagship lane because a private LLM or operator could see "healthy replay" without seeing whether the replay had actually proved it was touching the right X11/i3 target.
+
+Revision 0473 closes that gap by classifying replay-time `target_authority` on `macro_latest_run_json.sh <macro>` and `latest_run_health_json.sh`, by introducing `verified_recent_target_unproven` on the macro replay board when a healthy run still lacks current selector proof, and by mirroring quick target-authority fields into the runtime board's latest-run context so the resident control plane can keep replay proof and target proof aligned.
+
+## 2026-03-23: receipt history kept warm-runtime drift but still flattened target proof
+
+Revision 0471 made checked dispatch explicit about X11/i3 target authority at gate time, but the newest receipt/history lane still mostly collapsed back to warm-runtime currentness. That meant a private LLM could tell whether the receipt was stale overall without seeing whether the last checked dispatch actually preserved a matched selector+probe witness, a mismatch, or only weak target proof. The comparison layer also still treated omitted selector-default booleans and explicit `false` flags as drift, which could falsely stale a good receipt.
+
+Revision 0472 closes both gaps. Dispatch-receipt contract comparison now canonicalizes selector defaults before digest/compare, `latest_dispatch_json.sh` emits receipt-scoped `target_authority_evidence`, and `primary_macro_work_ticket` mirrors that receipt target handoff so the selected-macro lane can say what target proof was last observed and which bounded inspect/recheck command comes next.
+
+Concrete win: the resident i3/X11 control plane can now distinguish “receipt stale because the session moved” from “receipt current and target proof matched” without reopening broader stack surfaces or re-deriving selector equivalence by hand.
+
+# 2026-03-23: resident runtime still needed an explicit repair recipe and retry guard
+
+Revision 0470 closes the next warm-service observability gap. `warm_runtime_ticket` and `warm_runtime_ticket_json.sh` now preserve a bounded `runtime_repair_recipe` that says which repair family is active, which scope drift triggered it, whether the control plane should repair now or inspect a prior failed reload/restart first, and which startup-owner issue should remain visible as secondary attention.
+
+Concrete win: the i3/X11-first resident lane no longer has to infer retry policy from scattered status ids and latest-repair receipts; the ticket itself now says when to stop repeating the same failed repair.
+
+# 2026-03-23: selected-macro LLM lane still blurred editable source vs generated/runtime artifacts
+
+Revision 0456 closes the next private-LLM control-plane gap. `macro_author_loop_json.sh <macro>` and `primary_macro_work_ticket_json.sh` now both carry `authoring_boundary`, a machine-readable rule that names the canonical editable macro source, the inspect-only review/runtime/receipt surfaces, the allowed actuation surfaces, and default `do_not_edit` globs for generated wrappers, receipts, logs, and runtime caches.
+
+Revision 0457 closes the adjacent gap: the same helpers now also carry `lane_transition`, a machine-readable stop/switch contract for the private-LLM loop. Instead of inferring from scattered stop-condition prose when to keep editing YAML, inspect a current/stale dispatch receipt, repair the warm resident runtime, emit checked dispatch, use direct run, or record runtime acceptance, the selected-macro surfaces now say that directly. This is narrower than a full Studio, but it materially improves the X11/i3-first resident-service lane because the model can switch from authoring to execution without reopening half the pack or mutating the wrong artifacts.
+
+Concrete win: the resident i3/X11 lane can now say not only *what to do next* but also *what is actually allowed to be edited* when a macro is under review, which keeps the LLM/script-authoring loop anchored on checked-in YAML instead of drifting into generated stack wrappers or runtime evidence files.
+
+# 2026-03-23: top-level selected-macro fallback still flattened checked-dispatch truth
+
+Revision 0453 closes the remaining smaller-surface fallback gap above the checked-dispatch lane. `primary_macro_work_ticket` now carries an explicit `execution_ticket_handoff`, `next_action_json.sh` / `next_action.sh` will fall back to that handoff when the visible selected-macro ticket only says `dispatch_selected_macro`, and the helper summaries mirror both the chosen handoff and the checked-dispatch fallback. That keeps the resident X11/i3 control plane aligned with the execution ticket even when a smaller ticket is generic or lagging.
+
+# 2026-03-23: checked-dispatch gate and execution ticket still lagged the receipt-first handoff
+
+Revision 0452 closes the next control-plane drift. `macro_dispatch_gate_json.sh`, `primary_macro_execution_ticket`, and the fused `stack_state_json.sh` gate snapshot now reuse the same selected-macro receipt/runtime handoff logic that the smaller work tickets and top-level helpers already project. The execution ticket now consults the selected macro's latest dispatch receipt directly, and the gate/stack surfaces inherit the chosen receipt-first handoff even when the per-macro gate stub is lightweight.
+
+Concrete win: the resident checked-dispatch lane now says "inspect the newest selected-macro receipt first" when receipt truth is sharper than another emit, instead of drifting back to a generic `dispatch_now` answer.
+
+# 2026-03-23: top-level resident surfaces still hid the sharper selected-macro lane
+
+Revision 0451 closes that final top-level gap. `next_action_json.sh` and `stack_state_json.sh` now project `primary_macro_selected_handoff`, and the text helpers mirror the same source/mode/surface/command fields. The resident control plane can now say directly when the right next hop is receipt inspection or runtime handoff instead of only exposing a generic next action plus a separate macro LLM workbench.
+
+# 2026-03-23: small selected-macro tickets still flattened receipt truth into generic execution/runtime answers
+
+By revision 0449, the repo already had strong macro-scoped workbenches: the selected-macro work ticket, the direct author loop, the runtime board, and the dispatch-history board could all explain a bounded lane. But the smaller helper tickets still mostly summarized the selected macro as `execution_ticket` vs `runtime_handoff`, which meant a private LLM still had to reopen sibling surfaces to discover when the sharper next move was actually "inspect the newest stale receipt first."
+
+Revision 0450 closes that gap. `primary_macro_work_ticket` and `warm_runtime_ticket` now project an explicit `selected_macro_handoff` that can point at `dispatch_history_workbench`, and stale selected-macro receipt evidence now outranks generic durable-signoff repair inside the selected-macro work ticket.
+
+Concrete win: the resident helpers can now answer "what should I open next for this macro?" with one honest bounded lane instead of making the caller reconstruct receipt truth from posture plus side fields.
+
+## rev0449: receipt-history lane still hid the bounded LLM handoff
+
+By rev0448 the runtime board and warm-runtime ticket already projected the chosen macro-scoped `llm_workbench`, but the receipt-history lane still lagged behind. `macro_dispatch_history_board_json.sh` exposed posture, repeated blocks, forced overrides, and newest receipt observability, yet a private LLM still had to infer the real receipt-inspection loop from those fields or reopen `macro_author_loop_json.sh <macro>` just to recover a bounded inspect/edit/execute contract.
+
+Revision 0449 closes that gap by mirroring a per-macro `llm_workbench` on the dispatch-history board itself, projecting `primary_macro_dispatch_history_workbench` in the fused stack, and carrying that receipt-scoped workbench through `warm_runtime_ticket_json.sh` / `warm_runtime_ticket.sh`.
+
+## 2026-03-23: top-level control plane still hid which macro-scoped LLM workbench to open
+
+## 2026-03-23: resident-runtime entry surfaces still hid the chosen LLM loop
+
+By rev0447 the fused stack and next-action surfaces already projected one chosen `primary_macro_llm_workbench`, but the smaller resident-runtime entry surfaces still lagged. `macro_runtime_board_json.sh` exposed posture and `runtime_handoff` without the direct author-loop workbench, and `warm_runtime_ticket_json.sh` / `warm_runtime_ticket.sh` still forced callers to reopen the bigger fused stack just to recover the same bounded macro-scoped edit/inspect/execute contract.
+
+Revision 0448 closes that gap by mirroring per-macro `llm_workbench` on the runtime board and projecting the fused stack's chosen `primary_macro_llm_workbench` through the warm-runtime ticket helpers.
+
+Concrete win: the warm resident lane now answers both `what should the daemon/runtime do next?` and `which bounded macro surface should the private LLM reopen next?` from the same one-read runtime surfaces.
+
+Revision 0446 gave both the selected-macro ticket and the direct per-macro author loop a bounded `llm_workbench`, but the higher control-plane surfaces still mostly exposed action ids and dispatch/runtime handoffs. A private LLM opening `next_action_json.sh` or `stack_state_json.sh` still had to infer whether to reopen `primary_macro_work_ticket_json.sh` or `macro_author_loop_json.sh <macro>` to recover the sharper inspect/edit/execute contract.
+
+Revision 0447 closes that gap by projecting a chosen `primary_macro_llm_workbench` onto `next_action_json.sh` and `stack_state_json.sh`. The policy is explicit: prefer the selected-macro work ticket during recorder/cleanup/replay/acceptance-style review stages, but prefer the direct per-macro author loop during execution-stage work where receipt/runtime handoffs are the sharper truth.
+
+Concrete win: the resident i3/X11 control plane can now hand a private LLM one top-level answer for "which macro-scoped surface should I open next, and which command anchors that loop?" instead of forcing another layer of helper arbitration.
+
+## 2026-03-23: direct macro author loop still lagged behind the selected-macro LLM workbench
+
+Revision 0445 gave `primary_macro_work_ticket_json.sh` a strong stage-aware `llm_workbench`, but the direct per-macro lane still stopped short of that same bounded handoff. A private LLM that already knew which macro to open could still end up bouncing back to the selected-macro ticket just to recover the sharper inspect/edit/execute contract, latest receipt lane, or current runtime handoff.
+
+Revision 0446 closes that gap by teaching `macro_author_loop_json.sh <macro>` to carry the same core author/execute contract shape: `execution.latest_dispatch_handoff`, `execution.runtime_handoff`, and a top-level `llm_workbench` now sit on the macro-scoped surface itself. The helper metadata mirrored in the fused stack is updated too, so higher-level stack readers can project the same mode/recommended-command summary without reopening the full payload.
+
+Concrete win: the resident i3/X11 control plane now gives the private LLM one bounded macro-scoped workbench whether it arrives via the selected-macro stack or by opening a macro directly.
+
+## Product focus note
+
+Wayland, portals, and app-native adapters remain secondary or vault-only unless they materially improve the i3/X11 resident-runtime lane. The active issue stream should prefer warm-service reliability, X11/i3 control, recorder cleanup/replay proof, dispatch honesty, and operator/LLM observability over generic Linux breadth.
+
+## 2026-03-22: warm-runtime ticket still flattened selected-macro handoff back to a generic execution answer
+
+Revision 0443 taught `primary_macro_work_ticket_json.sh` to reuse the runtime board's bounded selected-macro `runtime_handoff` when the execution ticket was only generic, but the smaller resident-runtime ticket still lagged behind. `warm_runtime_ticket_json.sh` could say the i3/X11 service was healthy while still pointing the private LLM/operator back at a vague selected-macro execution answer, even though the runtime board already knew the sharper checked-dispatch or receipt-inspection move.
+
+Revision 0444 closes that gap by teaching `warm_runtime_ticket_json.sh` and `warm_runtime_ticket.sh` to prefer the runtime board's bounded selected-macro `runtime_handoff` whenever runtime is healthy and the execution ticket is only generic. The warm-runtime ticket now also exposes whether that chosen handoff came from the runtime board or the execution ticket, plus the selected receipt lane tied to that handoff.
+
+Concrete win: a private LLM can stay on the smaller resident-runtime surface, verify that the i3/X11 service is healthy, and still get the sharp selected-macro next step without reopening the full runtime board or falling back to a generic author-loop answer.
+
+## 2026-03-22: top-level next action still fell back to generic dispatch/run when runtime board already had a bounded selected-macro handoff
+
+Revision 0441 made `macro_runtime_board_json.sh` action-aware, but the top-level `next_action_json.sh` surface still ignored that selected-macro `runtime_handoff`. When `primary_macro_work_ticket_json.sh` or `macro_dispatch_gate_json.sh` was missing, empty, or only generic, the control plane could still collapse back to a vague author-queue `dispatch_or_run` answer even though the runtime board already knew the bounded next move.
+
+Revision 0442 closes that gap by reusing the runtime-board `runtime_handoff` as the next selected-macro fallback inside `next_action_json.sh` and by mirroring the same handoff explicitly in `stack_state_json.sh`. Concrete win: the resident i3/X11 control plane now stays action-specific even when one narrower helper surface is unavailable.
+
+## 2026-03-22: runtime board still described posture without a bounded next move
+
+Revision 0440 made `macro_runtime_board_json.sh` much better for selected-macro receipt observability, but one practical private-LLM/operator gap remained: the board could say `warm_dispatch_ready` and point at the right receipt lane, yet still left the caller to re-derive whether the next bounded move should be checked dispatch, receipt inspection, replay-proof refresh, direct run, or recorder stabilization.
+
+Revision 0441 closes that gap by adding `runtime_handoff` to each runtime-board item plus primary-handoff summary fields. The board now collapses runtime posture, dispatch attention, and macro-scoped receipt truth into one bounded next-step recommendation while keeping the checked gate and replay surfaces as the deeper proof lanes.
+
+Concrete win: a private LLM can open the project-wide execution board and immediately choose the right selected-macro action for the resident i3/X11 lane instead of reassembling that choice from posture + receipt + entrypoints by hand.
+
+## 2026-03-22: macro-scoped receipt helpers still leaked back to the project-global newest receipt
+
+Revision 0436 added `macro_latest_dispatch_json.sh <macro>` and moved the selected-macro stack surfaces onto it, but one quieter selected-lane leak remained in the shared receipt-evidence classifier: the macro-scoped receipt helper could still emit `warm_runtime_evidence.followup` commands that ended at the project-global `latest_dispatch_json.sh`. The project-wide dispatch-history board also still implied, rather than stated, whether a receipt lane was project-global or macro-scoped.
+
+Revision 0437 closes both gaps. Macro-scoped receipt evidence now keeps `macro_latest_dispatch_json.sh <macro>` in its followup chain, and `macro_dispatch_history_board_json.sh` now exposes explicit `receipt_surfaces` plus per-macro `command_scope_id` / `receipt_observability` so a private LLM can tell whether it is looking at project-global newest-receipt truth or one macro's newest receipt.
+
+Concrete win: the resident i3/X11 author/repair/execute lane stays selected-macro correct not just for which receipt is loaded, but also for which receipt surface the control plane recommends next.
+
+## 2026-03-22: selected-macro receipt lanes still consulted the project-global newest receipt
+
+Revision 0435 made the gate and top-level fallback path receipt-first for stale evidence, but one selected-macro correctness gap still remained inside the generated stack and fused stack-state surfaces: several selected-macro helpers still read `latest_dispatch_json.sh`, which means the selected macro could lose its newest receipt handoff whenever some other macro emitted more recently.
+
+Revision 0436 closes that gap by adding `macro_latest_dispatch_json.sh <macro>` as the explicit macro-scoped receipt surface and wiring the selected-macro gate/work-ticket/stack-state paths to use it. The project-global latest receipt surface still exists for project-wide observability, but the selected-macro author/repair/execute lane now stays macro-correct.
+
+Concrete win: a private LLM can inspect the chosen macro's freshest warm-lane receipt even in a busy project where another macro emitted later, so receipt-first triage stays on the right desktop-automation lane.
+
+## 2026-03-22: checked gate still flattened stale receipt evidence back into generic repair or re-emit
+
+Revision 0434 made stale receipt evidence first-class on the selected-macro and top-level helpers, but the per-macro checked gate still lagged behind. A macro could already have a stale newest warm-runtime receipt that explained runtime/session drift, yet `macro_dispatch_gate_json.sh <macro>` could still answer with `dispatch_now` or some broader repair lane instead of first pointing at that newest receipt artifact.
+
+Revision 0435 closes that last alignment gap on the per-macro execution surface. The checked gate now emits `inspect_stale_dispatch_evidence` when the newest same-macro receipt is stale resident evidence, and `next_action_json.sh` now also knows how to reuse that receipt-first recommendation directly from the gate when the smaller selected-macro work-ticket helper is missing.
+
+Concrete win: a private LLM can stay receipt-first even on the fallback per-macro lane, inspect the newest stale receipt before widening into runtime repair, and still recover the same recommendation if only the checked gate is available.
+
+## 2026-03-22: selected-macro lane still hid stale receipt evidence behind generic execution
+
+Revision 0433 made `next_action_json.sh` probe-first when bounded live desktop evidence already existed, but one adjacent warm-lane gap remained for the private-LLM/operator loop: if the selected macro already had the newest dispatch receipt and that receipt itself explained contract/session/runtime drift, the selected-macro ticket could still flatten back into a generic execution handoff instead of surfacing the freshest stale receipt first.
+
+Revision 0434 closes that gap by teaching `primary_macro_work_ticket` to switch to `stage_id = receipt` when the selected macro already has a stale warm-runtime receipt worth inspecting, and by teaching `next_action_json.sh` to reuse that stale-receipt handoff before the generic checked-gate path.
+
+Concrete win: a private LLM can now stay on the one-read selected-macro lane even when the newest receipt is stale, inspect the exact receipt drift, and only then follow the bounded repair command that receipt already recommends.
+
+## 2026-03-22: latest-dispatch surfaced stale receipt truth but still hid the next move
+
+Revision 0427 made `latest_dispatch_json.sh` honest about exact resident probe-result drift, but one practical private-LLM/operator gap remained on the flagship warm i3/X11 lane: the newest receipt could say `contract drift`, `session drift`, or `runtime probe drift` without answering which compact control-plane command should be run next. That left the surface better for forensic truth than for actual author→revise→execute loops.
+
+Revision 0428 closes that gap by adding `latest_dispatch.warm_runtime_evidence`, a one-read receipt-currentness verdict with `current`, `status_id`, `summary`, `reason`, `recommended`, and `followup`. The newest dispatch receipt now says not only whether it is still current resident evidence, but also whether the right next move is to reopen `warm_runtime_ticket.sh` or the current per-macro checked-dispatch gate.
+
+Concrete win: a private LLM can inspect the newest receipt and immediately choose the right refresh path without reopening sibling boards just to turn stale receipt truth into an action.
+
+## 2026-03-22: latest-dispatch currentness still flattened distinct runtime probe failures
+
+Revision 0426 made dispatch receipts honest about current resident probe posture, but one compare edge remained too coarse for the flagship warm i3/X11 lane: `runtime_probe_status_drift` only triggered when the daemon crossed the success/failure boundary. If the resident bounded probe stayed in the failure family but changed *which* failure it was reporting — for example `ack_timeout` drifting to `invalid_ack` — `latest_dispatch_json.sh` and the project-wide dispatch-history board could still present the newest receipt as current warm-path evidence.
+
+Revision 0427 closes that gap by treating any comparable bounded-probe result change as probe-result drift. Dispatch receipt currentness is now tied to the exact resident probe result, not only to whether the daemon is broadly in a success vs failure bucket.
+
+Concrete win: a private LLM or operator can now trust that the newest receipt only counts as current warm-path evidence when the daemon is still in the same bounded-probe state, not merely the same broad failure family.
+
+## 2026-03-22: dispatch history still overstated warm-path health after probe posture drift
+
+Revision 0425 made checked dispatch and durable signoff honest about stale or over-budget resident probe proof, but the durable dispatch-receipt surfaces still only compared daemon epoch/session/contract identity. That left one observability gap on the flagship i3/X11 lane: `latest_dispatch_json.sh` and `macro_dispatch_history_board_json.sh` could keep presenting the newest receipt as current even after the daemon's bounded probe had gone stale, crossed the latency budget, or degraded from `ok` to a failed result.
+
+Revision 0426 closes that gap by promoting warm-path probe posture into the runtime-witness comparison used by latest-dispatch and dispatch-history surfaces. Receipt/runtime comparison now distinguishes `runtime_probe_freshness_drift`, `runtime_probe_latency_drift`, and `runtime_probe_status_drift`, and the dispatch-history board maps those into more specific stale postures instead of folding them into generic runtime drift.
+
+Concrete win: a private LLM or operator can now read the newest receipt and know whether it is current evidence for the resident fast path, merely tied to the right daemon epoch, or already stale because the daemon's warm-path proof posture changed underneath it.
+
+
+## 2026-03-22: checked dispatch and durable signoff still over-trusted stale probe witnesses
+
+Revision 0424 made checked dispatch honest about a *current* warm-path latency breach, but one resident-runtime proof gap remained: both the checked gate and durable acceptance still treated the latest cached successful probe as current even when that probe had gone stale. That was still too optimistic for an always-available i3/X11 session service, because an old `ok` sample could keep the control plane saying `warm path ready` long after the daemon had drifted, been restarted elsewhere, or simply not been re-proven recently enough to justify the fast-path claim.
+
+Revision 0425 closes that gap by promoting probe freshness into the resident-runtime witness itself. The runtime-state cache now computes probe age and freshness status, durable runtime acceptance now carries `warm_runtime_probe_freshness_attention_id`, and the checked per-macro dispatch gate now routes stale cached probe witnesses to `refresh_runtime_probe_before_dispatch` with an explicit `runtime_probe_refresh` blocker instead of silently treating old success as current readiness.
+
+Concrete win: a private LLM or operator now gets one honest answer to `is the warm lane currently proven enough to trust?` — recent bounded proof, current latency attention, or refresh the probe first.
+
+## 2026-03-22: checked dispatch still trusted macro-local proof after the warm path slowed down
+
+Revision 0423 made durable runtime signoff go stale when the resident probe crossed the warm-path latency budget, but the checked per-macro dispatch gate still made its decision from macro-local posture alone. That left one awkward inconsistency for the flagship i3/X11 lane: the control plane could say "accepted is stale because the warm path is slow" while `dispatch_macro_checked.sh` still allowed the same macro onto that slow resident lane.
+
+Revision 0424 closes that gap by promoting warm-path latency attention into the checked gate itself. `macro_dispatch_gate_json` now reports an explicit `runtime_latency_attention` blocker with the measured probe latency and budget, routes to `inspect_runtime_latency_before_dispatch`, and points back at `warm_runtime_ticket.sh` / `check_runtime_json.sh` instead of pretending the resident fast path is ready.
+
+Revision 0423 closes the next fast-path honesty gap on the i3/X11 resident-runtime lane. Revision 0422 already surfaced `reachable but over-budget` in the warm-runtime ticket and selected-macro handoff, but durable runtime acceptance still ignored that live speed regression. A macro could remain `accepted` even after the resident checked-dispatch lane slowed down enough to violate the warm-path budget.
+
+Revision 0423 persists the latest bounded dispatch-probe observation into the runtime-state cache, extends the runtime-acceptance proof contract with `warm_runtime_probe_latency_attention_id`, and now stales durable signoff when the current resident lane has crossed into `inspect_runtime_latency`.
+
+Concrete win: a private LLM or operator no longer has to choose between honest fast-path health and durable signoff. The same one-read control plane can now say both `this macro was previously accepted` and `that signoff is stale because the resident warm path is currently over budget`.
+
+Revision 0422 closes the next warm-path observability gap on the i3/X11 resident-runtime lane. The bounded dispatch probe already proved reachability and session/contract drift, but callers still treated `reachable but sluggish` the same as `healthy enough for checked dispatch`.
+
+`src/vhk/project/runtime_dispatch_probe.py` now classifies probe latency against an explicit warm-path budget and carries `latency_status`, `latency_within_budget`, and `latency_budget_ms` beside the round-trip measurement. `warm_runtime_ticket` now routes that state to `inspect_runtime_latency` instead of silently falling through to ready/warning lanes, and `primary_macro_work_ticket` now carries the same latency handoff so a private LLM sees `inspect latency before dispatch` without reopening the full fused stack. The human helpers (`warm_runtime_ticket.sh`, `primary_macro_work_ticket.sh`, `stack_state.sh`) now print the same signal.
+
+Revision 0420 closed the source-path gap in the selected-macro work ticket, but one practical LLM loop gap remained: after reading that ticket the model could open source and review surfaces, yet still had to reopen entrypoints, the author loop, or the acceptance ticket to discover the exact checked-dispatch/direct-run/signoff commands.
+
+# 2026-03-22: selected-macro handoff still stopped at review instead of execute/signoff
+
+By revision 0420, `primary_macro_work_ticket` already carried the editable source path, desktop-target summary, and the minimum source/author/review commands for the chosen macro. But the selected ticket still stopped one step short of the actual private-LLM job: author, revise, execute, and record bounded runtime acceptance on the resident i3/X11 lane.
+
+Revision 0421 closes that gap. The selected-macro work ticket now carries explicit checked-dispatch, dispatch-gate, direct-run, dispatch-history, and runtime-acceptance entrypoints plus a compact `execution_handoff` that says which execution mode is preferred, whether checked warm dispatch is currently ready, and whether durable runtime signoff is already current.
+
+Concrete win: a private LLM can now stay on the smaller selected-macro ticket all the way from edit/review into execute/signoff instead of reopening sibling helpers just to recover the right actuation command.
+
+Revision 0419 closes the remaining helper-surface gap after rev0418 by exposing `warm_runtime_ticket_json.sh` and `primary_macro_work_ticket_json.sh` as first-class generated entrypoints. The fused stack already knew those answers, but callers still had to reopen or reparse the full `stack_state_json.sh` payload to read them directly.
+
+# 2026-03-22: fused stack still made the LLM re-derive macro priority from sibling tickets
+
+By revision 0417, the warm resident stack already carried strong selected-macro
+surfaces: recording, cleanup, replay, acceptance, execution, and warm-runtime
+state. But the private-LLM/operator loop still had to reopen or mentally merge
+several sibling tickets just to answer one practical question: should I record,
+clean up, replay, sign off, repair runtime, or execute now?
+
+Revision 0418 closes that gap by adding `primary_macro_work_ticket` to the
+fused stack. It selects one bounded selected-macro lane from the already-fused
+recorder/cleanup/replay/acceptance/execution/runtime tickets and carries one
+stage id, one source ticket id, one recommended command, and compact
+evidence/followup commands.
+
+Concrete win: the resident X11/i3 control plane is now closer to a one-read
+author/repair/execute handoff for a private LLM instead of a pile of sibling
+JSON surfaces that still require local planning.
+
+# 2026-03-22: warm-runtime repair loop still forgot the last bounded repair attempt
+
+Revision 0416 added a bounded `restart_runtime_json.sh` helper, but the fused
+stack still treated reload/restart mostly as recommendations. Once a repair
+helper returned, its outcome vanished into stdout. That left one practical
+private-LLM/operator blind spot on the i3/X11 flagship lane: the control plane
+could keep recommending the same restart or reload again even when the newest
+bounded repair had just failed for the same live session.
+
+Revision 0417 closes that gap. Reload and restart helpers now persist their
+receipts under `build/runtime_control_receipts/`, the generated stack exposes
+`latest_runtime_repair_json.sh` as a first-class observability helper, and the
+fused `warm_runtime_ticket` now switches to inspect-first after a recent failed
+bounded reload/restart instead of blindly repeating the same resident repair.
+
+Concrete win: the one-read warm-runtime handoff can now say not just what to try
+next, but also what was already tried most recently and whether retrying the
+same repair would just thrash the resident X11/i3 lane.
+
+# 2026-03-22: live dispatch proof still collapsed daemon-session drift into generic path health
+
+By revision 0413, VHK could compare daemon desktop-session witnesses in the
+cached runtime-state lane and inside latest-dispatch receipt inspection. But the
+live `check_runtime_json.sh` probe still mostly reduced resident-daemon honesty
+to env-var sync, watcher sync, and project-contract sync. That left one warm
+service blind spot: the daemon could answer the bounded probe and match bridge
+variables while still advertising a different full X11/i3 desktop-session
+witness than the current shell.
+
+Revision 0414 closes that gap. `summarize_runtime_dispatch_probe(...)` now
+compares the daemon's own `desktop_session_contract`, `check_runtime_json.sh`
+raises `dispatch daemon desktop session drift`, and the fused stack's
+`warm_runtime_ticket` can answer with
+`restart_runtime_for_daemon_desktop_session` instead of collapsing that case
+into generic dispatch repair.
+
+Concrete win: the one-read resident handoff can now say "daemon reachable, but
+still the wrong X11/i3 desktop" without forcing an operator or private LLM to
+infer it from lower-level session fields.
+
+# 2026-03-22: cached warm-runtime witness still missed daemon-session drift
+
+By revision 0412, VHK could prove desktop-session drift in two places: replay and
+dispatch receipts compared the *shell* session that authored or emitted them, and
+`check_runtime_json.sh` could probe the *live daemon* directly. But the cheap
+runtime-state cache used by dispatch-history comparison still only tracked daemon
+epoch, PID, watcher set, and project-contract digest.
+
+Revision 0413 closes that gap by writing the daemon's own
+`desktop_session_contract` into the runtime-state cache and internal runtime
+probe ack payload. Cached runtime-witness comparison now detects
+`runtime_desktop_session_drift`, so an old receipt can be marked stale when it
+came from a resident daemon bound to a different `DISPLAY`/`I3SOCK` session even
+when the macro contract itself did not change.
+
+# 2026-03-22: durable acceptance needed a proof-bound write path
+
+By revision 0411, VHK could tell with high fidelity when durable signoff had gone stale: macro/recorder drift, replay drift, dispatch-history drift, resident-daemon drift, and desktop-session drift all surfaced cleanly. But the selected-macro acceptance ticket still dead-ended in an out-of-band ledger edit. That left the private-LLM/operator loop with the right proof and the right next move, but without a first-class way to write the acceptance row from that proof.
+
+Revision 0412 closes that gap without making acceptance automatic. `macro-runtime-accept` and the generated `record_runtime_acceptance.sh` wrapper now write a durable runtime signoff explicitly, storing the current posture plus the current proof contract into `review/macro_acceptance.yaml` (or the resolved ledger file). Acceptance stays checked-in project truth; it just stops requiring the operator or LLM to reconstruct the YAML entry by hand.
+
+# 2026-03-22: durable runtime signoff still missed desktop-session drift
+
+Revision 0410 bound durable runtime signoff to the resident daemon instance, but one X11/i3-specific blind spot remained: an accepted macro could still look current after the shell moved to a different `DISPLAY`/`I3SOCK` session, provided no fresh replay or dispatch receipt had yet been written. That was still too optimistic for a session-bound automation system, because operator acceptance could outlive the desktop binding it was actually reviewed against.
+
+Revision 0411 closes that gap by extending `runtime_acceptance_contract` with `desktop_session_contract_digest`, sourced from the live shell the same way replay and dispatch session witnesses already are. The acceptance ledger, runtime board, and author loop now stale durable signoff as soon as the current desktop session changes underneath it, even before the next replay or checked-dispatch receipt.
+
+# 2026-03-22: durable runtime signoff still missed resident-daemon drift
+
+Revision 0409 bound durable runtime signoff to warm-dispatch history, but it still had one resident-runtime blind spot: a signoff could remain "accepted" when the warm daemon itself had reloaded or restarted and no new dispatch receipt had yet been written. That was still too optimistic for an always-on i3/X11 service, because the acceptance ledger could lag behind the actual daemon instance that would execute the next emit.
+
+Revision 0410 closes that gap by extending `runtime_acceptance_contract` with `resident_runtime_epoch_id` and `resident_runtime_contract_digest`, sourced from the cheap busd-written runtime-state cache. The acceptance ledger, runtime board, and author loop now treat durable signoff as stale when the resident daemon epoch or loaded runtime contract changed underneath it, even before dispatch history has been refreshed.
+
+Concrete win: the private-LLM/operator loop can now distinguish "this macro was accepted on a previous daemon instance" from "this macro is still accepted for the daemon that is live right now."
+
+# 2026-03-22: dispatch-bound durable runtime signoff
+
+Revision 0408 made warm dispatch receipts session-bound, but durable runtime signoff still did not care whether the resident warm bus lane had changed since acceptance. That left one stale-success hole: a macro could remain durably "accepted" even after the newest dispatch evidence turned session-stale, runtime-stale, contract-stale, or newly blocked.
+
+Revision 0409 closes that gap by binding `runtime_acceptance_contract` to `dispatch_history_posture_id` and `dispatch_history_attention_id`. The acceptance ledger, runtime board, and author loop now treat an old signoff as stale when the current warm-dispatch lane no longer matches the one that was accepted.
+
+# 2026-03-22: replay proof still over-trusted old desktop sessions
+
+Revision 0406 had already made replay proof contract-bound to macro source and recorder evidence, but one X11/i3-specific blind spot remained: a healthy run from an older desktop session could still look current after the user re-entered X11 on a different `DISPLAY`, with a different `I3SOCK`, or after i3 had been restarted onto a different IPC socket. That was the wrong bias for the flagship lane because VHK is explicitly session-bound and the private-LLM loop needs current desktop truth more than generic historical optimism.
+
+Revision 0407 closes that gap without breaking old logs wholesale. `run_start` now records a `desktop_session_contract`, the replay-health surfaces compare that witness to the current shell, and replay turns stale only when the stored witness says the run was proven on a different current X11/i3 desktop session. Legacy runs that predate the witness remain readable, but session-aware runs no longer over-claim that yesterday's healthy proof still applies to today's desktop binding.
+
+## 2026-03-22: durable runtime signoff still over-trusted posture-only ledger rows
+
+Revision 0405 made replay proof and warm dispatch receipts contract-bound, but durable runtime acceptance still had one softer edge: a posture-only signoff row in `review/macro_acceptance.yaml` could keep looking current even after replay posture, macro proof, or dispatch proof had drifted. That was the wrong bias for the private-LLM/operator loop because it preserved operator intent without preserving the proof state that justified it.
+
+Revision 0406 closes that gap for the i3/X11-first lane. Runtime acceptance entries can now carry a `proof_contract`, the acceptance ledger computes the current runtime-acceptance contract for each macro, and runtime boards/author loops mark older posture-only signoff as stale until it matches current proof again.
+
+Concrete win: the same one-read stack can now tell a private LLM not just that a macro *was* accepted once, but whether that durable signoff is still current for the macro/replay/dispatch state it is about to execute.
+
+## 2026-03-22: warm dispatch receipts now prove which daemon epoch emitted them
+
+Revision 0405 closes the next observability gap in the warm i3/X11 lane.
+Dispatch receipts were already contract-bound to the current macro and minimal
+dispatch shape, but they still were not bound to the resident daemon instance
+that emitted them. After a reload or restart, an older clean receipt could still
+look current unless a human or LLM re-ran the live runtime probe and mentally
+compared epochs.
+
+The resident daemon now writes a lightweight runtime-state cache on startup and
+reload, dispatch receipts capture a compact runtime witness from that cache, and
+dispatch history now compares the latest receipt against the current cached
+daemon epoch/PID/runtime-contract tuple.
+
+Concrete win: a clean dispatch receipt from an older `vhk busd` instance no
+longer passes as current warm-runtime evidence after the daemon has changed.
+
+## 2026-03-22: reload receipts now refuse session-drift false positives
+
+Revision 0415 closes the next honesty gap on the i3/X11 warm-runtime lane. The
+reload receipt from revision 0402 could already prove that a reload happened and
+that the daemon reported the current on-disk project contract afterward, but it
+could still treat that as success even when the live daemon stayed attached to a
+different X11/i3 desktop session.
+
+Revision 0416 adds a matching restart-receipt lane for the resident service. The generated stack now emits `restart_runtime_json.sh`, warm-runtime restart tickets point at that helper instead of raw `systemctl` chains, and the helper proves whether sync+restart actually brought the daemon back on the current X11/i3 session with the expected watcher/runtime contract.
+
+Revision 0415 binds `reload_runtime_json.sh` to the same daemon desktop-session
+witness used by the live dispatch probe. The reload receipt now compares the
+post-reload daemon witness against the current shell's desktop-session contract,
+returns explicit drift statuses when project-contract sync succeeded but session
+binding did not, and carries one bounded follow-up:
+
+- `recommended_followup.id = restart_runtime_for_daemon_desktop_session`
+- `recommended_followup.route_id = daemon_desktop_session_then_restart`
+
+Concrete win: a private LLM can no longer accept “reload succeeded” when the
+resident daemon is still the wrong long-lived daemon for the current X11/i3
+session.
+
+
+## 2026-03-22: the checked-dispatch gate still over-recommended redundant emits
+
+Revision 0430 taught `next_action_json.sh` to reuse a fresh clean latest-dispatch receipt before telling the warm lane to emit again, but the per-macro execution surface was still lagging one step behind. `macro_dispatch_gate_json.sh <macro>` could still return `dispatch_now` even when `latest_dispatch_json.sh` already proved that the same macro had a current clean receipt on the same resident-runtime witness.
+
+Revision 0431 closes that drift for the i3/X11-first resident path. The checked-dispatch gate now reads the newest receipt too, exposes `current_dispatch_evidence_available` in `dispatch_readiness`, and switches its decision/repair route to `inspect_current_dispatch_evidence` when the lane is ready and the receipt is still current. That keeps the per-macro operator/LLM surface aligned with `primary_macro_work_ticket` and `next_action_json.sh`: green still means ready, but the recommended next move is to inspect and reuse current evidence before emitting again.
+
+## 2026-03-22: selected-macro work ticket still dropped live probe evidence
+
+The fused stack already computed `primary_macro_probe_observation`, but `primary_macro_work_ticket` still fell through to a generic execution ticket even when the checked gate was blocked on `desktop_state_mismatch` and a bounded live X11/i3 probe sample was already available. That kept the selected-macro one-read lane weaker than the sibling observability surface it was meant to collapse.
+
+Revision 0432 closes that gap for the i3/X11-first resident path. `primary_macro_work_ticket` now carries `probe_handoff`, and when recorder/cleanup/replay/acceptance/runtime are otherwise clear and the execution block is a desktop-state mismatch with a bounded probe sample already in hand, the work ticket switches to `stage_id = probe` and `source_ticket_id = primary_macro_probe_observation` instead of dropping to generic execution triage. The helper summaries and helper metadata now carry the same route.
+
+## 2026-03-22: top-level next-action helper still hid selected-macro probe evidence
+
+After revision 0432, `primary_macro_work_ticket` could already route a blocked selected macro into `probe_handoff`, but the generated `next_action_json.sh` helper still ignored that smaller ticket. On the flagship i3/X11 resident lane that meant the first control-plane surface an operator or private LLM opened could still flatten `desktop_state_mismatch` back into a generic gate/execution recommendation even when a bounded live probe sample was already available.
+
+Revision 0433 closes that remaining top-level drift. `next_action_json.sh` now reads `primary_macro_work_ticket_json.sh`, carries that helper in its source metadata, and prefers the selected macro's `inspect_live_probe_observation` route when the work ticket is already in `stage_id = probe`. Concrete win: the first stack-level helper now stays one-read and evidence-first on live desktop mismatches instead of making the caller reopen the selected-macro handoff by hand.
+
+Concrete win: the private LLM/operator can inspect the freshest failed wait sample first, then revise selectors or retry dispatch, without reopening extra sibling surfaces just to find the most relevant X11/i3 evidence.
+
+## 2026-03-22: reload repairs needed a receipt, not just a command
+
+Revision 0401 made resident project-contract drift explicit, but the bounded repair was still only a shell prescription: reload the daemon, then re-check the runtime. For a long-lived X11/i3 daemon operated by a private LLM, that was still too implicit. The control plane could say *what to try* but not *whether the reload was actually observed* by the resident service.
+
+Revision 0402 closes that observability gap. The internal runtime probe now carries daemon epoch/reload state, `reload_runtime_json.sh` probes the resident daemon before and after emitting the reload event, and its receipt says whether a new epoch/PID/reload count was observed and whether the daemon now reports the current on-disk project contract.
+
+Concrete win: the warm lane no longer treats "reload requested" as equivalent to "reload observed."
+
+## 2026-03-22: fused stack state now proves the resident daemon loaded the current project contract
+
+Revision 0401 closes the next warm-runtime honesty gap on the i3/X11 lane. The
+internal `vhk.runtime.probe` reply now carries a digest of the daemon's loaded
+project contract, `check_runtime_json.sh` computes the current contract digest
+from disk, and `dispatch_path_summary` compares the two directly.
+
+That adds one more first-class resident-runtime distinction beside session and
+watcher truth:
+
+- `dispatch_path_summary.runtime_contract_in_sync`
+- `dispatch_path_summary.expected_runtime_contract_digest`
+- `dispatch_path_summary.daemon_runtime_contract_digest`
+
+And it adds one bounded warm-runtime repair when LLM or operator edits have
+outpaced the live daemon's loaded project state:
+
+- `warm_runtime_ticket.status_id = reload_runtime_for_project_contract`
+
+Concrete win: the one-read resident handoff no longer treats “busd answered and
+has the right watcher names” as equivalent to “the daemon is serving the current
+macro source on disk.” The fused stack can now say when the warm runtime only
+needs a bounded live reload instead of a restart or a generic inspect step.
+
+Remaining gap: this is still a semantic project digest, not a per-macro hot
+reload receipt. A future cut can decide whether macro-scoped edit receipts are
+worth carrying into the resident control plane, but the repo no longer has to
+guess whether a live daemon is stale after source edits.
+
+## 2026-03-21: fused stack state now proves the running daemon's session too
+
+Revision 0398 closes the runtime-side half of the session-attachment gap on the
+i3/X11 lane. `check_runtime_json.sh` still checks the live shell, X11/i3 probes,
+and systemd activation-environment drift, but it now also reads the running
+service's `MainPID` and inspects `/proc/<pid>/environ` to compare the daemon
+process's startup environment against the live shell.
+
+That adds two new control-plane surfaces:
+
+- `service_environment_probe`
+- `session_attachment.runtime_service_environment`
+
+And it adds one bounded warm-runtime repair when the resident daemon itself is
+already attached to the wrong desktop session:
+
+- `warm_runtime_ticket.status_id = restart_runtime_in_live_session`
+
+Concrete win: the one-read resident handoff no longer treats “activation is now
+in sync” as equivalent to “the running warm daemon is already in the right
+session.” The fused stack can now say when the daemon must be restarted in the
+live X11/i3 session even after future socket activations have been repaired.
+
+Remaining gap: this is still process-environment truth, not end-to-end dispatch
+latency truth. A future cut can decide whether the resident daemon should carry
+a tiny runtime heartbeat or last-attach receipt for even tighter post-restart
+proof, but the repo no longer needs to guess which session the current daemon
+was born in.
+
+## 2026-03-21: fused stack state now carries explicit X11/i3 session-attachment truth
+
+Revision 0397 closes the next resident-runtime ambiguity on the i3/X11 lane. `check_runtime_json.sh` no longer stops at unit state plus `DISPLAY`/`XDG_RUNTIME_DIR` presence. It now derives an explicit `session_attachment` witness from:
+
+- live shell session variables (`DISPLAY`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`, `XDG_RUNTIME_DIR`, `I3SOCK`)
+- best-effort X11 control-path proof
+- best-effort i3 IPC proof
+- systemd user activation-environment drift against the live shell
+
+`stack_state_json.sh` now carries that witness directly and lets `warm_runtime_ticket` choose one bounded repair when the activation environment drifted: sync the systemd/D-Bus activation environment back to the live X11/i3 shell before trusting socket-activated restarts again.
+
+Concrete win: the one-read resident handoff no longer treats “this shell is graphical” as equivalent to “the warm runtime will restart into the same live desktop session.”
+
+Remaining gap: this still keeps the proof narrow and shell-facing. A future cut can decide whether the resident daemon itself should emit a tiny runtime-side session fingerprint/receipt so post-restart attachment can be proven from both sides instead of only from shell-side probes.
+
+## 2026-03-21: fused stack state now carries a bounded startup-owner repair ticket
+
+Revision 0395 closes the next startup-ownership ambiguity on the i3/X11 warm-runtime lane. `stack_state_json.sh` still keeps startup ownership helper-derived, but it now derives `startup_handoff_repair_ticket` from the already-fused startup-owner witness, startup status/drift helper output, and live runtime identity.
+
+That startup-owner repair ticket now carries:
+
+- `status_id`
+- `route_id`
+- `target_owner_id`
+- one bounded recommended owner-fix or no-op command
+- compact `evidence_commands`
+- compact `verify_commands`
+- startup-owner status/drift signals that explain why the bounded repair was chosen
+
+Concrete win: the one-read resident handoff no longer stops at “startup ownership looks wrong.” A private LLM can now stay inside the fused i3/X11 control plane and choose one bounded owner repair: hide the duplicate autostart bridge so the user unit becomes singular again, unmask/enable the user-unit owner when startup drifted or disappeared, or skip startup repair because the user-unit owner is already current.
+
+Remaining gap: this still deliberately avoids a general installer or planner. A future cut can decide whether packaged install lanes should reuse this same bounded owner-repair contract directly, but the resident control plane should still avoid turning startup ownership into open-ended systemd/session planning.
+
+## 2026-03-21: fused stack state now carries a bounded startup-handoff witness
+
+Revision 0394 closes the next resident-runtime ambiguity beside `warm_runtime_ticket` on the i3/X11 lane. `stack_state_json.sh` now derives `startup_handoff_witness` from two new helper surfaces, `startup_handoff_status_json.sh` and `startup_handoff_drift_json.sh`, plus the already-fused warm-runtime ticket.
+
+That startup-owner witness now carries:
+
+- `status_id`
+- `route_id`
+- one bounded recommended inspect or follow-on command
+- compact `evidence_commands`
+- compact `verify_commands`
+- startup-owner status signals (enabled-unit count, autostart state/effectiveness)
+- bounded startup-owner drift signals when recent snapshots disagree or stay risky
+
+Concrete win: the one-read resident handoff no longer makes a private LLM reopen install docs or infer startup ownership from unit snippets just to answer whether the generated stack is owned by the primary user unit, only by an autostart bridge, by both at once, by neither, or by a drifting/flapping login path.
+
+Remaining gap: this stays deliberately bounded and helper-derived. A future cut can decide whether packaged install lanes should reuse the same bounded owner-repair contract directly, but the control plane should still avoid turning startup ownership into open-ended systemd/session planning.
+
+## 2026-03-21: fused stack state now carries a bounded warm-runtime ticket
+
+Revision 0393 closes the next resident-service gap above the selected-macro tickets on the i3/X11 lane. `stack_state_json.sh` now derives `warm_runtime_ticket` from already-fused status, prerequisite, next-action, helper-error, and selected-macro execution truth.
+
+That stack-level ticket now carries:
+
+- `status_id`
+- `route_id`
+- one bounded recommended runtime or selected-macro handoff command
+- compact `evidence_commands`
+- compact `verify_commands`
+- a bounded `selected_macro_handoff` when the warm runtime is already usable
+
+Concrete win: the one-read resident handoff no longer makes a private LLM reopen `status_runtime_json.sh`, `check_runtime_json.sh`, and `next_action_json.sh` separately just to answer whether the session-bound socket/service itself is broken, degraded, or honestly ready to hand off to the selected macro.
+
+Remaining gap: the ticket stays deliberately bounded and does not invent a full service installer or planner. A future cut can decide whether startup-handoff drift deserves one compact witness beside the runtime ticket, but the resident control plane should still avoid open-ended systemd/session planning.
+
+## 2026-03-21: selected-macro stack state now carries a bounded cleanup ticket
+
+Revision 0391 closes the source-mutation gap between the selected-macro recording ticket and replay ticket on the i3/X11 lane. `stack_state_json.sh` now derives `primary_macro_cleanup_ticket` for the author-queue-selected macro from already-fused recorder truth, review-queue truth, replay posture, execute posture, and preferred entrypoints.
+
+That selected-macro ticket now carries:
+
+- `status_id`
+- `route_id`
+- one bounded recommended cleanup-or-proceed command
+- compact `evidence_commands`
+- compact `verify_commands`
+- the selected macro's selector summary plus cleanup-relevant signals
+
+Concrete win: the one-read resident handoff no longer makes a private LLM reopen recorder helpers or infer cleanup posture from raw review-queue buckets just to answer whether to re-record first, reconcile recorder/source drift, review a cleanup diff, or skip cleanup and move on to replay/execute.
+
+Remaining gap: this stays deliberately bounded and helper-derived. A future cut can decide whether cleanup review itself deserves a tiny diff-summary witness, but the resident runtime should still avoid turning source mutation into open-ended planning.
+
+## 2026-03-21: selected-macro stack state now carries a bounded replay ticket
+
+Revision 0390 closes the replay-proof gap between the selected-macro recording ticket and execution ticket on the i3/X11 lane. `stack_state_json.sh` now derives `primary_macro_replay_ticket` for the author-queue-selected macro from already-fused latest-run, replay-board, recorder-ticket, execute-ticket, and entrypoint truth.
+
+That selected-macro ticket now carries:
+
+- `status_id`
+- `route_id`
+- one bounded recommended replay command
+- compact `evidence_commands`
+- compact `verify_commands`
+- the selected macro's replay posture and latest-run health
+
+Concrete win: the one-read resident handoff no longer makes a private LLM reopen latest-run or replay-board helpers just to answer whether to record first, inspect a warned or failed run, mint fresh proof, or proceed to checked dispatch.
+
+Remaining gap: this stays deliberately bounded and helper-derived. A future cut can decide whether repeated same-macro warning windows deserve slightly richer replay-staleness summaries, but the resident runtime should still avoid turning replay control into open-ended planning.
+
+## 2026-03-21: selected-macro stack state now carries a compact execution ticket
+
+Revision 0388 closes the next execute-handoff gap on the i3/X11 lane. `stack_state_json.sh` now derives `primary_macro_execution_ticket` for the author-queue-selected macro from already-fused gate, contract, latest-run, dispatch-catalog, and entrypoint truth.
+
+That selected-macro ticket now carries:
+
+- `status_id`
+- `execution_mode_id`
+- `route_id`
+- one bounded recommended execute-or-inspect command
+- compact preflight commands
+- compact verify commands
+- warm-lane route contract details when checked dispatch is the honest path
+
+Concrete win: the one-read resident handoff no longer stops at diagnosis. A private LLM can now decide and act from the fused stack without reopening per-macro dispatch-contract helpers just to reconstruct the actual execution route.
+
+Remaining gap: the ticket stays deliberately small and helper-derived. A future cut can decide whether recorder-heavy macros deserve a second bounded replay-ticket surface, but the resident runtime should still avoid turning control-plane handoff into open-ended planning.
+
+## 2026-03-21: selected-macro stack state now carries one bounded live probe observation
+
+Revision 0386 closes the next warm-runtime observability gap on the i3/X11 lane. `stack_state_json.sh` now derives `primary_macro_probe_observation` for the author-queue-selected macro from already-fused gate, latest-run, contract, and receipt truth.
+
+That selected-macro observation now carries:
+
+- `status_id`
+- `probe_id`
+- `observation_source_id`
+- bounded `observed` X11/i3 facts
+- the expected desktop target
+- a first inspect command plus compact inspect followups
+
+Concrete win: when checked dispatch is blocked by a live desktop-target mismatch, the one-read resident handoff no longer stops at blocker class plus command. It can now also say what the freshest failed live probe actually observed without reopening report/trace output first.
+
+Remaining gap: this stays deliberately compact and helper-derived. A future cut can decide whether a few probe classes deserve slightly richer typed snapshots, but the resident runtime should still avoid turning full trace payloads into its default control-plane surface.
+
+## 2026-03-21: repair recipes and author-queue entrypoints are now blocker-aware
+
+Revision 0385 closes the next warm-runtime control-plane gap on the i3/X11 lane. `macro_author_queue_json.sh` now exposes fuller execute/inspect entrypoints for each macro instead of only the author-loop and recorder review subset, and `stack_state_json.sh` now upgrades `primary_macro_repair_recipe` from a generic short sequence into a blocker-aware bounded recipe.
+
+That selected-macro recipe now carries:
+
+- `focus_id`
+- `source_blocker_class_id`
+- `evidence_commands`
+- a slightly richer bounded step budget for blocker classes that honestly need one more inspect hop
+
+Concrete win: recorder/contract debt now keeps contract rereads on the same one-read lane, live desktop-target mismatch now keeps `report_latest`/`trace_latest`/contract truth together, and run-proof gaps can keep the refresh-run plus proof-inspection loop explicit without widening into a planner.
+
+Remaining gap: the recipe is still deliberately bounded and helper-driven. A future cut can decide whether a few blocker classes deserve one compact structured observation payload in addition to commands, but the resident runtime should still avoid open-ended planning.
+
+## 2026-03-21: selected-macro stack state now carries a bounded repair recipe
+
+Revision 0384 closes the next one-read gap on the resident i3/X11 lane. `stack_state_json.sh` now derives `primary_macro_repair_recipe` for the author-queue-selected macro from the same fused stack surfaces already in memory: review queue, checked gate, latest run, command palette, consistency, and preferred entrypoints.
+
+That means the top-level private-LLM/operator handoff no longer stops at “best next command.” It now also carries a short bounded sequence such as review-then-repair, repair-then-replay, dispatch now, or direct run now.
+
+Remaining gap: the repair recipe is intentionally generic and capped. A future cut can decide whether some blocker classes deserve richer blocker-specific remediation without turning the warm-runtime control plane into a planner.
+
+Revision 0380 closes the next no-extra-hop gap in the resident i3/X11 control plane. The fused stack snapshot now lifts the author-queue-selected macro's active review-queue slice directly out of `macro_review_queue_json.sh`, so the private-LLM/operator handoff can see whether that macro is still queued for recorder/segment cleanup and which review command belongs to it without rescanning project-wide queue buckets.
+
+## 2026-03-21: checked-dispatch now carries one concrete repair action
+
+Revision 0369
+Revision 0379 closes another one-read gap in the resident i3/X11 control plane. The fused stack snapshot now lifts the author-queue-selected macro's own latest dispatch receipt out of the dispatch-history board, so the private-LLM/operator handoff can see current gate/run/recording truth *and* that macro's most recent blocked/emitted/forced receipt even when the project-global latest dispatch belongs to some other macro.
+
+ closes the next resident-runtime usability gap on the i3/X11 lane. The checked-dispatch gate, fused per-macro author loop, durable receipts, and `latest_dispatch_json.sh` now carry a structured `repair_action` that answers the operational next move directly: emit now, use direct-run, repair recorder debt, inspect the live desktop target mismatch, or refresh matching run proof.
+
+That same action now also flows into `macro_author_queue_json.sh` when repeated blocked dispatch or unresolved forced overrides pull a macro back upward. Dispatch pressure is still advisory, but it now points at a concrete repair command instead of only escalating visibility.
+
+Remaining gap: the repair action is intentionally single-step and conservative. A future cut could decide whether some blocker classes deserve a tiny multi-step remediation recipe without bloating the resident-runtime control plane.
+
+## 2026-03-21: checked-dispatch receipts now preserve bounded failed live observations
+
+Revision 0368 closes the next warm-runtime observability gap on the i3/X11 lane. The resident checked-dispatch gate, durable dispatch receipts, `latest_dispatch_json.sh`, and latest-run health now preserve `live_probe_hint.observation` when the newest matching run has a cheap failed wait/error sample worth carrying forward. That means `desktop_state_mismatch` no longer stops at blocker class + target hint + likely probe id; the warm lane can now also preserve one bounded sample of what the failed live probe actually observed.
+
+- Keep `primary_macro_execution_brief` derived from already-loaded fused stack data so the top-level control plane stays one-read and does not add fresh helper hops.
+- Keep `primary_macro_consistency` derived from that same fused stack data; contradictions should become explicit state, not another manual reconciliation task for the LLM/operator.
+
+Remaining gap: the observation snapshot is intentionally cheap and bounded. A future cut should decide whether a few probe classes deserve richer structured snapshots (for example focused-window info or trimmed i3 tree/workspace data) without bloating the resident receipt path.
+
+## 2026-03-21: checked-dispatch receipts now preserve likely failed live probe hints
+
+Revision 0367 closes the next warm-runtime observability gap on the i3/X11 lane. The resident checked-dispatch gate, durable dispatch receipts, and `latest_dispatch_json.sh` now preserve a structured `live_probe_hint` when the newest matching run already points at a likely failed live window/event/focus/i3 probe. That means `desktop_state_mismatch` no longer stops at blocker class + target hint + stderr text; the receipt can now also say which live probe most likely went wrong before the warm lane refused to emit.
+
+## 2026-03-21: blocked checked-dispatch receipts now preserve real refusal text
+
+Revision 0366 closes the remaining receipt-truth gap on the resident i3/X11 lane. Blocked checked-dispatch attempts now keep the actual refusal text in durable receipts and `latest_dispatch_json.sh` instead of dropping to a generic placeholder. That keeps the private-LLM execution lane one-read: receipt history now answers not only *that* the warm dispatcher refused a macro, but also *what it said* when it refused.
+
+## 2026-03-21: stack-level next action still needs to follow the author queue and checked gate
+
+Revision 0369 sharpened per-macro checked-dispatch `repair_action`, but the generated `next_action_json.sh` helper could still drift back to older recorder-review and latest-run heuristics. That left the stack-level warm-runtime handoff weaker than the repo's newer control plane: the author queue knew which macro deserved attention next, and the checked gate knew whether that macro was ready to dispatch or needed direct run or repair, yet the top-level helper might still recommend a generic review step.
+
+Revision 0370 closes that gap for the i3/X11 flagship lane. `next_action_json.sh` now uses `macro_author_queue_json.sh` as its macro-triage surface, then opens `macro_dispatch_gate_json.sh <primary-macro>` when the selected macro is already in the execute lane. That lets the generated stack return the same `refresh_recording_review`, `inspect_latest_failures`, `ready_to_dispatch`, or `use_direct_run` command that the private-LLM lane would have chosen by hand.
+
+Revision 0371 closes the next one-read gap in the same lane. `stack_state_json.sh
+- Keep `stack_state_json.sh` action-oriented: when the selected macro is already known, derive a normalized command palette from the fused per-macro slices instead of forcing the LLM/operator to reconstruct commands from scattered fields.
+` already fused author queue, replay board, runtime board, dispatch history, and catalog truth, but callers still had to reopen `macro_dispatch_gate_json.sh <macro>` to see the selected macro's checked-dispatch decision and repair action. The fused stack snapshot now inlines that primary gate under `macro_dispatch_gate` and mirrors its key ids in `sources.helpers.macro_dispatch_gate_json`, so a private LLM can read one stack snapshot and immediately know whether the chosen macro is ready to dispatch, requires direct run, or needs a specific repair step.
+
+Revision 0372 closes the next adjacent gap. Even with the primary gate fused in, callers still had to reopen `macro_latest_run_json.sh <macro>` to inspect the selected macro's newest matching run and replay verdict. `stack_state_json.sh` now inlines that macro-scoped replay truth under `primary_macro_latest_run` and mirrors its verdict/posture ids in `sources.helpers.macro_latest_run_json`, so one fused stack snapshot carries both the selected macro's warm-lane decision and its freshest replay evidence.
+
+Revision 0373 closes the next one-read gap in the same fused lane. Even with the primary gate and latest run carried inline, callers still had to reopen `macro_contract_json.sh <macro>` to inspect the selected macro's desktop target, invocation shape, and generated wrappers. `stack_state_json.sh` now inlines that contract under `primary_macro_contract` and mirrors key contract facts in `sources.helpers.macro_contract_json`, while also forcing subordinate helper reads to use closed stdin so the resident control plane stays non-interactive under failure pressure.
+
+Revision 0375 closes the next recorder-side gap. Even with the primary gate, latest run, contract, and author loop fused inline, callers still had to reopen `macro_recording_json.sh <macro>` to inspect the selected macro's recorder freshness, selector source, and segment-review truth. `stack_state_json.sh` now inlines that recorder surface under `primary_macro_recording` and mirrors key review facts in `sources.helpers.macro_recording_json`, so the selected macro's recorder debt or selector stability travels with the same one-read handoff.
+
+Revision 0376 closes the next execution-hop gap in the same fused lane. Even with the selected macro's state, gate, latest run, contract, author loop, and recorder truth carried inline, callers still had to reopen `macro_entrypoints_json.sh` or scrape the project-wide entrypoints map to figure out the concrete author-loop, direct-run, or checked-dispatch command for that selected macro. `stack_state_json.sh` now mirrors that per-macro slice under `primary_macro_entrypoints` and echoes the key command ids in `sources.helpers.macro_entrypoints_json`, so diagnosis can turn into the right next command without another helper hop.
+
+## 2026-03-21: author queue now escalates warm-runtime dispatch pressure instead of treating it as read-only observability
+
+Revision 0362 made the per-macro author loop the one-read checked-dispatch verdict surface, but the project-wide author queue still sorted almost entirely by recorder/latest-run next-step rank. That left a warm-runtime blind spot: repeated checked-dispatch blocks and unresolved forced overrides were visible on the dispatch-history board, yet they did not materially pull a macro back upward in LLM triage.
+
+Revision 0363 closes that gap for the X11/i3 flagship lane. `macro_author_queue_json.sh` now emits `dispatch_attention` per macro and uses dispatch-pressure-aware `priority.effective_rank` so execute-lane warm-runtime macros are escalated when checked dispatch is repeatedly blocked or still depends on an unresolved forced override. Missing recorder evidence, freshness drift, and brittle cleanup debt still outrank that pressure, but clean execute-lane macros no longer hide resident-runtime trouble just because the recorder side is quiet.
+
+Revision 0365 closes the target-awareness follow-up for the resident i3/X11 lane. Checked-dispatch payloads, durable dispatch receipts, `latest_dispatch_json.sh`, and `macro_dispatch_history_board_json.sh` now preserve a compact `desktop_target` hint built from recorder stable-selector evidence and explicit macro contract truth when available. `desktop_state_mismatch` no longer means only "some live target was wrong"; it can now point at the class/title/workspace target the warm lane expected.
+
+Remaining gap: queue pressure is now target-aware at the receipt/inspection layer, but it still only ranks by blocker class and attention id. A future cut should decide whether some target mismatches are stable enough to escalate differently from obviously transient focus/workspace misses.
+
+## Fresh issue cluster: per-macro authoring still needed one more checked-dispatch read
+
+- revision 0361 fused runtime posture, signoff, and dispatch-history truth into `macro-author-loop-json`, but a private LLM still had to reopen `macro_dispatch_gate_json.sh` to see the actual checked-dispatch verdict for the macro it had already selected
+- that extra read was cheap, but it was still the wrong ownership boundary for the flagship lane: once the caller is already on one macro, the per-macro handoff should answer whether to dispatch now, direct-run, inspect replay proof, or stabilize recorder debt
+- revision 0362 closes that gap by embedding `execution.dispatch_gate` inside `macro-author-loop-json`, reusing the same checked-dispatch projection as `macro-dispatch-gate-json` so decision id, blocker list, contract commands, and force-override guidance stay consistent
+- the runtime board and dispatch catalog remain the project-wide posture surfaces, but the per-macro author loop is now the canonical one-read execution verdict surface for the private-LLM lane
+- next follow-up: decide whether project-wide author queue ranking should start treating repeated blocked dispatch or unresolved forced overrides as stronger authoring pressure instead of leaving them observability-only
+
+## Fresh issue cluster: dispatch observability still over-trusted the single latest receipt
+
+- revision 0357 made checked dispatch observable with durable receipts, but higher-level triage still leaned too hard on `latest-dispatch-json`
+- that meant the resident runtime and a private LLM could see the newest block/emit decision, but not whether a macro had been blocked repeatedly, was still living on a forced override, or simply had stale dispatch evidence
+- revision 0360 closes that gap by adding `macro-dispatch-history-board-json`, generated `macro_dispatch_history_board_json.sh`, and per-macro dispatch-history posture (`blocked_repeated_recently`, `forced_override_pending_review`, `forced_override_stale`, `dispatch_history_stale`, `clean_recent_dispatch`, `no_dispatch_history`) based on durable receipt history
+- the runtime board / dispatch catalog / checked gate / fused stack state now carry that dispatch-history context too, so resident-runtime triage no longer has to infer dispatch health from one latest receipt
+- next follow-up: decide whether repeated blocked-dispatch history or unresolved forced overrides should start influencing the ranked author queue directly instead of staying observability-first
+
+## Fresh issue cluster: per-macro replay truth was still leaking through the project-wide latest run
+
+- revision 0357 made the thin dispatch lane observable, but the author queue/runtime board/author loop still treated the project's single latest run as if it were macro-specific replay proof
+- that meant one macro's newest run could blur another macro's replay posture, which is the wrong shape for an always-warm private-LLM control plane
+- revision 0358 closes that gap by adding `macro-replay-board-json`, generated `macro_replay_board_json.sh`, and per-macro replay posture (`verified_recent`, `warning_recent`, `failed_recent`, `unverified`) based on each macro's own newest matching run
+- revision 0359 closes that follow-up by adding `macro-latest-run-json`, generated `macro_latest_run_json.sh`, and direct `macro_report_latest.sh` / `macro_trace_latest.sh` wrappers so per-macro replay inspection can jump straight to the newest matching log
+- next follow-up: let higher-level health/triage surfaces reason about replay staleness windows and repeated same-macro warnings instead of only the newest matching run
+
+## Fresh issue cluster: warm dispatch needed durable receipts
+
+- revision 0356 made thin dispatch safer with an explicit checked gate, but the resident-runtime lane still made operators and private LLM callers reconstruct the *last* emit/block decision from logs or wrapper stderr
+- VHK needs one more resident-runtime truth here: a durable project-local receipt for each checked/raw dispatch attempt, with one stable latest snapshot and a short machine-readable contract for why the emit happened, why it was blocked, or whether it was force-overridden
+- revision 0357 closes that gap by adding `latest-dispatch-json`, durable `build/dispatch_receipts/` history, and generated-stack receipt writers so checked dispatch becomes observable without scraping journals
+- next follow-up: let higher-level health/triage surfaces reason about repeated blocked dispatches and stale forced overrides instead of only the single latest receipt
+
+Revision 0356 closes the next resident-runtime control-plane gap after the dispatch catalog: the generated i3/X11 stack and CLI now expose `macro_dispatch_gate_json.sh` / `vhk macro-dispatch-gate-json` plus `dispatch_macro_checked.sh`, a fail-fast checked-dispatch lane that can say why a macro should not emit through the warm runtime yet.
+
+Revision 0355 closes the next control-plane gap after the acceptance ledger: the generated i3/X11 stack and CLI now expose `macro_dispatch_catalog_json.sh` / `vhk macro-dispatch-catalog-json`, a project-wide thin-dispatch catalog that says which macros can emit a minimal payload through the resident runtime right now, which wrapper owns that contract, and which explicit blocker still forces direct-run or stabilization.
+
+## 2026-03-20: project-wide execution posture now has one canonical resident-runtime surface
+
+Revision 0353 closes the next control-plane gap after the author queue: the generated i3/X11 stack and CLI now expose `macro_runtime_board_json.sh` / `vhk macro-runtime-board-json`, a project-wide execution board that classifies each macro as `warm_dispatch_ready`, `warm_dispatch_candidate`, `direct_run_only`, or `stabilize_first`. That keeps warm-runtime triage explicit instead of inferred from a pile of recorder, latest-run, and contract helpers.
+
+Revision 0354 closes that gap: the generated i3/X11 stack and CLI now expose `macro_acceptance_ledger_json.sh` / `vhk macro-acceptance-ledger-json`, and the author queue/runtime board/stack state now separate active recorder debt from explicitly accepted debt instead of treating every historical review item as still active.
+
+## 2026-03-20: project-wide macro triage now has one canonical warm-runtime surface
+
+Revision 0352 closes a control-plane gap in the private-LLM lane: the generated i3/X11 stack and CLI now expose `macro_author_queue_json.sh` / `vhk macro-author-queue-json`, a ranked project-wide queue that answers which macro should enter the author loop next. It uses the same next-step policy as the per-macro author loop, then carries preferred entrypoints, recorder freshness posture, review debt counts, and execution mode in one advisory surface.
+
+Remaining gap: queue rank is still derived from current source, recorder sidecars, and latest-run posture rather than a persistent accepted-review ledger, so future studio work should decide how to represent review debt that is known, reviewed, and intentionally tolerated.
+
+## 2026-03-19: resident next-action surfaces now carry recorder review debt, but queue ownership still needs pruning
+
+Revision 0347 closes a practical resident-runtime gap: the generated `next_action_json.sh` / `next_action.sh` surface now consumes macro inventory plus latest-run health so it can recommend not just "enable the socket" or "run a macro", but also which macros have stale recorder sidecars, exact-selector segments, title-bound segments, or recorder evidence newer than source. That makes the warm stack a better private-LLM/operator handoff because the repair queue is explicit instead of buried across multiple JSON calls.
+
+Remaining gap: the queue is still derived from inventory heuristics rather than a richer persisted review ledger, so future studio/service work should decide when a recorder issue is "known and accepted" versus still active review debt.
+
+## 2026-03-18: recorder workspace transitions are now explicit instead of accidental
+
+Revision 0324 closes another recorder honesty gap. Same-window workspace changes were already leaking into segment identity because workspace was part of the sampled context, but VHK was still classifying those boundaries as generic focus transitions. `record-x11` now makes workspace segmentation opt-in via `--segment-on-workspace-change`, leaves same-window workspace changes flat by default, and can preserve those boundaries as `WaitForWindowEvent(event=workspace, ...)` when `--window-guard-mode event` is active.
+
+Remaining gap: workspace event truth is still strongest on compositors/WMs with first-class workspace signals. Generic X11 can still observe workspace/desktops through EWMH-style snapshots and current-desktop checks, but recorder-driven workspace guards should remain best-effort outside the stronger WM-specific event lanes.
+
+## 2026-03-18: geometry-backed event guards now exist, but richer compositor geometry lanes still need care
+
+Revision 0323 closes the next recorder/runtime seam: `WaitForWindowEvent` now has an explicit `geometry` kind, generic polling can surface best-effort active-window geometry changes, i3/sway can map geometry waits onto window-change IPC (`move` / `floating` / `fullscreen_mode`), and `record-x11 --window-guard-mode event` can now preserve geometry-refresh boundaries as `WaitForWindowEvent(event=geometry, ...)` instead of flattening them back into state waits.
+
+Remaining gap: generic desktops still do not have a universal workspace/urgent/custom event stream, and KWin/Hyprland do not yet have a first-class dedicated rect-event bridge in VHK, so geometry waits on those lanes should stay explicitly best-effort/polling-backed unless a stronger backend hook is added.
+
+## Fresh issue cluster: recorder output still made app scope too easy to lose
+
+- VHK already had `window-spy` / `record-selectors`, but the X11 recorder still wrote bare lexical steps unless authors manually stitched selector evidence back in afterward
+- AHK / Pulover-style workflows set a higher bar here: recording and window-scope capture should feel adjacent, not like two unrelated tools
+- revision 0315 closes the next part of that gap by letting `vhk record-x11` capture active-window context, emit a stable/exact selector sidecar, and optionally apply the stable selector into the recorded macro's top-level `when:` field when writing into a project
+- revision 0316 closes the next part too: the same recorder lane can now rewrite recorded pointer steps into `CoordMode(mouse=window|client)` form using captured window geometry, which makes pointer recordings more relocatable inside a stable target window instead of hard-freezing them to screen coordinates
+- revision 0317 closes the next part after that: recorder window-context capture can now preserve *transitions* instead of only one final suggestion, segmenting one recording by active-window changes, injecting `WaitForWindow` guards, falling back to exact selectors when stable selectors would collapse distinct recorded windows together, and translating relative mouse coordinates per segment rather than anchoring the whole run to the first window seen
+- revision 0318 closes the next recorder seam too: segmented recording can now opt into same-window title transitions, which lets VHK preserve browser-tab/document-title boundaries when window identity stays constant and stable selectors alone would blur the real workflow
+- revision 0319 closes the next seam in that same lane: segmented recordings now default their inserted guards to the recorded *active* window truth instead of only waiting for any matching window to exist, and they expose an explicit `--window-guard-scope active|present` knob so broader existence waits stay opt-in rather than accidental
+- next follow-up: carry the same evidence lane into future Studio/editor flows so selector capture, route hints, relative-coordinate review, segmented window transitions, title-aware guard review, active-vs-present guard review, and semantic target upgrades stop living only in CLI review artifacts
+
+## Fresh issue cluster: startup ownership was still too easy to duplicate
+
+- revision 0303 made graphical-session lifetime explicit, but the service handoff could still install more than one startup owner for the same VHK-owned lane: a systemd target path plus an XDG autostart bridge
+- Linux-native automation needs one more repo rule here: startup ownership should be explicit and singular by default, with alternate owners kept as reviewed fallbacks instead of silently enabled in parallel
+- revision 0304 closes the next part of that gap by adding a startup-handoff policy, guide, and probe, and by changing generated install helpers so graphical-session-bound user units stay primary while the XDG autostart bridge becomes an explicit opt-in fallback
+- next follow-up: carry the same startup-owner policy into bootstrap/runtime launcher lanes so packaged first-run behavior does not drift back into duplicated startup hooks
+
+## Fresh issue cluster: activation sync alone was not enough
+
+- revision 0302 made live session/user-bus variables explicit, but the service handoff still left one operational truth too fuzzy: should the VHK-owned unit die with the graphical session or behave like a generic user daemon?
+- Linux-native automation needs that answer in shipped artifacts because user services, XDG autostart, and desktop-specific session targets are related but not identical
+- revision 0303 closes the next part of that gap by adding a session-target policy, generated session-target guide/probe, and explicit `BindsTo=graphical-session.target` wiring in the generated user units
+- next follow-up: carry the same session-lifetime expectations into bootstrap/runtime launcher lanes so first-run helpers and packaged launchers stop flattening session truth back into generic app startup language
+
+## Fresh issue cluster: release handoffs still drifted away from Linux ownership truth
+
+- planner/install/service work had already identified who owns Linux automation authority per surface, but setup/release artifacts still risked flattening those distinctions back into package/deploy prose
+- VHK now needs a persistent repo rule: setup, release-lane, release-deploy, and release-stage outputs should all preserve the same authority story the planner learned
+- revision 0301 closes the next part of that gap by carrying project-level authority policy and per-lane authority stories through those packs
+- next follow-up: let bootstrap/release-stage assembly/runtime launchers consume those same authority signals when deciding default service/env/session wiring
+
+## Fresh issue cluster: installs and services must respect Linux authority boundaries
+
+- native-install packs were already good at shipping launcher/runtime/doc handoffs, but they still risked implying that one local install somehow owned portal sessions, remapper edges, or privileged helpers too
+- session-service packs were already good at user units and autostart bridges, but they did not yet say which surfaces they truly owned versus which ones remained adjacent privileged or desktop-mediated lanes
+- VHK now needs this as a persistent product rule: installs can own userland packaging and resident session orchestration, while portal/global-shortcut and evdev/uinput/helper lanes stay explicit boundary objects
+- next follow-up: let more setup/release/bootstrap artifacts consume the same authority policy so service scope and helper adjacency stay consistent across the repo
+
+
+## Fresh issue cluster: authority envelopes were still implicit
+
+VHK had become much better at saying who should ship, start, control, recover,
+verify, and stay warm for a promoted Linux-native surface. But one product truth
+was still too easy to lose in prose: *which layer actually has authority to own
+that surface on Linux?*
+
+That gap matters because Linux surfaces that all appear to “work” often mean very
+different things operationally:
+
+- a text expander is usually a user-session service/config authority story
+- a portal lane is a desktop-mediated session/consent authority story
+- a remapper is an evdev/uinput or compositor-edge authority story
+- a helper daemon is a socket + `/dev/uinput` + service policy authority story
+- a launcher is often only a discoverability/launch authority story
+
+`plan-project` now closes that gap with `promotion_authority_envelope_plan` and
+`promotion_authority_envelope_summary`, and promotion/operator/capability packs
+now render the same surface so release/install docs stop conflating warm paths
+with real host authority. The next follow-up is to let setup/native-install/
+runtime generation consume those authority envelopes directly when deciding which
+service scope, permission story, or desktop integration lane to materialize by
+default.
+
+### 0) Portal audit history needed operator-facing review + retention
+
+The portal ledger and diff work now live under `XDG_STATE_HOME`, and VHK now ships `vhk portal-assignment-history`, `vhk export-portal-assignment-history`, `vhk prune-portal-assignment-history`, and `vhk inspect-portal-assignment-preset` so that state root becomes reviewable, shareable, pruneable, and provenance-aware instead of a pile of YAML files. Recent gaps closed: time-window / changed-shortcut filters, age-based pruning, Markdown + HTML summary export, generated saved review presets, layered `--preset-file` merging for team-shared plus operator-local overrides, and machine-readable preset-resolution provenance in history/export/prune handoffs. Remaining gap: carry that same provenance model into broader machine-readable review packs outside the portal lane.
+
+## Fresh issue cluster: media automation needed a concrete thin adapter handoff
+
+- the planner already knew how to recognize MPRIS-shaped projects, but that lane still stopped at review prose and generic session-fit/design commands
+- `vhk gen-playerctl-pack` now closes the first deployment gap for that route with a reviewable playerctl/MPRIS adapter pack: route catalog, machine-readable command ledger, and thin helper wrappers that either print `playerctl --follow` output or invoke the matching `vhk run ...` command
+- this keeps the product boundary honest: playerctl owns latest-player/follow behavior while VHK still owns macro semantics and project review
+- next follow-up: feed those generated playerctl artifacts into broader release/setup/deploy packs and eventually support richer route-specific follow templates instead of one generic helper shape
+
+## Fresh issue cluster: notification feedback needed action/progress runtime semantics
+
+- the planner already knew desktop notifications were a real Linux feedback lane, but the runtime `Notify` step was still too thin for repeated progress/status updates and daemon-owned action prompts
+- `Notify` now carries richer daemon-facing metadata too: `app_name`, `icon`, `category`, `timeout_ms`, `replace_id`, `transient`, `out_id`, `progress`, `actions`, and `out_action`
+- the runtime can now round-trip notification ids so one step can create a notification and a later step can atomically replace it instead of spraying duplicate toasts
+- progress-style notification hints can now stay explicit in macros instead of hiding in ad hoc `notify-send -h INT:value:...` wrappers
+- action selections can now flow back into macro vars when the backend supports blocking/action output, which makes passive “open / dismiss / retry” prompts more honest than turning them into fake modal dialogs
+- planner evidence now also highlights `replaceable_notifications`, `timed_notifications`, `transient_notifications`, `actionable_notifications`, and `progress_notifications` when projects start using that richer lane
+- next follow-up: model close reasons/capability probing more explicitly and add a reviewable notification adapter pack so daemon-owned actions/history stay as explicit as the playerctl/kitty/mpv/qutebrowser lanes
+
+## Fresh issue cluster: portal backend inventory still matters even after `portals.conf` support
+
+`vhk doctor` already knew how to probe the live portal frontend interfaces and summarize `portals.conf`, but there was still a blind spot that mattered on real Wayland hosts: the installed backend manifests themselves.
+
+That gap made several failure modes hard to explain cleanly:
+
+- `portals.conf` could name a backend id that is not actually installed
+- a backend could exist on disk but be excluded by its `.portal` `UseIn` rules for the current `XDG_CURRENT_DESKTOP`
+- alternative wlroots backends such as `luminous` could be present yet invisible to VHK unless the user had already routed them explicitly
+
+This revision closed the next part of that gap too: host-contract and readiness packs now ship a dedicated portal route contract so operators can compare "configured", "installed", and "actually live on D-Bus" in one place.
+
+The next follow-up is to carry the same route-contract surface into setup/native-install/release-facing artifacts, so deployment bundles do not regress back into package-only portal prose.
+
+## Fresh issue cluster: route ownership still drifts unless each macro names its lane
+
+VHK already had stack profiles, surface choices, activation routes, and target
+route packs, but one gap remained: authors could still ask “should this macro
+really stay in the runner?” and the answer lived only in review prose.
+
+That makes Linux-native design drift more likely:
+
+- remap-like key transforms stay trapped in YAML when they belong in keyd / xremap / kanata-class exports
+- hotstring/text bodies get treated like generic replay instead of text-tier assets
+- watcher-driven workflows hide inside “normal macros” instead of becoming service-owned routes
+- Wayland capture/pointer flows overpromise portability because the macro never says it is helper-boundary owned
+
+`plan-project` now closes more of that gap with both `macro_route_profiles` and `macro_export_candidates`, while the new `route_portfolio`, `export_promotion_plan`, `promotion_waves`, `promotion_readiness`, `promotion_backlog`, and `promotion_evidence` surfaces finally let reviewers see which lanes dominate the whole project, which Linux-native promotions should be staged next, what belongs in the first shipping wave versus later fixup waves, which export surfaces are actually ready versus still needing session/compositor review, what concrete queued work remains, and which checked-in proof artifacts are still missing before those surfaces/gates should count as release-proof. `lint-project` now surfaces advisory `ROUTE_DRIFT_*` findings for text-tier, remapper-tier, watcher-service, and helper-boundary macros plus `PROMOTION_EVIDENCE_*` gaps when promotion proof has not been materialized yet. `gen-promotion-pack` closes more of the execution gap by turning that promotion work into docs/JSON/refresh scripts plus backlog/evidence docs, and now carries the planner's shipping-lane map directly so each promotion surface shows which Linux-native input lane actually owns shipping. The next issue is to let scaffold/export generators consume that plan directly instead of stopping at review artifacts.
+
+## Fresh issue cluster: dispatch budgets were still under-expressed
+
+VHK had gotten much better at saying who should ship, start, operate, recover, and verify a promoted Linux-native surface. But one AHK-parity question was still too easy to hand-wave away: *what dispatch path is that surface actually supposed to protect?*
+
+That omission matters because Linux-native surfaces do not all win the same way:
+
+- a text package wants a service-resident warm path instead of paying startup or per-character orchestration costs on every expansion
+- a remapper wants an edge-resident path that stays as close to the input edge as possible instead of detouring through launcher or runner startup
+- a helper/portal route may honestly accept daemon-warm or session-resume first use, but it still needs that posture stated out loud
+- a watcher service wants a resident event pipeline, while a launcher may remain intentionally launch-cold
+
+`plan-project`, `gen-promotion-pack`, `gen-capability-audit-pack`, and `gen-operator-pack` now expose a `promotion_dispatch_budget_plan` plus summary data so those expectations become reviewable. The next follow-up is to let setup/export/runtime-pack generation consume those postures directly, so “service-resident” and “edge-resident” stop being only documentation labels and start shaping the default shipped lane.
+
+## Fresh issue cluster: portal shortcut lane should close the bind/install loop
+
+- the portal trigger lane got noticeably more honest too: `vhk lint-project` now flags GlobalShortcuts bindings that would be skipped from the freedesktop catalog and reminds authors that `when:` selectors stay runtime-only after activation, while the converter itself now handles more punctuation keys via shortcuts-spec/xkbcommon identifiers instead of treating them as impossible
+- `plan-project` now also separates **stable portal-catalog bindings** from **dynamic/helper-sensitive Wayland hotkeys**, exposes that split in `portal-global-shortcuts` evidence, and uses it to stop defaulting every Wayland hotkey toward the portal session route
+
+- extend the new portal assignment diff flow into a persistent history lane (likely under XDG state) so VHK can keep reviewed snapshots across multiple sessions without hand-managed report paths
+- surface portal shortcut catalogs in more release/install packs so Wayland release lanes do not rely on maintainers describing portal actions by hand
+- add backend-specific validation hints for portal shortcut ids/triggers when desktop support is partial or gated by backend policy
+
+## Fresh issue cluster: WM grouped trigger layers were under-modeled
+
+- VHK already had exporter support for WM launcher modes and `gen-wm-config`
+  mode/submap snippets, but the planner still treated that capability like a
+  hidden implementation detail
+- that made Linux-native trigger planning too binary: authors were nudged toward
+  either more flat global binds or launcher hubs, with no first-class middle
+  lane for grouped desktop-native action families
+- `plan-project` now surfaces that middle layer explicitly through
+  `wm-modal-trigger-layer`, `wm-modal-submap-lane`, and the ecosystem lesson
+  `wm-modes-submaps-grouped-triggers`
+- next follow-up: keep future which-key / hinting work aligned with the same
+  action ids so grouped trigger UX can deepen without creating a second macro
+  runtime
+
+## Fresh issue cluster: remapper lanes are real product boundaries
+
+- finish a real `xremap` exporter or adapter manifest so the new `xremap-remap` surface stops being planning-only
+- teach setup/bootstrap to separate **portal-first trigger installs** from **remapper-first trigger installs** instead of always carrying portal base packages alongside remapper lanes
+- carry the same choose-one-lane math into docs/install recipes for app-context bridges and focused-window metadata, because xremap-like lanes often depend on desktop-specific context adapters
+
+
+## Fresh issue cluster: text-first automation should stay first-class even when recordings start low-level
+
+- keep pushing text reconstruction carefully past the easy cases: backspace is now covered, but dead keys, compose sequences, IME flows, and layout-specific printable keys still need a truth-preserving policy
+- keep teaching the recorder/optimizer to distinguish semantic shortcuts from literal text entry, especially around dead keys, multi-stroke compose/IME flows, and layout-specific printable characters
+- carry the same text-first bias into future Studio cleanup flows so recorded snippets graduate toward `TypeText`, prompts, hotstrings, or exported text-expander lanes instead of staying as unreadable raw key chatter
+- keep adapter/export honesty first-class: `vhk lint-project` now flags voice-context loss, AutoKey scope widening, and Espanso scoped-hotstring gaps before pack generation, but future Studio/setup flows should surface the same warnings visually instead of hiding them in JSON or terminal tables
+- keep app-aware text/export lanes explicit in support language, since Linux text insertion still varies by session, helper, and compositor
+- keep the new typing-vs-pasting optimizer lane conservative: long literal single-line text can be promoted to clipboard-paste explicitly, `${...}` templates and typed-delay choreography should stay visible as typed text by default, and Tab/Enter-rich form snippets should only cross into the new hybrid segmentation lane when an author explicitly opts in
+
+
+## Fixed in this revision
+
+## Fresh issue cluster: repeated click intent was still too lexical
+
+- recorded double-click and triple-click flows were still easy to capture but too
+  easy to leave behind as repeated low-level click fragments
+- VHK now has an explicit `MouseClickAt(clicks, delay_between_clicks_ms)` lane,
+  but recorder cleanup, future Studio surfaces, and inspector UX should keep
+  surfacing repeated-click intent as a first-class authoring concept instead of
+  making users reverse-engineer it from raw click runs
+- future work: teach higher-level authoring and app-aware selectors when a
+  repeated click should really become a semantic open/activate action rather than
+  a pointer-level replay step
+
+## Fresh issue cluster: structured UI control is still under-modeled relative to Linux toolkits
+
+- AT-SPI remains one of the strongest Linux-native semantic lanes, especially for
+  GTK/accessible-tree-aware apps, but it still risks being overshadowed by input
+  replay and vision-first authoring
+- future inspector/planner work should keep accessible roles, names, states, and
+  exported actions visible as a first-class selection/control surface
+- future playback/design work should prefer semantic UI contracts when a target
+  app exposes them cleanly, instead of treating pointer/text replay as the only
+  serious automation story
+
+## Fresh issue cluster: Wayland hot paths still need deliberate lane separation
+
+- global shortcuts, text injection, generic pointer injection, and app-context
+  scoping are still different capability/authority problems on Linux desktops
+- portal/session lanes, helper-daemon/uinput lanes, and remapper lanes should
+  stay separate in planning and install language, because performance and scope
+  guarantees differ materially between them
+- future latency work should keep the hottest trigger paths thin and explicit
+  instead of routing every low-latency need through the same generic stack
+
+### App-native protocol lanes now show up in planning
+
+VHK already had enough building blocks to notice when a project was clearly
+aiming at protocol-rich apps, but it was still flattening those flows into
+generic window/text/pointer language.
+
+This revision adds:
+
+- `app-native-control-adapter` to candidate surface choices
+- `app-native-protocol-lane` to reference patterns
+- `native-app-protocols-beat-input-replay` to ecosystem lessons
+
+That keeps kitty/WezTerm/mpv/qutebrowser-shaped targets visible as explicit
+adapter opportunities instead of letting them disappear into generic replay
+prose.
+
+### Fresh follow-up
+
+- `vhk gen-kitty-pack` now makes the first concrete app-native lane real for terminal text routes
+- `vhk gen-mpv-pack` now makes the first concrete app-native media lane real for reviewable pause/stop/next/previous/seek/volume/mute/fullscreen commands over local mpv JSON IPC
+- `vhk gen-wezterm-pack` now makes the next concrete app-native terminal lane real for reviewable pane-text routes over `wezterm cli send-text`, `wezterm cli get-text`, and `wezterm cli list --format json`
+- `vhk gen-qutebrowser-pack` now makes the first concrete app-native browser lane real for reviewable userscript entrypoints that preserve `QUTE_*` context and route execution back through `vhk run`
+- future Studio/inspector flows should help authors capture app-specific target evidence (window class/app_id/title, socket path hints, pane/window ids, userscript entrypoints, hint-mode assumptions) instead of expecting them to infer it from terminal/browser docs
+
+### Fresh issue cluster: qutebrowser hint/userscript shaping is still intentionally thin
+
+The first concrete qutebrowser adapter pack is now real, but it also stays intentionally conservative:
+
+- it exports one reviewable userscript wrapper per qutebrowser-targeted macro instead of inventing a browser-specific macro DSL
+- it preserves browser-side `QUTE_*` context and optional `QUTE_FIFO` status feedback, but it does not yet synthesize dedicated hint-mode variants or richer qutebrowser command templates from macro intent
+- future Studio/inspector flows should help authors capture userscript entrypoints, hint-mode assumptions, and browser-side command affordances directly instead of reconstructing them from qutebrowser docs
+
+### Fresh issue cluster: mpv socket capture is still mostly operator-supplied
+
+The first concrete mpv adapter pack is now real, but it also stays intentionally conservative:
+
+- it infers only a small reviewable command set from macro names/descriptions/binding keys
+- it does not claim to discover a live `--input-ipc-server` path from running mpv instances, so helpers default to `${XDG_RUNTIME_DIR:-/tmp}/mpv.socket` unless the operator overrides `MPV_SOCKET`
+- future Studio/inspector flows should help authors capture real mpv socket paths and richer per-route IPC commands instead of asking them to reconstruct those from player docs
+
+### Fresh issue cluster: WezTerm pane identity capture is still partly operator-supplied
+
+The first concrete WezTerm adapter pack is now real, but it also stays intentionally conservative:
+
+- helpers prefer explicit `WEZTERM_PANE_ID` or `WEZTERM_PANE` and only fall back to title/title-regex lookup through `wezterm cli list --format json` when there is enough reviewable selector evidence
+- ambiguous pane-title matches fail instead of guessing, because the exporter does not yet capture richer pane identity such as cwd, workspace, or semantic pane roles
+- future Studio/inspector flows should help authors capture stable pane ids and richer pane-match hints directly instead of reconstructing them from the running terminal
+
+### Fresh issue cluster: kitty match capture is still narrower than the runtime
+
+The first concrete kitty adapter pack is now real, but it stays intentionally conservative:
+
+- title/title-regex selectors can become honest exported `kitten @ send-text --match ...` routes
+- class/app_id-only kitty selectors are still skipped because the exporter does not yet capture live kitty window metadata or synthesize safer cmdline/cwd match rules
+- future Studio/inspector flows should help authors capture kitty match hints (title, cwd, cmdline, socket target) directly instead of asking them to infer those from terminal docs
+
+## Fresh issue cluster: typed-text throughput needs first-class planning
+
+- keep making long literal `TypeText` visible in lint/planner output so snippet-heavy projects do not hide latency behind otherwise clean-looking YAML
+- keep the policy conservative: interpolation-heavy text, IME/dead-key flows, and choreographed per-character typing should stay explicit until VHK can prove a faster lane preserves semantics
+- future Studio cleanup / palette / export surfaces should surface the same throughput advice instead of treating text optimization as a recorder-only trick
+
+# Issues to track (2026 Q1)
+
+This is a focused issue shortlist derived from the current VHK codebase plus the
+current official Wayland/portal documentation landscape.
+
+## Fixed in this revision
+
+## Fresh issue cluster: repeated click intent was still too lexical
+
+- recorded double-click and triple-click flows were still easy to capture but too
+  easy to leave behind as repeated low-level click fragments
+- VHK now has an explicit `MouseClickAt(clicks, delay_between_clicks_ms)` lane,
+  but recorder cleanup, future Studio surfaces, and inspector UX should keep
+  surfacing repeated-click intent as a first-class authoring concept instead of
+  making users reverse-engineer it from raw click runs
+- future work: teach higher-level authoring and app-aware selectors when a
+  repeated click should really become a semantic open/activate action rather than
+  a pointer-level replay step
+
+## Fresh issue cluster: structured UI control is still under-modeled relative to Linux toolkits
+
+- AT-SPI remains one of the strongest Linux-native semantic lanes, especially for
+  GTK/accessible-tree-aware apps, but it still risks being overshadowed by input
+  replay and vision-first authoring
+- future inspector/planner work should keep accessible roles, names, states, and
+  exported actions visible as a first-class selection/control surface
+- future playback/design work should prefer semantic UI contracts when a target
+  app exposes them cleanly, instead of treating pointer/text replay as the only
+  serious automation story
+
+## Fresh issue cluster: Wayland hot paths still need deliberate lane separation
+
+- global shortcuts, text injection, generic pointer injection, and app-context
+  scoping are still different capability/authority problems on Linux desktops
+- portal/session lanes, helper-daemon/uinput lanes, and remapper lanes should
+  stay separate in planning and install language, because performance and scope
+  guarantees differ materially between them
+- future latency work should keep the hottest trigger paths thin and explicit
+  instead of routing every low-latency need through the same generic stack
+
+- planner/lint now flag long literal typed-text throughput and structured Tab/Enter-rich `TypeText` bodies so clipboard/hybrid text lanes become an explicit design-time choice instead of a buried optimizer feature.
+- Process-aware window context for `GetActiveWindow`, `GetWindowAtCursor`, and `GetWindowList`, including `window_pid` / `window_process` convenience vars and selector-side PID matching.
+- Deterministic bundle mode with normalized timestamps and `SOURCE_DATE_EPOCH`.
+- X11 recorder smoothing presets + distance-aware mouse move thinning.
+- Recorder drag collapse now survives intermediate motion samples.
+- `vhk doctor` now probes `Screenshot`, `ScreenCast`, `RemoteDesktop`, `InputCapture`, and `GlobalShortcuts` separately, inspects `portals.conf`, and emits a capability matrix.
+- `vhk validate` now reuses that capability model to warn about likely session/project mismatches.
+- `vhk lint-project` now reuses the same model, so bulk project advice combines macro hygiene with session-fit warnings.
+- `PromptForm` adds a first-class multi-field prompt step with YAD-native forms plus a portable sequential fallback.
+- `vhk palette` adds a launcher-friendly project-level macro picker with recent-run ordering and lightweight macro metadata (`description`, `group`, `icon`, `tags`, `hidden`).
+- Macros can now define saved parameter presets, and the palette surfaces them as separate launcher actions (`macro@preset`).
+- Presets can now attach prompt overlays so one launcher action can preload stable vars and still collect a few run-time fields before execution.
+- Prompt forms and preset overlays now remember last-used answers in a project-local store, support named prompt profiles from the CLI, and can expose saved-profile actions directly in `vhk palette`.
+- VHK can now export a `.desktop` launcher for the project palette, plus optional quick actions for macros, presets, and saved prompt-profile workflows so launcher integration is part of the runtime story.
+- VHK now ships lightweight prompt-profile management commands (`list-prompt-profiles`, `delete-prompt-profile`).
+- VHK now ships `vhk plan-project`, a project-shape / strategy analyzer that turns macro structure + trigger surfaces + session capability mismatches into Linux-native recommendations.
+- `vhk gen-support-pack` now ships planner-backed triage artifacts plus a support capture script so bug reports can preserve doctor/validate/plan facts, recent logs, and privacy review notes.
+- `vhk gen-capability-audit-pack` now turns the repo's long-promised capability/fallback surface into a real artifact: audit docs, fixup queue, machine-readable plan, refresh script, and a `build/capability-audit/...` capture handoff that can regenerate fresh doctor/validate/plan + host/readiness/activation evidence on a target host.
+- `vhk gen-host-contract-pack` now turns planner host requirements plus live helper/uinput/portal probes into reviewable deployment artifacts, and `plan-project` now emits explicit `host_requirements` so service lifecycle, permissions, and portal routing stop being stranded in prose.
+- `vhk gen-publish-pack` can now target one reviewed release-stage lane via `--bundle-target-profile <profile>`, so audience-facing release/install docs and refresh scripts can ship the same lane payload a maintainer actually reviewed instead of always re-zipping the whole project tree.
+- `vhk gen-publish-pack` now also materializes a reviewable publish handoff tree under `build/publish/<bundle-name>/`, with copied support/install docs, machine-readable handoff metadata, and refresh/bundle scripts that keep whole-project and release-stage shipping flows explicit.
+- `vhk gen-distribution-pack` now grows that handoff into `build/publish/<bundle-name>/distribution/`, emitting AppImage and Flatpak skeletons from the same reviewed bundle story instead of asking maintainers to invent package metadata later.
+- `vhk gen-runtime-pack` now partially closes the next packaging gap too by materializing a reviewable runtime handoff under `build/publish/<bundle-name>/runtime/`, with dependency specs, wheelhouse/offline-install scripts, and a Flatpak bridge helper derived from the same reviewed bundle lane.
+- `vhk gen-runtime-embed-pack` now partially closes the next runtime gap after that by generating exact-target bootstrap helpers under `build/publish/<bundle-name>/runtime/embed/`, so maintainers can build the runtime where it will actually live instead of copying virtual environments around.
+- `vhk gen-native-install-pack` now partially closes the next productization gap by materializing a conservative XDG-local app/install handoff under `build/publish/<bundle-name>/native/`, so maintainers can test one reversible native lane before overselling AppImage/Flatpak or helper-daemon-heavy stories.
+- the native lane now also defaults to a palette-first launcher that reuses a materialized reviewed bundle from XDG cache and exposes desktop quick actions, which makes the installed app story feel much closer to a real Linux product surface instead of a maintainer-only inspect-bundle shim.
+- `vhk gen-service-compose-pack` now partially closes the next startup gap by materializing a session-service handoff under `build/publish/<bundle-name>/service/`, with first-party busd user units, environment.d exports, an explicit session-activation sync lane, and an XDG autostart bridge so login-time composition becomes reviewable instead of tribal knowledge.
+- `vhk optimize --compress-text` (and recorder-side optimize) now recognizes shifted printable text too, so recorded runs like `Hello!` can collapse into one `TypeText` step instead of staying trapped as `shift+...` chords.
+- that same text compaction lane now reconstructs small in-run corrections too, so recorder cleanup can turn sequences like `hex` + `Backspace` + `llo` into the final intended `TypeText("hello")` form instead of preserving typo noise as if it were author intent.
+- recorder cleanup now also tolerates short cursor-local edits (`Left`/`Right`/`Home`/`End`/`Delete`), whole-word cleanup via `Ctrl+Backspace` / `Ctrl+Delete`, and tiny local selection replacements (`Shift+Left` / `Shift+Right` / `Shift+Home` / `Shift+End` followed by replacement text) when it can still prove the final caret returns to the logical end of the text with no live selection left behind; remaining gaps are richer editor semantics, dead keys, IME composition, and layout-aware printable inference.
+- VHK now ships a generic `WaitUntil` step for expression-observable state, so authors can replace a class of brittle fixed sleeps and hand-rolled polling `While` loops with one backoff-aware primitive.
+- VHK now also ships `WaitForBusEvent`, giving macros a dedicated event-driven synchronization primitive for helper scripts / WM binds / service glue instead of forcing everything through polling waits.
+- VHK now ships `GetIdleMs` and `WaitForIdle`, making idle-aware automation first-class while keeping the support language explicit instead of pretending every Wayland session exposes one generic idle probe.
+- `vhk plan-project` now emits a `performance_profile`, so unscoped capture/OCR pressure, aggressive polling waits, fixed-delay budgets, and heavy hotkey-bound macros are surfaced during design review instead of only after runtime profiling.
+- planner and host-contract output now name daemon-backed Wayland uinput lanes more explicitly: `dotoold`/`dotoolc` becomes a first-class repeated-playback requirement alongside `ydotoold` instead of being buried under a generic helper seam.
+- `plan-project` now also names a launcher/menu-hub surface and related reference pattern so larger macro catalogs can stay discoverable via rofi/WM launcher exports instead of defaulting to more memorized hotkeys.
+- `gen-setup-pack` now stops flattening `dotool` and `ydotool` into one additive bootstrap list when the planner already knows they are alternative Wayland helper lanes; setup docs/scripts now surface one default lane plus explicit alternative package filters.
+- host-contract and readiness packs now treat `dotoold` / `ydotoold` as a choose-one requirement group where appropriate, so one healthy helper lane no longer looks blocked just because a sibling fallback is absent.
+
+## Next issues worth tackling
+
+### 1) Studio-side form editor + parameter surfacing
+
+`PromptForm` now exists at the engine level, but it still needs the rest of the
+product surface around it:
+
+- scaffold/templates that generate parameterized macros
+- studio-side field editors
+- palette flows that can surface stored or prompted parameter sets
+- better preset-prompt tooling (saved answers, optional validation, future Studio editors)
+- preset editors and saved-parameter review inside future Studio surfaces
+- richer prompt-profile management (rename/export/import, profile selection policies, future Studio editors) now that listing/deletion and palette surfacing exist
+
+### 2) Capability-aware scaffold/help UX
+
+`plan-project` now gives VHK a planning surface for this work, and `setup_recipes` now makes the operator handoff explicit. `vhk init` now partially consumes that language too by generating a starter guide + machine-readable starter plan for new projects, so authoring begins with deployable surfaces, setup recipes, toolchain choices, and reference patterns already visible.
+
+
+The capability model now reaches doctor, validate, lint-project, and init. The next
+step is to thread the same language into scaffold/help and into live session-aware authoring flows so the user
+sees "text injection available, pointer injection missing" instead of a vague
+"Wayland caveat" while they are authoring, not just reviewing.
+
+### 2.5) broader alternative-lane modeling
+
+The helper-daemon case is now modeled more honestly, but the same pattern still
+needs to spread further:
+
+- portal shortcut lanes vs compositor/WM bind lanes
+- portal capture lanes vs compositor-native capture helpers
+- remapper families (`keyd`, `kanata`, `kmonad`, `xremap`) when only one is
+  meant to own the trigger surface on a given host
+
+The key follow-up is not just setup packaging. It is effective readiness math:
+VHK should keep distinguishing "missing optional sibling" from "actual
+blocked deployment path" anywhere multiple Linux-native routes satisfy the
+same capability.
+
+### 2.75) accessibility inspector/editor gap
+
+The planner now models an explicit AT-SPI / structured-UI lane more honestly,
+but the product still lacks the authoring surface that would make that lane feel
+first-class:
+
+- an Accerciser-class inspector/browser inside future Studio flows
+- event-monitor style visibility for focus/object/window signals
+- selector capture/copy workflows that can turn inspected nodes into VHK-ready
+  structured targets
+
+Until that exists, the planner can say the right thing about accessibility lanes
+but the authoring UX still relies too heavily on outside tools and manual
+translation.
+
+### 2.9) chooser preview / manifest gap
+
+The planner now models a picker-native chooser lane more honestly, but the
+product still lacks the authoring/install surface that would make it feel
+first-class:
+
+- a preview harness that can render the same palette/action catalog through
+  rofi-script, stdin/stdout picker, and desktop-entry launch paths
+- explicit per-picker manifests/argv notes so operators can review how a
+  project should be wired into rofi, fuzzel, wofi, or similar shells
+- future Studio affordances for testing hidden search terms, icons, and chooser
+  action ids without manually launching external picker tools
+
+Until that exists, VHK can plan the chooser lane correctly, but picker-native
+flows still feel more external than the rest of the product.
+
+### 3) libei helper spike
+
+The official libei docs are mature enough to justify a small throwaway helper
+spike. The Python runtime should not absorb all of that complexity directly; a
+helper binary or isolated module is the safer first cut.
+
+### 4) Recorder key-state fidelity
+
+The recorder is now better at motion thinning, but richer modifier/key-state
+reconstruction is still a separate problem. That likely needs either XI2 state
+tracking improvements or a second conversion pass.
+
+- Launcher export follow-up: richer picker bundles and multi-action launcher flows still remain, but WM-ready snippets now exist via `export-wm-bindings`, and transient launcher layers now exist via `export-wm-launcher-mode`, so users can wire rofi-mode / launcher-script / direct palette-command flows into i3/sway/Hyprland without hand-assembling the command syntax.
+- Remaining launcher-workflow gap: mode/submap exports currently map one key to one launcher or palette entry. They do not yet export richer session bundles such as nested management submodes or which-key style hints. Higher-level install/export bundles now exist via `export-wm-bundle`, so the next launcher-install work should probably focus on richer session UX rather than basic artifact placement.
+- Exported launcher scripts now auto-detect rofi script mode and emit stable `info` ids, invisible `meta` search terms, and optional row icons.
+
+
+## Fresh issues from March 2026 research
+
+These are not regressions in VHK itself; they are ecosystem realities that should continue to shape VHK's Linux-native roadmap.
+
+### 5) wlroots portal support is still incomplete enough to block a "portal-only" strategy
+
+As of early March 2026, `xdg-desktop-portal-wlr` still shows open work for both RemoteDesktop and InputCapture, even though active pull requests now exist for both areas. That is a strong signal that VHK should keep compositor-native and uinput-based fallbacks first-class instead of assuming a clean cross-DE portal path yet.
+
+### 6) Hyprland portal backend still lacks RemoteDesktop coverage in practice
+
+`xdg-desktop-portal-hyprland` continues to track missing `org.freedesktop.portal.RemoteDesktop` support, and follow-up reports from 2025 show user-visible remote-input failures collapsing back onto that same gap. For VHK, that means Hyprland automation should keep leaning on Hyprland-native events/dispatch plus optional helper tooling rather than betting on RemoteDesktop.
+
+### 7) Portal routing remains a configuration problem, not just an API problem
+
+The official `portals.conf` docs make it clear that backend routing is selected per interface and can vary by desktop-specific config file, system config, and user overrides. VHK's current doctor/config inspection is the right direction; future authoring/install flows should continue to surface routing details explicitly instead of assuming "portal installed" means "portal usable".
+
+### 8) Performance guidance needs to stay tied to measured runs
+
+VHK now has a much better post-run feedback loop (`vhk report` advice), but the next step is to connect that with recorder cleanup and future Studio workflows so authors can move directly from a slow/flaky log to a concrete fix.
+
+
+### 9) App-scoped behavior on Wayland still depends on desktop-specific context bridges
+
+Current remapper/text-expander ecosystems still rely on shell extensions,
+window-context helpers, or compositor-native metadata to make per-app behavior
+reliable on Wayland. VHK should keep treating app/window scoping as a capability
+with backend-specific implementations, not a generic checkbox.
+
+### 10) `plan-project` should eventually compare candidate export surfaces, not just recommend them
+
+The new playbooks are a good first step, but the next leap is comparative
+review: given a project and a target desktop, VHK should eventually say why
+keyd vs kanata vs compositor binds vs portal hotkeys is the better fit.
+
+
+### 11) Planning output should eventually diff target environments, not just project shape
+
+`plan-project` now emits architecture maps and stack profiles, but the next leap
+is environment comparison: given the same project, VHK should eventually show
+how the preferred profile changes across X11, GNOME Wayland, KDE Wayland, or
+wlroots/Hyprland-class sessions when the capability matrix changes.
+
+### 11.5) Helper families still need alternative-lane modeling, not additive wishlists
+
+Update:
+
+- `gen-host-contract-pack`, `gen-readiness-pack`, and `gen-session-fit-pack` now partially close the operator-action gap too by carrying one preferred helper member and a bootstrap filter id through alternative-lane docs/JSON, so a healthy `dotoold` lane can point directly at `pointer-injection__dotool-daemon` instead of only saying “some helper is ready”.
+
+Remaining gap:
+
+- the same preference/filter language still needs to spread beyond helper daemons into remapper families and other route-choice surfaces.
+
+The new `dotool-daemon` host/readiness requirement is more honest than the old
+generic helper seam, but the planner can still make Wayland fallback toolchains
+look additive when they are really *alternative* families. The next refinement
+should express that a target lane might be satisfied by `wtype`, or a reviewed
+`dotoold`/`dotoolc` lane, or a reviewed `ydotoold` lane, rather than quietly
+implying an ideal host should run every helper stack at once.
+
+- `plan-project` now compares concrete Linux integration surfaces (`surface_choices`) so issue 10 is partially addressed: remap/text/trigger/service options can now be scored and reviewed side-by-side instead of only being mentioned in prose.
+- `plan-project` now emits hypothetical `environment_diffs`, so issues 11 and 12 are partially addressed too: the same project can be compared against X11/i3, GNOME/KDE Wayland, and conservative wlroots/Hyprland targets without depending on a live session switch.
+
+### 12) Surface comparison should eventually become environment-specific
+
+The new `surface_choices` layer still compares candidates against one project
+plus an optional live session. The next step is to let the same project be
+scored against hypothetical targets such as GNOME Wayland, KDE Wayland, X11/i3,
+or wlroots/Hyprland conservative profiles without needing to boot each session
+right away.
+
+- `plan-project` now emits `portability_gaps`, so environment comparison can be
+  turned into a migration plan instead of stopping at a score table.
+- `plan-project` now also emits `portability_playbooks`, which partially addresses
+  the next step too: each portability gap can now suggest concrete exports,
+  install checks, and validation commands instead of only naming abstract target
+  changes.
+
+
+### 13) Research needs to become planner output, not just documentation
+
+A recurring repo risk is that ecosystem research ends up stranded in markdown
+without affecting commands, scaffolds, or deployment decisions.
+
+Update:
+
+- `plan-project` now emits `reference_patterns`, which partially addresses this
+  by turning "learn from AHK / Pulover / Espanso / keyd / kanata / KMonad /
+  xremap / portal helpers" into machine-readable output.
+
+Update:
+
+- `vhk gen-operator-pack` now partially addresses this too by turning planner output into portable guide/checklist/JSON handoff artifacts for real projects, not only new-project starter docs.
+
+Remaining gap:
+
+- future scaffold/studio flows should consume these patterns directly when
+  suggesting project layouts, recorder defaults, and export bundles.
+
+Update:
+
+- `plan-project` now also emits `runtime_seams` and `ecosystem_lessons`, which partially address the architecture-handoff gap by turning “what stays inside VHK vs what stays thin/exported” plus adjacent-tool lessons into machine-readable design output.
+- `vhk gen-design-pack` now partially addresses the same gap by generating `VHK_DESIGN_BRIEF.md`, `VHK_RUNTIME_CONTRACT.md`, and `VHK_DESIGN_PLAN.json` for real projects instead of leaving this analysis stranded in terminal tables.
+
+
+### 14) Toolchain choice still needs to become scaffold/export behavior
+
+`plan-project` now emits `toolchain_choices`, so the research is no longer stuck
+in prose: VHK can recommend concrete paths like `xdotool`, `wtype`,
+portal-first capture, helper/uinput seams, or compositor metadata bridges.
+
+Remaining gap:
+
+- init now partially consumes that data directly when generating starter guide/plan artifacts.
+- `vhk gen-trigger-pack` now partially addresses the export-behavior gap by turning remapper/WM trigger advice into a self-contained bundle of generated configs/docs/JSON plus a refresh script.
+- future scaffold/export flows should consume the same data when generating starter bundles, install notes, and deployment recipes for text, services, and support surfaces too
+- future Studio UX should expose why a project is being pushed toward one input
+  or capture path instead of another
+
+
+### 15) Planning should eventually become release gating, not only recommendation
+
+The planner is now much better at describing targets, surfaces, toolchains,
+and portability gaps. The next requirement is release discipline: Linux-native
+projects need a way to say what must be proven before a capability is treated
+as shippable.
+
+Update:
+
+- `plan-project` now emits `verification_gates`, which partially addresses this
+  by turning capability planning into explicit acceptance checks, commands,
+  artifact hints, and fallback paths.
+
+Update:
+
+- `vhk gen-verification-pack` now partially addresses this by turning verification gates, setup recipes, and deployable surfaces into a release guide, release checklist, machine-readable verification plan, and a shell-oriented rehearsal script.
+- `vhk gen-support-pack` now partially addresses the support handoff gap by turning planner + diagnostics output into triage docs/checklists/JSON plus a capture script for real projects.
+
+Remaining gap:
+
+- future CI and Studio flows should consume these artifacts directly instead of
+  leaving them as review-time exports only.
+
+
+- `plan-project` now also emits `artifact_blueprint`, which partially addresses the deployment/scaffold gap by naming the concrete exports/configs/services/assets a Linux-native project should generate.
+- `plan-project` now also emits `deployable_surfaces`, which partially addresses the same gap from the operator side by grouping artifacts into install-facing Linux surfaces instead of leaving them as a flat file list.
+
+
+### 16) Global shortcuts are still better for stable action catalogs than open-ended macro systems
+
+The GlobalShortcuts portal is real and useful, but current upstream discussion makes the constraint explicit: applications generally need to pre-register the shortcuts they want, which is a poor fit for endlessly dynamic macro catalogs or recorder-generated ad-hoc bindings. VHK should keep WM/compositor binds and launcher surfaces first-class instead of treating portal shortcuts as the universal answer.
+
+### 17) libei / InputCapture still needs operational caution, not just feature detection
+
+Portal and libei progress matters, but recent field reports still show lifecycle hazards around input-capture stacks. A February 2026 lan-mouse issue reports a suspend/resume path that panics in the libei layer and can crash GNOME Shell. VHK should keep recovery notes, helper boundaries, and conservative release gates around input-capture-class features instead of treating portal presence as proof of production readiness.
+
+### 18) daemon-backed uinput helper lifecycle should stay explicit
+
+Current helper-backed Wayland injection keeps reinforcing the same operational
+truth: repeated playback quality depends on long-lived helper lifecycle, not
+just on whether a binary exists on PATH. `ydotoold` and `dotoold` should remain
+visible in VHK planning, host contracts, and install docs so authors do not
+confuse one-shot demos with real hotkey/session behavior.
+
+### 19) Wayland text injection is still compositor-specific in practice
+
+Current text-injection tools keep reinforcing the same lesson:
+
+- `wtype` depends on compositor support for the virtual keyboard protocol
+- KDE/Plasma now has KDE-specific lanes such as `KWtype`/`kdotool`
+- `ydotool` still depends on `/dev/uinput` access and a helper-daemon lifecycle
+
+That means VHK should keep text injection as a route-selection problem with
+explicit toolchain choices, not a single generic “Wayland typing” checkbox.
+
+### 20) Portal/input-capture persistence is still an operational edge, not solved product ground
+
+Recent Input Leap Wayland discussions keep pointing at missing clipboard support
+and repeated permission prompts, with upstream references to portal work around
+clipboard transport and restore-token/persist-mode behavior. VHK should treat
+portal/input-capture flows as recoverable session lanes with explicit re-arming,
+not as fire-and-forget infrastructure.
+
+### 21) AutoKey still validates the need for an honest X11-first lane
+
+Current AutoKey issue templates still present the project as an Xorg/X11
+application and continue to surface Wayland incompatibility up front. For VHK,
+that reinforces the product stance: keep the X11/i3 lane strong and fast, and
+make Wayland support route-based and capability-scoped rather than slogan-based.
+
+### 18) Linux-native install stories are still product work, not packaging trivia
+
+Current adjacent tools keep reinforcing the same lesson:
+
+- AutoKey still has to be honest that it is fundamentally X11-oriented
+- Espanso exposes first-class service and app-specific config flows
+- keyd / kanata / ydotool-class helpers still require explicit uinput/group/service setup
+
+That means VHK should keep treating setup/install/rollback guidance as part of
+the core product surface.
+
+Update:
+
+- `plan-project` now emits `setup_recipes`, which partially addresses this by
+  turning deployable surfaces into explicit install/review/verification handoffs
+  instead of leaving operators to infer the setup story from raw artifact lists.
+
+Remaining gap:
+
+- init now partially consumes these recipes directly by emitting starter onboarding artifacts for new projects.
+- future scaffold/export flows should consume these recipes directly too.
+- future Studio onboarding should render the same handoff language instead of
+  re-describing install stories in ad-hoc prose
+
+
+### 15) Remapper installs are still operator work, not just config generation
+### 16) Planner-backed host requirements still need deeper live verification
+
+`plan-project` can now name service lifecycle, permissions, and portal-routing
+requirements, `gen-host-contract-pack` can turn them into review artifacts, and
+`gen-readiness-pack` now partially closes the next gap by probing common
+service-manager states, current group membership, and raw-input readability.
+
+Remaining gap:
+
+- service coverage is still intentionally conservative (`espanso`, `vhk-busd`,
+  `ydotoold`, `keyd`, `kanata`, `kmonad`), not a universal service-manager
+  abstraction
+- dedicated service users, custom socket activation layouts, and non-systemd
+  launch stories still need deeper review support
+- espanso registration is still inferred through service state rather than a
+  dedicated espanso-native probe
+
+Current keyd and kanata guidance still makes permissions, service wiring,
+config placement, and reload/start commands explicit. VHK already exports
+configs, but deployment UX should keep those operator seams visible instead of
+implying that generating a remap file is the whole job.
+
+### 19) There is still no generic portal for active-window / open-window introspection
+
+AHK-class tooling depends heavily on being able to inspect the active window,
+enumerate candidates, and scope automation against app/title/class-like facts.
+That remains straightforward on X11 and desktop-specific on Wayland, and the
+upstream portal discussion around a generic “currently open windows” surface is
+still unresolved. VHK should keep Window Spy / app-scoping features layered on
+X11 and compositor-native bridges instead of assuming a portal-first answer is
+arriving soon.
+
+Reference:
+
+- `flatpak/xdg-desktop-portal#304` (“Add a portal to see currently open windows”)
+
+### 20) Support evidence still needs privacy-aware capture and better replay hooks
+
+Linux automation failures are often only visible on one real desktop, so triage quality depends on whether a project can capture the right evidence without oversharing secrets.
+
+Update:
+
+- `vhk gen-support-pack` now partially addresses this by generating a support guide, support checklist, machine-readable support plan, and a capture script that gathers doctor/validate/plan reports, recent logs, traces, and optional bundles into `support/capture_*/`.
+- `vhk gen-portability-pack` now partially addresses issues 11, 12, and 14 too by turning environment diffs, capability coverage, portability gaps, and playbooks into a portability guide, target rollout worksheet, machine-readable plan, and review script for real projects.
+
+Remaining gap:
+
+- future Studio and run-history flows should be able to launch this capture process directly, preview sensitive artifacts before export, and capture richer evidence such as curated traces, redacted screenshots, or short repro clips.
+
+
+
+### 15) Wayland app-scoping and remapping still depend on desktop-specific bridges
+
+Current xremap docs still advertise X11/Wayland app-specific remapping, but the
+installation/troubleshooting story remains desktop-shaped: GNOME needs an
+extension and DBus allowances, some Wayland paths rely on `sudo -E`, and the
+troubleshooting guide still tells users to inspect which desktop integration is
+actually active. That reinforces VHK's decision to treat app/window scoping as
+a portability review surface instead of a generic checkbox.
+
+
+### 21) Support claims need an auditable contract, not just rollout prose
+
+Linux automation teams eventually need to say what they actually support:
+reference lane, supported lane, caveated lane, experimental lane, and what is
+still outside the matrix. Current tools keep forcing that honesty in practice:
+Espanso still splits X11/Wayland install methods and capabilities, AutoKey's
+official project is still Xorg-bound while forks narrow Wayland scope to GNOME,
+and xremap/Toshy-style stacks keep shipping desktop-specific setup bridges.
+
+Update:
+
+- `vhk gen-claim-pack` now partially addresses this by turning planner output into a claim guide, editable target-claims manifest, machine-readable audit plan, and claim-audit script.
+- `vhk audit-target-claims` now makes those claims enforceable by failing overclaims and checking for missing proof artifacts on stronger lanes.
+
+Remaining gap:
+
+- `vhk bundle` now partially addresses this by embedding planner-backed claim snapshots into `vhk_bundle_manifest.json`, and `vhk inspect-bundle` can now review that support/proof summary from a shared zip.
+
+Update:
+
+- `vhk gen-publish-pack` now partially addresses this by turning the audited target matrix into public support notes, install quickstarts, machine-readable publish metadata, and a refresh script that bundles + inspects the project again.
+
+Remaining gap:
+
+- exported launcher/menu/install surfaces still need to consume the same publish/support metadata automatically, so every outward-facing entrypoint inherits the same audited claim tiers by default.
+
+## Issue: public support posture can still drift from install-facing entrypoints
+
+Even after claim audits and publish packs, outward-facing launcher surfaces can still drift when the shared bundle, launcher helper, desktop entry, or WM snippet does not actually carry that support story with it.
+
+Partial mitigation in this revision:
+
+- exported launcher scripts now expose `--about` / `--support-json`
+- desktop entries now emit `X-VHK-Support-*` metadata
+- self-contained WM bundles now ship bundle-local public support/install docs plus `docs/VHK_BUNDLE_SUPPORT.json`
+
+Remaining gap:
+
+- install-mode WM exports still rely on the project docs staying nearby; future package/install surfaces should ingest the same metadata more directly
+
+
+
+## Issue: setup recipes were documented but not yet executable
+
+`setup_recipes` already captured the missing Linux-native layer between
+artifact generation and real deployment, but authors still had to translate
+that plan into ad-hoc shell history.
+
+That was especially visible in the current ecosystem:
+
+- service-managed tools like Espanso expose explicit register/start/status
+  surfaces
+- remapper stacks like keyd/xremap still depend on reviewable config placement
+  and desktop/session-aware verification
+- Wayland/X11 differences keep forcing honest install/review loops instead of
+  universal one-click stories
+
+Partial mitigation now exists:
+
+- `vhk gen-setup-pack` generates project-specific setup docs
+- it also emits runnable apply/verify scripts derived from planner
+  `setup_recipes`, filtered down to command-like steps instead of blindly
+  executing prose
+- it now also emits a dry-run-first `vhk_install_toolchain_packages.sh` helper
+  plus normalized apt/dnf/pacman/zypper command hints derived from planner
+  `toolchain_choices`, so package bootstrap stops living only in prose
+
+Remaining gap:
+
+- package names are still best-effort and distro-shaped, so install helpers
+  must remain opt-in and reviewable instead of pretending to be a universal
+  one-click installer
+- these scripts are intentionally conservative and still stop short of claiming
+  that every install or rollback path can be fully automated
+
+## Issue: planner + doctor still needed a first-class host-fit handoff
+
+By this point VHK could already answer two adjacent questions:
+
+- what kind of Linux-native stack a project wants (`plan-project`)
+- what the current session can likely do (`doctor` / session capability matrix)
+
+But operators still lacked the missing join: a single artifact that says whether
+a concrete project is *ready*, *degraded*, or *blocked* on the current host,
+and which helper/bootstrap lanes are relevant when it is not.
+
+Partial mitigation now exists:
+
+- `vhk gen-session-fit-pack` generates project-specific host/session review docs
+- it emits `VHK_SESSION_FIT.md`, `VHK_SESSION_FIXUPS.md`, and
+  `VHK_SESSION_PLAN.json` so the project requirements and session capability
+  story live together
+- it also emits `scripts/vhk_review_session_fit.sh`, which refreshes
+  `doctor`, `validate`, `plan-project`, and the generated session-fit artifacts
+  into a small evidence folder
+- the pack links blocked/degraded capabilities back to planner
+  `toolchain_choices` and normalized setup/bootstrap groups so missing helper
+  lanes stop being an implicit support conversation
+
+Remaining gap:
+
+- package groups still collapse services, permissions, and portal/backend
+  routing into a mostly package-shaped view
+- host-fit guidance is still intentionally conservative; desktop-specific app
+  context, consent flows, and permission models remain real
+- future desktop-aware scoring should narrow the union package story for
+  GNOME/KDE/wlroots/Hyprland instead of showing one broad helper set
+
+## Additional March 2026 ecosystem notes folded into this revision
+
+- The official AutoKey project still describes itself as an X11 application and
+  explicitly warns that it will not function correctly under Wayland. That keeps
+  reinforcing VHK's decision to treat X11-era automation parity as a separate
+  lane from Linux-native Wayland surfaces rather than pretending they are one
+  portability story.
+  - https://github.com/autokey/autokey
+- xremap continues to advertise app-specific remapping on both X11 and Wayland,
+  which is useful evidence that the Linux market wants per-app behavior, but it
+  is still a remapper/helper product shape rather than a full AHK/PMC-class
+  authoring surface. VHK should keep learning from that split instead of trying
+  to flatten remapping, hotkeys, recording, and visual automation into one
+  universal always-on daemon.
+  - https://github.com/xremap/xremap
+- The GlobalShortcuts portal is now documented as a session-oriented API where
+  applications create a shortcut session and bind explicit shortcuts into it.
+  That is a real capability, but it still fits stable action catalogs better
+  than ad-hoc recorder output or endlessly dynamic macro inventories.
+  - https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html
+- The InputCapture portal docs make two constraints unusually explicit: there is
+  no immediate-capture mode, and the compositor decides when capture becomes
+  active. That keeps reinforcing VHK's current plan to treat portal capture as a
+  capability lane, not as a drop-in replacement for unrestricted AHK-style
+  low-latency hooks.
+  - https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.InputCapture.html
+- xremap's own GNOME Wayland docs still rely on a GNOME Shell extension and
+  extra DBus/root allowances for some flows, while its troubleshooting guide
+  still points users back to desktop-specific context bridges for app-specific
+  remappings. That is exactly the sort of desktop-shaped reality VHK should keep
+  modeling explicitly instead of flattening into a generic "Wayland supported"
+  checkbox.
+  - https://github.com/xremap/xremap/blob/master/doc/running_with_sudo.md
+  - https://github.com/xremap/xremap/blob/master/doc/troubleshooting.md
+- Espanso's current docs still say app-specific configurations are not yet
+  supported on Wayland. For VHK that is another data point that per-app Linux
+  behavior on Wayland is still backend/tool/desktop-specific instead of a solved
+  platform primitive.
+  - https://espanso.org/docs/configuration/app-specific-configurations/
+- The libei docs now expose a mature split between libei/libeis/liboeffis and
+  explicitly position liboeffis as the portal connection layer. That makes a
+  helper-boundary experiment more justified, but it still argues against shoving
+  the whole input-capture/input-emulation stack directly into VHK's Python core.
+  - https://libinput.pages.freedesktop.org/libei/api/index.html
+- ydotool still presents itself as a generic command-line automation tool built
+  around a lower-level input path rather than a high-level desktop workflow
+  engine. That reinforces VHK's current architecture direction: keep helpers like
+  ydotool behind adapters and let VHK own orchestration, project packaging,
+  review surfaces, and eventually Studio UX.
+  - https://github.com/ReimuNotMoe/ydotool
+
+
+### 22) Host truth should become activation truth, not just readiness truth
+
+`gen-readiness-pack` proved whether services, groups, sockets, and portal config
+look alive on one host. The next problem is route ownership:
+
+- which lane actually wakes the project?
+- which lanes are only fallback/manual routes?
+- which lanes are blocked because one dependency is still degraded?
+- which lanes stay session-bound versus restartable?
+
+Update:
+
+- `plan-project` now emits `activation_routes`, `gen-activation-pack` turns
+  those into route docs/fixups/refresh scripts, and `gen-route-selection-pack`
+  now chooses explicit primary/fallback reference routes per activation lane
+  instead of leaving all routes flat.
+
+Remaining gap:
+
+- future proofing should probe route-native state more deeply (for example
+  explicit portal/session binding status, non-systemd launch managers, and
+  process/socket ownership beyond conservative `systemd` unit checks)
+- `vhk gen-target-route-pack` now partially closes the cross-target comparison
+  gap by comparing reference-route decisions across conservative `x11-desktop`,
+  `gnome-wayland`, `kde-wayland`, and `wlroots-wayland` planning profiles.
+- `vhk gen-release-lane-pack` now partially closes this by turning target-route
+  comparisons into `VHK_RELEASE_LANES.md`, `VHK_RELEASE_SNIPPETS.md`,
+  `VHK_RELEASE_LANE_PLAN.json`, and `scripts/vhk_refresh_release_lanes.sh` so a
+  project can ship per-desktop release/support language without hand-maintained
+  prose.
+- release lanes now flow into launcher/about metadata, desktop-entry `X-VHK-Release-*` fields, WM bundle support JSON, and bundle manifests so exported surfaces stop losing the desktop-lane story by default.
+- `vhk gen-release-deploy-pack` now partially closes that remaining gap by emitting lane-native install/autostart snippets, generated artifact subsets, and deploy-style summaries for each release lane.
+- remaining gap: route-native install output should eventually grow deeper live packaging helpers (portal/session verification, non-systemd managers, and per-lane release artifact assembly) instead of only generator commands + docs.
+
+## Release-stage follow-through
+
+- now that `gen-release-stage-pack` materializes per-lane ship trees, the next gap is
+  lane-native signing/notarization/distribution handoff instead of only project-local
+  staging
+- `vhk bundle-stage` now partially closes the bundle side of that gap by zipping one
+  materialized lane directly from `build/release-stage/<profile>/`, with embedded
+  release-stage metadata so `inspect-bundle` can tell reviewers which lane they are
+  looking at without unpacking it first.
+- `vhk gen-publish-pack` now partially closes that gap too by materializing
+  `build/publish/<bundle-name>/` with copied public docs, bundle scripts, and
+  release-stage references, so a maintainer can review one publish handoff tree
+  instead of only a repo-level script.
+- remaining gap: package/signing/AppImage/Flatpak handoff should eventually grow
+  from that same publish tree instead of stopping at deterministic zip output.
+
+
+## Distribution-pack follow-on gaps
+
+- The generated AppImage/Flatpak outputs are intentionally skeletons; `vhk gen-runtime-pack` now gives maintainers a reviewable Python runtime handoff and `vhk gen-runtime-embed-pack` now gives them exact-target bootstrap helpers, but final interpreter selection, store-ready packaging, and helper-daemon review are still future work before VHK should market those lanes as fully self-contained automation products.
+- `vhk gen-native-install-pack` plus `vhk gen-service-compose-pack` now give the repo one conservative proving lane for local install + login-time composition, including a bundle-state long-lived runner, but the remaining gap is deeper verification of actual desktop-shell discoverability and full host rehearsal on real sessions.
+- `vhk gen-host-rehearsal-pack` now partially closes that follow-through gap by materializing one reviewed-lane operability tree with install/status/log/uninstall scripts, desktop-file validation hooks, and integrated rehearsal smoke paths, but real compositor/session verification still needs live host runs rather than generated scripts alone.
+- Native package/AppImage/Flatpak signing, repo publishing, and store policy
+  checks are still future work.
+- Flatpak permissions remain deliberately conservative and should stay tied to
+  portal/app-scoped workflows rather than host-global remapper claims.
+
+## Bundle-native session runner follow-through
+
+The service pack now has a bundle-state runner, but the next hardening step is
+proving one conservative lane end to end on a real host: install native app
+root, embed runtime, materialize the reviewed bundle into user state, and start
+a watcher unit without falling back to the mutable project checkout.
+
+## Native doc-surface follow-through
+
+- `gen-native-install-pack` now ships a packaged app-home/support doc surface plus launcher actions to open those docs, which makes the installed lane more product-real and less maintainers-only.
+- remaining gap: those surfaces are still static/generated docs, not a richer interactive GTK/QML front-end or tray/status surface.
+- next hardening path: tie packaged home/status surfaces to live session/service state carefully, without making desktop-entry actions depend on a terminal or on desktop-specific notification daemons.
+
+## Native launcher-state follow-through
+
+- `gen-native-install-pack` now keeps launcher state under XDG state and can refresh installed desktop actions from pinned/recent entries, which is a better Linux-native posture than freezing every quick action at generation time.
+- remaining gap: quick actions are still only as visible as the launcher/menu actually allows; they should stay additive rather than become the only way to reach important workflows.
+- next hardening path: let the installed lane surface richer live status/home data without making the desktop file itself depend on a compositor-specific tray or a full GUI shell.
+
+## Native live-status follow-through
+
+- `gen-native-install-pack` now partially closes the “static docs only” gap by emitting a live installed-lane status report under XDG state, with machine-readable JSON + Markdown and best-effort `systemctl --user show` probing for expected VHK-owned user-service units.
+- remaining gap: this is still a launcher/report surface, not a full GTK/QML status UI or tray app, and it should stay that way until one conservative lane has been exercised on real GNOME/KDE/wlroots hosts.
+- `gen-host-rehearsal-pack` now partially closes that gap by emitting `report_reviewed_lane.sh`, which collects one host-rehearsal report from the installed launcher’s live status JSON plus best-effort desktop/systemd probes under XDG state.
+- remaining gap: the report is still generated by scripts rather than by a richer in-app operator UI, and real compositor/session confidence still needs live host runs on representative desktops.
+
+- `gen-native-install-pack` now also carries an installed-lane readiness verdict directly inside `--status-json`/status Markdown, and `gen-support-pack` now asks for that lighter-weight status bridge before escalating to a full host packet.
+- remaining gap: the installed status lane is still a report/document surface, not a live GTK/QML operator dashboard, and its usefulness still needs validation on real GNOME/KDE/wlroots hosts with service/session drift.
+
+## Host dossier follow-through
+
+- `gen-host-dossier-pack` now turns that rehearsed installed lane into one shareable XDG-state support packet with collection/archive/smoke scripts, so launcher status, rehearsal output, session facts, and best-effort `loginctl`/`systemctl`/`journalctl` probes stop living only in scattered terminals.
+- remaining gap: the dossier is still a scripted support packet, not a live in-app support/export UI, and it still needs manual privacy review before external sharing.
+- next hardening path: exercise dossier collection on representative GNOME/KDE/wlroots hosts and refine which session/service facts are most useful without over-collecting private data.
+
+## Host dossier privacy follow-through
+
+- `gen-host-dossier-pack` now partially closes its own privacy gap by generating a share-safe dossier copy plus a redaction report before external archive handoff.
+- remaining gap: automatic redaction can only catch common path/email/secret patterns; real projects may still log tenant names, app titles, or domain-specific identifiers that need a final human review.
+- next hardening path: exercise the share-safe dossier on representative GNOME/KDE/wlroots hosts and tune the suspicious-pattern report using real bug packets instead of synthetic examples.
+
+
+
+### 12) Idle-aware automation needs explicit probe/event routing
+
+Current Linux idle tooling still splits cleanly into two families:
+- direct probes (`xprintidle`, Mutter IdleMonitor)
+- event daemons (`xidlehook`, `swayidle`)
+
+VHK should keep both lanes explicit. The new idle steps close the basic runtime
+gap, but future route-selection/help/doctor surfaces should keep teaching when
+an author should use a direct probe and when they should bridge compositor
+activity into the local VHK bus instead.
+
+
+### 20) There is still no generic cross-desktop idle-inhibitor model
+
+Current idle daemons keep exposing their own inhibitor and lifecycle seams.
+Recent `hypridle` docs still name `ignore_dbus_inhibit` and
+`ignore_systemd_inhibit`, while `swayidle` continues to document `idlehint`,
+lock/unlock, and before-sleep/after-resume behavior behind logind support. VHK
+should keep idle-aware authoring first-class, but it should treat inhibitor
+policy and sleep/lock orchestration as desktop/helper-specific deployment work
+rather than pretending one generic Linux idle contract exists.
+
+## Window introspection follow-through
+
+- `GetActiveWindow` now closes an authoring gap by making active-window state a
+  runtime primitive instead of a CLI-only debugging surface.
+- remaining gap: there is still no generic cross-desktop window-enumeration /
+  active-window portal that deserves broad “Wayland window introspection”
+  marketing language.
+- next hardening path: keep one stable runtime data shape (`window`, `wm`,
+  `window_title`, `window_class`, `workspace`, `urgent`) while expanding the
+  backend matrix carefully for KDE/wlroots/Hyprland-class sessions.
+- additional follow-through: planning/doctor/report surfaces should eventually
+  call out when a project depends on geometry-grade window introspection versus
+  metadata-only focus detection.
+
+
+## Window enumeration follow-through
+
+- `GetWindowList` now closes the next obvious authoring gap after
+  `GetActiveWindow`: macros can enumerate currently open windows directly
+  instead of shelling out to one-off helper scripts.
+- this is still a backend-shaped feature, not a generic Wayland right. On KDE,
+  `kdotool search` helps, but it uses KWin internal ids and does not fully match
+  `xdotool` flags; on Hyprland, `hyprctl clients` is powerful but not a high-rate
+  polling API.
+- remaining gap: there is still no generic cross-desktop portal for open-window
+  enumeration, so VHK should keep its marketing language precise and continue
+  routing through compositor-specific helpers where necessary.
+- `GetActiveWindow`, `GetWindowAtCursor`, and `GetWindowList` now partially
+  close that next hardening path by carrying best-effort state fields such as
+  `visible`, `fullscreen`, `floating`, `sticky`, `minimized`, `mapped`, or
+  `hidden` where the backend exposes them cleanly.
+- `I3WindowSelector` now partially closes that gap by accepting best-effort
+  state fields (`visible`, `fullscreen`, `fullscreen_mode`, `floating`,
+  `sticky`, `minimized`, `hidden`, `mapped`, `pinned`) across runtime selector
+  surfaces.
+- planner/doctor/validate now summarize those stateful window dependencies as a first-class **window contract** instead of flattening them into generic `window_introspection` usage.
+- remaining gap: release/readiness surfaces still do not rank those contracts by backend confidence (for example: direct pointer-window query vs best-effort geometry matching), and KDE/Hyprland state semantics still need more live-host hardening than sway/X11.
+
+
+### 19) Pointer-window mapping is still backend-shaped and sometimes heuristic
+
+AHK-style “window under mouse” workflows are important enough to support, but
+Linux does not offer one generic, compositor-neutral answer. X11 and KDE
+Wayland can often provide a direct pointer window id, while sway/i3 and
+Hyprland more often force geometry-based matching. VHK should keep this feature
+first-class, but it should also keep the support language explicit and avoid
+turning pointer-window introspection into a high-rate polling dependency.
+
+
+### 21) Process-aware window matching is still backend-shaped
+
+AHK-style PID/process scoping is important enough to support directly, but Linux
+does not expose it through one universal contract. X11 often relies on
+`_NET_WM_PID`, which may be absent or incomplete; sway documents numeric `pid`
+criteria; Hyprland exposes process-bearing client metadata but warns against
+spamming synchronous `hyprctl` info calls; KDE Wayland still routes through a
+KWin-specific bridge (`kdotool`). VHK should therefore keep `pid` /
+`process_name` first-class in runtime snapshots and selectors while keeping
+exported config snippets conservative per WM/backend.
+
+
+## Window event support should stay explicit in planner/doctor surfaces
+
+VHK now has a first-class `WaitForWindowEvent` lane, but the broader issue to
+keep watching is **which event kinds are honestly available per backend**.
+
+- i3/sway can support focus/workspace/title/urgent/new/close through IPC
+- Hyprland can support focus/workspace/title/urgent/new/close/custom through
+  socket2
+- generic X11/other desktops should not be oversold as having a universal rich
+  event stream
+
+That means future work should keep event-kind support explicit in generated
+artifacts and operator docs, not flatten it into generic `window_introspection`.
+
+## Filesystem watcher truthfulness gap
+
+- `file_watchers` now exist, but the Linux-native caveats are still real: `inotify` queue overflow, mount/filesystem quirks, and helper availability all affect reliability.
+- next hardening path: expose watcher-health / overflow / fallback mode more clearly in doctor/readiness surfaces instead of leaving it implicit in implementation details.
+
+
+## One-shot file-event waits are now first-class
+
+- `file_watchers:` gave VHK a long-running daemon lane for filesystem-triggered
+  macros, but one-shot macros still had to approximate "wait for the next file
+  event" with `WaitForFile`, `WaitForNewFile`, or shell glue.
+- `WaitForFileEvent` now closes that authoring gap with the same high-level
+  event vocabulary as project watchers (`new`, `changed`, `deleted`, `any`),
+  plus the same producer-friendly settling knobs (`exclude`, `min_size`,
+  `stable_ms`, `recursive`).
+- remaining gap: the file lane still does not summarize burst/coalescing needs
+  as a first-class project contract, so "one event means done" can still be too
+  optimistic for chatty producers without explicit settling or watcher-level
+  dedupe/cooldown.
+
+
+## New issue: noisy producer bursts still need first-class authoring knobs
+
+VHK now has `quiet_ms` on `file_watchers:` and `WaitForFileEvent`, but the broader project story still lacks a cross-surface policy for burst coalescing, restart/reload semantics, and queue ownership. That matters because Linux-native file/event tools keep teaching the same lesson: the first low-level event is often not the right time to run the real automation.
+
+
+- systemd's D-Bus API docs still say clients need to call `Subscribe()` before
+  most manager signals are sent. That means VHK's new `WaitForDbusSignal` lane
+  is useful immediately, but a future systemd-specialized helper should be able
+  to auto-manage Subscribe/Unsubscribe when authors target manager/unit-state
+  signals rather than leaving that contract implicit.
+  - https://www.freedesktop.org/software/systemd/man/org.freedesktop.systemd1.html
+- `gdbus monitor` remains a useful fallback, but its own command shape is
+  narrower than `dbus-monitor`: it monitors one owner's objects (`--dest` and
+  optional `--object-path`) instead of arbitrary match rules. VHK should keep
+  preferring `dbus-monitor` for broad signal waits and stay explicit that
+  `gdbus` fallback flows need a sender/bus-name scope.
+  - https://manpages.ubuntu.com/manpages/focal/en/man1/gdbus.1.html
+
+## systemd unit lifecycle should be first-class for Linux-native automation
+
+VHK now has `GetSystemdUnitState` and `WaitForSystemdUnitState`, which closes
+the most common service-orchestration gap for macros that depend on user units,
+socket-activated helpers, timers, or other local manager-owned components.
+
+What remains open is the *event-stream* side: long-lived service monitoring,
+auto-managed `Subscribe()` / `Unsubscribe()` lifecycles for systemd
+D-Bus-heavy flows, and richer unit-family helpers beyond the current
+`systemctl show`-shaped state contract.
+
+## Route-health follow-through
+
+- helper and remapper alternative lanes should propagate all the way into activation, route selection, and target-profile comparison
+- every route that depends on a choose-one lane should surface the exact reviewed bootstrap filter or preferred lane member, not only a generic readiness verdict
+- remapper families (`keyd`, `kanata`, `kmonad`, `xremap`) still deserve the same alternative-lane treatment now implemented for helper daemons
+
+- The xremap lane now has a first exporter, and it is a little less lossy than before: launch-style bindings plus app/window scoping are covered, `title_regex` / `app_id_regex` can now survive into native xremap filters, and `vhk lint-project` now warns when selector fields like `workspace`, `pid`, or window-state flags would remain runtime-only in VHK. Richer xremap features (device filters, more advanced sequence/mode stories, and broader compositor-specific testing) still need dedicated follow-through.
+
+
+## 2026-03-08 portal history export follow-up
+
+- `export-portal-assignment-history` now covers Markdown and single-file HTML, and `gen-portal-assignment-presets` now ships named review/export/prune bundles. The next useful operator surface is preset governance: distinguish team-shared review presets from local/operator overrides without forking the whole file.
+
+
+### 15) Clipboard-trigger semantics need backend-aware review tooling
+
+VHK now has a better runtime contract for clipboard change-vs-event waits, but
+project/studio/planner surfaces still need to explain when `event_mode: event`
+is genuinely available versus when a host has fallen back to pure polling.
+That distinction matters for AHK-style repeated-copy workflows.
+
+### 16) Linux-native app context should stay desktop-specific, not flattened
+
+Recent ecosystem review keeps reinforcing that app-aware behavior on Wayland is
+still mediated by desktop-specific context bridges and helper lanes. VHK should
+keep modeling GNOME, KDE, wlroots/sway, Hyprland, and similar targets as
+separate implementation lanes for app/window-sensitive automation instead of
+pretending one generic "Wayland app detection" checkbox exists.
+
+### 17) Portal-first hotkey stories still need drift/error budgeting
+
+GlobalShortcuts is strategically important, but backend consent flow, app-id
+association, and session-start timing issues still make it a soft boundary
+rather than a deterministic always-on trigger lane. Planner/readiness/install
+surfaces should keep budgeting for verification and fallback routes.
+
+
+### 18) Voice adapter follow-through
+
+`plan-project` now makes the voice lane visible too via `voice-command-adapter`, `voice-context-command-lane`, and `voice-tools-own-recognition-context`, so Dragonfly/Talon export stops hiding behind pack-generation trivia. `vhk gen-dragonfly-pack` and `vhk gen-talon-pack` still close the deployment side by exporting reviewable adapters instead of hand-waving toward speech support. The remaining gaps are now more concrete:
+- doctor/readiness should surface Dragonfly/X11 and Talon/X11 prerequisites explicitly when operators choose these lanes
+- prompt-heavy macros still need better spoken-workflow guidance than a raw `--include-prompt-entries` escape hatch
+- future Studio surfaces should help authors assign/test `voice_phrases` instead of leaving them as hidden YAML-only metadata
+- cross-export validation is better now: `vhk lint-project` catches duplicate spoken phrases within the same effective Dragonfly/Talon scope, warns when explicit phrases normalize to nothing, points out punctuation/case variants that export as a different literal phrase, flags redundant variants that collapse together, and nudges authors away from short one-word global voice commands. The remaining gap is richer pronunciation/homophone guidance rather than raw duplicate detection.
+- `voice_when` now gives voice packs honest app/title scoping, but richer selector coverage still needs a deliberate design instead of backend-specific wishful thinking
+- Wayland-native voice-trigger stories remain an open research area; VHK should keep these exports framed as X11-leaning adapters, not universal Linux voice layers
+
+
+### AutoKey adapter lane should stay reviewable because the upstream trigger/editor surface is still noisy
+
+Now that `vhk gen-autokey-pack` exists, the remaining product lesson is not “pretend AutoKey is a universal Linux backend,” but “keep the X11 adapter explicit and diffable.” AutoKey still documents itself as Linux/X11, its configs still live as body files plus sidecar metadata pairs, and recent issue traffic still includes both core X11/Wayland honesty and day-to-day trigger/editor rough edges such as abbreviation editing failures. That argues for shipping a reviewable adapter pack instead of burying AutoKey-specific behavior inside VHK internals.
+
+Implications for VHK:
+- keep AutoKey export strictly X11-positioned
+- prefer generated script + sidecar pairs plus a manifest/README over hidden importer magic
+- keep selector translation conservative because AutoKey's window filter is coarser than VHK's selector model
+- keep skip reasons visible so operators can manually review what still needs a different trigger lane
+
+Refs:
+- https://autokey.github.io/intro.html
+- https://autokey.github.io/api/system.html
+- https://github.com/autokey/autokey/issues/1013
+- https://github.com/autokey/autokey/issues/1061
+
+### AutoKey window-filter export should stay opt-in approximate
+
+Current AutoKey behavior and issue discussion still point to one important limitation: the window filter is effectively one regex matched against window title **or** class, not a true multi-field selector model. That means even a simple VHK `when: {class: Firefox}` export is broader than it looks once it crosses into AutoKey.
+
+Product rule carried into VHK:
+- skip scoped AutoKey exports by default
+- only allow simple scoped export behind an explicit `--allow-window-filter-approximation` flag
+- keep rejecting broader selectors (`class` + `title`, `workspace`, `app_id`, etc.)
+- validate `title_regex` patterns before emitting AutoKey sidecar metadata
+
+- Espanso package-dir export needed a more honest/applicable precedence model: current Espanso docs say only one app-specific config is active at a time, so VHK should not emit multiple overlapping scoped config files without also modeling precedence and composite includes.
+
+
+## Trigger-lane honesty follow-through (2026-03-09)
+
+- `vhk lint-project` now covers keyd, Kanata, KMonad, and sxhkd trigger honesty
+  in addition to voice/AutoKey/Espanso/xremap.
+- keyd-fork's current experimental `keyd-application-mapper` suggests a future
+  app-aware export lane, but VHK should not claim it yet until it can emit and
+  validate that extra sidecar/config surface honestly.
+- KMonad's current leader/layer export is now called out before generation; the
+  remaining gap is richer preview tooling so operators can see the selector-key
+  layout without opening the generated `.kbd` file by hand.
+
+
+### 19) Promotion gates should become release-audit inputs
+
+VHK now has planner-facing promotion gates, but the next follow-through is to
+connect them to the release and claim packs instead of leaving them only in
+strategy/lint/promotion output. That would let a reviewed bundle or staged lane
+carry explicit claim-discipline evidence instead of relying on maintainers to
+copy the planner summary by hand.
+
+### 20) Session proof should become target-aware, not only host-aware
+
+This is now moving in the right direction: release-deploy, release-stage,
+native-install, host-rehearsal, and host-dossier output can all carry a compact
+`target_fit_contract`, so later-stage artifacts can compare current host truth
+against one declared flagship release lane instead of only repeating local
+status.
+
+What remains open:
+- planner/audit surfaces should learn to consume the same target-fit contract so
+  claim discipline and promotion gates become target-aware too
+- target-fit should eventually accept explicit operator-selected comparison
+  lanes when a repo wants to review more than the flagship profile
+
+### 21) Deployment truth should stay attached to install/release surfaces
+
+`gen-setup-pack`, `gen-native-install-pack`, `gen-service-compose-pack`,
+`gen-release-deploy-pack`, `gen-release-stage-pack`, `gen-host-rehearsal-pack`,
+and `gen-host-dossier-pack` now carry the same compact host/deployment truth
+forward instead of dropping back to static packaging or support prose.
+
+What remains open:
+- the deployment truth model should keep distinguishing configured routing,
+  installed backend manifests, and live portal interfaces as separate review
+  layers
+- claim/audit-facing packs should eventually ingest that same deployment truth
+  snapshot instead of expecting operators to correlate review docs by hand
+
+
+### 22) Claim witness review is now host-aware, and promotion surfaces now consume it too
+
+`gen-claim-pack`, `audit-target-claims`, and `gen-capability-audit-pack` can now
+carry a compact current-host witness review so strong claims fail when the local
+machine clearly drifts from the lane it is being used to prove.
+`gen-promotion-pack` now consumes that same witness posture and adds a compact
+`current-host-proof-gate` plus backlog/evidence pressure before maintainers ever
+edit claim YAML.
+
+What remains open:
+- core planner/strategy JSON should eventually expose the same witness posture
+  directly instead of waiting for the promotion/claim overlays
+- claim witness review should eventually support explicit operator-selected
+  evidence hosts/lanes instead of only the current machine
+- release/publish output should be able to quote this witness status directly in
+  support/release snippets when a repo wants a stricter proof chain
+
+### 23) Core planner output still hides wrong-host proof until pack overlays run
+
+Closed in REV0265: `plan-project` / core strategy JSON now exposes
+`planner_target_claims`, `planner_claim_witness`, plus current `host_truth` and
+`portal_route_contract` when live checks are available. That means wrong-host
+proof drift no longer waits for claim/promotion overlays before it becomes
+visible in core planner output.
+
+What remains open:
+- let maintainers compare more than one reviewed evidence lane instead of only
+  the current host
+- keep the planner-level contract small enough that it remains explainable in
+  docs and CI output
+- thread the same compact witness summary into any future CI/status surfaces
+  that consume planner JSON directly
+
+### 24) Evidence-lane review existed implicitly, but operators could not pin one lane across planner/claim/promotion flows
+
+Closed in REV0266: `plan-project`, `gen-claim-pack`, `audit-target-claims`,
+`gen-promotion-pack`, and `gen-capability-audit-pack` now accept
+`--evidence-lane <profile-id>` and carry that explicit lane through JSON/docs and
+refresh scripts. That means maintainers can ask one focused question: is this
+particular machine believable proof for *this* chosen lane?
+
+What remains open:
+- allow comparing more than one explicit evidence lane in the same review run
+- give operators a clearer distinction between flagship shipping lane, reviewed
+  evidence lane, and fallback/reference lanes
+- thread explicit evidence lanes into any future CI/status surfaces that consume
+  planner or claim audit JSON directly
+
+### 25) Several host-aware commands collected live proof but dropped it before pack/audit generation
+
+Closed in REV0268: `plan-project`, `gen-host-contract-pack`, `gen-claim-pack`,
+`audit-target-claims`, `gen-capability-audit-pack`, and `gen-promotion-pack`
+now forward the live host snapshot and explicit evidence-lane context into the
+pack/audit builders that consume it. That keeps wrong-host proof drift visible
+across planner, claim, promotion, host-contract, session-fit, and
+capability-audit workflows instead of silently degrading into hostless review.
+
+What remains open:
+- centralize this host-proof plumbing so future pack commands do not each have
+  to hand-thread `host_snapshot` / `evidence_lane_profile` arguments
+- add regression coverage for every host-aware CLI command that probes live
+  readiness before calling a writer
+- consider a shared proof-context object so refresh scripts, JSON, and markdown
+  stay aligned by construction rather than by repeated parameter plumbing
+
+
+
+### Planner output should keep explicit X11 adapter lanes visible
+
+Closed in REV0269:
+
+- `plan-project` now scores an explicit `autokey-x11-adapter` candidate surface
+- planner patterns now include `autokey-reviewable-adapter`
+- X11 text-tier route guidance now includes `vhk gen-autokey-pack ...` so AutoKey export is no longer just a hidden side feature
+
+Why it matters:
+
+- AutoKey remains an X11-first automation shell, which still makes it useful as a reviewable adapter lane
+- but that usefulness only helps VHK if the planner shows *when* it is the right lane and *why* it is not a generic Wayland answer
+
+
+### Generic Wayland text planning was too eager to treat `wtype` as the default answer
+
+Closed in REV0270:
+
+- `plan-project` now exposes `wtype-wayland-text` as an explicit narrow surface
+  instead of hiding `wtype` behind a generic text-toolchain story
+- planner patterns now include `wtype-narrow-wayland-text-lane`
+- ecosystem lessons now include `wtype-virtual-keyboard-boundary`
+- the generic Wayland text-toolchain default is now clipboard-first, with
+  `wtype` remaining the explicit fast path when the session actually supports it
+
+Why it matters:
+
+- `wtype` is valuable precisely because it is a thin typed-text edge, not a full
+  Linux automation contract
+- virtual-keyboard support is compositor/protocol-shaped, so VHK should not
+  present `wtype` as the broad Wayland default in host-agnostic planning
+- keeping package/clipboard text export visible prevents text-heavy projects
+  from drifting into unnecessary helper/uinput complexity
+
+
+### Planner should expose daemon-backed helper lanes directly, not only through setup docs
+
+VHK already knew a lot about helper lifecycle:
+
+- `gen-dotoold-service` and `gen-ydotoold-service` existed
+- setup packs already knew about `wayland-uinput-helper-daemon`
+- host/readiness packs already reasoned about `/dev/uinput`, helper sockets, and
+  choose-one daemon groups
+
+But `plan-project` still under-expressed that lesson at the top level. That left
+Wayland-heavy projects in an awkward place where the planner could say “helper
+boundary” while the concrete daemon/service route stayed hidden until later
+packs.
+
+This revision closes that gap by adding:
+
+- `uinput-helper-daemon` to candidate surface choices
+- `daemonized-uinput-helper-lane` to reference patterns
+- `daemonized-helper-lifecycle` to ecosystem lessons
+
+That makes repeated helper-backed playback feel more like a real Linux-native
+deployment lane and less like a buried implementation detail.
+
+### Planner and audit output should expose workload-shaped input lanes directly
+
+Closed in REV0290:
+
+- `plan-project` now emits `input_lane_dossier`, a workload-oriented summary of
+  clipboard-first text, Wayland virtual-keyboard fast paths, daemon-backed
+  uinput playback, portal-permissioned input, and X11-native replay
+- promotion surfaces can now also be tied back to concrete lanes through
+  `promotion_input_lane_plan`, so project-level shipping work no longer floats
+  free of the runtime/input model
+- the next missing truth was lifecycle ownership, not just input ownership: the
+  repo still needed a `promotion_activation_route_plan` so each shipping surface
+  could say which service/session/launcher route actually wakes it and keeps it
+  alive on Linux
+- the dossier carries fit, commands, cautions, host requirement ids, and
+  session-capability posture so Linux input review stops being a helper-inventory
+  decoding exercise
+- `gen-capability-audit-pack` now renders that same dossier as a human-readable
+  section, so operator docs and planner JSON talk about the same real lanes
+
+Why it matters:
+
+- upstream Linux automation keeps splitting by lane and lifecycle rather than by
+  one universal injection contract
+- maintainers need to review workloads like "text bursts" or "repeated pointer
+  playback," not just memorize helper names
+- making those lanes first-class keeps VHK closer to a Linux-native AHK product
+  strategy instead of a pile of adapters
+
+
+## Fresh issue cluster: Linux-native prior art still splits by lane
+
+- AutoKey mainline still presents itself as X11-first, while current Wayland work is active but not yet a clean general-purpose parity story
+- Espanso continues to show why text expansion is its own lane: Wayland support exists, but it is explicitly experimental and still lacks app-specific configuration on that path
+- xremap and keyd remain strong evidence that low-latency remap ownership belongs near evdev/uinput or desktop-specific context bridges, not in a generic replay runner
+- libei/EIS remains the important longer-horizon input-emulation direction for Wayland-native automation, but shipping Linux desktops and compositors still vary widely in what they expose today
+- implication: VHK should keep one authoring surface, but keep text-expander, remapper, notification, accessibility, and helper/service lanes explicit instead of claiming one universal backend can honestly cover them all
+
+
+## Newly surfaced gap after REV0293
+
+- Promotion review also needed a `promotion_operator_control_plan` so each shipping surface names its day-2 status/reload/log ownership instead of stopping at startup-route truth alone.
+
+
+### 25) Promotion review knew how to ship and operate a surface, but not how to recover it
+
+`promotion_input_lane_plan`, `promotion_activation_route_plan`, and `promotion_operator_control_plan` made shipping/startup/day-2 ownership explicit, but review docs still left one Linux-native question implicit: what is the first safe response when a promoted surface drifts, seizes input, loses consent, or stops delivering events?
+
+This revision partially closes that gap by adding `promotion_recovery_plan` to planner output and threading it into promotion, operator, and capability-audit docs. Each promoted surface now names a first-response / rollback / re-entry lane instead of leaving recovery as scattered prose. Remaining gap: the runtime still does not collect enough live watcher overflow/backpressure telemetry to prove those recovery loops empirically on host-aware runs.
+
+### Promotion verification proof loops
+
+`promotion_input_lane_plan`, `promotion_activation_route_plan`, `promotion_operator_control_plan`, and `promotion_recovery_plan` made shipping/startup/day-2/recovery ownership explicit, but one Linux-native question was still only implied: what exact smoke/proof loop demonstrates that a promoted surface is alive on the target desktop right now?
+
+This revision closes part of that gap by adding `promotion_verification_plan` to planner output and threading it into promotion, capability-audit, and operator docs. Each promoted surface now names a verification posture, primary verification lane, related capability gates, smoke loop, live probe, and proof surfaces. Remaining gap: the runtime still lacks enough built-in live probes to automatically collect those proof loops from real sessions instead of only planning them.
+
+- Add more direct performance-envelope review commands and examples for flagship surfaces, especially clipboard/text throughput smoke, remapper edge-path smoke, and daemon warm-path validation for repeated playback.
+
+
+## Fresh issue cluster: service startup still needed live session proof
+
+VHK had become much more explicit about startup ownership and session lifetime,
+but one Linux-native failure mode remained too easy to misread: a service could
+be *properly installed* yet still be started before its live graphical/session
+prerequisites existed.
+
+That gap is now narrower because service-compose output ships an explicit
+session-readiness guide and probe, and the generated VHK-owned unit uses an
+`ExecCondition=` guard. The next follow-up is to let broader rehearsal/dossier
+surfaces ingest readiness outcomes directly instead of treating them as a pure
+service-pack concern.
+
+
+## Fresh issue cluster: readiness needed to become operator evidence
+
+That gap is now narrower because host rehearsal and host dossier output ingest
+installed `verify_session_readiness.sh` results directly. The next follow-up is
+to feed those same readiness verdicts into higher-level support/public-status
+lanes so session truth can travel beyond one machine-local rehearsal or dossier
+archive.
+
+
+## Fresh issue cluster: installed status still flattened runtime health
+
+The installed lane could already say whether the session looked ready, but that
+still left an important Linux-native question under-modeled: was the owned lane
+actually healthy, quietly stopped, missing, or churning through restart
+pressure?
+
+That gap is now narrower because the installed status bridge carries an explicit
+runtime-health verdict derived from readiness plus nearby user-unit facts,
+including restart churn signals. The next follow-up is to let public/support
+surfaces aggregate those verdicts over time instead of only reporting one live
+snapshot.
+
+## Fresh issue cluster: installed status still flattened startup ownership
+
+The installed lane could already say whether the session looked ready and
+whether the owned service looked healthy, but that still left one Linux-native
+question under-modeled: did the lane actually have one valid startup owner, a
+fallback autostart owner, both, or neither?
+
+That gap is now narrower because the installed status bridge carries an explicit
+startup-handoff verdict derived from both user-unit enablement and effective
+autostart state, including `Hidden=true` and missing `TryExec` cases. The next
+follow-up is to let rehearsal/dossier lanes preserve longer-term startup-owner
+drift, not just one live snapshot.
+
+
+
+## Fresh issue cluster: installed status still flattened startup-owner drift
+
+The installed lane could already say who owned startup in one snapshot, but it
+still could not say whether that ownership was stable, recently changed, or
+chronically degraded. That made duplicate-start risk and missing-owner states
+feel more transient than they really were.
+
+That gap is now narrower because the installed status bridge keeps a short local
+startup-owner history and surfaces a drift verdict. The next follow-up is to let
+release/public-status lanes aggregate those drift verdicts across hosts instead
+of only within one installed lane.
+
+
+## Fresh issue cluster: installed status still flattened runtime-health drift
+
+The installed lane could already say whether it looked healthy in one snapshot,
+but it still could not say whether that health was stable, newly recovered, or
+repeatedly degrading. That made restart churn and failed-state evidence feel
+more transient than they really were, especially because systemd counters can be
+reset during normal operator recovery work.
+
+That gap is now narrower because the installed status bridge keeps a short local
+runtime-health history and surfaces a drift verdict. The next follow-up is to
+let release/public-status lanes aggregate those runtime-health drift verdicts
+across hosts instead of only within one installed lane.
+
+
+## Fresh issue cluster: installed status still flattened recent incidents
+
+The installed lane could already say whether the session looked ready, whether
+the owned service looked healthy, and whether that health/startup ownership was
+drifting, but it still could not say what kind of recent incident had actually
+happened. That made clean skips, start-limit churn, and genuine service
+failures feel too similar in day-to-day support.
+
+That gap is now narrower because the installed status bridge carries an
+incident-signature verdict with a short user-journal sample when available. The
+next follow-up is to let release/public-status lanes aggregate those incident
+classes across hosts instead of only within one installed lane.
+
+## Fresh issue cluster: incident snapshots still hid incident history
+
+The installed lane could already classify the current incident, but one compact
+incident snapshot still left operators guessing whether a clean skip or service
+failure was a one-off, chronic, or flapping condition.
+
+That gap is now narrower because the installed status bridge also carries one
+incident-signature drift verdict with a short bounded local history. The next
+follow-up is to let release/public-status lanes aggregate those drift stories
+across hosts instead of only within one installed lane.
+
+
+
+Keep `next_action_json.sh` aligned with the primary macro author queue and checked gate; do not let the stack-level helper drift back to stale review-queue-only heuristics. Keep `stack_state_json.sh` aligned with the per-macro author loop too, so the fused stack snapshot remains a truthful one-read handoff instead of a partial mirror.
+
+- Keep `stack_state_json.sh` opinionated around the author-queue-selected macro: project-wide boards are useful, but the fused stack should also expose the selected macro's own replay/runtime/dispatch rows directly so the resident-runtime lane does not regress into array-scanning glue.
+
+- Keep the fused stack snapshot opinionated about the selected macro: acceptance/signoff truth should be lifted into `stack_state_json.sh` instead of forcing callers to rescan project-wide ledgers.
+
+- Keep `macro_recording_json` and `stack_state_json.sh` aligned on recorder truth: the recorder helper should emit the same bounded selector summary (`when:` vs recorder-stable source, exact/title/workspace pressure) that the fused warm-runtime handoff expects.
+
+- Keep the fused stack recorder-heavy, not only execute-heavy: the selected macro should keep a compact recording ticket beside its execute ticket so a private LLM can decide record/re-record/review/cleanup work without reopening recorder helpers just to recover the obvious route.
+
+
+- Keep the fused stack explicit about durable signoff, not only raw acceptance rows: the selected macro should keep a compact acceptance/signoff ticket beside cleanup, replay, and execute so a private LLM can tell whether it should repair, settle cleanup debt, mint fresh replay proof, or review/update the durable acceptance ledger without reopening multiple helpers.
+
+
+## 2026-03-22: resident dispatch proof still needs watcher-contract honesty
+
+Warm-runtime truth could already prove socket activation, session attachment,
+and bus round trips, but that still left one practical blind spot: a daemon can
+answer the internal probe while running the wrong watcher set for the generated
+i3 stack. The control plane should therefore treat `daemon answered` and
+`expected hotkey/dispatch watcher contract is loaded` as separate questions and
+make the restart path explicit when they drift.
+
+- Keep the global `next_action_json.sh` helper aligned with the newer latest-dispatch truth surfaces too: once current receipt evidence exists for the selected macro, the top-level helper should recommend inspecting that receipt before blindly re-emitting through the warm lane again. Revision 0430 closes this gap by making `next_action_json.sh` consult `latest_dispatch_json.sh` before trusting a green checked gate.
+
+
+[rev0438] `next_action_json.sh` now carries both `latest_dispatch_json.sh` (project-global newest receipt) and `macro_latest_dispatch_json.sh <macro>` (selected-macro newest receipt) as explicit receipt scopes.
+[rev0439] The remaining ambiguity was inside the receipt evidence object itself: once a receipt summary was copied into `primary_macro_work_ticket`, `next_action_json`, or fused stack-state, callers still had to infer whether `warm_runtime_evidence` came from the project-global newest receipt or the selected-macro newest receipt. Receipt evidence now carries explicit scope metadata and next-action traces mirror the chosen receipt lane directly.
+
+[rev0440] The runtime board used to classify warm-dispatch posture without carrying the selected macro's own receipt lane directly. That made the project-wide execution board weaker than it needed to be for a private LLM: it could say "warm-dispatch-ready" yet still force another hop into the dispatch-history board just to inspect the right `macro_latest_dispatch_json.sh <macro>` surface. The runtime board now mirrors macro-scoped receipt observability per item plus explicit project-global vs primary-macro receipt surfaces.
+[rev0458] The resident selected-macro control plane still had one implicit rule left even after `authoring_boundary` and `lane_transition`: it could say what was editable and what lane came next, but it still made the private-LLM path infer when a lane was actually complete. That showed up most clearly on the current-receipt path: the direct author loop and selected-macro ticket could both expose current warm-runtime receipt evidence, but neither surface made the finish line explicit, and the direct macro loop still tended to underrate durable signoff when replay proof and current receipt evidence were already in hand.
+
+Revision 0458 closes that gap by adding `stage_completion` to both `macro_author_loop_json.sh <macro>` and `primary_macro_work_ticket_json.sh`, then mirroring it through the generated selected-macro helper metadata and summary wrappers. Each active lane now carries a completion id, completion summary, `complete_when` / `still_open_when` clauses, inspect-to-confirm commands, verify-after-completion commands, and the most honest completion command. Concrete win: current resident receipts now complete on “receipt disposition is explicit” instead of implicitly demanding another generic emit/verify cycle, and the direct macro-scoped lane can promote replay-proof-plus-current-receipt straight into durable runtime signoff instead of nudging one more redundant checked dispatch.
+
+
+[rev0459] Even after `stage_completion`, the resident selected-macro lane still hid one practical decision inside prose: what the *current* receipt/proof posture operationally implies before another execution is attempted. That left the control plane able to say a lane was complete without making the next execution cutover explicit, and it still risked redundant warm emits when a current receipt merely needed inspection/disposition or when replay proof plus current resident evidence already justified signoff.
+
+Revision 0459 closes that gap by adding `execution_cutover` to both `macro_author_loop_json.sh <macro>` and `primary_macro_work_ticket_json.sh`, then mirroring it through generated helper metadata and summary surfaces. Each active lane now carries a cutover id, summary, inspect command, receipt-disposition requirement, redundant resident-dispatch risk, repair/signoff readiness, and the most honest next execution-facing command. Concrete win: the warm resident lane can now explicitly say "inspect current receipt before re-emit", "repair runtime before resident dispatch", or "sign off from current proof" instead of flattening those postures back into a vague execute-again answer.
+- [rev0460] Push `stage_completion` and `execution_cutover` into lower receipt/runtime surfaces so `macro_latest_dispatch_json.sh <macro>`, macro-scoped receipt observability, and runtime handoff can directly express receipt disposition, signoff readiness, repair blockers, and redundant resident-dispatch risk.
+- [rev0461] Preserve that receipt/runtime contract in the higher selected-macro bridge so `selected_macro_handoff` on the work ticket and generated resident helpers still carries stage/cutover/disposition/signoff/repair truth, and make resident-runtime repair outrank “inspect the current receipt” when the warm session service itself is degraded.
+
+
+- Compact ticket surfaces used to be self-described only through `control_plane.helper_surface_contracts`. Revision 0467 closes that gap by mirroring `selected_handoff_projection` inline on the live `warm_runtime_ticket` and `primary_macro_work_ticket` payloads, so compact callers can trust those smaller JSON tickets directly. Revision 0468 closes the human-summary half of the same gap: `warm_runtime_ticket.sh` and `primary_macro_work_ticket.sh` now print a `selected_handoff_projection_*` digest, and the helper manifest advertises that inline-summary contract so operators do not need to reopen JSON just to confirm the chosen handoff charter.
+
+- [done][rev0471] checked dispatch now emits a compact X11/i3 `target_authority` witness and the selected-macro work ticket mirrors it as `target_handoff`, so resident triage can stay target-specific without reopening the whole gate payload.
+
+- [done][rev0479] `next_action_json.sh`, `stack_state_json.sh`, and the compact text summaries now preserve `clean_replacement_required` plus the dedicated `inspect_forced_receipt_before_clean_replacement` cutover on the projected primary action. That closes the remaining top-level flattening bug where a current forced receipt could still look like a generic dispatch-ready wrapper on the fused resident X11/i3 control plane.
+
+[rev0493] The resident runtime, selected-macro work ticket, and one-read LLM ticket used to be tested mostly as adjacent surfaces. They now also have a single fused-snapshot consistency check, so one compact resident helper cannot silently point at a different macro or checked-dispatch lane than the others.
+
+[rev0494] The resident lane used to make callers jump from `warm_runtime_ticket*` to `stack_state_json.sh` to recover watcher/mode truth and bounded repair/next-action posture together. A new compact `runtime_witness*` surface now fuses those pieces into one resident-runtime witness, and focused generated-stack tests keep that witness aligned with the control-plane contract and the shared fused snapshot.
+
+
+[rev0495] The compact `runtime_witness*` surface used to be adjacent to the fused resident snapshot rather than mirrored inside it. `stack_state_json.sh` now carries an explicit `mirrored_runtime_witness_projection` contract plus witness helper metadata, so the higher X11/i3 resident control plane stays manifest-locked on watcher/mode truth, warm runtime posture, repair lane, and bounded next action.
+
+
+[rev0496] The fused resident JSON snapshot already mirrored `runtime_witness*`, but the human/operator `stack_state.sh` summary could still drift back to ad hoc prose. It now carries a manifest-backed `stack_runtime_witness_*` digest so operator-visible one-read status stays aligned with the same watcher/mode, repair, and bounded-next-action witness the compact JSON surfaces expose.
+
+
+[rev0497] The shortest daemon-health surface still lagged behind the newer compact witness and fused stack summaries. `status_runtime.sh` now carries a manifest-backed `status_runtime_witness_*` digest sourced from `runtime_witness_json.sh`, so the quick operator repair view and the higher fused resident summaries stay on one X11/i3 warm-runtime truth.

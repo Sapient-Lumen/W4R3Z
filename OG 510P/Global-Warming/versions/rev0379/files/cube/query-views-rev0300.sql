@@ -1,0 +1,29 @@
+
+-- rev0300 nuclear upstream uranium accountability query views
+CREATE VIEW IF NOT EXISTS v_rev0300_nuclear_upstream_service_floors AS
+SELECT service_floor_id, scorecard_family, upstream_specific_gate_count, maturity_ceiling, next_required_action
+FROM nuclear_upstream_extraction_scorecard;
+
+CREATE VIEW IF NOT EXISTS v_rev0300_upstream_gap_backlog AS
+SELECT service_floor_id, nuclear_gate_id, priority, required_action, maturity_cap_if_unclosed
+FROM nuclear_upstream_gap_backlog;
+
+CREATE VIEW IF NOT EXISTS v_rev0300_tailings_water_reclamation AS
+SELECT service_floor_id, upstream_assurance_family, minimum_public_evidence, maturity_cap_if_missing
+FROM nuclear_uranium_tailings_water_reclamation;
+
+CREATE VIEW IF NOT EXISTS v_rev0300_indigenous_legacy_cleanup AS
+SELECT service_floor_id, upstream_assurance_family, public_challenge_path, status
+FROM nuclear_uranium_legacy_cleanup_indigenous_consent;
+
+CREATE VIEW IF NOT EXISTS v_rev0300_material_provenance_transport AS
+SELECT service_floor_id, upstream_assurance_family, minimum_public_evidence, public_challenge_path
+FROM nuclear_uranium_material_provenance_transport;
+
+CREATE VIEW IF NOT EXISTS v_rev0300_upstream_source_authority AS
+SELECT source_id, source_role, authority_class, usable_for, not_sufficient_for
+FROM nuclear_upstream_source_authority_audit;
+
+CREATE VIEW IF NOT EXISTS v_rev0300_upstream_maturity_caps AS
+SELECT service_floor_id, maturity_cap, cap_reason, required_closure_tables
+FROM nuclear_upstream_maturity_cap_execution;

@@ -1,0 +1,5 @@
+BVPS REV0356 SYNTHETIC SMOKETEST
+case_id=T048
+packet_id=PKT-048
+marker=CONTEXT_NO_UPGRADE
+claim_boundary=no_auto_closure

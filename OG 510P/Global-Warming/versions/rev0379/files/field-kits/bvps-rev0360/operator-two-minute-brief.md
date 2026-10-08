@@ -1,0 +1,10 @@
+- **BRIEF-001** Run the one-command go/no-go script before accepting any first-real-drop file. _Boundary:_ capture-ready does not mean readiness-ready
+- **BRIEF-002** Accept files only into quarantine/intake lanes; never directly into release or closure lanes. _Boundary:_ quarantine is not evidence closure
+- **BRIEF-003** Reject public notices, public meeting statements, AAR paragraphs, PI pages, dashboards, or MSEL rows offered as closure. _Boundary:_ public context can route or reopen only
+- **BRIEF-004** For each packet require original hash, redacted surrogate or sensitive-annex reason, custody event, owner, verifier, source clock, and counterevidence path. _Boundary:_ complete-looking packets are candidates only
+- **BRIEF-005** If the console, network, scanner, or identity system fails, use offline packet forms and keep the loss cap active. _Boundary:_ paper receipt is custody only
+- **BRIEF-006** Run media quarantine before opening or copying external media. _Boundary:_ scan pass is not readiness proof
+- **BRIEF-007** Keep synthetic dry-run artifacts separate; retire or replace them before adjudication. _Boundary:_ synthetic payloads never count as real evidence
+- **BRIEF-008** Use the safe public statement draft; do not write ready, green, passed, safe, certified, sufficient, demonstrated, or closed. _Boundary:_ claim embargo active
+- **BRIEF-009** Escalate any hash, timestamp, custody, surrogate, or fork conflict to the repair board. _Boundary:_ conflict freezes claims
+- **BRIEF-010** A candidate packet moves to adjudication only; CAP/retest/verifier and claim-kernel gates control any future claim. _Boundary:_ no auto-closure invariant

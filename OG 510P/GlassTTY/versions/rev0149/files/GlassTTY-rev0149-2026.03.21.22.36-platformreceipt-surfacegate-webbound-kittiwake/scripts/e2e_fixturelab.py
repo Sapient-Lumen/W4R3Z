@@ -1,0 +1,74 @@
+from pathlib import Path
+import importlib.util
+
+_script = Path(__file__).with_name('e2e-fixturelab.py')
+_spec = importlib.util.spec_from_file_location('glasstty_e2e_fixturelab_script', _script)
+_module = importlib.util.module_from_spec(_spec)
+assert _spec and _spec.loader
+_spec.loader.exec_module(_module)
+
+browser_launch_command = _module.browser_launch_command
+free_tcp_port = _module.free_tcp_port
+probe_url = _module.probe_url
+probe_cdp = _module.probe_cdp
+wait_for_http = _module.wait_for_http
+fetch_json = _module.fetch_json
+browser_env = _module.browser_env
+existing_playwright_browsers_path = _module.existing_playwright_browsers_path
+discover_playwright_browser_install = _module.discover_playwright_browser_install
+playwright_extension_launch_plan = _module.playwright_extension_launch_plan
+discover_browser_executable = _module.discover_browser_executable
+launch_playwright_persistent_probe = _module.launch_playwright_persistent_probe
+extension_dist_ready = _module.extension_dist_ready
+run = _module.run
+run_cli_step = _module.run_cli_step
+run_cli_proof = _module.run_cli_proof
+native_bootstrap_summary = _module.native_bootstrap_summary
+extension_context_summary = _module.extension_context_summary
+native_host_install_targets = _module.native_host_install_targets
+browser_attempt_artifact_root = _module.browser_attempt_artifact_root
+browser_attempt_artifact_dir = _module.browser_attempt_artifact_dir
+snapshot_browser_attempt_artifacts = _module.snapshot_browser_attempt_artifacts
+diagnose_browser_attempt_snapshot = _module.diagnose_browser_attempt_snapshot
+wait_for_probe_result = _module.wait_for_probe_result
+wait_for_probe_result_playwright = _module.wait_for_probe_result_playwright
+wait_for_healthy_extension_service_worker = _module.wait_for_healthy_extension_service_worker
+main = _module.main
+
+utc_now = _module.utc_now
+write_json_atomic = _module.write_json_atomic
+shell_join = _module.shell_join
+ensure_setup_section = _module.ensure_setup_section
+append_setup_action = _module.append_setup_action
+run_command_record = _module.run_command_record
+planned_playwright_channel_prepare = _module.planned_playwright_channel_prepare
+build_setup_replay_script = _module.build_setup_replay_script
+write_setup_replay_script = _module.write_setup_replay_script
+trim_text_tail = _module.trim_text_tail
+summarize_setup_action = _module.summarize_setup_action
+build_setup_ledger = _module.build_setup_ledger
+write_setup_ledger = _module.write_setup_ledger
+build_setup_summary_markdown = _module.build_setup_summary_markdown
+write_setup_summary = _module.write_setup_summary
+write_setup_artifacts = _module.write_setup_artifacts
+checkpoint_report = _module.checkpoint_report
+append_step = _module.append_step
+mark_browser_attempt_inflight = _module.mark_browser_attempt_inflight
+clear_browser_attempt_inflight = _module.clear_browser_attempt_inflight
+finalize_browser_attempt = _module.finalize_browser_attempt
+install_termination_checkpoint = _module.install_termination_checkpoint
+connect_over_cdp_kwargs = _module.connect_over_cdp_kwargs
+make_tree_writable = _module.make_tree_writable
+open_probe_page = _module.open_probe_page
+extract_probe_page_result = _module.extract_probe_page_result
+stop_extension_service_worker_playwright = _module.stop_extension_service_worker_playwright
+worker_resume_summary = _module.worker_resume_summary
+launch_playwright_extension_context = _module.launch_playwright_extension_context
+attach_playwright_extension_context = _module.attach_playwright_extension_context
+EXTENSION_DIR = _module.EXTENSION_DIR
+INSTALL_NATIVE_HOST = _module.INSTALL_NATIVE_HOST
+WRAPPER_PATH = _module.WRAPPER_PATH
+DOCTOR_SCRIPT = _module.DOCTOR_SCRIPT
+PLAYWRIGHT_IMPORT_ERROR = _module.PLAYWRIGHT_IMPORT_ERROR
+sync_playwright = _module.sync_playwright
+DEFAULT_WRITE_TEXT = _module.DEFAULT_WRITE_TEXT

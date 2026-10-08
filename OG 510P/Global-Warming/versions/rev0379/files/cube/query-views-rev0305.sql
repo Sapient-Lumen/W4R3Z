@@ -1,0 +1,41 @@
+-- rev0305 nuclear emergency preparedness, EPZ, KI, evacuation, medical response and recovery query views
+DROP VIEW IF EXISTS v_rev0305_nuclear_emergency_preparedness_service_floors;
+DROP VIEW IF EXISTS v_rev0305_emergency_preparedness_gap_backlog;
+DROP VIEW IF EXISTS v_rev0305_epz_alert_protective_action;
+DROP VIEW IF EXISTS v_rev0305_evacuation_shelter_equity;
+DROP VIEW IF EXISTS v_rev0305_ki_medical_countermeasures;
+DROP VIEW IF EXISTS v_rev0305_drill_after_action_closure;
+DROP VIEW IF EXISTS v_rev0305_reentry_recovery_claims;
+DROP VIEW IF EXISTS v_rev0305_emergency_source_authority;
+
+CREATE VIEW v_rev0305_nuclear_emergency_preparedness_service_floors AS
+SELECT service_floor_id, scorecard_family, emergency_preparedness_gate_count, emergency_preparedness_specific_gap_count, maturity_ceiling, next_required_action
+FROM cube__nuclear_emergency_preparedness_scorecard_csv;
+
+CREATE VIEW v_rev0305_emergency_preparedness_gap_backlog AS
+SELECT service_floor_id, nuclear_gate_id, gate_family, priority, required_action, required_table, maturity_cap_if_unclosed
+FROM cube__nuclear_emergency_preparedness_gap_backlog_csv;
+
+CREATE VIEW v_rev0305_epz_alert_protective_action AS
+SELECT service_floor_id, plume_epz_status, ingestion_epz_status, alert_channels, protective_actions, demographic_data_status, status
+FROM cube__nuclear_epz_alert_protective_action_crosswalk_csv;
+
+CREATE VIEW v_rev0305_evacuation_shelter_equity AS
+SELECT service_floor_id, evacuation_route_capacity_status, transportation_assistance_status, shelter_in_place_status, language_access_status, disability_access_status, status
+FROM cube__nuclear_evacuation_shelter_equity_access_csv;
+
+CREATE VIEW v_rev0305_ki_medical_countermeasures AS
+SELECT service_floor_id, ki_decision_authority, ki_inventory_status, dosing_message_status, medical_countermeasure_status, status
+FROM cube__nuclear_ki_medical_countermeasure_distribution_csv;
+
+CREATE VIEW v_rev0305_drill_after_action_closure AS
+SELECT service_floor_id, exercise_status, scenario_coverage, after_action_status, FEMA_NRC_interface_status, status
+FROM cube__nuclear_drill_exercise_after_action_closure_csv;
+
+CREATE VIEW v_rev0305_reentry_recovery_claims AS
+SELECT service_floor_id, reentry_decision_status, relocation_status, compensation_claims_status, mental_health_followup_status, status
+FROM cube__nuclear_reentry_relocation_recovery_claims_csv;
+
+CREATE VIEW v_rev0305_emergency_source_authority AS
+SELECT source_id, source_title, authority_tier, use_boundary, emergency_or_context_limit
+FROM cube__nuclear_emergency_preparedness_source_authority_audit_csv;

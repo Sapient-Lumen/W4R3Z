@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { appendPersistentNativeEvent, buildPersistentDiagnosticsSnapshot, normalizePersistentBridgeHistory, recordPersistentWorkerBoot } from '../dist/shared/persistent-history.js';
+
+let history = normalizePersistentBridgeHistory(null);
+history = recordPersistentWorkerBoot(history, { bootId: 'boot-1', bootAt: '2026-03-17T16:00:00.000Z', bootCount: 1 });
+history = appendPersistentNativeEvent(history, { at: '2026-03-17T16:00:02.000Z', bootId: 'boot-1', kind: 'native.connected', trigger: 'native.connected' });
+let snapshot = buildPersistentDiagnosticsSnapshot(history, { currentBootId: 'boot-1', currentBootAt: '2026-03-17T16:00:00.000Z', bootCount: 1 }, undefined, Date.parse('2026-03-17T16:00:10.000Z'));
+assert.equal(snapshot.runtimeHint?.status, 'current_boot_connected');
+history = recordPersistentWorkerBoot(history, { bootId: 'boot-2', bootAt: '2026-03-17T16:05:00.000Z', bootCount: 2 });
+snapshot = buildPersistentDiagnosticsSnapshot(history, { currentBootId: 'boot-2', currentBootAt: '2026-03-17T16:05:00.000Z', bootCount: 2 }, undefined, Date.parse('2026-03-17T16:05:05.000Z'));
+assert.equal(snapshot.runtimeHint?.status, 'restart_pending');
+history = appendPersistentNativeEvent(history, { at: '2026-03-17T16:05:06.000Z', bootId: 'boot-2', kind: 'native.oneshot_reachable', trigger: 'bridge.status' });
+snapshot = buildPersistentDiagnosticsSnapshot(history, { currentBootId: 'boot-2', currentBootAt: '2026-03-17T16:05:00.000Z', bootCount: 2 }, undefined, Date.parse('2026-03-17T16:05:07.000Z'));
+assert.equal(snapshot.runtimeHint?.status, 'current_boot_oneshot_only');
+assert.match(snapshot.runtimeHint?.recommendedAction ?? '', /persistent reconnect/i);
+history = recordPersistentWorkerBoot(history, { bootId: 'boot-3', bootAt: '2026-03-17T16:06:00.000Z', bootCount: 3 });
+history = recordPersistentWorkerBoot(history, { bootId: 'boot-4', bootAt: '2026-03-17T16:07:00.000Z', bootCount: 4 });
+snapshot = buildPersistentDiagnosticsSnapshot(history, { currentBootId: 'boot-4', currentBootAt: '2026-03-17T16:07:00.000Z', bootCount: 4 }, undefined, Date.parse('2026-03-17T16:07:10.000Z'));
+assert.equal(snapshot.runtimeHint?.status, 'restart_churn');
+const trimmed = normalizePersistentBridgeHistory({ workerBoots: Array.from({ length: 20 }, (_, index) => ({ bootId: `boot-${index}`, bootAt: `2026-03-17T16:${String(index).padStart(2, '0')}:00.000Z`, bootCount: index + 1 })), nativeEvents: Array.from({ length: 60 }, (_, index) => ({ at: `2026-03-17T17:${String(index % 60).padStart(2, '0')}:00.000Z`, bootId: 'boot-4', kind: 'native.oneshot_reachable' })) });
+assert.equal(trimmed.workerBoots.length, 12);
+assert.equal(trimmed.nativeEvents.length, 40);
+console.log(JSON.stringify({ ok: true, runtimeHint: snapshot.runtimeHint, trimmedCounts: { workerBoots: trimmed.workerBoots.length, nativeEvents: trimmed.nativeEvents.length } }, null, 2));

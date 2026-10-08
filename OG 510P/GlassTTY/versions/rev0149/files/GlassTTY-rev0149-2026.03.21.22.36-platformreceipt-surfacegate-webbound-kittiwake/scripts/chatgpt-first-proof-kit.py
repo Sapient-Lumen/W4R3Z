@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+from chatgpt_first_proof_kit import main
+
+if __name__ == '__main__':
+    main()
