@@ -13,6 +13,7 @@ A self-owned device agent over Tox, with durable offline commands, directory syn
 
 A NixOS Foundation module concerned with exact-source changes, observations and continuity records. The supplied module requires a machine adapter. Its source includes explicitly opt-in experimental vault and encrypted keystroke-journal facilities; their presence is not permission to enable them.
 
+- [Read the Monsternix introduction](guides/Monsternix.md)
 - [Current supplied configuration.nix](configuration.nix)
 - [3 October 2026 source-update receipt](updates/2026-10-03.json)
 
@@ -20,6 +21,7 @@ A NixOS Foundation module concerned with exact-source changes, observations and 
 
 A Linux Codex workstation with project isolation, a guarded desktop and worker orchestration.
 
+- [Read the Sandcodex introduction](guides/Sandcodex.md)
 - [Current supplied sandcodex file](sandcodex)
 - [3 October 2026 source-update receipt](updates/2026-10-03.json)
 
