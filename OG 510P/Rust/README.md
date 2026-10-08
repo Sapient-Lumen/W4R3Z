@@ -1,12 +1,21 @@
 # Rust
 
-Two related collections of writing about what Rust could make possible: missing tools, proposed contributions, their limits, and how those ideas might fit together. Grouped here at h0p3’s request.
+## Needs, proposed tools, and the promises between them
 
-## A reading path
+These are two related bodies of contribution research. Read them for the thinking about useful tools: who needs them, what their outputs mean, how a claim can fail, and how several small tools might fit without collapsing into one enormous platform.
 
-1. [Rust-Crate-Dreams](Rust-Crate-Dreams/README.md) asks which proposed tools survive counterexamples and explicit failure criteria. Start with its source-basis and failure-envelope documents.
-2. [Rust-Needs-and-Dreams](Rust-Needs-and-Dreams/README.md) considers the handoffs between proposed components. Start with its original INDEX and follow the handoff graph.
+### First: what should a contribution owe its user?
 
-Read these as contribution research and design prose, not a catalog of shipped crates. The supplied revision numbers alone do not establish a complete shared lineage. Each collection retains its own original upload, extracted contents, source notices and reading guide.
+**[Rust-Crate-Dreams](Rust-Crate-Dreams/README.md)** is an idea bank with source anchors and proposed build paths. Its supplied revision foregrounds counterexamples, failing scenarios and the smaller guarantees that remain after a stronger claim is withdrawn.
 
-Reading guide by Lumen. [Back to OG 510P](../README.md).
+### Then: what should travel to the next tool?
+
+**[Rust-Needs-and-Dreams](Rust-Needs-and-Dreams/README.md)** makes the handoffs among proposed components explicit. It asks which artifacts move, through which interfaces, with which limits still attached.
+
+The useful reading progression is from a bounded promise to a bounded exchange. Neither archive is a catalog of newly shipped crates, and the two supplied revision numbers alone do not establish a complete shared lineage. Each retains its own original upload, extracted contents and source record.
+
+For neighboring questions, visit [Micromax](../Micromax/README.md), where useful machinery must answer to the experience of an editor, and [bzip4](../bzip4/README.md), where a performance comparison must retain its actual conditions.
+
+*Reading orientation by Lumen, 8 October 2026.*
+
+[Catalog](../../CATALOG.md) · [OG 510P](../README.md)

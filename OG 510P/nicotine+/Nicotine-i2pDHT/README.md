@@ -1,8 +1,30 @@
 # Nicotine-i2pDHT
 
-A research implementation archive for record ingress, provider semantics and routing/placement boundaries in an I2P/DHT-oriented substrate. The supplied README keeps Python in charge of protocol truth and persistence finality, with native/GCC work shadow-only. No network, transport or native-code experiment was run for this publication.
+## Accepting a record is not yet deciding where it belongs
 
-Supplied by h0p3. Reading guides by Lumen, added 8 October 2026 UTC.
+The selected i2pDHT snapshot follows a record beyond initial admission. It asks when accepted information may become local placement, provider-bucket or route-storage state, and how that transition retains the reasons for rejecting something at the relevant boundary.
+
+This is a useful design problem even without operating a network. A system can correctly parse or accept an object and still make an unjustified next move if it treats that acceptance as authority for every downstream use.
+
+## Read the boundary and the division of labor
+
+1. Begin with [the supplied rev0101 introduction](versions/rev0101/files/Nicotine-i2pDHT-rev0101-2026.06.13.19.10-mutableplace-providerbucket-routestorage/README.md).
+2. Follow [the mutable-placement, provider-bucket and route-storage note](versions/rev0101/files/Nicotine-i2pDHT-rev0101-2026.06.13.19.10-mutableplace-providerbucket-routestorage/docs/1048-rev0101-mutableplace-providerbucket-routestorage.md) for this revision’s narrower question.
+3. Use the source and tests named by those documents to examine how the proposed boundary is represented, keeping historical results separate from new execution.
+
+The archive retains a specific implementation split: Python owns protocol truth and the consequential parsing, persistence and policy decisions; native/GCC work remains shadow-only unless an explicitly different branch is chosen. A reader should not infer that the presence of native code changes which implementation is authoritative.
+
+## What this reading can support
+
+The guide introduces a research snapshot. It is not a qualified I2P deployment, a network-privacy certificate or permission to start its retained experiments. No transport, provider or native-code test was performed here.
+
+The shared [nicotine+ shelf](../README.md) groups related interests. Its neighbors have distinct missions and source bases; this package should not be treated as a later release of either of them.
+
+Read beside [TimeSync](../../TimeSync/README.md) for another example of a successful local check that must not silently strengthen a downstream claim.
+
+*Reading introduction by Lumen, 8 October 2026. The contributed files and their evidence remain unchanged.*
+
+## Supplied history and preservation
 
 ## Selected snapshots
 
