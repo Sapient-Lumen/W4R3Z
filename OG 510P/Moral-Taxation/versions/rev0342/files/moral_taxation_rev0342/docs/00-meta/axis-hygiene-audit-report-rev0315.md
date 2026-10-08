@@ -1,0 +1,83 @@
+# Axis-hygiene audit report — rev0315
+
+Result: pass.
+
+Rev0315 does not loosen the rev0314 wealth/procurement axis gates. Currentness refs were added without introducing live-axis placeholders.
+
+## Metrics
+
+- `blocked_review_trigger_new_calibration_file`: 0
+- `blocked_anti_pattern_unclassified_anti_pattern`: 0
+- `blocked_remedy_type_not_remedy_specific`: 0
+- `blocked_floor_risk_no_specific_floor_risk`: 0
+- `blocked_market_not_market_specific`: 0
+- `blocked_channel_not_channel_specific`: 0
+- `blocked_burden_not_incidence_specific`: 0
+- `blocked_rights_not_rights_specific`: 0
+- `tax_admin_rent_extraction_antipattern_before`: 16
+- `tax_admin_rent_extraction_antipattern_remaining`: 0
+- `tax_admin_antipattern_records_touched`: 16
+- `legal_enforcement_rent_extraction_antipattern_before`: 3
+- `legal_enforcement_rent_extraction_antipattern_remaining`: 0
+- `legal_enforcement_public_channel_only_before`: 11
+- `legal_enforcement_public_channel_only_remaining`: 0
+- `legal_enforcement_legal_risk_transfer_burden_before`: 7
+- `legal_enforcement_legal_risk_transfer_burden_remaining`: 0
+- `legal_enforcement_waiver_remedy_before`: 4
+- `legal_enforcement_waiver_remedy_remaining`: 0
+- `labor_care_rent_extraction_antipattern_before`: 6
+- `labor_care_rent_extraction_antipattern_remaining`: 0
+- `labor_care_legal_risk_transfer_burden_before`: 3
+- `labor_care_legal_risk_transfer_burden_remaining`: 0
+- `labor_care_public_channel_only_before`: 1
+- `labor_care_public_channel_only_remaining`: 0
+- `environment_rent_extraction_antipattern_before`: 4
+- `environment_rent_extraction_antipattern_remaining`: 0
+- `environment_compliance_theater_antipattern_before`: 4
+- `environment_compliance_theater_antipattern_remaining`: 0
+- `environment_public_channel_delivery_before`: 9
+- `environment_public_channel_delivery_remaining`: 0
+- `environment_public_channel_only_before`: 1
+- `environment_public_channel_only_remaining`: 0
+- `environment_price_pass_through_burden_before`: 8
+- `environment_price_pass_through_burden_remaining`: 0
+- `environment_legal_risk_transfer_burden_before`: 1
+- `environment_legal_risk_transfer_burden_remaining`: 0
+- `environment_community_benefit_remedy_before`: 7
+- `environment_community_benefit_remedy_remaining`: 0
+- `financial_rent_extraction_antipattern_before`: 3
+- `financial_rent_extraction_antipattern_remaining`: 0
+- `financial_public_loss_private_upside_antipattern_before`: 3
+- `financial_public_loss_private_upside_antipattern_remaining`: 0
+- `financial_compliance_theater_antipattern_before`: 1
+- `financial_compliance_theater_antipattern_remaining`: 0
+- `financial_platform_account_delivery_before`: 1
+- `financial_platform_account_delivery_remaining`: 0
+- `financial_legal_risk_transfer_burden_before`: 1
+- `financial_legal_risk_transfer_burden_remaining`: 0
+- `financial_fee_surcharge_burden_before`: 1
+- `financial_fee_surcharge_burden_remaining`: 0
+- `financial_clawback_remedy_before`: 7
+- `financial_clawback_remedy_remaining`: 0
+- `financial_disclosure_remedy_before`: 1
+- `financial_disclosure_remedy_remaining`: 0
+- `wealth_property_rent_extraction_antipattern_before`: 2
+- `wealth_property_rent_extraction_antipattern_remaining`: 0
+- `wealth_property_compliance_theater_antipattern_before`: 2
+- `wealth_property_compliance_theater_antipattern_remaining`: 0
+- `wealth_property_public_loss_private_upside_antipattern_before`: 1
+- `wealth_property_public_loss_private_upside_antipattern_remaining`: 0
+- `wealth_property_price_pass_through_burden_before`: 3
+- `wealth_property_price_pass_through_burden_remaining`: 0
+- `wealth_property_deferral_remedy_before`: 6
+- `wealth_property_deferral_remedy_remaining`: 0
+- `procurement_rent_extraction_antipattern_before`: 5
+- `procurement_rent_extraction_antipattern_remaining`: 0
+- `procurement_access_exclusion_antipattern_before`: 2
+- `procurement_access_exclusion_antipattern_remaining`: 0
+- `procurement_compliance_theater_antipattern_before`: 1
+- `procurement_compliance_theater_antipattern_remaining`: 0
+- `procurement_price_pass_through_burden_before`: 5
+- `procurement_price_pass_through_burden_remaining`: 0
+- `procurement_clawback_remedy_before`: 5
+- `procurement_clawback_remedy_remaining`: 0

@@ -14,4 +14,8 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [LivingChristFigures](LivingChristFigures/): five selected historical research checkpoints and Lumen’s rev0105 reading edition on costly care and threshold offices.
 
+- [The Election Stack](Election-Stack/): nine selected evidence-and-transparency checkpoints, with synthetic-election and non-production boundaries retained.
+
+- [Moral Taxation](Moral-Taxation/): five selected tax-design research checkpoints, from take-up and calibration to sandbox decision-review bundles.
+
 Each project has its own reading guide and provenance. Existing license notices remain applicable; no new blanket license is granted here.

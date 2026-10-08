@@ -1,0 +1,21 @@
+# Official voter-information language-selector surface checklist
+
+- Inventory each official header toggle, language menu, multilingual landing page, selected-content language menu, and machine-translation helper the public may encounter.
+- Make the delivery role explicit: the selector helps the voter reach current official content in a usable language; it does not overstate what the jurisdiction has translated or authorized.
+- Distinguish equivalent translated pages from selected multilingual content, official help/oral-assistance routes, and unsupported language paths.
+- When equivalent translated content exists, route to the corresponding current page instead of a generic landing page.
+- Do not create dead ends that imply translated coverage but deliver little or no meaningful election content.
+- Keep the language selector visible, consistently placed, and independent from unrelated navigation items.
+- Do not use flags or country codes as substitutes for language labels.
+- Strongly consider labeling languages in their common native form as well as English descriptors when helpful.
+- Avoid silent browser-locale or location-based auto-redirects that hide manual language choice or surprise the voter.
+- If only selected multilingual content exists for a language, say so explicitly and keep the official help path visible.
+- If oral assistance or another official help lane is the real fallback, make that route visible instead of pretending the page is fully translated.
+- If a machine-translation helper is present, keep it visibly subordinate to the current official source/help route and do not imply fully reviewed equivalence where none exists.
+- Preserve machine-readable language signaling, including HTML lang attributes and correctly marked language links.
+- Test the selector in context for keyboard use, focus order, screen-reader behavior, and zoom rather than assuming the component alone is sufficient.
+- Preserve a bounded locale trace for action-changing outputs, including selector policy version, presented language, equivalence class, promoted anchor, presentment mode, and timestamp.
+- Do not retain raw Accept-Language headers, geolocation guesses, or preference histories longer than the published policy requires.
+- Keep official language-access and office/help fallback contact information visible.
+- Re-check the selector after translation updates, content moves, language-coverage changes, oral-assistance changes, help-route changes, or major header/navigation redesigns.
+- When material selector behavior changes, publish an explicit update/superseding note instead of relying only on silent UI edits.

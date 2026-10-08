@@ -1,0 +1,70 @@
+# CDF mapping: BD ↔ CVR ↔ ERR ↔ event logs (closing the audit loop)
+
+**Track:** A (Deployable core)
+
+
+> **Problem:** many “secure” systems cannot reproduce published results because identifiers, geography, or ballot styles don’t line up across data sets.
+
+This doc defines the **mapping manifest** that binds:
+- Ballot Definition (BD)
+- Cast Vote Records (CVR)
+- Election Results Reporting (ERR)
+- Election Event Logging (EEL)
+
+…and makes the relationships reproducible.
+
+## Recommended base standards
+- BD: NIST SP 1500-20 (Ballot Definition CDF) (`source: nist_sp1500_20_bd_pdf`)
+- CVR: NIST SP 1500-103 (Cast Vote Records CDF) (`source: nist_sp1500_103_cvr_pdf`)
+- ERR: NIST SP 1500-100r2 (Election Results CDF) (`source: nist_sp1500_100r2_err_pdf`)
+- EEL: NIST SP 1500-101 (Election Event Logging CDF) (`source: nist_sp1500_101_eel_pdf`)
+- Guidance across CDFs: NIST GCR 24-058 (`source: nist_gcr_24_058_cdf_implementation_guidance_pdf`)
+
+## Canonical identifiers
+### Geopolitical / reporting units
+- Use stable `gp_unit_id` values with external identifiers where possible.
+- Maintain a `ReportingUnitMap` so precinct splits/merges are explicit, signed, and anchored.
+
+### Ballot styles
+- Every CVR MUST reference:
+  - `ballot_style_id`
+  - `bd_hash` (hash of canonical ballot definition bytes)
+
+### Contests and options
+- Contest IDs and option IDs MUST be stable across BD, CVR, and ERR.
+- Write-in handling must be pre-specified and consistent.
+
+## Mapping manifest
+Introduce `CDFMappingManifest` (content-addressed, signed):
+- `bd_hash`
+- `cvr_schema_version`, `err_schema_version`, `eel_schema_version`
+- `ballot_style_map[]`: style → gp_units
+- `contest_map[]`: bd_contest_id → err_contest_id (should be identity unless transformation is justified)
+- `option_map[]`: bd_option_id → err_option_id
+- `reporting_unit_map[]`: gp_unit relationships and any changes
+
+The manifest MUST be:
+- generated deterministically
+- canonicalized (e.g., RFC 8785 for JSON)
+- included in the EPB
+
+
+## v895 executable bridge
+
+`tools/cdf_export_replay.py` now exercises the minimum reproducibility loop above for the Example County synthetic path. It parses a small `TES-CDF-MINIMAL-PROJECTION-v1` fixture aligned to NIST BD/CVR/ERR identifiers, recomputes CVR option totals, compares them to the synthetic ERR totals, emits a schema-clean `CanonicalResultsObject`, and release-gates negative controls for totals mismatch, unknown option IDs, and selection-limit violations.
+
+This bridge intentionally does **not** claim full NIST CDF conformance, XML/JSON vendor interoperability, VRI/EEL coverage, live jurisdiction exports, certification, outcome proof, current voter instruction, or legal reliance. Full CDF parsing and NIST CDF Test Method execution remain future adopter work.
+
+## Minimum reproducibility tests
+A verifier MUST be able to:
+1. Load BD + manifest
+2. Validate CVR references (style/contest/option IDs)
+3. Tabulate CVRs into totals
+4. Compare totals to ERR in CRO
+5. Produce a signed `ReproducibilityReport`
+
+## Privacy and disclosure
+Mapping manifests can leak sensitive structure (e.g., very small reporting units). The DisclosurePolicy must specify:
+- whether unit-level identifiers are public
+- minimum cell sizes
+- allowed aggregation levels

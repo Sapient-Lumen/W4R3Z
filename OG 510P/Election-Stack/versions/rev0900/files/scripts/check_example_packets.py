@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""scripts/check_example_packets.py
+
+Release-gate drift firewall: ensure bundled example evidence packets remain self-consistent.
+
+It verifies every directory matching:
+  artifacts/examples/evidence_packet_*
+
+The check calls the same core verifier functions used by tools/observer_verify_packet.py
+instead of spawning one verifier subprocess per packet. This keeps the gate bounded
+and avoids hiding the failing packet behind a whole-step timeout.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_EXAMPLES_ROOT = ROOT / "artifacts" / "examples"
+TOOLS = ROOT / "tools"
+
+sys.path.insert(0, str(TOOLS))
+from observer_verify_packet import verify_envelopes, verify_manifest, verify_objects  # noqa: E402
+
+
+def find_example_packets(examples_root: Path) -> list[Path]:
+    out: list[Path] = []
+    if not examples_root.exists():
+        return out
+    for p in sorted(examples_root.iterdir()):
+        if not p.is_dir():
+            continue
+        if not p.name.startswith("evidence_packet_"):
+            continue
+        if (p / "manifest.json").exists() and (p / "envelopes").exists() and (p / "objects").exists():
+            out.append(p)
+    return out
+
+
+def verify_packet(packet_dir: Path) -> list[str]:
+    problems: list[str] = []
+    obj_problems, _objects_checked = verify_objects(packet_dir / "objects")
+    env_problems, _envelopes_checked, _kinds_seen = verify_envelopes(packet_dir / "envelopes", packet_dir)
+    manifest_problems = verify_manifest(packet_dir)
+    problems.extend(obj_problems)
+    problems.extend(env_problems)
+    problems.extend(manifest_problems)
+    return problems
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Verify all example evidence packets")
+    ap.add_argument("--examples-root", default=str(DEFAULT_EXAMPLES_ROOT), help="path to artifacts/examples")
+    args = ap.parse_args()
+
+    examples_root = Path(args.examples_root)
+    packets = find_example_packets(examples_root)
+    if not packets:
+        print("No example packets found under", examples_root)
+        return 0
+
+    any_fail = False
+    for p in packets:
+        problems = verify_packet(p)
+        if problems:
+            any_fail = True
+            print("FAIL", p)
+            for problem in problems[:80]:
+                print("  ", problem)
+            if len(problems) > 80:
+                print(f"  ... ({len(problems) - 80} more)")
+        else:
+            print("PASS", p)
+
+    return 2 if any_fail else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

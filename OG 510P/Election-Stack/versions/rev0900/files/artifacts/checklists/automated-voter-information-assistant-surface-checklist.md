@@ -1,0 +1,32 @@
+# Automated voter-information assistant surface checklist
+
+- Publish a visible lifecycle phase label (`pre_deployment_not_live`, `pilot_or_beta_limited_live`, `production`, `paused`, or `retired`) so the public can tell whether the assistant is experimental, fully live, temporarily withdrawn, or historical only.
+- Publish when the current lifecycle phase took effect and, for non-production states, what bounded live scope or next review / exit criteria apply.
+- If the assistant is paused or retired, keep a clear tombstone, redirect, or successor notice instead of leaving a zombie public-help lane that still looks live.
+- State plainly that the assistant helps users find or summarize official election information and is not the standalone authority for jurisdiction-specific rules.
+- Keep a visible point-of-interaction notice and short warning label so users do not have to infer, after trusting the output, that the surface is automated.
+- Do not let the assistant make final rights-affecting determinations about voter eligibility, registration status, ballot acceptance or rejection, provisional-ballot disposition, cure sufficiency, ID sufficiency, challenge outcome, deadline exceptions, or accessibility accommodation entitlement.
+- For rights-affecting or record-specific questions, route to the official form, lookup, secure channel, or human office path; the assistant may explain the route but must not replace the official determination.
+- Publish the official source classes the assistant may rely on for action-changing answers.
+- Publish an approved source hierarchy and enforce the practical rule: no current source, no authoritative-sounding answer.
+- Require explicit official anchors, visible `last_verified_at`, jurisdiction label, and abstention behavior for dates, hours, locations, ID rules, registration/update paths, absentee deadlines, and high-risk special-case questions.
+- Route to a maintained official wizard, lookup, or form when one already exists instead of reconstructing branching official logic in free text.
+- Route unanswered or uncertain questions to an official office/help path instead of letting the assistant guess.
+- Preserve a clear escalation path for rights, intimidation, accessibility failures, discrimination concerns, or emergency safety issues (`307`).
+- Stop on materially conflicting official sources; do not synthesize a confident answer from fragments.
+- Publish a compact operating-bounds card or equivalent public description covering intended use, no-use cases, human-review posture, supported languages, and known limitations.
+- If the assistant is claimed as official, list it in the official channel directory (`203`) or equivalent domain-first discovery path and verify that the assistant/help channel identifier still resolves correctly.
+- Publish whether the decisive answer path is in-house, vendor-hosted, or mixed, whether prompts leave the office boundary for processing, and which material external suppliers/model or service layers are in the public-answer path when those dependencies are stable enough to name.
+- Record a bounded answer trace for action-changing answers: timestamp, source anchors, source-hierarchy rule, policy/model version, warning-label version, answer outcome, and official handoff path.
+- Treat provenance, citations, retrieved dates, and source labels as the assistant's basis for an answer, not as proof that the answer is legally complete, currently effective, or safe for every voter.
+- Prefer digests and source-anchor identifiers over indefinite storage of raw free-text conversations.
+- Publish a minimization rule for personal data and route record-specific matters to official secure channels when needed.
+- Keep a bounded public route for wrong-answer, stale-answer, unsafe-answer, or unclear-answer reports.
+- Treat wrong-answer reports, user confusion reports, and operator escalations as monitoring inputs that can trigger narrower scope, re-check, rollback, or retirement decisions.
+- Treat source, model, supplier, hosting-boundary, prompt, or policy changes that materially affect public answers as change-controlled public-surface updates, with refreshed directory/discovery checks when the public assistant remains live.
+- Before deployment and after material source/model/prompt changes, test for prompt injection, source poisoning, stale-source replay, jurisdiction mixing, synthetic citation/confabulation, unsafe tone when sources conflict, and overconfident answers when the source hierarchy is missing.
+- Require human approval before publishing or changing answer templates for deadlines, eligibility, registration status, ballot status, ID, polling/place lookup, mail-ballot cure, accessibility accommodations, intimidation, challenges, provisional ballots, or dispute/escalation rights.
+- Check parity between the assistant's guidance and the current official page / signed notice / office directory it depends on.
+- Re-test the assistant after major deadline, site, office-hour, emergency-routing, wizard-logic, or localization changes.
+- Include AI-misuse and bad-answer scenarios in tabletop exercises or other rehearsal work.
+- Publish `last_verified_at` for the assistant surface, its source hierarchy, and its operating-bounds disclosure.

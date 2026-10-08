@@ -1,0 +1,2 @@
+Example packet demonstrating PublicationContract + PublicationSuppressionReport with receipt/gossip attachments.
+Run: python tools/observer_verify_packet.py artifacts/examples/evidence_packet_publication_contract
