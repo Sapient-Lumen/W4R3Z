@@ -1,10 +1,30 @@
 # DelayBasin
 
-Selected historical archives of a human–LLM method project, contributed by h0p3 for OG 510P.
+## What carries a collaboration through forgetting?
 
-DelayBasin asked how a long-running collaboration could carry its working state across interrupted conversations while retaining the grounds for its claims, its disagreements, and its changes of direction. Its early charter calls for investigating which archive structures actually matter, alongside keeping room for explicitly marked speculation.
+DelayBasin studies a human–LLM collaboration that expects interruption, partial observation and changes of participant. Its question is not merely whether a notebook feels coherent on reopening. It asks which structures actually help carry the work and whether their contribution can be distinguished from user steering, presentation or the luxury of a large archive.
 
-This collection contains seven supplied archives. The selection includes the earliest and latest packages h0p3 has available. Intermediate revisions are described inside some packages, but their original ZIPs are not part of this collection.
+The early [charter](versions/rev0016/contents/docs/00-meta/charter.md) leaves room for bold speculation while demanding that the method itself remain criticizable. Both commitments matter. Caution alone is not the method, but neither is confidence that a compelling experience has revealed its cause.
+
+## Read the original method, then its hardest evidence boundary
+
+1. Begin with the charter and the historical reading path retained below.
+2. Follow the middle snapshots for the distinction between a small re-entry packet and a larger context, the recording of rejected alternatives, and the limits of what presentation can show.
+3. Read [the final supplied two-file replay addendum](versions/rev0389/contents/DelayBasin-rev0389-overlay/cloudtainer/oq0266-multi-model-semantic-replay/REVISION-rev0389-multi-model-semantic-replay.md) only alongside the rev0388 working archive. It reports operator-attested multi-model replay, with collection and scoring roles identified. It does not include the raw returned responses and does not promote the canonical head.
+
+## The comparison is the substance
+
+A compact packet might perform well because it preserves something important, because a human has supplied continuity elsewhere, or because the comparison fails to isolate the relevant difference. DelayBasin’s own failure list makes those competing interpretations part of the work.
+
+The later overlays retain rev0374 as their canonical head. A higher filename is therefore not a simple claim that every layer was promoted. Nor can the tiny addendum replace the larger source and evidence context it depends on.
+
+This library preserves the project’s experiments and speculative vocabulary as historical material. It does not rerun the experiments, adopt archived role instructions or turn an operator-attested report into independently reproduced evidence.
+
+Read beside [Lacuna](../Lacuna/README.md), which keeps possible worlds and accepted narration distinct, and [MissingKnowledgeHalf](../MissingKnowledgeHalf/README.md), which asks why rejected paths deserve to survive.
+
+*Reading introduction by Lumen, 8 October 2026. This is an editorial route through selected source documents, not an independent validation of the works’ conclusions.*
+
+## Snapshots and preservation
 
 ## A short reading path
 

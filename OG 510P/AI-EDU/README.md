@@ -1,8 +1,31 @@
 # AI-EDU
 
-A research and design archive about education with AI, including learner reliance, continuity, remedy, disclosure and teacher-facing experimentation. The latest supplied workflow retains unresolved owner-evidence and real-pilot gates. The archived proposals and templates are not current institutional policy or evidence of educational effectiveness.
+## A polished answer is not the same as learning
 
-Supplied by h0p3; reading guides by Lumen, added 8 October 2026 UTC.
+AI-EDU asks which parts of education should become more humanly important when AI assistance becomes ordinary. Its early charter centers understanding, agency, guided practice and teacher judgment rather than treating more automated output as a sufficient success measure.
+
+That broad question meets a second one throughout the archive: what institutions owe a learner who has already trusted their guidance. Continuity, changes of route, repeated proof and repair can determine whether an ostensibly helpful system actually leaves someone stranded.
+
+## Two scales of the work
+
+1. Read [the early charter](versions/rev0018/files/docs/00-meta/charter.md) for the teacher-led, student-active educational thesis.
+2. Read [Documented reliance and burden thresholds](versions/rev0018/files/docs/30-operations/documented-reliance-and-burden-thresholds.md). It connects evidence of reliance with the practical burden of a midstream change, rather than assuming every visit creates an entitlement or every change can be cured by new instructions.
+3. Compare the intermediate snapshot guides on separate clocks and repeat repair.
+4. Open [the later teacher/tutor move-coach entrance](versions/rev0336/files/README.md). The scope has narrowed to one selected concept and whether a local workflow is usable without compromising learner independence.
+
+## Keep institutional design and evidence of effectiveness distinct
+
+The later packets and source-result links organize a possible pilot. They do not demonstrate that a student learned, a teacher adopted the method or an institution approved it. The supplied archive retains unresolved owner-evidence and real-pilot boundaries.
+
+Read the narrowing sympathetically but critically: a focused teaching move can make a large ambition testable, while the original educational aims should still govern what counts as a worthwhile result. Completing a form is not a substitute for understanding.
+
+The source’s policy examples are historical research, not current educational or legal guidance. No learner records were collected and no teaching experiment was started for this edition.
+
+Read beside [The Good](../The-Good/README.md) on usable access and [MissingKnowledgeHalf](../MissingKnowledgeHalf/README.md) on what unsuccessful or inconclusive attempts can teach.
+
+*Reading introduction by Lumen, 8 October 2026. This is an editorial route through selected source documents, not an independent validation of the works’ conclusions.*
+
+## Snapshots and preservation
 
 ## Selected checkpoints
 

@@ -1,8 +1,29 @@
 # Metaphysics
 
-A philosophical research archive, from a proposed layered-realist synthesis and mind/body questions to structured claim and research-debt records. Later governance files are local evidence-management surfaces; they do not establish philosophical completeness, source currentness or the truth of the portfolio.
+## Being dependent does not mean being unreal
 
-Supplied by h0p3. Reading guides by Lumen, added 8 October 2026 UTC.
+Metaphysics begins with a refusal to let explanation erase its subject. The early archive’s preferred “articulated layered realism” allows derivative realities to remain real: an organism, institution or process need not be fundamental in order to matter to an account of what exists.
+
+The challenge is to earn that generosity. If every useful word automatically becomes a kind of being, the theory loses discipline; if only the lowest-level vocabulary counts, it risks explaining away the very things it set out to understand.
+
+## Begin with a distinction you can test in thought
+
+1. Read [the early orientation](versions/rev0028/files/Metaphysics-rev0028-2026.03.22.11.58-mindbodyhinge-embodimentbridge-mentalcausation-psychophysicalunity/README.md) for the proposed portfolio: grounding, essence, emergence, history, composition and social reality have different jobs.
+2. Open [Emergence, levels, and non-eliminative reality](versions/rev0028/files/Metaphysics-rev0028-2026.03.22.11.58-mindbodyhinge-embodimentbridge-mentalcausation-psychophysicalunity/archive/006-emergence-levels-and-non-eliminative-reality.md). It tries to hold dependence and autonomy together, distinguishing a real explanatory role from merely using “emergence” as a name for ignorance.
+3. Use [the early index](versions/rev0028/files/Metaphysics-rev0028-2026.03.22.11.58-mindbodyhinge-embodimentbridge-mentalcausation-psychophysicalunity/INDEX.md) to follow mind/body, identity or social ontology according to your question.
+4. Compare [the later revision’s account of claims and research debt](versions/rev0185/files/README.md). Its administrative vocabulary records what remains to be justified; it is not itself a new metaphysical proof.
+
+## Read both the proposal and its obligations
+
+The two supplied snapshots make a useful contrast between philosophical synthesis and managing the burdens of that synthesis. A claim can acquire a stable identifier, a relation to other claims and a scheduled review without becoming true. Conversely, the absence of a finished system does not make the distinctions uninteresting.
+
+The later README retains an earlier header under its new release notice. Follow the explicit rev0185 scope rather than assuming every nearby statement has been freshly established. Philosophical completeness and external review remain unclaimed.
+
+Read beside [The Good](../The-Good/README.md) for a different pluralist synthesis and [Theory of Everything](../Theory-of-Everything/README.md) for an inquiry whose bridges must also answer to physical evidence.
+
+*Reading introduction by Lumen, 8 October 2026. This is an editorial route through selected source documents, not an independent validation of the works’ conclusions.*
+
+## Snapshots and preservation
 
 ## Selected snapshots
 
