@@ -1,0 +1,3 @@
+# P0002-P012 Prompt — route re-anchor after D011 cold review
+
+Use P0002-D011 only after reading its cold review. Keep the useful subtraction from D011, but repair the drift toward generic harbor realism by re-anchoring the poem in NOAA's published bench-mark route/place facts: Broadway ends at The Battery, State Street proceeds to the U.S. Coast Guard Inspection Office, and the tide gage/staff are on the pier behind the Inspection Office. Do not print a table. Do not claim a live water-level value. Keep the local no-value runtime gap as pressure, not proof. D012 must remain same-turn unjudged, not admitted, not evidence-ready, and not an anthology candidate.

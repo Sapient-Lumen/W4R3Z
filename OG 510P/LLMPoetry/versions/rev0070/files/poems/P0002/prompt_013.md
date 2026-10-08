@@ -1,0 +1,3 @@
+# P0002-P013 Prompt — benchmark object re-anchor after D012 cold review
+
+Use P0002-D012 only after reading its cold review. Preserve the no-value / water-did hinge, but do not let the poem resolve into directions or thesis. Shift the pressure to the NOAA published benchmark object: the tidal station disk set in a concrete loading dock near the blue brick guard house at the Coast Guard building context. Keep the body free of NOAA tables, station numbers, live data, and explanatory `Station Datum` language. D013 must remain same-turn unjudged, not admitted, not evidence-ready, not an anthology candidate, and not a reader response.

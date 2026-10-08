@@ -1,0 +1,3 @@
+# Prompt — P0002-D017 — Borrowed Corners
+
+After cold-reviewing P0002-D016 as too instructional, use the NOAA 8518750 benchmark sheet's dry corner-offset syntax without writing directions. Preserve the source facts: disk in concrete loading dock, east/SW corner-offset pressure, blue brick guard house, westernmost corner, south corner, above ground, staff behind office, Station Datum / first tide staff, and failed local latest-water capture. Cut the D016 commands (`To find`, `Start`, `Take`) and the explanatory closure (`found by corners, not by tide`). Do not claim a live water-level value. Do not promote same-turn.

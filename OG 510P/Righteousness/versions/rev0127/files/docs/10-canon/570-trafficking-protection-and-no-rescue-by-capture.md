@@ -1,0 +1,57 @@
+# Trafficking, Protection, and No-Rescue-by-Capture
+
+## Why this surface matters
+
+The archive already rejects captive service, no-risk-export, no-rightlessness-by-paper, no-home-as-exception, and no-punishment-by-dependency. What it still lacked was a compact rule for **what happens when a person is identified as trafficked, or at serious risk of trafficking, and institutions answer mainly through detention, prosecution, deportation, closed shelters, or compelled cooperation while calling the arrangement rescue, anti-smuggling, cybercrime response, or victim protection**.[S93][S127][S137][S138][S139][S141][S142][S181][S360][S361][S362][S363][S364][S365][S366]
+
+That gap matters because trafficking sits at a morally dangerous junction. The same office may raid a site, separate victims from traffickers, hold passports and phones, demand statements, threaten immigration consequences, prosecute crimes committed under coercion, or confine survivors in the name of safety. But if safety, legal status, movement, or access to care depend on accepting the authority's custodial script, righteousness is not secured by naming the system rescue. It may simply be a second capture with better rhetoric.[S34][S35][S41][S45][S47][S49][S93][S127][S181][S360][S361][S362][S363][S364]
+
+## Working-canon thesis
+
+> **Righteousness is burdened, and often defeated, when anti-trafficking, migration, labour, criminal-justice, or cybercrime systems respond to trafficking mainly through detention, prosecution, deportation, closed-shelter confinement, compelled testimony, or punishment for acts that flowed from exploitation. Trafficking justifies strong action against traffickers and real protective intervention for victims. But once rescue or protection are doing their practical work by making safety, movement, legal status, or access to care depend on custody or compliance with authorities, righteousness usually fails unless the intervention is narrowly necessary, non-punitive, reviewable, and genuinely exit-enabling.**[S34][S35][S41][S45][S47][S49][S93][S127][S181][S360][S361][S362][S363][S364][S365][S366]
+
+## 1. Trafficking is first a standing injury, not just a crime-control category
+
+Current OHCHR trafficking materials matter because they say many practices associated with trafficking — debt bondage, slavery, servitude, child sexual exploitation, forced marriage, and enforced prostitution — are already human-rights violations, not merely bad market behavior or border disorder.[S360] The Trafficking Protocol sharpens the same point by making protection and assistance to victims, with full respect for their human rights, one of the instrument's stated purposes rather than an optional afterthought to prosecution.[S362]
+
+That is morally clarifying for the archive because it blocks a common inversion. Once trafficking is suspected, the person harmed can disappear into a file as evidence, illegal entrant, disorder problem, prostitution offender, scam operator, or witness resource. But righteousness cannot begin from that disappearance. A righteous response may punish traffickers vigorously, yet it must still keep the trafficked person visible as a bearer of standing whose liberty, privacy, bodily integrity, documents, family ties, and future are not automatically available for state management.[S34][S35][S41][S45][S47][S49][S93][S127][S181][S360][S361][S362]
+
+## 2. Apparent consent does not cleanse exploitation
+
+The Trafficking Protocol is morally revealing because it defines trafficking through coercion, fraud, deception, abuse of power, or abuse of a position of vulnerability, and then says the victim's consent to the intended exploitation is irrelevant where those means have been used.[S362] OHCHR's current overview is useful for the same reason: it names trafficking as exploitation structured through domination rather than as an unfortunate transaction that remained valid because someone initially agreed, moved, or trusted the wrong recruiter.[S360]
+
+This matters because righteousness often gets laundered through narrative shortcuts such as “they accepted the job,” “they crossed voluntarily,” “they kept the money,” or “they participated in the offence.” Current OHCHR materials on trafficking into scam compounds sharpen the point further: people can be recruited through trusted contacts, transported across borders, trapped in prison-like settings, and forced into online fraud or other criminalized conduct while still looking outwardly like willing workers or ordinary offenders.[S365][S366] The archive therefore now treats apparent choice, movement, or participation as morally weak evidence wherever coercion, dependency, threat, fraud, or abused vulnerability are doing the real work.[S34][S35][S41][S45][S47][S49][S93][S127][S181][S360][S362][S365][S366]
+
+## 3. Non-punishment is not leniency; it is part of protection
+
+The 2021 Special Rapporteur report matters because it calls the non-punishment principle a cornerstone of effective protection for victims of trafficking and notes that failures still include punishment outside ordinary criminal conviction, such as administrative sanctions, deprivation of nationality, and detention in closed shelters.[S363] UNODC's ICAT issue-brief materials sharpen the same point by stating that trafficked persons should not be subject to arrest, charge, detention, prosecution, or other punishment for illegal conduct committed as a direct consequence of being trafficked.[S364]
+
+That helps the archive name a recurring laundering move. An office may say it was not punishing the trafficked person *as a victim*; it was merely enforcing immigration law, public-order law, prostitution law, scam law, document law, curfew rules, shelter rules, or another facially ordinary regime. But once the practical result is that exploitation turns into second-stage custody, fines, records, removal, or confinement for the exploited person, the system is no longer merely protecting against trafficking. It is governing through punishment after coercion.[S34][S35][S41][S45][S47][S49][S93][S127][S181][S362][S363][S364]
+
+## 4. Rescue can become a second captivity
+
+OHCHR's Recommended Principles and Guidelines matter because they provide the human-rights frame for anti-trafficking work rather than letting criminal law or migration control set the moral horizon by themselves.[S361] The Trafficking Protocol's victim-protection provisions matter because they foreground privacy, information, and assistance instead of treating victims as disposable evidence.[S362] The non-punishment report then sharpens the warning by naming detention in closed shelters and other quasi-protective restrictions as live defects rather than as morally neutral care.[S363]
+
+This is where the archive needed a new compression rule. A trafficked person may be physically removed from the exploiter and yet still be unable to leave, refuse interviews, recover documents, contact family, choose housing, decide about return, or decline participation in prosecution without losing protection. At that point the question is no longer whether the authority used the word rescue. The question is whether protection preserved agency and standing, or merely changed who held the keys.[S34][S35][S41][S45][S47][S49][S93][S127][S181][S361][S362][S363]
+
+## 5. Emerging forms of trafficking prove protection cannot stay inside old scripts
+
+Current OHCHR materials on scam compounds are morally revealing because they show trafficking now appearing in forms that can be mistaken for pure cybercrime, immigration violation, or willing criminality. The 2025 experts' statement warns of large-scale trafficking for forced labour and forced criminality in scam compounds across Southeast Asia, where hundreds of thousands of people of various nationalities are trapped and forced to carry out online fraud.[S365] The 2026 OHCHR report page sharpens the point by documenting grave abuses against people trafficked into scam centres from many countries between 2021 and 2025.[S366]
+
+This matters for righteousness because it blocks another innocence story: that institutions only failed to identify a few exceptional victims. In reality, the category of trafficking keeps meeting systems that are already built to see border offenders, illicit workers, sex offenders, or fraud perpetrators faster than they see coercion, dependency, and captured labour. Where that institutional eyesight is not repaired, rescue becomes sporadic and punishment becomes systematic.[S34][S35][S41][S45][S47][S49][S93][S127][S181][S360][S365][S366]
+
+## 6. Working rule
+
+When an actor claims righteousness while trafficking, anti-trafficking, or trafficking-adjacent enforcement is at issue, ask seven questions:
+1. **What standing-bearing thing was actually at stake?** Immediate safety, liberty, immigration status, bodily integrity, document control, wages, shelter, family contact, privacy, remedy, or freedom from retaliation?[S93][S127][S181][S360][S361][S362][S363][S364]
+2. **What mechanism did the real burden work?** Raid, arrest, immigration detention, deportation order, closed shelter, phone confiscation, passport retention, compelled interview, witness pressure, prosecution for prostitution or forced criminality, or another custodial or punitive lever?[S361][S362][S363][S364][S365][S366]
+3. **Who carried the burden in practice?** Women and girls, children, migrant workers, refugees, undocumented people, poorer people, disabled persons, racialized groups, queer people, or others already easier to misread as disposable, illegal, or unreliable?[S360][S363][S365][S366]
+4. **What made the response genuinely protective rather than custody-preserving?** Safe housing, medical care, interpretation, legal aid, trauma-informed practice, survivor-chosen contact, income support, status protection, and a real option not to cooperate with authorities on pain of losing safety?[S361][S362][S363][S364]
+5. **What did support depend on in practice?** Testimony, continued confinement, migration compliance, institutional silence, immediate repatriation, surrender of earnings, or another condition that made protection look like exchange rather than due?[S361][S362][S363][S364]
+6. **What review and remedy remained live?** Challenge to detention, complaint against officials, expungement of charges, return of documents, compensation, secure residence, family reunification, or safe exit from both traffickers and the protective regime itself?[S361][S362][S363][S364]
+7. **Was rescue doing the moral laundering?** If the stronger party can say “they were also offenders,” “immigration law required removal,” “the shelter had to be closed,” “they needed to be held for their own safety,” or “cooperation was necessary” while liberty and ordinary standing were being made conditional on custody, the righteousness claim is presumptively corrupted.[S34][S35][S41][S45][S47][S49][S93][S127][S181][S361][S362][S363][S364][S365][S366]
+
+## Compression sentence
+
+> **Do not let rescue become a second captivity: where institutions answer trafficking mainly through detention, prosecution, deportation, closed shelters, or compelled cooperation rather than through non-punishment, rights-preserving protection, and real exit from exploiters, righteousness fails unless the intervention is truly protective, reviewable, and exit-enabling.**[S34][S35][S41][S45][S47][S49][S93][S127][S181][S360][S361][S362][S363][S364][S365][S366]
+

@@ -1,0 +1,286 @@
+--- pynicotine/downloads.py
++++ pynicotine/downloads.py
+@@ -1083,6 +1083,14 @@
+ 
+         download = (self.queued_users.get(username, {}).get(virtual_path)
+                     or self.failed_users.get(username, {}).get(virtual_path))
++        active_download = self.active_users.get(username, {}).get(token)
++
++        if active_download is not None and active_download is not download:
++            log.add_transfer("Rejected duplicate download request with token %s for file %s from user %s; "
++                             "token is already bound to active file %s",
++                             (token, virtual_path, username, active_download.virtual_path))
++            reason = TransferRejectReason.QUEUED if download is not None else TransferRejectReason.CANCELLED
++            return TransferResponse(allowed=False, reason=reason, token=token)
+ 
+         if download is not None:
+             # Remote peer is signaling a transfer is ready, attempting to download it
+--- pynicotine/transfers.py
++++ pynicotine/transfers.py
+@@ -553,13 +553,20 @@
+         username = transfer.username
+         token = transfer.token
+ 
+-        if token is None or token not in self.active_users.get(username, {}):
++        if token is None:
+             return False
+ 
+-        del self.active_users[username][token]
++        active_transfers = self.active_users.get(username, {})
++        active_transfer = active_transfers.get(token)
++        deactivated = False
+ 
+-        if not self.active_users[username]:
+-            del self.active_users[username]
++        if active_transfer is transfer:
++            del active_transfers[token]
++
++            if not active_transfers:
++                del self.active_users[username]
++
++            deactivated = True
+ 
+         if transfer.speed > 0:
+             self.total_bandwidth = max(0, self.total_bandwidth - transfer.speed)
+@@ -572,7 +579,7 @@
+         transfer.sock = None
+         transfer.token = None
+ 
+-        return True
++        return deactivated
+ 
+     def _fail_transfer(self, transfer):
+         self.failed_users[transfer.username][transfer.virtual_path] = transfer
+--- pynicotine/slskproto.py
++++ pynicotine/slskproto.py
+@@ -920,19 +920,35 @@
+         conn_type = init.conn_type
+ 
+         if username == self._server_username:
+-            return
++            return True
+ 
+-        prev_init = self._username_init_msgs.pop(username + conn_type, None)
++        init_key = username + conn_type
++        prev_init = self._username_init_msgs.pop(init_key, None)
+ 
+         if prev_init is None or prev_init.sock is None:
+-            return
++            return True
++
++        prev_conn = self._conns.get(prev_init.sock)
++
++        if prev_conn is None:
++            return True
++
++        if prev_conn.is_established:
++            self._username_init_msgs[init_key] = prev_init
++            log.add_conn(
++                "Rejecting replacement connection of type %s to user %s, "
++                "since an established primary connection already exists",
++                (conn_type, username)
++            )
++            return False
+ 
+         log.add_conn("Discarding existing connection of type %s to user %s", (init.conn_type, username))
+ 
+         init.outgoing_msgs = prev_init.outgoing_msgs
+         prev_init.outgoing_msgs = []
+ 
+-        self._close_connection(self._conns[prev_init.sock])
++        self._close_connection(prev_conn)
++        return True
+ 
+     @staticmethod
+     def _close_socket(sock):
+@@ -1658,7 +1674,9 @@
+             self._set_tcp_buffer_size(conn.sock, conn_type)
+ 
+             init = msg
+-            self._replace_existing_connection(init)
++
++            if not self._replace_existing_connection(init):
++                return None
+ 
+         self._emit_network_message_event(msg)
+         return init
+@@ -2602,9 +2620,15 @@
+             self._process_distrib_input(conn)
+ 
+         if conn.sock is not None and init.sock is not conn.sock:
+-            log.add_conn("Received message on secondary connection of type %s to user %s, "
+-                         "promoting to primary connection", (init.conn_type, init.target_user))
+-            init.sock = conn.sock
++            primary_conn = self._conns.get(init.sock)
++
++            if init.sock is None or primary_conn is None or not primary_conn.is_established:
++                log.add_conn("Received message on secondary connection of type %s to user %s, "
++                             "promoting to primary connection", (init.conn_type, init.target_user))
++                init.sock = conn.sock
++            else:
++                log.add_conn("Received message on secondary connection of type %s to user %s, "
++                             "keeping established primary connection", (init.conn_type, init.target_user))
+ 
+     def _process_outgoing_messages(self, msgs):
+ 
+--- pynicotine/search.py
++++ pynicotine/search.py
+@@ -274,12 +274,19 @@
+             if feedback is not None:
+                 room, search_term = feedback
+ 
++            room_obj = getattr(getattr(core, "chatrooms", None), "joined_rooms", {}).get(room)
++
++            if room_obj is not None and room_obj.users:
++                users = tuple(room_obj.users)
++
+         elif mode == "buddies":
+             feedback = core.pluginhandler.outgoing_buddy_search_event(search_term)
+ 
+             if feedback is not None:
+                 search_term = feedback[0]
+ 
++            users = tuple(core.buddies.users)
++
+         elif mode == "user":
+             if not users:
+                 users = [core.users.login_username]
+@@ -328,7 +335,7 @@
+             self.do_rooms_search(search.term_transmitted, room)
+ 
+         elif mode == "buddies":
+-            self.do_buddies_search(search.term_transmitted)
++            self.do_buddies_search(search.term_transmitted, search.users)
+ 
+         elif mode == "user":
+             self.do_peer_search(search.term_transmitted, users)
+@@ -346,8 +353,11 @@
+     def do_rooms_search(self, text, room):
+         core.send_message_to_server(RoomSearch(room, self.token, text))
+ 
+-    def do_buddies_search(self, text):
+-        for username in core.buddies.users:
++    def do_buddies_search(self, text, users=None):
++        if users is None:
++            users = tuple(core.buddies.users)
++
++        for username in users:
+             core.send_message_to_server(UserSearch(username, self.token, text))
+ 
+     def do_peer_search(self, text, users):
+@@ -463,6 +473,24 @@
+             return
+ 
+         username = msg.username
++
++        if search.mode == "user":
++            expected_users = search.users or ()
++
++            if username not in expected_users:
++                msg.token = None
++                return
++
++        elif search.mode == "buddies" and search.users is not None:
++            if username not in search.users:
++                msg.token = None
++                return
++
++        elif search.mode == "rooms" and search.users is not None:
++            if username not in search.users:
++                msg.token = None
++                return
++
+         ip_address, _port = msg.addr
+ 
+         if core.network_filter.is_user_ignored(username):
+--- pynicotine/slskmessages.py
++++ pynicotine/slskmessages.py
+@@ -52,6 +52,8 @@
+ UINT64_PACK = Struct("<Q").pack
+ 
+ SEARCH_TOKENS_ALLOWED = set()
++MAX_SEARCH_RESPONSE_USERNAME_LENGTH = 255
++MAX_SEARCH_RESPONSE_RESULT_COUNT = 10000
+ 
+ 
+ def initial_token():
+@@ -3310,6 +3312,12 @@
+         max_uncompressed_size = 134217728  # 128 MiB
+ 
+         _pos, username_len = self.unpack_uint32(decompressor.decompress(message, 4))
++
++        if username_len > MAX_SEARCH_RESPONSE_USERNAME_LENGTH:
++            self.token = None
++            self.list = []
++            return
++
+         _pos, self.token = self.unpack_uint32(
+             decompressor.decompress(decompressor.unconsumed_tail, username_len + 4), username_len)
+ 
+@@ -3318,14 +3326,37 @@
+             self.list = []
+             return
+ 
+-        # Optimization: only decompress the rest of the message when needed
+-        decompressed_message = decompressor.decompress(decompressor.unconsumed_tail, max_uncompressed_size)
++        # Optimization: only decompress the rest of the message when needed.
++        accepted_result_count_header = decompressor.decompress(decompressor.unconsumed_tail, 4)
++
++        if len(accepted_result_count_header) < 4:
++            self.token = None
++            self.list = []
++            return
++
++        _pos, accepted_result_count = self.unpack_uint32(accepted_result_count_header)
++        if accepted_result_count > MAX_SEARCH_RESPONSE_RESULT_COUNT:
++            self.token = None
++            self.list = []
++            self.privatelist = []
++            return
++
++        decompressed_message = accepted_result_count_header + decompressor.decompress(
++            decompressor.unconsumed_tail, max_uncompressed_size - len(accepted_result_count_header))
+ 
+         if not decompressor.unconsumed_tail:
+             self._parse_remaining_network_message(memoryview(decompressed_message))
+ 
+     def _parse_remaining_network_message(self, message):
+-        pos, self.list = self._parse_result_list(message)
++        pos, results = self._parse_result_list(message, max_results=MAX_SEARCH_RESPONSE_RESULT_COUNT)
++
++        if results is None:
++            self.token = None
++            self.list = []
++            self.privatelist = []
++            return
++
++        self.list = results
+         pos, self.freeulslots = self.unpack_bool(message, pos)
+         pos, self.ulspeed = self.unpack_uint32(message, pos)
+         pos, self.inqueue = self.unpack_uint32(message, pos)
+@@ -3334,11 +3365,23 @@
+             pos, self.unknown = self.unpack_uint32(message, pos)
+ 
+         if message[pos:]:
+-            pos, self.privatelist = self._parse_result_list(message, pos)
++            remaining_results = MAX_SEARCH_RESPONSE_RESULT_COUNT - len(self.list)
++            pos, private_results = self._parse_result_list(message, pos, max_results=remaining_results)
+ 
+-    def _parse_result_list(self, message, pos=0):
++            if private_results is None:
++                self.token = None
++                self.list = []
++                self.privatelist = []
++                return
++
++            self.privatelist = private_results
++
++    def _parse_result_list(self, message, pos=0, max_results=MAX_SEARCH_RESPONSE_RESULT_COUNT):
+         pos, nfiles = self.unpack_uint32(message, pos)
+ 
++        if nfiles > max_results:
++            return pos, None
++
+         ext = None
+         results = []
+ 

@@ -1,0 +1,45 @@
+# Digital-only administration, portal services, and no-rights-by-portal
+
+> **Righteousness is burdened, and often defeated, when access to benefits, schooling, permits, complaints, voting-adjacent functions, hearings, identity proofing, or other public and essential services is made to depend on a portal, app, device, connectivity path, or digital-authentication flow such that rights become practically unusable for people who cannot reliably clear the digital gate, obtain the required technology or ID, or reach timely human and offline help.**[S34][S35][S41][S45][S47][S49][S93][S501][S502][S503][S504][S505]
+
+## 1. The missing moral question is not whether a service is online, but whether the portal has become the practical title to the right
+
+The archive already rejected no-rightlessness-by-disconnection, no-rightlessness-by-paper, no-destitution-by-sanction, no-schooling-by-exclusion, and no-rights-without-redress. But it still lacked a direct rule for a now-common defect: **a person may formally possess the right while practically needing to pass through a portal, app, identity-proofing flow, browser requirement, upload format, or help-thin digital queue that they cannot reliably use.**[S34][S35][S41][S45][S47][S49][S93][S501][S502][S503][S504][S505]
+
+That gap matters because institutions often describe the change as mere modernization. They say they are simplifying service delivery, reducing paperwork, improving fraud control, consolidating accounts, or making services available 24/7. Sometimes they really are improving access. But righteousness has to ask a narrower question: **what actually did the practical work of deciding whether this person could get the benefit, file the complaint, prove who they are, watch the hearing, enroll the child, or answer the deadline — the underlying right, or the person's ability to traverse a digital gate with the required device, data, literacy, disability accommodation, language support, and proofing credentials?**[S34][S35][S41][S45][S47][S49][S93][S501][S502][S503][S504][S505]
+
+So the archive now needs a canon surface that is not reducible either to internet access alone or to paper-status problems alone. No-rights-by-portal asks when a digital route stops being a convenience or additional channel and becomes the standing-defective infrastructure through which rights are rationed, delayed, or made unreachable.[S34][S35][S41][S45][S47][S49][S93][S501][S502][S503][S504][S505]
+
+## 2. Current official materials now name this family clearly enough to justify canon admission
+
+Current DOJ materials are morally revealing because the Department's January 2025 guidance says barriers to accessing services online affect people's day-to-day lives and notes that inaccessible online forms can prevent someone with a disability from completing and submitting them; the same guidance says accessible web and mobile services matter for registering to vote, attending public schools and universities, applying for government benefits, requesting local services, and watching public hearings.[S501] The Department's 2024 fact sheet adds that Title II of the ADA applies to all state and local government services, programs, and activities, including those offered on websites and through mobile apps, and that the new rule is meant to ensure equal access rather than leaving accessibility as a vague aspiration.[S501][S502]
+
+EU materials sharpen the same point from a cross-public-service angle. The Commission's current web-accessibility materials say the Web Accessibility Directive provides people with disabilities better access to websites and mobile apps of public services and requires accessibility statements, feedback mechanisms, and regular monitoring.[S502] The Interoperable Europe principles then make the deeper design point explicit: inclusion and accessibility must be built through the whole lifecycle of a public service, and multi-channel delivery may require paper-based or face-to-face service to coexist with electronic delivery, while third parties may need to act on behalf of citizens who cannot make direct use of digital services.[S504]
+
+Current UK public materials make the non-exclusion point even plainer. The government's 2026 Digital Inclusion Action Plan progress update says online services must be simple to use **with offline options too** and identifies low-income households, older people, disabled people, unemployed people, and some young people as groups more likely to struggle.[S503] The current GOV.UK digital-identity consultation similarly says the system must be for everyone and that people will not be left behind if they struggle with technology or do not have other forms of ID such as a passport.[S505]
+
+Together these materials show that no-rights-by-portal is not a speculative worry but an active governance boundary around how digitization may and may not structure public and essential access.[S501][S502][S503][S504][S505]
+
+## 3. The righteousness issue is not digitization as such; it is making the digital gate do the real work of exclusion, delay, or burden
+
+Righteousness should not treat every portal, mobile app, digital-identity system, online form, or automated intake route as automatically unrighteous. Digitization can reduce travel, preserve records, speed communication, widen hours of access, and support people who prefer remote interaction.[S501][S502][S503] The narrower defect appears where the digital route stops being one service channel among others and becomes the practical monopoly route through which the burdened person must pass.
+
+That defect is clearest where a person loses a deadline because the portal fails, cannot upload the required document, cannot complete proofing without a passport or smartphone, cannot use the interface with assistive technology, cannot navigate English-only or jargon-heavy screens, cannot reach a human being with authority to solve the problem, or cannot have a helper act on their behalf.[S501][S502][S503][S504][S505] In those cases the wrong is not simply that technology was used. It is that the right has been made to depend on no-rights-by-portal.[S34][S35][S41][S45][S47][S49][S93][S501][S502][S503][S504][S505]
+
+That matters across benefits systems, schools, court and complaint interfaces, tax and licensing systems, public hearings, health-administration systems, digital-ID rollouts, utility and banking service interfaces, and other ordinary access points where a portal can function as a standing-determining gate rather than as an aid.[S501][S502][S503][S504][S505]
+
+## 4. Questions righteous judgment should now ask
+
+When an actor claims righteousness while digitizing access to public or essential services, ask seven questions:
+
+1. **What exact service or right was at stake?** Was the digital route attached to benefits, schooling, identification, hearing access, complaint, tax filing, permit renewal, utility access, or another standing-bearing function?[S501][S502][S503][S504][S505]
+2. **What exact digital dependencies did the system impose?** Portal account creation, smartphone possession, browser/device compatibility, one-time passcodes, biometric or document proofing, upload format, constant connectivity, or another gate?[S501][S502][S503][S504][S505]
+3. **What non-digital, assisted-digital, or proxy routes remained live?** Could paper, phone, face-to-face help, authorized representatives, community intermediaries, or emergency overrides still carry the claim?[S503][S504][S505]
+4. **Was the digital route actually accessible and intelligible?** Did the system work with assistive technology, language needs, low-literacy users, older devices, and ordinary error recovery, or was accessibility treated as an afterthought?[S501][S502][S503][S504]
+5. **Who bore the heavier burden in practice?** Did disabled people, poorer people, rural users, migrants, older adults, people with limited English, people lacking passports or smartphones, or those in crisis carry the exclusion cost?[S34][S35][S41][S45][S47][S49][S93][S501][S503][S504][S505]
+6. **What happened when the digital path failed?** Was there deadline tolling, human override, rapid correction, continuity of service, and a reachable complaint path, or did technical failure harden into lost rights?[S501][S502][S503][S504][S505]
+7. **Was the portal doing the real work?** If the person could not traverse the digital gate, would the institution still have recognized the underlying claim through another route, or had the interface quietly become the real decision-maker?[S34][S35][S41][S45][S47][S49][S93][S501][S502][S503][S504][S505]
+
+## 5. Canonical compression
+
+> **Do not let a portal become the practical title to a right.** Digitization may widen access when it is genuinely accessible and backed by reachable human, proxy, and offline routes, but righteousness is heavily burdened when benefits, schooling, complaints, hearings, identification, or other standing-bearing services become usable mainly for those who can successfully clear the digital gate.[S34][S35][S41][S45][S47][S49][S93][S501][S502][S503][S504][S505]

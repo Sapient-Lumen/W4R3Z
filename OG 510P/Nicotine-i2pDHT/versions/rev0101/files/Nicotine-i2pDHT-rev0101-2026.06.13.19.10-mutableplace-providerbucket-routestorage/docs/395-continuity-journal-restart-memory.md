@@ -1,0 +1,3 @@
+# 395-continuity-journal-restart-memory.md
+
+rev0039 continuityjournal probeloop successionrepair servicelease sessionledger serviceepochledger servicehandoffledger serviceepochfold serviceoperabilityfold continuityjournalfold.

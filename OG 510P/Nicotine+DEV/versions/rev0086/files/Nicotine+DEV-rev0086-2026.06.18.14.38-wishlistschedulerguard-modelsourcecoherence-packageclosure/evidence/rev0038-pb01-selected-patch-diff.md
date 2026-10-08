@@ -1,0 +1,235 @@
+# rev0038 PB-01 selected patch diff by lane
+
+## github-tag-3.3.10
+
+```diff
+--- /mnt/data/nicotine_sources/Nicotine+DEV-rev0003-upstream-sources-20260612T181540Z/source-trees/github-tag-3.3.10/pynicotine/slskproto.py	2026-06-14 21:59:44.266339652 +0000
++++ /mnt/data/rev0038_pb01_patch_lanes/github-tag-3.3.10/pynicotine/slskproto.py	2026-06-15 02:21:14.206175505 +0000
+@@ -868,19 +868,35 @@
+         conn_type = init.conn_type
+
+         if username == self._server_username:
+-            return
++            return True
+
+-        prev_init = self._username_init_msgs.pop(username + conn_type, None)
++        init_key = username + conn_type
++        prev_init = self._username_init_msgs.pop(init_key, None)
+
+         if prev_init is None or prev_init.sock is None:
+-            return
++            return True
++
++        prev_conn = self._conns.get(prev_init.sock)
++
++        if prev_conn is None:
++            return True
++
++        if prev_conn.is_established:
++            self._username_init_msgs[init_key] = prev_init
++            log.add_conn(
++                "Rejecting replacement connection of type %s to user %s, "
++                "since an established primary connection already exists",
++                (conn_type, username)
++            )
++            return False
+
+         log.add_conn("Discarding existing connection of type %s to user %s", (init.conn_type, username))
+
+         init.outgoing_msgs = prev_init.outgoing_msgs
+         prev_init.outgoing_msgs = []
+
+-        self._close_connection(self._conns[prev_init.sock])
++        self._close_connection(prev_conn)
++        return True
+
+     @staticmethod
+     def _close_socket(sock):
+@@ -1575,7 +1591,9 @@
+                 return None
+
+             init = msg
+-            self._replace_existing_connection(init)
++
++            if not self._replace_existing_connection(init):
++                return None
+
+         self._emit_network_message_event(msg)
+         return init
+@@ -2545,9 +2563,15 @@
+             self._process_distrib_input(conn)
+
+         if conn.sock is not None and init.sock is not conn.sock:
+-            log.add_conn("Received message on secondary connection of type %s to user %s, "
+-                         "promoting to primary connection", (init.conn_type, init.target_user))
+-            init.sock = conn.sock
++            primary_conn = self._conns.get(init.sock)
++
++            if init.sock is None or primary_conn is None or not primary_conn.is_established:
++                log.add_conn("Received message on secondary connection of type %s to user %s, "
++                             "promoting to primary connection", (init.conn_type, init.target_user))
++                init.sock = conn.sock
++            else:
++                log.add_conn("Received message on secondary connection of type %s to user %s, "
++                             "keeping established primary connection", (init.conn_type, init.target_user))
+
+     def _process_outgoing_messages(self, msgs):
+
+
+```
+
+## github-branch-3.3.x
+
+```diff
+--- /mnt/data/nicotine_sources/Nicotine+DEV-rev0003-upstream-sources-20260612T181540Z/source-trees/github-branch-3.3.x/pynicotine/slskproto.py	2026-06-14 21:59:44.471654553 +0000
++++ /mnt/data/rev0038_pb01_patch_lanes/github-branch-3.3.x/pynicotine/slskproto.py	2026-06-15 02:21:21.528667668 +0000
+@@ -920,19 +920,35 @@
+         conn_type = init.conn_type
+
+         if username == self._server_username:
+-            return
++            return True
+
+-        prev_init = self._username_init_msgs.pop(username + conn_type, None)
++        init_key = username + conn_type
++        prev_init = self._username_init_msgs.pop(init_key, None)
+
+         if prev_init is None or prev_init.sock is None:
+-            return
++            return True
++
++        prev_conn = self._conns.get(prev_init.sock)
++
++        if prev_conn is None:
++            return True
++
++        if prev_conn.is_established:
++            self._username_init_msgs[init_key] = prev_init
++            log.add_conn(
++                "Rejecting replacement connection of type %s to user %s, "
++                "since an established primary connection already exists",
++                (conn_type, username)
++            )
++            return False
+
+         log.add_conn("Discarding existing connection of type %s to user %s", (init.conn_type, username))
+
+         init.outgoing_msgs = prev_init.outgoing_msgs
+         prev_init.outgoing_msgs = []
+
+-        self._close_connection(self._conns[prev_init.sock])
++        self._close_connection(prev_conn)
++        return True
+
+     @staticmethod
+     def _close_socket(sock):
+@@ -1658,7 +1674,9 @@
+             self._set_tcp_buffer_size(conn.sock, conn_type)
+
+             init = msg
+-            self._replace_existing_connection(init)
++
++            if not self._replace_existing_connection(init):
++                return None
+
+         self._emit_network_message_event(msg)
+         return init
+@@ -2602,9 +2620,15 @@
+             self._process_distrib_input(conn)
+
+         if conn.sock is not None and init.sock is not conn.sock:
+-            log.add_conn("Received message on secondary connection of type %s to user %s, "
+-                         "promoting to primary connection", (init.conn_type, init.target_user))
+-            init.sock = conn.sock
++            primary_conn = self._conns.get(init.sock)
++
++            if init.sock is None or primary_conn is None or not primary_conn.is_established:
++                log.add_conn("Received message on secondary connection of type %s to user %s, "
++                             "promoting to primary connection", (init.conn_type, init.target_user))
++                init.sock = conn.sock
++            else:
++                log.add_conn("Received message on secondary connection of type %s to user %s, "
++                             "keeping established primary connection", (init.conn_type, init.target_user))
+
+     def _process_outgoing_messages(self, msgs):
+
+
+```
+
+## github-branch-master
+
+```diff
+--- /mnt/data/nicotine_sources/Nicotine+DEV-rev0003-upstream-sources-20260612T181540Z/source-trees/github-branch-master/pynicotine/slskproto.py	2026-06-14 21:59:44.696470311 +0000
++++ /mnt/data/rev0038_pb01_patch_lanes/github-branch-master/pynicotine/slskproto.py	2026-06-15 02:21:28.050842129 +0000
+@@ -938,19 +938,35 @@
+         conn_type = init.conn_type
+
+         if username == self._server_username:
+-            return
++            return True
+
+-        prev_init = self._username_init_msgs.pop(username + conn_type, None)
++        init_key = username + conn_type
++        prev_init = self._username_init_msgs.pop(init_key, None)
+
+         if prev_init is None or prev_init.sock is None:
+-            return
++            return True
++
++        prev_conn = self._conns.get(prev_init.sock)
++
++        if prev_conn is None:
++            return True
++
++        if prev_conn.is_established:
++            self._username_init_msgs[init_key] = prev_init
++            log.add_conn(
++                "Rejecting replacement connection of type %s to user %s, "
++                "since an established primary connection already exists",
++                (conn_type, username)
++            )
++            return False
+
+         log.add_conn("Discarding existing connection of type %s to user %s", (init.conn_type, username))
+
+         init.outgoing_msgs = prev_init.outgoing_msgs
+         prev_init.outgoing_msgs = []
+
+-        self._close_connection(self._conns[prev_init.sock])
++        self._close_connection(prev_conn)
++        return True
+
+     @staticmethod
+     def _close_socket(sock):
+@@ -1700,7 +1716,9 @@
+             self._set_tcp_buffer_size(conn.sock, conn_type)
+
+             init = msg
+-            self._replace_existing_connection(init)
++
++            if not self._replace_existing_connection(init):
++                return None
+
+         self._emit_network_message_event(msg)
+         return init
+@@ -2726,9 +2744,15 @@
+             self._process_distrib_input(conn)
+
+         if conn.sock is not None and init.sock is not conn.sock:
+-            log.add_conn("Received message on secondary connection of type %s to user %s, "
+-                         "promoting to primary connection", (init.conn_type, init.target_user))
+-            init.sock = conn.sock
++            primary_conn = self._conns.get(init.sock)
++
++            if init.sock is None or primary_conn is None or not primary_conn.is_established:
++                log.add_conn("Received message on secondary connection of type %s to user %s, "
++                             "promoting to primary connection", (init.conn_type, init.target_user))
++                init.sock = conn.sock
++            else:
++                log.add_conn("Received message on secondary connection of type %s to user %s, "
++                             "keeping established primary connection", (init.conn_type, init.target_user))
+
+     def _process_outgoing_messages(self, msgs):
+
+
+```

@@ -1,0 +1,136 @@
+# Library
+
+This is Concord’s evolving “things worth keeping” shelf: references, design notes, and pointers that help future work stay grounded.
+
+Primary sources already live in the spec pack:
+- `Original-Starting-Place/reading/README.md`
+- `Original-Starting-Place/reading/links.yaml`
+- `Original-Starting-Place/reading/bibliography.bib`
+- `Original-Starting-Place/reading/papers/README.md`
+
+This folder adds:
+- short topical notes
+- “what we should build next” implications
+- links to where the relevant code lives
+
+Index:
+- `docs/LIBRARY/topics/metamorphic_testing.md`
+- `docs/LIBRARY/topics/adversarial_extortion.md`
+- `docs/LIBRARY/topics/search_and_extortion.md`
+- `docs/LIBRARY/topics/indirect_reciprocity_and_institutions.md`
+- `docs/LIBRARY/topics/reproducibility_and_provenance.md`
+- `docs/LIBRARY/topics/golden_rule_inheritor_brief.md`
+- `docs/LIBRARY/topics/memory_one_tradeoff_against_extortion.md`
+- `docs/LIBRARY/topics/unilateral_exit_is_not_partner_choice.md`
+- `docs/LIBRARY/topics/rematch_proxy_changes_the_frontier.md`
+- `docs/LIBRARY/topics/rematch_proxy_search_space_canonicalization.md`
+- `docs/LIBRARY/topics/rematch_proxy_canonicalization_is_pool_specific.md`
+- `docs/LIBRARY/topics/rematch_proxy_cache_invalidation_by_start_support.md`
+- `docs/LIBRARY/topics/rematch_proxy_noise_semantics_dominate_cache_keys.md`
+- `docs/LIBRARY/topics/rematch_proxy_minimal_cache_key_by_noise_mode.md`
+- `docs/LIBRARY/topics/rematch_proxy_horizon_saturates_early.md`
+- `docs/LIBRARY/topics/rematch_proxy_cache_plan_manifest.md`
+- `docs/LIBRARY/topics/rematch_proxy_zero_noise_regime_rules.md`
+- `docs/LIBRARY/topics/rematch_delay_is_a_first_class_world_parameter.md`
+- `docs/LIBRARY/topics/rematch_role_assignment_is_a_first_class_contract.md`
+- `docs/LIBRARY/topics/rematch_delay_is_not_market_thickness.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_occupancy_accounting.md`
+- `docs/LIBRARY/topics/rematch_delay_tax_scales_with_turnover_tempo.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_occupancy_normalized_rankings.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_delay_robustness_reports.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_live_contender_reports.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_winner_certification.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_budget_aware_winner_triage.md`
+- `docs/LIBRARY/topics/rematch_gap_sg003_should_be_retired_in_three_compact_layers.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_materiality_gates.md`
+- `docs/LIBRARY/topics/first_retained_rematch_world_benchmark_should_carry_a_winner_triage_handoff.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_delta_frontier_reports.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_delta_budget_frontiers.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_delta_hazard_bands.md`
+- `docs/LIBRARY/topics/virtue_vs_strategy.md`
+- `docs/LIBRARY/topics/anti_vampire_scorecard_spec.md`
+- `docs/LIBRARY/topics/noisy_ecology_test_reveals_zd_extraction.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_declared_anchor_priorities.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_declared_budget_family_profiles.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_width_floor_plateau_contracts.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_declared_hazard_cap_profiles.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_delta_ceiling_plateau_contracts.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_monotone_hazard_clearance_thresholds.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_policy_box_corner_certification.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_preference_separating_inequalities.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_hazard_preference_regime_contracts.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_cap_robust_preference_certificates.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_hazard_normalized_cap_trajectory_contracts.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_minimal_cap_probe_sets.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_unique_minimal_cap_probe_contracts.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_adaptive_cap_probe_contracts.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_cap_robustness_probe_contracts.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_question_targeted_probe_contracts.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_decision_normal_forms.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_projective_decision_cones.md`
+- `docs/LIBRARY/topics/rematch_worlds_need_executable_decision_oracles.md`
+- `docs/LIBRARY/topics/rematch_worlds_should_store_prefix_resolved_references_inside_archive.md`
+- `docs/LIBRARY/topics/archive_size_control_should_cite_one_compaction_candidate_receipt.md`
+- `docs/LIBRARY/topics/archive_size_control_should_reuse_semantic_handles_before_minting_new_ones.md`
+- `docs/LIBRARY/topics/archive_size_control_should_trim_exact_report_paths_from_one_manifest.md`
+- `docs/LIBRARY/topics/archive_size_control_should_rehearse_one_manifest_before_removing_report_paths.md`
+- `docs/LIBRARY/topics/archive_size_control_should_stage_one_manifest_inside_scratch_before_canonical_trim.md`
+- `docs/LIBRARY/topics/archive_size_control_should_carry_one_execution_receipt_after_canonical_trim.md`
+- `docs/LIBRARY/topics/benchmark_interoperability_should_separate_partner_environment_and_institution_generalization.md`
+
+- `docs/LIBRARY/topics/rematch_worlds_should_publish_starting_policy_and_adaptation_rules_as_a_world_contract.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_counterpart_mix_as_a_first_class_evaluation_contract.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_counterpart_class_x_novelty_axis_coverage.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_human_proxy_provenance_and_real_human_escalation_status.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_human_lanes_should_publish_counterpart_disclosure_and_belief_protocol.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_human_lanes_should_publish_participant_pool_provenance_and_repeat_exposure_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_human_lanes_should_publish_material_stakes_and_comprehension_protocol.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_llm_lanes_should_publish_incentive_instructions_and_payoff_scaling.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_interaction_language_and_translation_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_familiarization_practice_and_coadaptation_protocol.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_separate_same_partner_coadaptation_from_fresh_partner_transfer.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_role_assignment_and_side_switch_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_information_visibility_and_asymmetry_regime.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_communication_schedule_and_channel_rights.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_interaction_horizon_stopping_rule_and_termination_knowledge.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_intervention_rights_delegation_policy_and_final_action_authority.md`
+- `docs/LIBRARY/topics/cooperation_benchmarks_should_publish_process_capture_and_common_ground_metrics_not_only_outcome_scores.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_the_headline_comparison_they_license.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_the_scored_unit_pooling_rule_and_primary_estimand.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_primary_endpoint_auxiliary_metrics_and_multiplicity_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_dependence_structure_inference_unit_and_uncertainty_summary.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_variant_selection_tuning_and_test_touch_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_evaluated_subject_provenance_serving_stack_and_drift_window.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_tool_access_external_state_and_knowledge_snapshot_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_turn_tool_context_budget_and_timeout_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_failure_handling_retry_repair_and_exclusion_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_judge_provenance_rubric_and_adjudication_policy.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_cards_should_publish_scenario_family_sampling_rule_seed_policy_and_release_posture.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_machine_checkable_compact_card_schema_and_worked_example.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_scaffold_and_canonical_renderer_for_compact_cards.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_distinguish_draft_valid_cards_from_claim_ready_cards_via_readiness_lint.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_freeze_receipt_for_claim_ready_compact_cards.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_canonical_delta_receipt_for_compact_cards.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_compact_inventory_and_lineage_register_for_cards_and_receipts.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_lineage_head_register_for_compact_cards.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_fused_control_plane_surface_for_compact_cards.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_typed_next_action_surface_for_compact_cards.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_an_arbitration_witness_for_compact_card_next_action_selection.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_an_execution_lane_surface_for_compact_card_handoffs.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_programs_should_ship_a_scope_surface_for_compact_card_subsystem_boundaries.md`
+- `docs/LIBRARY/topics/cooperation_benchmark_compact_card_scope_and_taxonomy_reports_should_be_citable_governance_handles.md`
+- `docs/LIBRARY/topics/example_json_snapshots_should_be_addressable_by_stable_ids_or_canonical_surrogate_ids.md`
+- `docs/LIBRARY/topics/evidence_acquisition_topology_challenge_binding_and_observation_scope_are_world_contracts_not_just_retained_evidence.md`
+- `docs/LIBRARY/topics/disclosure_profiles_omission_semantics_and_retention_intent_are_world_contracts_not_just_smaller_payloads.md`
+- `docs/LIBRARY/topics/request_contracts_satisfaction_mappings_and_authorized_asks_are_world_contracts_not_just_disclosed_outputs.md`
+- `docs/LIBRARY/topics/verifier_targeting_session_binding_and_replay_scope_are_world_contracts_not_just_valid_presentations.md`
+- `docs/LIBRARY/topics/metadata_resolution_federation_chains_and_capability_continuity_are_world_contracts_not_just_known_participants.md`
+- `docs/LIBRARY/topics/capability_negotiation_downgrade_resistance_and_chosen_profile_continuity_are_world_contracts_not_just_supported_features.md`
+- `docs/LIBRARY/topics/authenticator_assurance_user_presence_and_device_binding_are_world_contracts_not_just_valid_keys.md`
+- `docs/LIBRARY/topics/transaction_intent_binding_approval_surfaces_and_consent_continuity_are_world_contracts_not_just_authenticated_sessions.md`
+- `docs/LIBRARY/topics/correlation_scope_pairwise_pseudonyms_and_linkability_boundaries_are_world_contracts_not_just_selective_disclosure.md`
+- `docs/LIBRARY/topics/delivery_paths_transport_confidentiality_and_intermediary_visibility_are_world_contracts_not_just_valid_presentations.md`
+- `docs/LIBRARY/topics/approval_rendering_locale_and_trusted_display_are_world_contracts_not_just_bound_transaction_data.md`
+- `docs/LIBRARY/topics/ceremony_topology_device_split_and_invocation_routes_are_world_contracts_not_just_app_launch_plumbing.md`
+- `docs/LIBRARY/topics/golden_rule_archives_should_ship_a_machine_checkable_successor_safe_ceremony_receipt_schema_and_worked_example.md`
+- `docs/LIBRARY/topics/successor_safe_ceremony_receipt_dispositions_should_collapse_further_to_compact_remediation_plans.md`

@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.analysis.rematch_proxy_delta_decision_packet_compact_repeat_state_uncertainty_weakening_portfolio_service_mode_suffix_rank_clock_law import (
+    build_service_mode_suffix_rank_clock_snapshot,
+)
+
+REPORTS = ROOT / 'artifacts' / 'reports'
+OUT_JSON = REPORTS / 'rematch_proxy_delta_decision_packet_compact_repeat_state_uncertainty_weakening_portfolio_service_mode_suffix_rank_clock_law_snapshot_20260308.json'
+OUT_MD = REPORTS / 'rematch_proxy_delta_decision_packet_compact_repeat_state_uncertainty_weakening_portfolio_service_mode_suffix_rank_clock_law_snapshot_20260308.md'
+
+
+def _render_md(report: dict) -> str:
+    lines: list[str] = []
+    lines.append('# Compact repeat-state uncertainty weakening portfolio service mode-suffix rank clock law snapshot — 2026-03-08')
+    lines.append('')
+    lines.append(f"Focus: {report['focus']}")
+    lines.append('')
+    lines.append('## Headline findings')
+    for key, value in report['headline_findings'].items():
+        lines.append(f'- **{key}**: `{json.dumps(value, ensure_ascii=False)}`')
+    lines.append('')
+    lines.append('## Decision rules')
+    for rule in report['decision_rules']:
+        lines.append(f'- {rule}')
+    lines.append('')
+    lines.append('## Positive-service mode-suffix rank-clock rows')
+    lines.append('| state | probe | signature | code | mode | counter | bridge tail | bridge tax | term dist | source rank | match |')
+    lines.append('|---:|---:|---|---|---|---:|---:|---:|---:|---:|---|')
+    for row in report['positive_service_mode_suffix_rank_clock_rows']:
+        probe = row['probe_target']
+        probe_render = f"{probe:.12f}" if isinstance(probe, float) else str(probe)
+        lines.append(
+            f"| `{row['state_index']}` | `{probe_render}` | `{row['current_signature']}` | `{row['state_code']}` | `{row['mode']}` | `{row['counter']}` | `{row['bridge_tail_count']}` | `{row['current_bridge_tax']}` | `{row['predicted_terminal_distance_clock']}` | `{row['predicted_source_rank']}` | `{str(row['clock_matches_archive'] and row['rank_matches_archive']).lower()}` |"
+        )
+    lines.append('')
+    lines.append('## Distance examples')
+    for row in report['distance_examples']:
+        lines.append(f'- `{json.dumps(row, ensure_ascii=False, sort_keys=True)}`')
+    lines.append('')
+    lines.append('## Source reports')
+    for source in report['source_reports']:
+        lines.append(f'- `{source}`')
+    lines.append(f"- `{report['analysis_script']}`")
+    return '\n'.join(lines) + '\n'
+
+
+def main() -> None:
+    report = build_service_mode_suffix_rank_clock_snapshot()
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    OUT_JSON.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    OUT_MD.write_text(_render_md(report), encoding='utf-8')
+    print(str(OUT_JSON.relative_to(ROOT)))
+    print(str(OUT_MD.relative_to(ROOT)))
+
+
+if __name__ == '__main__':
+    main()

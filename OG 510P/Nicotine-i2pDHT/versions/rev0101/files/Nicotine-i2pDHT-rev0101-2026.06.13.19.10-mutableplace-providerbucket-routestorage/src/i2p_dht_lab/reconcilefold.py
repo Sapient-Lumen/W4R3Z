@@ -1,0 +1,114 @@
+"""rev0057 audit/refactor fold for dead-letter, retry quorum, and reconcile."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from .bencode import bencode
+from .foldmap import audit_fold_map
+from .foldregistry import audit_fold_registry
+from .ids import DOMAIN, sha256
+from .recoveryfold import audit_recovery_fold
+from .surfaceledger import audit_surface_ledger, entries_for_revision
+
+RECONCILE_FOLD_DOMAIN = DOMAIN + b":reconcile-fold-v1:"
+
+
+@dataclass(frozen=True)
+class ReconcileFoldFinding:
+    severity: str
+    code: str
+    path: str
+    detail: str
+
+    def bvalue(self) -> dict[bytes, object]:
+        return {b"severity": self.severity, b"code": self.code, b"path": self.path, b"detail": self.detail}
+
+
+@dataclass(frozen=True)
+class ReconcileFoldReport:
+    revision: str
+    artifact_stem: str
+    status: str
+    recovery_predecessor_status: str
+    foldmap_status: str
+    foldregistry_status: str
+    surface_ledger_status: str
+    findings: tuple[ReconcileFoldFinding, ...]
+    report_digest: bytes
+
+    @property
+    def error_count(self) -> int:
+        return sum(1 for finding in self.findings if finding.severity == "error")
+
+    @property
+    def warning_count(self) -> int:
+        return sum(1 for finding in self.findings if finding.severity == "warning")
+
+
+def _exists(root: Path, rel: str, findings: list[ReconcileFoldFinding]) -> None:
+    if not (root / rel).exists():
+        findings.append(ReconcileFoldFinding("error", "missing_path", rel, "rev0057 reconcile fold expected this path"))
+
+
+def audit_reconcile_fold(root: str | Path, *, revision: str = "rev0057", artifact_stem: str = "") -> ReconcileFoldReport:
+    root_path = Path(root)
+    artifact = artifact_stem or root_path.name
+    findings: list[ReconcileFoldFinding] = []
+    for rel in (
+        "src/i2p_dht_lab/deadletter.py",
+        "src/i2p_dht_lab/retryquorum.py",
+        "src/i2p_dht_lab/effectreconcile.py",
+        "src/i2p_dht_lab/reconcilefold.py",
+        "tests/test_rev0057_deadletter_retry_reconcile.py",
+        "docs/600-rev0057-deadletter-retryquorum-effectreconcile.md",
+        "docs/601-dead-letter-lane-prepared-only.md",
+        "docs/602-retry-quorum-after-recovery-watch.md",
+        "docs/603-effect-reconcile-boundary.md",
+        "docs/604-reconcilefold-audit-refactor.md",
+    ):
+        _exists(root_path, rel, findings)
+    try:
+        predecessor = audit_recovery_fold(root_path, revision="rev0056", artifact_stem=artifact)
+        recovery_status = predecessor.status
+        if predecessor.error_count:
+            findings.append(ReconcileFoldFinding("error", "recovery_predecessor_failed", "src/i2p_dht_lab/recoveryfold.py", "rev0056 predecessor fold failed"))
+    except Exception as exc:  # pragma: no cover
+        recovery_status = "exception"
+        findings.append(ReconcileFoldFinding("error", "recovery_predecessor_exception", "src/i2p_dht_lab/recoveryfold.py", str(exc)))
+    try:
+        fmap = audit_fold_map(root_path, revision=revision, artifact_stem=artifact)
+        foldmap_status = fmap.status
+        if fmap.error_count:
+            findings.append(ReconcileFoldFinding("error", "foldmap_failed", "src/i2p_dht_lab/foldmap.py", "rev0057 fold map failed"))
+    except Exception as exc:  # pragma: no cover
+        foldmap_status = "exception"
+        findings.append(ReconcileFoldFinding("error", "foldmap_exception", "src/i2p_dht_lab/foldmap.py", str(exc)))
+    try:
+        registry = audit_fold_registry(root_path, revision=revision)
+        foldregistry_status = registry.status
+        if registry.error_count:
+            findings.append(ReconcileFoldFinding("error", "foldregistry_failed", "src/i2p_dht_lab/foldregistry.py", "rev0057 fold registry failed"))
+    except Exception as exc:  # pragma: no cover
+        foldregistry_status = "exception"
+        findings.append(ReconcileFoldFinding("error", "foldregistry_exception", "src/i2p_dht_lab/foldregistry.py", str(exc)))
+    try:
+        ledger = audit_surface_ledger(root_path, entries_for_revision(revision))
+        surface_status = "pass" if ledger.ok else "fail"
+        if ledger.error_count:
+            findings.append(ReconcileFoldFinding("error", "surface_ledger_failed", "src/i2p_dht_lab/surfaceledger.py", "rev0057 surface ledger failed"))
+    except Exception as exc:  # pragma: no cover
+        surface_status = "exception"
+        findings.append(ReconcileFoldFinding("error", "surface_ledger_exception", "src/i2p_dht_lab/surfaceledger.py", str(exc)))
+    status = "pass" if not any(finding.severity == "error" for finding in findings) else "fail"
+    digest = sha256(RECONCILE_FOLD_DOMAIN + b":report:" + bencode({
+        b"revision": revision,
+        b"artifact": artifact,
+        b"status": status,
+        b"recovery": recovery_status,
+        b"foldmap": foldmap_status,
+        b"foldregistry": foldregistry_status,
+        b"surface": surface_status,
+        b"findings": [finding.bvalue() for finding in findings],
+    }))
+    return ReconcileFoldReport(revision, artifact, status, recovery_status, foldmap_status, foldregistry_status, surface_status, tuple(findings), digest)

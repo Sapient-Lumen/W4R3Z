@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True
+
+from publication_rights_gate import assert_publication_rights_ready
+
+ROOT = Path(__file__).resolve().parent.parent
+QUEUE_MAP = {'candidate': 'candidates', 'hold': 'hold', 'published_ready': 'published_ready', 'published': 'published'}
+
+
+def fail(msg: str) -> None:
+    print(f"publish-queue-item: FAIL: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def load_json(path: Path):
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        fail(f"invalid JSON in {path}: {exc}")
+
+
+def slugify(s: str) -> str:
+    out = []
+    prev_dash = False
+    for ch in s.lower():
+        if ch.isalnum():
+            out.append(ch)
+            prev_dash = False
+        elif not prev_dash:
+            out.append('-')
+            prev_dash = True
+    return ''.join(out).strip('-') or 'release'
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    return sha256_bytes(path.read_bytes())
+
+
+def release_field_line(label: str, value: object) -> str:
+    text = '' if value is None else str(value)
+    return f"- {label}: `{text}`" if text else f"- {label}:"
+
+
+def render_public_release_markdown(data: dict) -> str:
+    """Render the canonical human companion for a public release record."""
+    lines = [
+        '# Public release',
+        '',
+        release_field_line('Release ID', data.get('release_id')),
+        release_field_line('Date', data.get('date')),
+        release_field_line('Status', data.get('status')),
+        release_field_line('Decision', data.get('decision_id')),
+        release_field_line('Queue item', data.get('queue_item_id')),
+        release_field_line('Revision', data.get('revision')),
+        release_field_line('Public surface manifest', data.get('public_surface_manifest')),
+        release_field_line('Public surface manifest sha256', data.get('public_surface_manifest_sha256')),
+        release_field_line('Public surface snapshot', data.get('public_surface_snapshot')),
+        release_field_line('Public surface snapshot sha256', data.get('public_surface_snapshot_sha256')),
+        '',
+        '## Summary',
+        data.get('summary', ''),
+        '',
+        '## Public paths',
+    ]
+    public_paths = data.get('public_paths', [])
+    if public_paths:
+        lines.extend(f'- `{rel}`' for rel in public_paths)
+    else:
+        lines.append('-')
+    lines.extend([
+        '',
+        '## Public surface snapshot',
+        f"- `{data.get('public_surface_snapshot', '')}`",
+        '',
+        '## Release artifact',
+        f"- `{data.get('artifact_zip', '')}`",
+        f"- `{data.get('artifact_manifest', '')}`",
+        '',
+        '## Archive note',
+        data.get('archive_note', ''),
+    ])
+    return '\n'.join(lines) + '\n'
+
+
+def find_item(name: str):
+    for state, dirname in QUEUE_MAP.items():
+        state_dir = ROOT / 'release_queue' / dirname
+        for path in state_dir.glob('*.json'):
+            if path.stem == name:
+                return state, path
+            data = load_json(path)
+            if data.get('item_id') == name:
+                return state, path
+    fail(f"queue item not found: {name}")
+
+
+def latest_revision() -> str:
+    text = (ROOT / 'CHANGELOG.md').read_text()
+    m = re.search(r'^## (rev[0-9]{4})\b', text, re.M)
+    if not m:
+        fail('could not determine latest revision from CHANGELOG.md')
+    return m.group(1)
+
+
+def build_public_surface_snapshot(release_id: str, date: str, revision: str):
+    """Build the public-surface snapshot object without writing it.
+
+    `publish_queue_item.py --dry-run` is an operator preview mode, so it must
+    not create snapshot files.  Keep byte construction separate from emission so
+    the dry-run and write paths share the same SHA-256 calculation.
+    """
+    public_surface_path = ROOT / 'published' / 'PUBLIC_SURFACE.json'
+    public_surface = load_json(public_surface_path)
+    rel = f'published/releases/snapshots/{release_id}.surface.json'
+    entries = []
+    for entry in public_surface['entry_points']:
+        src = ROOT / entry['path']
+        payload = src.read_bytes()
+        entries.append({
+            'path': entry['path'],
+            'role': entry['role'],
+            'sha256': sha256_bytes(payload),
+            'size_bytes': len(payload),
+        })
+    data = {
+        'owner': 'published/releases/snapshots/',
+        'release_id': release_id,
+        'date': date,
+        'revision': revision,
+        'source_manifest': 'published/PUBLIC_SURFACE.json',
+        'source_manifest_sha256': sha256_file(public_surface_path),
+        'manifest_version': public_surface['version'],
+        'entry_points': entries,
+        'canonical_context': public_surface['canonical_context'],
+        'principles': public_surface['principles'],
+    }
+    return rel, data, data['source_manifest_sha256']
+
+
+def public_surface_snapshot_bytes(data: dict) -> bytes:
+    return (json.dumps(data, indent=2) + '\n').encode('utf-8')
+
+
+def write_public_surface_snapshot(rel: str, payload: bytes) -> None:
+    snapshot_path = ROOT / rel
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_bytes(payload)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--item', required=True, help='basename or queue item id in published_ready')
+    ap.add_argument('--release-slug', required=True)
+    ap.add_argument('--summary', default='')
+    ap.add_argument('--archive-note', default='')
+    ap.add_argument('--owner', default='EvidenceVault publishing pass')
+    ap.add_argument('--dry-run', action='store_true')
+    args = ap.parse_args()
+
+    assert_publication_rights_ready(ROOT, 'publish-queue-item')
+
+    state, path = find_item(args.item)
+    if state != 'published_ready':
+        fail('queue item must currently be in published_ready state')
+    item = load_json(path)
+    decision_id = item.get('decision_id')
+    if not decision_id:
+        fail('published_ready queue item must have a decision_id')
+
+    decision_path = ROOT / 'release_queue' / 'decisions' / f'{path.stem}.json'
+    if not decision_path.exists():
+        decision_path = None
+        for cand in (ROOT / 'release_queue' / 'decisions').glob('*.json'):
+            data = load_json(cand)
+            if data.get('decision_id') == decision_id:
+                decision_path = cand
+                break
+        if decision_path is None:
+            fail(f'could not locate decision for {decision_id}')
+    decision = load_json(decision_path)
+    if decision.get('status') != 'publish':
+        fail('queue item decision must have status publish')
+
+    slug = slugify(args.release_slug)
+    release_id = f"EV-PUB-{item['date']}-{slug}"
+    basename = f"{item['date']}-{slug}"
+    record_json = ROOT / 'published' / 'releases' / f'{basename}.json'
+    record_md = ROOT / 'published' / 'releases' / f'{basename}.md'
+    if record_json.exists() or record_md.exists():
+        fail(f'public release already exists: {basename}')
+
+    revision = latest_revision()
+    snapshot_rel, snapshot_data, manifest_sha = build_public_surface_snapshot(release_id, item['date'], revision)
+    snapshot_payload = public_surface_snapshot_bytes(snapshot_data)
+    snapshot_sha = sha256_bytes(snapshot_payload)
+    summary = args.summary or decision.get('summary') or item.get('summary') or f'Publish {release_id}.'
+    archive_note = args.archive_note or 'This public release is a stable surface, not a mirror of the full working archive.'
+    public_paths = decision.get('public_paths', [])
+    record = {
+        'release_id': release_id,
+        'date': item['date'],
+        'status': 'published',
+        'revision': revision,
+        'decision_id': decision_id,
+        'queue_item_id': item['item_id'],
+        'public_surface_manifest': 'published/PUBLIC_SURFACE.json',
+        'public_surface_manifest_sha256': manifest_sha,
+        'public_surface_snapshot': snapshot_rel,
+        'public_surface_snapshot_sha256': snapshot_sha,
+        'public_paths': public_paths,
+        'summary': summary,
+        'notes_path': record_md.relative_to(ROOT).as_posix(),
+        'archive_note': archive_note,
+        'artifact_manifest': f'published/releases/artifacts/{release_id}.bundle.json',
+        'artifact_zip': f'published/releases/artifacts/{release_id}.zip',
+    }
+    rendered_markdown = render_public_release_markdown(record)
+
+    if args.dry_run:
+        print(json.dumps(record, indent=2))
+        return
+
+    write_public_surface_snapshot(snapshot_rel, snapshot_payload)
+    record_json.write_text(json.dumps(record, indent=2) + '\n')
+    record_md.write_text(rendered_markdown)
+
+    subprocess.run([
+        sys.executable, str(ROOT / 'scripts' / 'transition_queue_item.py'),
+        '--item', item['item_id'], '--to-state', 'published',
+        '--decision-id', decision_id, '--public-release-id', release_id,
+        '--next-action', 'Update only if a later public release supersedes this executed item.'
+    ], check=True)
+
+    print(f"publish-queue-item: OK ({release_id})")
+
+
+if __name__ == '__main__':
+    main()

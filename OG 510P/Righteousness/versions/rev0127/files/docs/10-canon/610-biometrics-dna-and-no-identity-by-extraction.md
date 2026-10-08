@@ -1,0 +1,44 @@
+# Biometrics, DNA, and no-identity-by-extraction
+
+## Core claim
+
+> **Righteousness is burdened, and often defeated, when face, fingerprint, iris, voice, gait, palm, DNA, or other biometric or genetic capture makes routine identification, suspicion sorting, access control, or cross-system trackability do the real work of governance rather than using narrow, necessity-bound, contestable, retention-disciplined, and non-discriminatory forms of verification.**[S93][S153][S252][S404][S405][S406][S155][S408][S409]
+
+## 1. Not every identity check is unrighteous, but biometric extraction is not morally light
+
+The archive does **not** need to say that every identity check is impermissible. Institutions sometimes do need to verify that a person is who they say they are, prevent impersonation, protect records, or identify a specific suspect. But the current archive needed a clearer rule because biometric systems are often described as if they were merely faster passwords. That description is misleading. Privacy materials are morally revealing because they treat privacy not as a luxury but as an enabler of personality, identity, belief, and participation; the current OHCHR privacy work also treats the collection and processing of data as a live site of discrimination and unequal enjoyment of rights.[S153][S404][S155]
+
+That matters because biometric and genetic systems do not simply check a claim and disappear. They can turn the body into a standing credential, a reusable evidentiary trace, or a linkage key across institutions and times. Once face, fingerprint, iris, voice, gait, or DNA becomes the ordinary route to belonging, access, or suspicion management, the institution is no longer just verifying a fact. It is deciding that bodily extractability is the normal price of participation.[S93][S153][S404][S405][S155][S409]
+
+## 2. The main pathology is treating the body or genome as a universal key
+
+The 2022 OHCHR privacy report is especially useful here because it says recent privacy trends include widespread monitoring of public spaces and highlights the risk of creating systems of pervasive surveillance and control that can undermine rights-respecting societies.[S405] The 2025 OHCHR privacy report is useful because it focuses on discrimination and unequal enjoyment of privacy associated with the collection and processing of data and warns that digitalization can deepen exclusion rather than merely modernize administration.[S404] The 2021 OHCHR AI-and-privacy report page adds a sharper threshold rule by stressing moratoria for serious-risk systems and bans on applications that cannot be used consistently with international human rights law.[S252]
+
+The archive therefore needed a compact surface because biometric governance often launders a deeper move. A school says it is only managing attendance. A welfare office says it is only preventing fraud. A border agency says it is only confirming identity. A police service says it is only matching a face. But the practical effect can be much larger: permanent linkability, ambient recognizability, forced participation in a database one cannot meaningfully exit, or a presumption that public presence itself is searchable for identity. Once extraction and linkage become the ordinary way the institution knows people, righteousness is no longer judged only by the accuracy of the match. It is judged by whether the stronger party has made human recognizability itself into an administratively available resource.[S34][S35][S41][S45][S47][S49][S93][S153][S252][S404][S405][S409]
+
+## 3. Genetic and DNA-linked systems carry a stricter dignity burden
+
+The privacy mandate is useful because it identifies forensic DNA databases as a distinct and ongoing area of concern rather than folding them into generic data management.[S155] The UNESCO Universal Declaration on the Human Genome and Human Rights sharpens why. It says everyone has a right to respect for dignity and rights regardless of genetic characteristics, that dignity requires not reducing individuals to their genetic characteristics, and that identifiable genetic data must be held confidential except under law-bound and compelling limitations.[S408]
+
+That gives the archive a stricter rule for DNA and related genetic extraction. Genetic materials do not merely identify. They invite a style of governance that can tempt institutions to treat family relation, ancestry, or biological trace as deeper truth than testimony, context, consent, or ordinary standing. A theory of righteousness therefore cannot treat DNA collection, retention, familial searching, or cross-purpose reuse as just a technically stronger fingerprint. Where institutions rely on genetic extractability because it is administratively seductive, and where confidentiality, purpose limitation, deletion, and strong challenge pathways are weak or absent, the righteousness claim is heavily burdened.[S93][S153][S155][S408]
+
+## 4. Public-space and protest deployment make the standing defect easier to see
+
+The 2020 OHCHR protest guidance is especially revealing because it says facial recognition technology allows automated identification, surveillance, and tracking of protesters; may discourage people from demonstrating and expressing their views; may perpetuate and amplify discrimination; and should be subject to a moratorium in the context of peaceful protests until effective oversight, strict privacy and data-protection law, and full transparency are in place.[S406] The 2023 UN expert warning on counter-terrorism technologies generalizes the lesson: States and private actors are using intrusive and high-risk technologies, including biometrics, without adequate regulation, and there must be a pause in the use of intrusive high-risk technologies until safeguards are in place.[S409]
+
+This matters for the theory of righteousness because protest and public assembly reveal the hidden claim biometric systems often make everywhere else. They assume that appearing in public is enough to make identity capture presumptively available to power. But presence is not consent to permanent recognizability, and public visibility is not the same as public ownership of one’s face, gait, or voice. Where officials or contractors use remote biometric recognition to make association, assembly, or ordinary movement searchable by identity, the institution is not only watching. It is redistributing standing by making some people legible, traceable, and hence governable in ways others are not.[S34][S35][S41][S45][S47][S49][S93][S404][S405][S406][S409]
+
+## 5. Working rule
+
+When an actor claims righteousness while relying on biometric or genetic systems, ask seven questions:
+1. **What was actually extracted or matched?** Face, fingerprint, iris, voice, palm, gait, DNA, family relation, or some cross-linked biometric profile?[S155][S408]
+2. **What was the function really doing?** One-off verification, database enrollment, open-ended identification, location tracking, fraud screening, watchlisting, or retrospective searching of public presence?[S252][S404][S405][S406]
+3. **Was a less extractive route available?** Could a document check, human witness, bounded token, local credential, supervised fallback, or narrower investigative method have served the same purpose?[S93][S153][S252][S404]
+4. **What made the system non-totalizing?** Were purpose limitation, retention limits, deletion, non-sharing, local rather than centralized storage, and meaningful off-ramps real or merely promised?[S153][S404][S405][S155][S408]
+5. **Who carried the heavier burden of visibility or misrecognition?** Racialized groups, protesters, migrants, detainees, poor people seeking services, children, disabled persons, or communities already subject to heavy policing or documentation instability?[S404][S405][S406][S409]
+6. **What happened when a person refused, could not comply, or was mismatched?** Did they lose movement, benefits, speech, employment, schooling, or ordinary participation because their body had been made the required key?[S34][S35][S41][S45][S47][S49][S404][S405][S408]
+7. **What challenge and remedy path existed?** Could enrollment, matching, watchlisting, retention, sharing, or downstream decisions be understood, contested, corrected, and unwound in practice?[S153][S252][S404][S405][S409]
+
+## Compression sentence
+
+> **Do not let identity become a standing defect by extraction: where face, fingerprint, iris, voice, gait, DNA, or other biometric or genetic capture makes bodily or genomic extractability the ordinary condition of access, suspicion management, or public-space legibility, righteousness fails unless the measure is specifically justified, strictly bounded in purpose and retention, non-discriminatory in effect, genuinely contestable, and not better replaced by a narrower and less extractive form of verification.**[S93][S153][S252][S404][S405][S406][S155][S408][S409]

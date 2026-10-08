@@ -1,0 +1,4822 @@
+
+- **Entry 467** — `entries/2026-03-25-467.md` — falsification pass clarifies that worthy crates should ship failure envelopes, counterexample traces, degraded claims, and repair hints, and adds a machine-readable failure file
+- `meta/frontier-failure-envelopes-2026-03-25.md`
+- `meta/epic-crate-falsification-counterexample-and-failure-envelope-doctrine-2026-03-25.md`
+- `meta/top-lane-falsification-plans-2026-03-25.md`
+- `meta/source-basis-2026-03-25-467.md`
+- `templates/failure-envelope-card.template.md`
+- `failure-envelopes.json`
+
+
+- **Entry 466** — `entries/2026-03-25-466.md` — assurance-case pass clarifies that worthy crates should ship bounded claims, decisive witnesses, warrants, and challenge registers, adds assurance doctrine, and adds a machine-readable assurance file
+- `meta/frontier-assurance-cases-2026-03-25.md`
+- `meta/epic-crate-assurance-case-and-claim-traceability-doctrine-2026-03-25.md`
+- `meta/top-lane-assurance-case-plans-2026-03-25.md`
+- `meta/source-basis-2026-03-25-466.md`
+- `templates/assurance-case-card.template.md`
+- `assurance-cases.json`
+
+
+- **Entry 465** — `entries/2026-03-25-465.md` — delta-program pass clarifies that worthy crates should ship change classes, carry-forward decisions, and minimum rerun slices, adds delta doctrine, and adds a machine-readable delta file
+- `meta/frontier-delta-programs-2026-03-25.md`
+- `meta/epic-crate-delta-and-carry-forward-doctrine-2026-03-25.md`
+- `meta/top-lane-delta-rerun-plans-2026-03-25.md`
+- `meta/source-basis-2026-03-25-465.md`
+- `templates/delta-program-card.template.md`
+- `delta-programs.json`
+
+
+- **Entry 464** — `entries/2026-03-25-464.md` — renewal-program pass clarifies that worthy crates should ship bounded stewardship loops and freshness budgets, adds renewal doctrine, and adds a machine-readable renewal file
+- `meta/frontier-renewal-programs-2026-03-25.md`
+- `meta/epic-crate-renewal-and-stewardship-doctrine-2026-03-25.md`
+- `meta/top-lane-renewal-loop-plans-2026-03-25.md`
+- `meta/source-basis-2026-03-25-464.md`
+- `templates/renewal-program-card.template.md`
+- `renewal-programs.json`
+
+
+- **Entry 463** — `entries/2026-03-25-463.md` — review-packet pass clarifies that worthy crates should ship compact review packets and signoff rails, adds review doctrine, and adds a machine-readable review file
+- `meta/frontier-review-packets-2026-03-25.md`
+- `meta/epic-crate-review-packet-and-signoff-doctrine-2026-03-25.md`
+- `meta/top-lane-review-handoff-plans-2026-03-25.md`
+- `meta/source-basis-2026-03-25-463.md`
+- `templates/review-packet-card.template.md`
+- `review-packets.json`
+
+
+- **Entry 462** — `entries/2026-03-25-462.md` — policy-pack pass clarifies that worthy crates should ship explainable verdicts and override rails on top of evidence bundles, adds policy doctrine, and adds a machine-readable policy file
+- `meta/frontier-policy-packs-2026-03-25.md`
+- `meta/epic-crate-policy-pack-and-verdict-doctrine-2026-03-25.md`
+- `meta/top-lane-policy-verdict-plans-2026-03-25.md`
+- `meta/source-basis-2026-03-25-462.md`
+- `templates/policy-verdict-card.template.md`
+- `policy-packs.json`
+
+
+- **Entry 461** — `entries/2026-03-25-461.md` — evidence-interchange pass clarifies that worthy crates should ship portable profile manifests and reviewed exchange bundles, adds interchange doctrine, and adds a machine-readable interchange file
+- `meta/frontier-evidence-interchange-2026-03-25.md`
+- `meta/epic-crate-evidence-interchange-doctrine-2026-03-25.md`
+- `meta/top-lane-interchange-profiles-2026-03-25.md`
+- `meta/source-basis-2026-03-25-461.md`
+- `templates/interchange-profile-card.template.md`
+- `interchange-profiles.json`
+
+
+- **Entry 460** — `entries/2026-03-25-460.md` — conformance-kit pass clarifies that worthy crates should ship tiered support claims, adds promise-tier doctrine, and adds a machine-readable conformance file
+- `meta/frontier-conformance-kits-2026-03-25.md`
+- `meta/epic-crate-conformance-and-promise-tier-doctrine-2026-03-25.md`
+- `meta/top-lane-conformance-kits-2026-03-25.md`
+- `meta/source-basis-2026-03-25-460.md`
+- `templates/conformance-kit-card.template.md`
+- `conformance-kits.json`
+
+- **Entry 459** — `entries/2026-03-25-459.md` — suite-topology pass clarifies that worthy crates often need small package families, adds package-boundary doctrine, and adds a machine-readable suite file
+- `meta/frontier-suite-topologies-2026-03-25.md`
+- `meta/epic-crate-package-topology-doctrine-2026-03-25.md`
+- `meta/top-lane-suite-topologies-2026-03-25.md`
+- `meta/source-basis-2026-03-25-459.md`
+- `templates/suite-topology-card.template.md`
+- `suite-topologies.json`
+
+
+- **Entry 458** — `entries/2026-03-25-458.md` — product-blueprint pass turns the leading lanes into concrete `0.1`→`1.0` build programs, sharpens acceptance-packet planning, and adds a machine-readable state file
+- `meta/frontier-product-blueprints-2026-03-25.md`
+- `meta/top-lane-product-blueprints-2026-03-25.md`
+- `meta/epic-crate-release-ladders-2026-03-25.md`
+- `meta/source-basis-2026-03-25-458.md`
+- `templates/product-blueprint-card.template.md`
+- `archive-state.json`
+
+- **Entry 457** — `entries/2026-03-25-457.md` — promise-bundle pass clarifies what worthy crates should provide other people, adds a broad receiver-needs map, and installs `llms.txt` for machine-first repo hygiene
+- `meta/frontier-promise-bundles-2026-03-25.md`
+- `meta/epic-crate-support-envelope-framework-2026-03-25.md`
+- `meta/cross-domain-receiver-needs-map-2026-03-25.md`
+- `meta/source-basis-2026-03-25-457.md`
+- `templates/promise-bundle-card.template.md`
+- `llms.txt`
+
+- **Entry 456** — `entries/2026-03-25-456.md` — operating-surface pass makes runners and rechecks first-class, adds scenario-corpus discipline, and tightens operational claim hygiene
+- `meta/frontier-operating-surface-2026-03-25.md`
+- `meta/epic-crate-operating-models-2026-03-25.md`
+- `meta/scenario-corpus-and-recheck-discipline-2026-03-25.md`
+- `meta/source-basis-2026-03-25-456.md`
+- `templates/operating-model-card.template.md`
+
+- **Entry 455** — `entries/2026-03-25-455.md` — continuity-ring pass makes post-adoption value first-class, sharpens receiver planning, and adds stricter claim-upgrade discipline
+- `meta/frontier-continuity-ring-2026-03-25.md`
+- `meta/frontier-receiver-value-planes-2026-03-25.md`
+- `meta/epic-crate-continuity-contracts-2026-03-25.md`
+- `meta/archive-claim-upgrade-discipline-2026-03-25.md`
+- `meta/source-basis-2026-03-25-455.md`
+- `templates/continuity-contract-card.template.md`
+
+- **Entry 454** — `entries/2026-03-25-454.md` — adoption-contract pass sharpens what worthy crates provide, adds concrete MVP stack planning, and adds a stronger source-basis spine
+- `meta/epic-crate-adoption-contracts-2026-03-25.md`
+- `meta/frontier-mvp-stack-2026-03-25.md`
+- `meta/archive-source-basis-discipline-2026-03-25.md`
+- `meta/source-basis-2026-03-25-454.md`
+- `templates/source-basis-note.template.md`
+
+- **Entry 453** — `entries/2026-03-25-453.md` — delivery-card pass separates need from buildability, defines the ground-truth ring, and adds stronger pass-operating discipline
+- `meta/frontier-need-x-buildability-matrix-2026-03-25.md`
+- `meta/frontier-delivery-cards-2026-03-25.md`
+- `meta/archive-pass-operating-rules-2026-03-25.md`
+- `templates/frontier-delivery-card.template.md`
+- `templates/archive-pass-checklist.template.md`
+
+- **Entry 452** — `entries/2026-03-25-452.md` — broad territory pass keeps the control-plane frontier in front, raises the worthy-crate bar, and adds stronger amnesia resistance
+- `meta/frontier-salience-2026-03-25-243.md`
+- `meta/missing-crate-territory-map-2026-03-25.md`
+- `meta/epic-crate-worthiness-framework-2026-03-25.md`
+- `meta/archive-amnesia-resistance-2026-03-25.md`
+
+- **Entry 451** — `entries/2026-03-24-451.md` — evidence-gap pass makes bounded gap-closure first-class, keeps salience stable, and adds campaign/closure discipline
+- `meta/frontier-salience-2026-03-24-242.md`
+- `meta/pathfinder-evidence-gap-campaign-plan-2026-03-24.md`
+- `meta/evidence-gap-and-closure-contracts-2026-03-24.md`
+- `meta/archive-gap-closure-discipline-2026-03-24.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/evidence-gap.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/evidence-campaign.plan.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/gap-closure.receipt.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/enterprise_offline_stage_turns_open_gaps_into_campaign_without_rewriting_basis/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/enterprise_offline_stage_turns_open_gaps_into_campaign_without_rewriting_basis/evidence-gap.report.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/enterprise_offline_stage_turns_open_gaps_into_campaign_without_rewriting_basis/evidence-campaign.plan.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/enterprise_offline_stage_turns_open_gaps_into_campaign_without_rewriting_basis/gap-closure.receipt.example.json`
+
+- **Entry 450** — `entries/2026-03-24-450.md` — decision-program pass makes staged adoption and program exits first-class, keeps salience stable, and adds program-loop discipline
+- `meta/frontier-salience-2026-03-24-241.md`
+- `meta/pathfinder-decision-program-runbook-plan-2026-03-24.md`
+- `meta/profile-progression-and-program-exit-contracts-2026-03-24.md`
+- `meta/archive-program-loop-discipline-2026-03-24.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/decision-program.runbook.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/profile-progression.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/explore_packet_graduates_to_enterprise_offline_without_rewriting_basis/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/explore_packet_graduates_to_enterprise_offline_without_rewriting_basis/decision-program.runbook.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/explore_packet_graduates_to_enterprise_offline_without_rewriting_basis/profile-progression.report.example.json`
+
+- **Entry 449** — `entries/2026-03-24-449.md` — policy-profile pass makes adopter-specific evidence floors first-class, keeps salience stable, and adds profile-pack discipline
+- `meta/frontier-salience-2026-03-24-240.md`
+- `meta/pathfinder-policy-profile-pack-plan-2026-03-24.md`
+- `meta/policy-profile-and-evidence-floor-contracts-2026-03-24.md`
+- `meta/archive-profile-pack-discipline-2026-03-24.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/policy-profile.pack.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/profile-satisfaction.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/same_task_under_explore_enterprise_and_safety_profiles_yields_different_gates/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/same_task_under_explore_enterprise_and_safety_profiles_yields_different_gates/policy-profile.pack.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/same_task_under_explore_enterprise_and_safety_profiles_yields_different_gates/profile-satisfaction.report.example.json`
+
+- **Entry 448** — `entries/2026-03-24-448.md` — exception/expiry pass makes temporary relief reviewable, keeps salience stable, and adds exception-budget hygiene
+- `meta/frontier-salience-2026-03-24-239.md`
+- `meta/pathfinder-exception-workbench-plan-2026-03-24.md`
+- `meta/policy-exception-and-expiry-contracts-2026-03-24.md`
+- `meta/archive-exception-budget-discipline-2026-03-24.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/policy-exception.receipt.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/exception-expiry.ticket.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/cargo_vet_exemption_and_cargo_deny_ignore_need_one_reviewable_exception_packet/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/cargo_vet_exemption_and_cargo_deny_ignore_need_one_reviewable_exception_packet/policy-exception.receipt.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/cargo_vet_exemption_and_cargo_deny_ignore_need_one_reviewable_exception_packet/exception-expiry.ticket.example.json`
+
+- **Entry 447** — `entries/2026-03-24-447.md` — adjudication/carry-forward pass makes packet disagreement reviewable, keeps salience stable, and adds disagreement-ledger hygiene
+- `meta/frontier-salience-2026-03-24-238.md`
+- `meta/pathfinder-adjudication-workbench-plan-2026-03-24.md`
+- `meta/packet-adjudication-and-carryforward-contracts-2026-03-24.md`
+- `meta/archive-disagreement-ledger-discipline-2026-03-24.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/adjudication-session.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/decision-carryforward.receipt.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/conflicting_docs_registry_and_policy_signals_require_adjudication_not_overwrite/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/conflicting_docs_registry_and_policy_signals_require_adjudication_not_overwrite/adjudication-session.report.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/conflicting_docs_registry_and_policy_signals_require_adjudication_not_overwrite/decision-carryforward.receipt.example.json`
+
+- **Entry 446** — `entries/2026-03-24-446.md` — consumer-contract pass makes intake/materialization first-class, keeps salience stable, and adds session-receipt hygiene
+- `meta/frontier-salience-2026-03-24-237.md`
+- `meta/review-packet-consumer-contracts-2026-03-24.md`
+- `meta/crate-knowledge-pack-intake-materialization-plan-2026-03-24.md`
+- `meta/archive-session-receipt-discipline-2026-03-24.md`
+- `fixtures/crate-knowledge-pack-kit/intake.receipt.schema.json`
+- `fixtures/crate-knowledge-pack-kit/materialization-plan.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/latest_docsrs_download_materialization_resolves_pin_and_preserves_offline_caveats/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/latest_docsrs_download_materialization_resolves_pin_and_preserves_offline_caveats/intake.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/latest_docsrs_download_materialization_resolves_pin_and_preserves_offline_caveats/materialization-plan.example.json`
+
+- **Entry 445** — `entries/2026-03-23-445.md` — trigger/cadence pass makes recheck intake first-class, keeps salience stable, and promotes a minimal packet-ops loop into the practical core
+- `meta/frontier-salience-2026-03-23-236.md`
+- `meta/recheck-trigger-cadence-product-plan-2026-03-23.md`
+- `meta/archive-trigger-register-2026-03-23.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/recheck-ticket.manifest.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/advisory_pubtime_and_docs_build_drift_generate_recheck_ticket/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/advisory_pubtime_and_docs_build_drift_generate_recheck_ticket/recheck-ticket.manifest.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/trigger-intake.receipt.schema.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/alternate_registry_trigger_intake_distinguishes_signal_from_posture/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/alternate_registry_trigger_intake_distinguishes_signal_from_posture/trigger-intake.receipt.example.json`
+
+- **Entry 444** — `entries/2026-03-23-444.md` — drift-contract pass separates compare from refresh and transition, deepens dependency lifecycle planning, and adds freeze rules
+- `meta/frontier-salience-2026-03-23-235.md`
+- `meta/dependency-lifecycle-transition-product-plan-2026-03-23.md`
+- `meta/packet-refresh-and-drift-contracts-2026-03-23.md`
+- `meta/pathfinder-comparator-refresh-workflows-2026-03-23.md`
+- `meta/archive-promotion-freeze-rules-2026-03-23.md`
+- `fixtures/dependency-lifecycle-transition-kit/transition-review-packet.manifest.schema.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/fresh_advisory_and_new_release_force_transition_recheck_not_silent_keep/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/fresh_advisory_and_new_release_force_transition_recheck_not_silent_keep/transition-review-packet.manifest.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/alternate_registry_and_lock_only_anchor_need_shared_transition_packet/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/alternate_registry_and_lock_only_anchor_need_shared_transition_packet/transition-review-packet.manifest.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/decision-revalidation.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/comparator_packet_keeps_runner_up_and_recheck_trigger_visible/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/comparator_packet_keeps_runner_up_and_recheck_trigger_visible/decision-revalidation.report.example.json`
+
+- **Entry 443** — `entries/2026-03-24-443.md` — basis-witness pass makes replayable evidence locks first-class, defines first-usable release contracts, and binds pathfinder packets to packaged/docs/registry witnesses
+- `meta/frontier-salience-2026-03-24-234.md`
+- `meta/basis-witness-stack-2026-03-24.md`
+- `meta/epic-crate-first-usable-release-contracts-2026-03-24.md`
+- `meta/pathfinder-knowledge-pack-basis-lock-plan-2026-03-24.md`
+- `fixtures/crate-knowledge-pack-kit/basis-lock.manifest.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/review_packet_needs_basis_lock_across_registry_docs_and_package_witness/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/review_packet_needs_basis_lock_across_registry_docs_and_package_witness/basis-lock.manifest.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/decision_packet_carries_evidence_sources_not_just_rankings/README.md`
+
+- **Entry 442** — `entries/2026-03-24-442.md` — front-door stack pass pairs pathfinder with knowledge packs, freezes packet-family discipline, and adds review-bundle planning
+- `meta/frontier-salience-2026-03-24-233.md`
+- `meta/front-door-stack-pathfinder-knowledge-pack-2026-03-24.md`
+- `meta/packet-family-schema-discipline-2026-03-24.md`
+- `meta/crate-knowledge-pack-review-bundle-plan-2026-03-24.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/security_and_docs_surfaces_still_need_task_fit_review_packet/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/security_and_docs_surfaces_still_need_task_fit_review_packet/review-packet.manifest.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/decision_packet_uses_pinned_knowledge_pack_not_live_latest_pages/README.md`
+
+- **Entry 441** — `entries/2026-03-24-441.md` — receiver/persona and first-adopter pass sharpens who top crates serve, restores source-parity work to the practical core, and adds restricted-delivery scenario stubs
+- `meta/frontier-salience-2026-03-24-232.md`
+- `meta/epic-crate-receiver-persona-map-2026-03-24.md`
+- `meta/epic-crate-first-adopter-programs-2026-03-24.md`
+- `meta/cargo-vendor-source-parity-product-plan-2026-03-24.md`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/local_mirror_verification_still_needs_workspace_source_coverage/README.md`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/restricted_delivery_review_bundle_separates_transfer_mirror_and_parity/README.md`
+
+- **Entry 440** — `entries/2026-03-24-440.md` — supportive-surface pass sharpens what worthy crates provide, promotes knowledge packs in the practical queue, and adds hard-domain scenario stubs
+- `meta/frontier-salience-2026-03-24-231.md`
+- `meta/supportive-crate-surface-principles-2026-03-24.md`
+- `meta/pathfinder-review-packet-workflows-2026-03-24.md`
+- `meta/hard-domain-adoption-ladder-2026-03-24.md`
+- `meta/epic-crate-first-release-bundles-2026-03-24.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/safety_critical_boundary_selection_stack/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/air_gapped_enterprise_registry_native_support_stack/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/robotics_control_loop_vs_ops_stack/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/data_lakehouse_arrow_open_table_stack/README.md`
+
+- **Entry 439** — `entries/2026-03-23-439.md` — sector-atlas and pathfinder product pass widens the use-case map, adds scenario-pack planning, and raises the receiver-value bar
+- `meta/frontier-salience-2026-03-23-230.md`
+- `meta/missing-crate-sector-atlas-2026-03-23.md`
+- `meta/pathfinder-decision-pack-scenario-catalog-2026-03-23.md`
+- `meta/epic-crate-receiver-value-bar-2026-03-23.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/desktop_gui_teaching_vs_shipping_stack/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/wasm_component_plugin_host_target_split/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/mixed_language_cpp_wrapper_vs_binding_generator/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/local_first_sync_transport_storage_split/README.md`
+
+- **Entry 438** — `entries/2026-03-23-438.md` — scorecard application pass sharpens the top frontier, deepens concurrency into a scenario-lab plan, and adds freshness discipline
+- `meta/frontier-salience-2026-03-23-229.md`
+- `meta/epic-crate-scorecard-application-2026-03-23.md`
+- `meta/concurrency-contract-scenario-lab-plan-2026-03-23.md`
+- `meta/archive-freshness-refresh-policy-2026-03-23.md`
+
+- **Entry 437** — `entries/2026-03-23-437.md` — repo-building pass adds delivery cards and promotes the native-build support stack into the practical queue
+- `meta/frontier-salience-2026-03-23-228.md`
+- `meta/epic-crate-delivery-cards-2026-03-23.md`
+- `meta/native-build-stack-implementation-queue-2026-03-23.md`
+- `meta/buildscript-ux-support-bundle-plan-2026-03-23.md`
+- `meta/native-deps-abi-provenance-plan-2026-03-23.md`
+
+- **Entry 436** — `entries/2026-03-23-436.md` — repo-building pass tightens the epic-crate bar and deepens docs.rs parity + build-dir transition planning
+- `meta/frontier-salience-2026-03-23-227.md`
+- `meta/epic-crate-contribution-bar-2026-03-23.md`
+- `meta/docsrs-build-parity-issue-flow-plan-2026-03-23.md`
+- `meta/cargo-build-dir-consumer-transition-dual-support-plan-2026-03-23.md`
+- `meta/archive-refresh-loop-2026-03-23.md`
+
+- **Entry 435** — `entries/2026-03-23-435.md` — repo-building pass adds a cross-domain demand matrix plus sharper pathfinder and debuggability plans
+- `meta/frontier-salience-2026-03-23-226.md`
+- `meta/control-plane-demand-matrix-2026-03-23.md`
+- `meta/crate-ecosystem-pathfinder-lane-catalog-plan-2026-03-23.md`
+- `meta/debuggability-support-capability-stack-plan-2026-03-23.md`
+
+- **Entry 434** — `entries/2026-03-23-434.md` — territory map rerank splits control-plane epics, adoption amplifiers, sector labs, and promotes debuggability
+- `meta/epic-crate-territory-map-2026-03-23-225.md`
+- `meta/archive-operator-stack-2026-03-23.md`
+
+- **Entry 433** — `entries/2026-03-23-433.md` — broad frontier rerank favors horizontal ecosystem kits over narrow novelty crates
+- `meta/frontier-salience-2026-03-23-224.md`
+
+- **Entry 432** — `entries/2026-03-23-432.md` — concurrency-contract deepened around observer cursors, progress isolation, and slow-observer coupling honesty
+- `meta/frontier-salience-2026-03-23-223.md`
+- `meta/concurrency-contract-observer-cursor-plan-2026-03-23.md`
+- `meta/concurrency-contract-observer-cursor-boundaries-2026-03-23.md`
+- `fixtures/concurrency-contract-kit/observer-cursor.report.schema.json`
+- `fixtures/concurrency-contract-kit/observer-progress-isolation.report.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_receivers_have_independent_seen_cursors/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_receivers_have_independent_seen_cursors/observer-cursor.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_receivers_have_per_receiver_cursors_and_self_lag_rebase/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_receivers_have_per_receiver_cursors_and_self_lag_rebase/observer-progress-isolation.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/async_channel_consumers_share_competitive_claim_pool_not_independent_cursors/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/async_channel_consumers_share_competitive_claim_pool_not_independent_cursors/observer-cursor.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/flume_cloned_receivers_compete_for_shared_work_pool/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/flume_cloned_receivers_compete_for_shared_work_pool/observer-progress-isolation.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_single_receiver_has_fixed_cursor_not_multiobserver_coupling/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_single_receiver_has_fixed_cursor_not_multiobserver_coupling/observer-cursor.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_is_wake_only_and_has_no_data_cursor/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_is_wake_only_and_has_no_data_cursor/observer-progress-isolation.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_observer_cursor_and_progress_isolation_separate/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_observer_cursor_and_progress_isolation_separate/concurrency-support-bundle.manifest.example.json`
+
+- **Entry 430** — `entries/2026-03-23-430.md` — concurrency-contract deepened around closure finality, post-close availability, and tail-honesty
+- `meta/frontier-salience-2026-03-23-221.md`
+- `meta/concurrency-contract-closure-plan-2026-03-23.md`
+- `meta/concurrency-contract-closure-boundaries-2026-03-23.md`
+- `fixtures/concurrency-contract-kit/closure-finality.report.schema.json`
+- `fixtures/concurrency-contract-kit/post-close-availability.report.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_close_is_drain_then_terminal_not_immediate_empty/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_close_is_drain_then_terminal_not_immediate_empty/closure-finality.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_closed_still_delivers_retained_values_until_exhausted/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_closed_still_delivers_retained_values_until_exhausted/post-close-availability.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_closed_keeps_last_value_and_can_reopen_via_subscribe/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_closed_keeps_last_value_and_can_reopen_via_subscribe/closure-finality.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_oneshot_close_blocks_future_send_but_in_flight_value_may_remain/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_oneshot_close_blocks_future_send_but_in_flight_value_may_remain/post-close-availability.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/async_channel_closed_still_allows_remaining_messages/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/async_channel_closed_still_allows_remaining_messages/post-close-availability.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/std_mpsc_disconnect_is_drain_then_terminal_with_buffered_tail/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/std_mpsc_disconnect_is_drain_then_terminal_with_buffered_tail/closure-finality.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_closure_finality_and_post_close_availability_separate/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_closure_finality_and_post_close_availability_separate/concurrency-support-bundle.manifest.example.json`
+
+- **Entry 429** — `entries/2026-03-23-429.md` — concurrency-contract deepened around delivery order, sequence windows, and gap-visibility honesty
+
+- **Entry 428** — `entries/2026-03-23-428.md` — concurrency-contract deepened around delivery acceptance, sender-side success meaning, and observation-evidence ceilings
+- `meta/frontier-salience-2026-03-23-219.md`
+- `meta/concurrency-contract-delivery-acceptance-plan-2026-03-23.md`
+- `meta/concurrency-contract-delivery-acceptance-boundaries-2026-03-23.md`
+- `fixtures/concurrency-contract-kit/delivery-acceptance.report.schema.json`
+- `fixtures/concurrency-contract-kit/observation-evidence.report.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_send_ok_means_receiver_open_not_eventual_receipt/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_send_ok_means_receiver_open_not_eventual_receipt/delivery-acceptance.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_send_count_is_hint_not_observation_receipt/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_send_count_is_hint_not_observation_receipt/observation-evidence.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_send_updates_latest_state_but_failed_send_seeds_no_future_receivers/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_send_updates_latest_state_but_failed_send_seeds_no_future_receivers/delivery-acceptance.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_oneshot_send_stores_value_but_sender_only_gets_close_signal/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_oneshot_send_stores_value_but_sender_only_gets_close_signal/observation-evidence.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_records_permit_or_wakes_without_payload_receipt/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_records_permit_or_wakes_without_payload_receipt/delivery-acceptance.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/flume_send_ok_requires_live_receiver_but_not_processing_receipt/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/flume_send_ok_requires_live_receiver_but_not_processing_receipt/observation-evidence.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_delivery_acceptance_and_observation_evidence_separate/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_delivery_acceptance_and_observation_evidence_separate/concurrency-support-bundle.manifest.example.json`
+- **Entry 427** — `entries/2026-03-23-427.md` — concurrency-contract deepened around delivery audience, claim semantics, and fanout honesty
+- `meta/frontier-salience-2026-03-23-218.md`
+- `meta/concurrency-contract-delivery-audience-plan-2026-03-23.md`
+- `meta/concurrency-contract-delivery-audience-boundaries-2026-03-23.md`
+- `fixtures/concurrency-contract-kit/delivery-audience.report.schema.json`
+- `fixtures/concurrency-contract-kit/consumption-claim.report.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_waiters_reaches_all_current_waiters_without_future_subscription/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_waiters_reaches_all_current_waiters_without_future_subscription/delivery-audience.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_fans_out_each_send_to_all_active_receivers/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_fans_out_each_send_to_all_active_receivers/consumption-claim.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_receivers_track_seen_state_independently/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_receivers_track_seen_state_independently/consumption-claim.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_delivers_each_message_to_single_consumer/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_delivers_each_message_to_single_consumer/delivery-audience.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/async_channel_competing_receivers_claim_each_message_once/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/async_channel_competing_receivers_claim_each_message_once/consumption-claim.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/flume_cloned_receivers_still_compete_for_single_delivery/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/flume_cloned_receivers_still_compete_for_single_delivery/delivery-audience.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_oneshot_is_single_use_transfer_not_subscription/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_oneshot_is_single_use_transfer_not_subscription/consumption-claim.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_delivery_audience_and_claim_separate/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_delivery_audience_and_claim_separate/concurrency-support-bundle.manifest.example.json`
+- **Entry 426** — `entries/2026-03-23-426.md` — concurrency-contract deepened around delivery memory, backlog pressure, and lag/loss honesty
+- `meta/frontier-salience-2026-03-23-217.md`
+- `meta/concurrency-contract-delivery-memory-plan-2026-03-23.md`
+- `meta/concurrency-contract-delivery-memory-boundaries-2026-03-23.md`
+- `fixtures/concurrency-contract-kit/delivery-memory.report.schema.json`
+- `fixtures/concurrency-contract-kit/backlog-pressure.report.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_single_permit_memory_is_not_a_queue/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_single_permit_memory_is_not_a_queue/delivery-memory.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_latest_value_only_drops_intermediate_history/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_latest_value_only_drops_intermediate_history/delivery-memory.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_bounded_history_reports_lagged_loss/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_bounded_history_reports_lagged_loss/backlog-pressure.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_bounded_fifo_backpressures_senders_without_overwrite/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_bounded_fifo_backpressures_senders_without_overwrite/backlog-pressure.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/async_channel_unbounded_removes_capacity_pressure_but_not_single_delivery/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/async_channel_unbounded_removes_capacity_pressure_but_not_single_delivery/delivery-memory.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/crossbeam_zero_capacity_is_rendezvous_not_buffered_memory/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/crossbeam_zero_capacity_is_rendezvous_not_buffered_memory/backlog-pressure.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_delivery_memory_and_pressure_separate/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_delivery_memory_and_pressure_separate/concurrency-support-bundle.manifest.example.json`
+- **Entry 425** — `entries/2026-03-23-425.md` — compile-iteration deepened around coverage-scope receipts, claim-ceiling honesty, and route-support boundaries
+- `meta/frontier-salience-2026-03-23-216.md`
+- `meta/compile-iteration-feedback-coverage-plan-2026-03-23.md`
+- `meta/compile-iteration-feedback-coverage-boundaries-2026-03-23.md`
+- `fixtures/compile-iteration-feedback-kit/coverage-scope.receipt.schema.json`
+- `fixtures/compile-iteration-feedback-kit/coverage-ceiling.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/dioxus_three_reload_surfaces_require_separate_coverage_claims/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/dioxus_three_reload_surfaces_require_separate_coverage_claims/coverage-scope.receipt.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_tip_crate_and_call_anchor_limit_live_update_coverage/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_tip_crate_and_call_anchor_limit_live_update_coverage/coverage-ceiling.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_feature_flag_and_hot_annotations_define_covered_routes/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_feature_flag_and_hot_annotations_define_covered_routes/coverage-scope.receipt.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_wrapped_dylib_exports_define_reload_coverage/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_wrapped_dylib_exports_define_reload_coverage/coverage-scope.receipt.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/bevy_simple_subsecond_preexisting_annotated_systems_bound_runtime_coverage/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/bevy_simple_subsecond_preexisting_annotated_systems_bound_runtime_coverage/coverage-ceiling.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_coverage_scope_and_claim_ceiling_separate/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_coverage_scope_and_claim_ceiling_separate/iteration-support-bundle.manifest.example.json`
+
+- **Entry 424** — `entries/2026-03-23-424.md` — compile-iteration deepened around live-update outcome receipts, degraded-mode honesty, and failure containment
+- `meta/frontier-salience-2026-03-23-215.md`
+- `meta/compile-iteration-feedback-outcome-plan-2026-03-23.md`
+- `meta/compile-iteration-feedback-degraded-mode-boundaries-2026-03-23.md`
+- `fixtures/compile-iteration-feedback-kit/live-update-outcome.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/degraded-iteration-mode.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_patch_error_keeps_patch_route_possible_but_current_attempt_failed/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_patch_error_keeps_patch_route_possible_but_current_attempt_failed/live-update-outcome.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_warn_and_error_levels_distinguish_degraded_from_broken_live_reload/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_warn_and_error_levels_distinguish_degraded_from_broken_live_reload/degraded-iteration-mode.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_signature_or_tracing_issue_demands_restart_or_disable/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_signature_or_tracing_issue_demands_restart_or_disable/live-update-outcome.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_eligibility_outcome_and_degraded_mode_separate/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_eligibility_outcome_and_degraded_mode_separate/iteration-support-bundle.manifest.example.json`
+
+- **Entry 423** — `entries/2026-03-23-423.md` — compile-iteration deepened around retirement boundaries, old-generation drain honesty, and cutover completeness
+- `meta/frontier-salience-2026-03-23-214.md`
+- `meta/compile-iteration-feedback-retirement-plan-2026-03-23.md`
+- `meta/compile-iteration-feedback-retirement-boundaries-2026-03-23.md`
+- `fixtures/compile-iteration-feedback-kit/retirement-boundary.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/old-generation-drain.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_rewind_retires_only_to_next_hot_anchor_not_whole_process/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_rewind_retires_only_to_next_hot_anchor_not_whole_process/retirement-boundary.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_hot_reload_completion_does_not_bound_old_route_retirement/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_hot_reload_completion_does_not_bound_old_route_retirement/retirement-boundary.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_before_after_events_bracket_reload_not_old_generation_drain/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_before_after_events_bracket_reload_not_old_generation_drain/old-generation-drain.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_generation_retirement_and_drain_separate/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_generation_retirement_and_drain_separate/iteration-support-bundle.manifest.example.json`
+- **Entry 422** — `entries/2026-03-23-422.md` — compile-iteration deepened around generation witnesses, mixed-generation risk, and route-level code-epoch honesty
+- `meta/frontier-salience-2026-03-23-213.md`
+- `meta/compile-iteration-feedback-generation-plan-2026-03-23.md`
+- `meta/compile-iteration-feedback-generation-boundaries-2026-03-23.md`
+- `fixtures/compile-iteration-feedback-kit/generation-witness.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/mixed-generation-risk.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_pointer_versioning_is_not_precise_generation_identity/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_pointer_versioning_is_not_precise_generation_identity/generation-witness.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_nested_calls_define_generation_cut_points_not_global_takeover/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_nested_calls_define_generation_cut_points_not_global_takeover/generation-witness.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_can_leave_mixed_old_and_new_code_routes_alive_after_reload/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_can_leave_mixed_old_and_new_code_routes_alive_after_reload/mixed-generation-risk.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_load_counter_names_library_generation_not_full_route_coverage/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_load_counter_names_library_generation_not_full_route_coverage/generation-witness.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_generation_activation_and_residency_separate/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_generation_activation_and_residency_separate/iteration-support-bundle.manifest.example.json`
+- **Entry 421** — `entries/2026-03-23-421.md` — compile-iteration deepened around activation boundaries, stale-code residency, and explicit handoff truth
+- `meta/frontier-salience-2026-03-23-212.md`
+- `meta/compile-iteration-feedback-activation-plan-2026-03-23.md`
+- `meta/compile-iteration-feedback-activation-boundaries-2026-03-23.md`
+- `fixtures/compile-iteration-feedback-kit/activation-boundary.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/stale-code-risk.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_hot_code_activates_at_annotated_entrypoints_not_as_global_switch/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/chaud_hot_code_activates_at_annotated_entrypoints_not_as_global_switch/activation-boundary.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_reload_events_make_state_handoff_explicit_not_implicit/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/hot_lib_reloader_reload_events_make_state_handoff_explicit_not_implicit/activation-boundary.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/function_pointers_and_trait_objects_can_keep_old_code_alive_after_reload/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/function_pointers_and_trait_objects_can_keep_old_code_alive_after_reload/stale-code-risk.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/typeid_identity_shift_breaks_simple_same_state_claims_after_reload/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/typeid_identity_shift_breaks_simple_same_state_claims_after_reload/stale-code-risk.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_activation_continuity_and_stale_code_separate/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_activation_continuity_and_stale_code_separate/iteration-support-bundle.manifest.example.json`
+- **Entry 420** — `entries/2026-03-23-420.md` — crate-knowledge deepened around build-surface receipts, docs-build recipes, and conditioned availability witnesses
+- `meta/frontier-salience-2026-03-23-211.md`
+- `meta/crate-knowledge-pack-build-surface-plan-2026-03-23.md`
+- `fixtures/crate-knowledge-pack-kit/build-surface.receipt.schema.json`
+- `fixtures/crate-knowledge-pack-kit/conditioned-availability.report.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/docsrs_cfg_only_applies_to_final_documented_crate_not_dependencies/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/docsrs_cfg_only_applies_to_final_documented_crate_not_dependencies/conditioned-availability.report.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/docsrs_metadata_recipe_defines_hosted_surface_not_one_universal_page_set/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/docsrs_metadata_recipe_defines_hosted_surface_not_one_universal_page_set/build-surface.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/scrape_examples_recipe_and_dev_dep_caveat_make_example_presence_conditioned/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/scrape_examples_recipe_and_dev_dep_caveat_make_example_presence_conditioned/conditioned-availability.report.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/rustdoc_json_format_window_makes_machine_surface_recipe_bound/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/rustdoc_json_format_window_makes_machine_surface_recipe_bound/build-surface.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/portable_bundle_keeps_identity_locator_and_conditioned_availability_separate/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/portable_bundle_keeps_identity_locator_and_conditioned_availability_separate/knowledge-pack.manifest.example.json`
+- **Entry 419** — `entries/2026-03-23-419.md` — concurrency-contract deepened around task locality, mobility/affinity, and driver-liveness truth
+- `meta/frontier-salience-2026-03-23-210.md`
+- `meta/concurrency-contract-locality-driver-plan-2026-03-23.md`
+- `fixtures/concurrency-contract-kit/mobility-affinity.report.schema.json`
+- `fixtures/concurrency-contract-kit/driver-liveness.report.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_spawn_local_requires_local_context_and_same_thread_execution/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_spawn_local_requires_local_context_and_same_thread_execution/mobility-affinity.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_current_thread_handle_block_on_is_not_driver_complete/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_current_thread_handle_block_on_is_not_driver_complete/driver-liveness.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_localruntime_is_thread_bound_and_not_a_localset/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_localruntime_is_thread_bound_and_not_a_localset/mobility-affinity.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/async_executor_local_executor_is_creator_thread_bound_and_explicitly_driven/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/async_executor_local_executor_is_creator_thread_bound_and_explicitly_driven/mobility-affinity.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/async_executor_local_executor_is_creator_thread_bound_and_explicitly_driven/driver-liveness.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/glommio_spawn_local_requires_current_single_thread_executor/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/glommio_spawn_local_requires_current_single_thread_executor/mobility-affinity.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_context_mobility_and_driver_liveness_separate/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_context_mobility_and_driver_liveness_separate/concurrency-support-bundle.manifest.example.json`
+- **Entry 418** — `entries/2026-03-23-418.md` — pathfinder deepened around explicit candidate elimination, re-entry triggers, and no-silent resurrection
+- `meta/frontier-salience-2026-03-23-209.md`
+- `meta/crate-ecosystem-pathfinder-elimination-reentry-plan-2026-03-23.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/candidate-elimination.receipt.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/candidate-reentry.policy.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/msrv_breach_is_exclusion_not_runner_up_and_reentry_requires_floor_shift_or_new_release/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/msrv_breach_is_exclusion_not_runner_up_and_reentry_requires_floor_shift_or_new_release/candidate-elimination.receipt.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/msrv_breach_is_exclusion_not_runner_up_and_reentry_requires_floor_shift_or_new_release/candidate-reentry.policy.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/search_order_and_popularity_do_not_revive_explicitly_excluded_candidate/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/search_order_and_popularity_do_not_revive_explicitly_excluded_candidate/candidate-elimination.receipt.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/docs_surface_or_sloc_improvement_do_not_override_target_gap_without_new_evidence/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/docs_surface_or_sloc_improvement_do_not_override_target_gap_without_new_evidence/candidate-reentry.policy.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/portable_bundle_keeps_choice_exclusion_and_reentry_separate/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/portable_bundle_keeps_choice_exclusion_and_reentry_separate/pathfinder-bundle.manifest.example.json`
+- **Entry 417** — `entries/2026-03-23-417.md` — compile-iteration deepened for edit-scope receipts, fast-path barrier reports, and invalidation honesty
+- **Entry 416** — `entries/2026-03-23-416.md` — dependency-lifecycle deepened around selection anchors, re-resolution risk, and lock/yank survivability
+- `meta/frontier-salience-2026-03-23-208.md`
+- `meta/dependency-lifecycle-transition-reresolution-plan-2026-03-23.md`
+- `fixtures/dependency-lifecycle-transition-kit/selection-anchor.receipt.schema.json`
+- `fixtures/dependency-lifecycle-transition-kit/reresolution-risk.report.schema.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/local_patch_and_lock_anchor_current_route_but_do_not_make_it_shared_or_durable/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/local_patch_and_lock_anchor_current_route_but_do_not_make_it_shared_or_durable/selection-anchor.receipt.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/yanked_locked_version_keeps_today_green_but_future_reresolve_is_exposed/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/yanked_locked_version_keeps_today_green_but_future_reresolve_is_exposed/reresolution-risk.report.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/rust_version_and_clean_resolve_shift_selected_family_and_transition_posture/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/rust_version_and_clean_resolve_shift_selected_family_and_transition_posture/reresolution-risk.report.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/portable_bundle_keeps_override_authority_selection_anchor_and_reresolve_risk_separate/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/portable_bundle_keeps_override_authority_selection_anchor_and_reresolve_risk_separate/lifecycle-support-bundle.manifest.example.json`
+- **Entry 415** — `entries/2026-03-23-415.md` — pathfinder deepened around freeze timeboxes, as-of replay, and knowability honesty
+- **Entry 414** — `entries/2026-03-23-414.md` — crate-knowledge deepened around item witnesses, opaque rustdoc IDs, and anchor-drift discipline
+- `meta/frontier-salience-2026-03-23-206.md`
+- `meta/crate-knowledge-pack-item-witness-plan-2026-03-23.md`
+- `fixtures/crate-knowledge-pack-kit/item-witness.manifest.schema.json`
+- `fixtures/crate-knowledge-pack-kit/identity-fidelity.report.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/rustdoc_json_opaque_ids_need_item_witness_not_cross_blob_reuse/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/rustdoc_json_opaque_ids_need_item_witness_not_cross_blob_reuse/item-witness.manifest.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/version_bump_keeps_same_item_witness_even_when_locator_route_changes/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/version_bump_keeps_same_item_witness_even_when_locator_route_changes/identity-fidelity.report.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/target_specific_item_witness_stays_distinct_from_default_target_locator/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/target_specific_item_witness_stays_distinct_from_default_target_locator/item-witness.manifest.example.json`
+- **Entry 413** — `entries/2026-03-23-413.md` — crate-knowledge deepened around citation-grade locators, target-aware pins, and answer-citation ceilings
+- `meta/frontier-salience-2026-03-23-205.md`
+- `meta/crate-knowledge-pack-citation-locator-plan-2026-03-23.md`
+- `fixtures/crate-knowledge-pack-kit/citation-locator.receipt.schema.json`
+- `fixtures/crate-knowledge-pack-kit/citation-capability.report.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/latest_docsrs_redirect_resolves_to_pinned_citation_locator/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/latest_docsrs_redirect_resolves_to_pinned_citation_locator/citation-locator.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/target_specific_docs_item_needs_target_aware_locator_and_fallback/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/target_specific_docs_item_needs_target_aware_locator_and_fallback/citation-locator.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/query_pack_has_citation_ready_getting_started_but_manual_review_perf/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/query_pack_has_citation_ready_getting_started_but_manual_review_perf/citation-capability.report.example.json`
+- `proposals/crate-knowledge-pack-kit.md`
+- `fixtures/crate-knowledge-pack-kit/README.md`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+# Rust Crate Dreams Archive Index
+
+## Latest revision package contents
+
+- **Entry 412** — `entries/2026-03-23-412.md` — concurrency-contract deepened around cancellation classes, recovery posture, and stronger claim ceilings
+- `meta/frontier-salience-2026-03-23-204.md`
+- `meta/concurrency-contract-product-plan-2026-03-23.md`
+- `meta/concurrency-contract-artifact-completeness-2026-03-23.md`
+- `proposals/concurrency-contract-kit.md`
+- `fixtures/concurrency-contract-kit/README.md`
+- `fixtures/concurrency-contract-kit/wait-cancellation.report.schema.json`
+- `fixtures/concurrency-contract-kit/failure-recovery.report.schema.json`
+- `fixtures/concurrency-contract-kit/concurrency-support-bundle.manifest.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_queue_loss_is_not_channel_message_loss/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_queue_loss_is_not_channel_message_loss/wait-cancellation.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_changed_true_cancel_safety_keeps_seen_state/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_changed_true_cancel_safety_keeps_seen_state/wait-cancellation.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_recv_true_cancel_safety_keeps_message_availability/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_recv_true_cancel_safety_keeps_message_availability/wait-cancellation.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/std_poisoning_and_nonpoison_are_recovery_contracts_not_fairness_claims/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/std_poisoning_and_nonpoison_are_recovery_contracts_not_fairness_claims/failure-recovery.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_reentrancy_progress_cancellation_and_context_separate/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_reentrancy_progress_cancellation_and_context_separate/concurrency-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 411** — `entries/2026-03-23-411.md` — compile-iteration deepened around framework-route splits, restart ceilings, and latency-budget truth
+- `meta/frontier-salience-2026-03-23-203.md`
+- `meta/compile-iteration-feedback-framework-lattice-2026-03-23.md`
+- `meta/compile-iteration-feedback-artifact-completeness-2026-03-23.md`
+- `fixtures/compile-iteration-feedback-kit/reload-surface.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/fallback-restart.plan.schema.json`
+- `fixtures/compile-iteration-feedback-kit/latency-budget.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/dioxus_rsx_and_assets_are_not_rust_hotpatch/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/dioxus_rsx_and_assets_are_not_rust_hotpatch/reload-surface.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/dioxus_hotpatch_has_restart_ceilings/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/dioxus_hotpatch_has_restart_ceilings/fallback-restart.plan.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/tauri_dev_joins_frontend_devserver_and_rust_reload_without_flattening_them/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/tauri_dev_joins_frontend_devserver_and_rust_reload_without_flattening_them/reload-surface.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/trunk_or_cargo_leptos_css_live_update_is_visual_budget_not_logic_budget/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/trunk_or_cargo_leptos_css_live_update_is_visual_budget_not_logic_budget/latency-budget.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_surface_restart_and_budget_separate/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_surface_restart_and_budget_separate/iteration-support-bundle.manifest.example.json`
+- `proposals/compile-iteration-feedback-kit.md`
+- `fixtures/compile-iteration-feedback-kit/README.md`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 410** — `entries/2026-03-23-410.md` — broad rerank adds a concurrency-contract lane for reentrancy, progress/fairness, cancellation safety, and execution-context truth
+- `meta/frontier-salience-2026-03-23-202.md`
+- `meta/concurrency-contract-lane-boundaries-2026-03-23.md`
+- `proposals/concurrency-contract-kit.md`
+- `fixtures/concurrency-contract-kit/README.md`
+- `fixtures/concurrency-contract-kit/reentrancy-scope.report.schema.json`
+- `fixtures/concurrency-contract-kit/progress-fairness.report.schema.json`
+- `fixtures/concurrency-contract-kit/wait-cancellation.report.schema.json`
+- `fixtures/concurrency-contract-kit/execution-context-boundary.report.schema.json`
+- `fixtures/concurrency-contract-kit/concurrency-support-bundle.manifest.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mutex_fifo_is_not_reentrant/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mutex_fifo_is_not_reentrant/reentrancy-scope.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mutex_fifo_is_not_reentrant/progress-fairness.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mutex_fifo_is_not_reentrant/execution-context-boundary.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_select_and_semaphore_cancel_safety_is_lane_specific/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_select_and_semaphore_cancel_safety_is_lane_specific/wait-cancellation.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/parking_lot_eventual_fairness_is_not_tokio_fifo/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/parking_lot_eventual_fairness_is_not_tokio_fifo/progress-fairness.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/std_mutex_blocking_and_nightly_reentrant_lock_do_not_imply_async_safety/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/std_mutex_blocking_and_nightly_reentrant_lock_do_not_imply_async_safety/reentrancy-scope.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/std_mutex_blocking_and_nightly_reentrant_lock_do_not_imply_async_safety/execution-context-boundary.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_reentrancy_progress_cancellation_and_context_separate/README.md`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_reentrancy_progress_cancellation_and_context_separate/concurrency-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 409** — `entries/2026-03-23-409.md` — rustdoc JSON support deepened into source-route, format-window, and normalization-loss artifacts
+- `meta/rustdoc-json-support-frontier-2026-03-23.md`
+- `meta/rustdoc-json-version-window-plan-2026-03-23.md`
+- `meta/rustdoc-json-normalization-boundaries-2026-03-23.md`
+- `proposals/rustdoc-json-kit.md`
+- `fixtures/rustdoc-json-kit/README.md`
+- `fixtures/rustdoc-json-kit/source-route.receipt.schema.json`
+- `fixtures/rustdoc-json-kit/format-window.matrix.schema.json`
+- `fixtures/rustdoc-json-kit/normalization-loss.report.schema.json`
+- `fixtures/rustdoc-json-kit/rustdoc-json-support-bundle.manifest.schema.json`
+- `fixtures/rustdoc-json-kit/scenarios/docsrs_download_keeps_format_version_and_rebuild_gap_explicit/README.md`
+- `fixtures/rustdoc-json-kit/scenarios/docsrs_download_keeps_format_version_and_rebuild_gap_explicit/source-route.receipt.example.json`
+- `fixtures/rustdoc-json-kit/scenarios/rustup_component_for_toolchain_crates_is_not_local_crate_generation/README.md`
+- `fixtures/rustdoc-json-kit/scenarios/rustup_component_for_toolchain_crates_is_not_local_crate_generation/source-route.receipt.example.json`
+- `fixtures/rustdoc-json-kit/scenarios/consumer_supports_multiple_format_versions_but_not_every_query/README.md`
+- `fixtures/rustdoc-json-kit/scenarios/consumer_supports_multiple_format_versions_but_not_every_query/format-window.matrix.example.json`
+- `fixtures/rustdoc-json-kit/scenarios/foreign_reexports_and_manifest_semver_need_loss_report/README.md`
+- `fixtures/rustdoc-json-kit/scenarios/foreign_reexports_and_manifest_semver_need_loss_report/normalization-loss.report.example.json`
+- `fixtures/rustdoc-json-kit/scenarios/portable_bundle_keeps_route_window_and_loss_separate/README.md`
+- `fixtures/rustdoc-json-kit/scenarios/portable_bundle_keeps_route_window_and_loss_separate/rustdoc-json-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 408** — `entries/2026-03-23-408.md` — workspace-tooling support deepened into command-authority, component-availability, and fallback-ceiling artifacts
+- `meta/cargo-workspace-toolchain-manifest-frontier-2026-03-23.md`
+- `meta/cargo-workspace-toolchain-command-authority-plan-2026-03-23.md`
+- `meta/cargo-workspace-toolchain-component-fallback-boundaries-2026-03-23.md`
+- `proposals/cargo-toolchain-manifest.md`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/README.md`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/command-authority.receipt.schema.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/component-availability.report.schema.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/fallback-ceiling.report.schema.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/tool-support-bundle.manifest.schema.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/rust_analyzer_path_fallback_is_not_rustup_component_backing/README.md`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/rust_analyzer_path_fallback_is_not_rustup_component_backing/command-authority.receipt.example.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/rust_analyzer_path_fallback_is_not_rustup_component_backing/component-availability.report.example.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/rust_analyzer_path_fallback_is_not_rustup_component_backing/fallback-ceiling.report.example.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/cargo_home_subcommand_route_is_not_a_rustup_component_claim/README.md`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/cargo_home_subcommand_route_is_not_a_rustup_component_claim/command-authority.receipt.example.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/rustfmt_component_presence_changes_with_toolchain_selection/README.md`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/rustfmt_component_presence_changes_with_toolchain_selection/component-availability.report.example.json`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/portable_bundle_keeps_authority_component_and_ceiling_separate/README.md`
+- `fixtures/cargo-workspace-toolchain-manifest-kit/scenarios/portable_bundle_keeps_authority_component_and_ceiling_separate/tool-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 403** — `entries/2026-03-23-403.md` — crate off-ramp work deepened into successor-authority, stopgap-horizon, and recipe-witness artifacts
+- `meta/crate-offramp-frontier-2026-03-23.md`
+- `meta/crate-offramp-authority-horizon-plan-2026-03-23.md`
+- `meta/crate-offramp-claim-boundaries-2026-03-23.md`
+- `proposals/crate-offramp-pack-kit.md`
+- `fixtures/crate-offramp-pack-kit/README.md`
+- `fixtures/crate-offramp-pack-kit/successor-authority.receipt.schema.json`
+- `fixtures/crate-offramp-pack-kit/stopgap-horizon.report.schema.json`
+- `fixtures/crate-offramp-pack-kit/recipe-witness.report.schema.json`
+- `fixtures/crate-offramp-pack-kit/offramp-support-bundle.manifest.schema.json`
+- `fixtures/crate-offramp-pack-kit/rustdoc_note_and_stopgap_authority/README.md`
+- `fixtures/crate-offramp-pack-kit/rustdoc_note_and_stopgap_authority/successor-authority.receipt.example.json`
+- `fixtures/crate-offramp-pack-kit/last_safe_pin_horizon/README.md`
+- `fixtures/crate-offramp-pack-kit/last_safe_pin_horizon/stopgap-horizon.report.example.json`
+- `fixtures/crate-offramp-pack-kit/rename_recipe_witness_scope/README.md`
+- `fixtures/crate-offramp-pack-kit/rename_recipe_witness_scope/recipe-witness.report.example.json`
+- `fixtures/crate-offramp-pack-kit/portable_bundle/README.md`
+- `fixtures/crate-offramp-pack-kit/portable_bundle/offramp-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 402** — `entries/2026-03-22-402.md` — debuggability-support work deepened into session-scope, capability-witness, and claim-ceiling artifacts
+- `meta/debuggability-support-capability-witness-frontier-2026-03-22.md`
+- `meta/debuggability-support-capability-witness-plan-2026-03-22.md`
+- `meta/debuggability-support-session-scope-boundaries-2026-03-22.md`
+- `proposals/debuggability-support-contract-kit.md`
+- `fixtures/debuggability-support-contract-kit/README.md`
+- `fixtures/debuggability-support-contract-kit/session-scope.receipt.schema.json`
+- `fixtures/debuggability-support-contract-kit/capability-witness.report.schema.json`
+- `fixtures/debuggability-support-contract-kit/claim-ceiling.report.schema.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/core_dump_symbolication_is_not_live_session_scope/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/core_dump_symbolication_is_not_live_session_scope/session-scope.receipt.example.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/locals_backtrace_and_pretty_render_do_not_settle_rust_expression_eval/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/locals_backtrace_and_pretty_render_do_not_settle_rust_expression_eval/capability-witness.report.example.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/lldb_linux_witness_does_not_settle_macos_or_pdb_lanes/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/lldb_linux_witness_does_not_settle_macos_or_pdb_lanes/claim-ceiling.report.example.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/portable_bundle_keeps_posture_scope_and_capability_witnesses_separate/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/portable_bundle_keeps_posture_scope_and_capability_witnesses_separate/debug-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 401** — `entries/2026-03-23-401.md` — publish-receipt work deepened into registry-capability, protection-scope, and bundle-honesty artifacts
+- `meta/cargo-publish-receipt-join-frontier-2026-03-23.md`
+- `meta/cargo-publish-receipt-join-registry-coverage-plan-2026-03-23.md`
+- `meta/cargo-publish-receipt-join-lane-boundaries-2026-03-23.md`
+- `proposals/cargo-publish-receipt-join-kit.md`
+- `fixtures/cargo-publish-receipt-join-kit/README.md`
+- `fixtures/cargo-publish-receipt-join-kit/registry-capability.receipt.schema.json`
+- `fixtures/cargo-publish-receipt-join-kit/protection-scope.report.schema.json`
+- `fixtures/cargo-publish-receipt-join-kit/publish-join-bundle.manifest.schema.json`
+- `fixtures/cargo-publish-receipt-join-kit/scenarios/crates_io_enrichments_and_tp_mode_do_not_transfer_to_alternate_registry/README.md`
+- `fixtures/cargo-publish-receipt-join-kit/scenarios/crates_io_enrichments_and_tp_mode_do_not_transfer_to_alternate_registry/registry-capability.receipt.example.json`
+- `fixtures/cargo-publish-receipt-join-kit/scenarios/crates_io_mitigations_do_not_prove_alternate_registry_protection_scope/README.md`
+- `fixtures/cargo-publish-receipt-join-kit/scenarios/crates_io_mitigations_do_not_prove_alternate_registry_protection_scope/protection-scope.report.example.json`
+- `fixtures/cargo-publish-receipt-join-kit/scenarios/portable_bundle_keeps_local_bytes_identity_registry_capability_and_visibility_separate/README.md`
+- `fixtures/cargo-publish-receipt-join-kit/scenarios/portable_bundle_keeps_local_bytes_identity_registry_capability_and_visibility_separate/publish-join-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 400** — `entries/2026-03-23-400.md` — workspace-boundary diagnosis deepened into ancestor-discovery, config-layering, and invocation-mode support artifacts
+- `meta/cargo-workspace-boundary-frontier-2026-03-23.md`
+- `meta/cargo-workspace-boundary-product-plan-2026-03-23.md`
+- `meta/cargo-workspace-boundary-invocation-boundaries-2026-03-23.md`
+- `proposals/cargo-workspace-boundary-doctor-kit.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/README.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/ancestor-discovery.receipt.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/config-layering.report.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/invocation-mode.report.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/boundary-support-bundle.manifest.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/parent_config_include_chain_and_cli_override_need_distinct_layer_receipts/README.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/parent_config_include_chain_and_cli_override_need_distinct_layer_receipts/ancestor-discovery.receipt.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/parent_config_include_chain_and_cli_override_need_distinct_layer_receipts/config-layering.report.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/manifest_command_and_manifest_path_have_different_config_roots/README.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/manifest_command_and_manifest_path_have_different_config_roots/invocation-mode.report.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/single_file_package_disables_workspace_autodiscovery_but_not_config_discovery/README.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/single_file_package_disables_workspace_autodiscovery_but_not_config_discovery/invocation-mode.report.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/portable_bundle_keeps_ancestor_layering_and_invocation_mode_separate/README.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/portable_bundle_keeps_ancestor_layering_and_invocation_mode_separate/boundary-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 397** — `entries/2026-03-23-397.md` — safety-contract consumption deepened into authority receipts, consumer-coverage matrices, and semantic-lane honesty
+- `meta/safety-contract-consumer-frontier-2026-03-23.md`
+- `meta/safety-contract-consumer-product-plan-2026-03-23.md`
+- `meta/safety-contract-consumer-lane-boundaries-2026-03-23.md`
+- `proposals/safety-contract-consumer-kit.md`
+- `fixtures/safety-contract-consumer-kit/README.md`
+- `fixtures/safety-contract-consumer-kit/contract-authority.receipt.schema.json`
+- `fixtures/safety-contract-consumer-kit/consumer-coverage.matrix.schema.json`
+- `fixtures/safety-contract-consumer-kit/semantic-lane.report.schema.json`
+- `fixtures/safety-contract-consumer-kit/scenarios/std_contract_authority_and_kani_profile_do_not_settle_other_consumers/README.md`
+- `fixtures/safety-contract-consumer-kit/scenarios/std_contract_authority_and_kani_profile_do_not_settle_other_consumers/contract-authority.receipt.example.json`
+- `fixtures/safety-contract-consumer-kit/scenarios/verify_rust_std_acceptance_does_not_mean_uniform_consumer_coverage/README.md`
+- `fixtures/safety-contract-consumer-kit/scenarios/verify_rust_std_acceptance_does_not_mean_uniform_consumer_coverage/consumer-coverage.matrix.example.json`
+- `fixtures/safety-contract-consumer-kit/scenarios/semantic_lanes_keep_runtime_checks_bmc_refinement_and_separation_logic_distinct/README.md`
+- `fixtures/safety-contract-consumer-kit/scenarios/semantic_lanes_keep_runtime_checks_bmc_refinement_and_separation_logic_distinct/semantic-lane.report.example.json`
+- `fixtures/safety-contract-consumer-kit/scenarios/portable_bundle_keeps_authority_coverage_and_semantics_separate/README.md`
+- `fixtures/safety-contract-consumer-kit/scenarios/portable_bundle_keeps_authority_coverage_and_semantics_separate/contracts-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 396** — `entries/2026-03-23-396.md` — async runtime assurance deepened into deployment topology and guarded capability matrices
+- `meta/async-runtime-deployment-topology-frontier-2026-03-23.md`
+- `meta/async-runtime-capability-availability-plan-2026-03-23.md`
+- `meta/async-runtime-surface-guard-boundaries-2026-03-23.md`
+- `proposals/async-runtime-assurance-profile-kit.md`
+- `fixtures/async-runtime-assurance-profile-kit/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/runtime-deployment-topology.receipt.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/capability-availability.matrix.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/surface-guard.report.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/embassy_std_host_examples_do_not_settle_embedded_target_capabilities/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/embassy_std_host_examples_do_not_settle_embedded_target_capabilities/runtime-deployment-topology.receipt.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/tokio_asyncfd_and_signal_support_are_lane_scoped_not_global/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/tokio_asyncfd_and_signal_support_are_lane_scoped_not_global/capability-availability.matrix.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/windows_console_signals_and_unix_signals_need_distinct_surface_guards/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/windows_console_signals_and_unix_signals_need_distinct_surface_guards/surface-guard.report.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/portable_bundle_keeps_topology_matrix_and_surface_guards_separate/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/portable_bundle_keeps_topology_matrix_and_surface_guards_separate/runtime-assurance-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 395** — `entries/2026-03-23-395.md` — async runtime assurance deepened into a service-topology and capability-route lane
+- `meta/async-runtime-capability-frontier-2026-03-23.md`
+- `meta/async-runtime-capability-topology-plan-2026-03-23.md`
+- `meta/async-runtime-capability-route-boundaries-2026-03-23.md`
+- `proposals/async-runtime-assurance-profile-kit.md`
+- `fixtures/async-runtime-assurance-profile-kit/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/runtime-service-topology.receipt.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/capability-route.receipt.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/compatibility-bridge.report.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/tokio_manual_runtime_needs_explicit_time_route_for_sleep/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/tokio_manual_runtime_needs_explicit_time_route_for_sleep/capability-route.receipt.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/embassy_executor_and_hal_time_driver_form_split_service_topology/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/embassy_executor_and_hal_time_driver_form_split_service_topology/runtime-service-topology.receipt.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/rtic_dispatchers_and_timer_queue_are_priority_scoped_services/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/rtic_dispatchers_and_timer_queue_are_priority_scoped_services/runtime-service-topology.receipt.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/async_compat_bridge_keeps_tokio_context_dependency_explicit/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/async_compat_bridge_keeps_tokio_context_dependency_explicit/compatibility-bridge.report.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/portable_bundle_keeps_profile_topology_and_bridge_debt_separate/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/portable_bundle_keeps_profile_topology_and_bridge_debt_separate/runtime-assurance-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 394** — `entries/2026-03-23-394.md` — projection/reborrow work deepened into a real smart-pointer semantics support lane
+- `meta/projection-reborrow-frontier-2026-03-23.md`
+- `meta/projection-reborrow-product-plan-2026-03-23.md`
+- `meta/projection-reborrow-lane-boundaries-2026-03-23.md`
+- `proposals/projection-reborrow-semantics-kit.md`
+- `fixtures/projection-reborrow-semantics-kit/README.md`
+- `fixtures/projection-reborrow-semantics-kit/projection-authority.receipt.schema.json`
+- `fixtures/projection-reborrow-semantics-kit/borrow-semantics.matrix.schema.json`
+- `fixtures/projection-reborrow-semantics-kit/semantics-witness.report.schema.json`
+- `fixtures/projection-reborrow-semantics-kit/projection-support-bundle.manifest.schema.json`
+- `fixtures/projection-reborrow-semantics-kit/pin_project_macro_presence_does_not_settle_projection_authority/README.md`
+- `fixtures/projection-reborrow-semantics-kit/generalized_reborrow_claim_needs_mode_matrix/README.md`
+- `fixtures/projection-reborrow-semantics-kit/miri_green_run_still_needs_uncovered_path_reporting/README.md`
+- `fixtures/projection-reborrow-semantics-kit/portable_bundle_keeps_authority_modes_and_witnesses_separate/README.md`
+- `fixtures/projection-reborrow-semantics-kit/scenarios/pin_project_macro_presence_does_not_settle_projection_authority/projection-authority.receipt.example.json`
+- `fixtures/projection-reborrow-semantics-kit/scenarios/generalized_reborrow_claim_needs_mode_matrix/borrow-semantics.matrix.example.json`
+- `fixtures/projection-reborrow-semantics-kit/scenarios/miri_green_run_still_needs_uncovered_path_reporting/semantics-witness.report.example.json`
+- `fixtures/projection-reborrow-semantics-kit/scenarios/portable_bundle_keeps_authority_modes_and_witnesses_separate/projection-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 393** — `entries/2026-03-22-393.md` — ecosystem-navigation deepening turned crate pathfinder into an imported-evidence honesty lane
+- `meta/crate-ecosystem-pathfinder-frontier-2026-03-22.md`
+- `meta/crate-ecosystem-pathfinder-import-basis-plan-2026-03-22.md`
+- `proposals/crate-ecosystem-pathfinder-kit.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/candidate-basis.receipt.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/support-visibility.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/pathfinder-bundle.manifest.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/cargo_add_best_effort_source_selection_is_not_decision_authority/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/visible_support_surfaces_do_not_settle_task_fit/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/portable_bundle_keeps_basis_visibility_and_choice_separate/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/cargo_add_best_effort_source_selection_is_not_decision_authority/candidate-basis.receipt.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/visible_support_surfaces_do_not_settle_task_fit/support-visibility.report.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scenarios/portable_bundle_keeps_basis_visibility_and_choice_separate/pathfinder-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 392** — `entries/2026-03-22-392.md` — build-observability deepening promoted cargo-event-stream into a real support-contract lane
+- `meta/cargo-event-stream-frontier-2026-03-22.md`
+- `meta/cargo-event-stream-product-plan-2026-03-22.md`
+- `meta/cargo-event-stream-lane-boundaries-2026-03-22.md`
+- `proposals/cargo-event-stream.md`
+- `fixtures/cargo-event-stream/README.md`
+- `fixtures/cargo-event-stream/cargo-event-envelope.schema.json`
+- `fixtures/cargo-event-stream/foreign-output.record.schema.json`
+- `fixtures/cargo-event-stream/rendering-policy.receipt.schema.json`
+- `fixtures/cargo-event-stream/event-stream-session.manifest.schema.json`
+- `fixtures/cargo-event-stream/event-stream-bundle.manifest.schema.json`
+- `fixtures/cargo-event-stream/redaction.receipt.schema.json`
+- `fixtures/cargo-event-stream/scenarios/proc_macro_stdout_is_captured_as_foreign_output_not_bare_text/README.md`
+- `fixtures/cargo-event-stream/scenarios/proc_macro_stdout_is_captured_as_foreign_output_not_bare_text/foreign-output.record.example.json`
+- `fixtures/cargo-event-stream/scenarios/json_render_diagnostics_requires_explicit_rendering_policy_receipt/README.md`
+- `fixtures/cargo-event-stream/scenarios/json_render_diagnostics_requires_explicit_rendering_policy_receipt/rendering-policy.receipt.example.json`
+- `fixtures/cargo-event-stream/scenarios/build_script_metadata_and_artifact_events_share_session_identity/README.md`
+- `fixtures/cargo-event-stream/scenarios/build_script_metadata_and_artifact_events_share_session_identity/event-stream-session.manifest.example.json`
+- `fixtures/cargo-event-stream/scenarios/portable_bundle_keeps_native_events_foreign_output_and_redaction_truth_separate/README.md`
+- `fixtures/cargo-event-stream/scenarios/portable_bundle_keeps_native_events_foreign_output_and_redaction_truth_separate/event-stream-bundle.manifest.example.json`
+- `fixtures/cargo-event-stream/scenarios/portable_bundle_keeps_native_events_foreign_output_and_redaction_truth_separate/redaction.receipt.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 391** — `entries/2026-03-22-391.md` — broad territory rerank added compile iteration feedback as a new top-lane candidate
+- `meta/frontier-salience-2026-03-22-201.md`
+- `meta/epic-crate-territory-map-2026-03-22.md`
+- `proposals/compile-iteration-feedback-kit.md`
+- `meta/compile-iteration-feedback-product-plan-2026-03-22.md`
+- `meta/compile-iteration-feedback-lane-boundaries-2026-03-22.md`
+- `fixtures/compile-iteration-feedback-kit/README.md`
+- `fixtures/compile-iteration-feedback-kit/patch-eligibility.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/linker-route.receipt.schema.json`
+- `fixtures/compile-iteration-feedback-kit/state-continuity.contract.schema.json`
+- `fixtures/compile-iteration-feedback-kit/iteration-support-bundle.manifest.schema.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/rsx_markup_change_uses_ui_hot_reload_not_code_patch/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/rsx_markup_change_uses_ui_hot_reload_not_code_patch/patch-eligibility.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/wild_or_lld_speedup_is_not_same_as_runtime_patch_route/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/wild_or_lld_speedup_is_not_same_as_runtime_patch_route/linker-route.receipt.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/static_layout_or_constructor_change_requires_restart_contract/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/static_layout_or_constructor_change_requires_restart_contract/state-continuity.contract.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_patch_linker_and_state_truth_separate/README.md`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_patch_linker_and_state_truth_separate/iteration-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 389** — `entries/2026-03-22-389.md` — debugger visualizer compatibility deepened around probe surface, comparison basis, and portable support bundles
+- `meta/frontier-salience-2026-03-22-199.md`
+- `meta/debugger-visualizer-comparison-basis-plan-2026-03-22.md`
+- `fixtures/debugger-visualizer-compatibility-kit/README.md`
+- `fixtures/debugger-visualizer-compatibility-kit/probe-surface.receipt.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/comparison-basis.receipt.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/visualizer-support-bundle.manifest.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/natvis_pdb_embedded_surface_is_not_same_as_solution_file_surface/README.md`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/natvis_pdb_embedded_surface_is_not_same_as_solution_file_surface/probe-surface.receipt.example.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/lldb_dap_and_lldb_cli_need_explicit_comparison_basis/README.md`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/lldb_dap_and_lldb_cli_need_explicit_comparison_basis/comparison-basis.receipt.example.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/gdb_versioned_printer_package_drift_is_not_plain_asset_failure/README.md`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/gdb_versioned_printer_package_drift_is_not_plain_asset_failure/comparison-basis.receipt.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 386** — `entries/2026-03-22-386.md` — debugger visualizer compatibility deepened around activation route, formatter origin, and portable support bundles
+- `meta/frontier-salience-2026-03-22-196.md`
+- `meta/debugger-visualizer-activation-origin-plan-2026-03-22.md`
+- `fixtures/debugger-visualizer-compatibility-kit/README.md`
+- `fixtures/debugger-visualizer-compatibility-kit/activation-route.receipt.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/formatter-origin.receipt.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/visualizer-support-bundle.manifest.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/gdb_safe_path_blocked_records_activation_route_instead_of_asset_failure/README.md`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/gdb_safe_path_blocked_records_activation_route_instead_of_asset_failure/activation-route.receipt.example.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/rust_lldb_wrapper_is_formatter_origin_not_repo_embedded_visualizer/README.md`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/rust_lldb_wrapper_is_formatter_origin_not_repo_embedded_visualizer/formatter-origin.receipt.example.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/portable_bundle_keeps_assets_activation_and_formatter_origin_separate/README.md`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/portable_bundle_keeps_assets_activation_and_formatter_origin_separate/visualizer-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 381** — `entries/2026-03-22-381.md` — FFI boundary-conformance work deepened around interface authority, callback lifecycle, and portable support bundles
+- `meta/frontier-salience-2026-03-22-191.md`
+- `meta/ffi-boundary-conformance-artifact-completeness-plan-2026-03-22.md`
+- `fixtures/ffi-boundary-conformance-kit/README.md`
+- `fixtures/ffi-boundary-conformance-kit/interface-authority.import.schema.json`
+- `fixtures/ffi-boundary-conformance-kit/callback-lifecycle.receipt.schema.json`
+- `fixtures/ffi-boundary-conformance-kit/ffi-support-bundle.manifest.schema.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/generated_header_is_derived_not_primary_interface_authority/README.md`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/generated_header_is_derived_not_primary_interface_authority/interface-authority.import.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/foreign_callback_requires_explicit_unregister_or_drop_story/README.md`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/foreign_callback_requires_explicit_unregister_or_drop_story/callback-lifecycle.receipt.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/portable_bundle_keeps_authority_lifecycle_and_contract_separate/README.md`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/portable_bundle_keeps_authority_lifecycle_and_contract_separate/ffi-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 380** — `entries/2026-03-22-380.md` — cargo feature-surface work deepened around resolution scope, hosted docs profiles, and portable support bundles
+- `meta/frontier-salience-2026-03-22-190.md`
+- `meta/cargo-feature-surface-artifact-completeness-plan-2026-03-22.md`
+- `fixtures/cargo-feature-surface-contract-kit/README.md`
+- `fixtures/cargo-feature-surface-contract-kit/resolution-scope.receipt.schema.json`
+- `fixtures/cargo-feature-surface-contract-kit/hosted-feature-profile.receipt.schema.json`
+- `fixtures/cargo-feature-surface-contract-kit/feature-support-bundle.manifest.schema.json`
+- `fixtures/cargo-feature-surface-contract-kit/scenarios/workspace_wide_no_default_features_scope_needs_explicit_receipt/README.md`
+- `fixtures/cargo-feature-surface-contract-kit/scenarios/workspace_wide_no_default_features_scope_needs_explicit_receipt/resolution-scope.receipt.example.json`
+- `fixtures/cargo-feature-surface-contract-kit/scenarios/docsrs_all_features_profile_is_not_runtime_support_contract/README.md`
+- `fixtures/cargo-feature-surface-contract-kit/scenarios/docsrs_all_features_profile_is_not_runtime_support_contract/hosted-feature-profile.receipt.example.json`
+- `fixtures/cargo-feature-surface-contract-kit/scenarios/portable_bundle_keeps_scope_hosted_docs_and_contract_separate/README.md`
+- `fixtures/cargo-feature-surface-contract-kit/scenarios/portable_bundle_keeps_scope_hosted_docs_and_contract_separate/feature-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 399** — `entries/2026-03-23-399.md` — crate knowledge pack work deepened around answerability scope, refusal honesty, and claim traces for machine-facing exports
+- `meta/crate-knowledge-pack-frontier-2026-03-23.md`
+- `meta/crate-knowledge-pack-answerability-plan-2026-03-23.md`
+- `meta/crate-knowledge-pack-assistant-boundaries-2026-03-23.md`
+- `fixtures/crate-knowledge-pack-kit/assistant-context.pack.schema.json`
+- `fixtures/crate-knowledge-pack-kit/query-support.matrix.schema.json`
+- `fixtures/crate-knowledge-pack-kit/claim-trace.report.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/assistant_context_declares_supported_queries_and_manual_review_zones/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/assistant_context_declares_supported_queries_and_manual_review_zones/assistant-context.pack.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/query_support_matrix_separates_supported_partial_and_refused_question_classes/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/query_support_matrix_separates_supported_partial_and_refused_question_classes/query-support.matrix.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/claim_trace_keeps_machine_summary_claims_tied_to_excerpts_and_materials/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/claim_trace_keeps_machine_summary_claims_tied_to_excerpts_and_materials/claim-trace.report.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 379** — `entries/2026-03-22-379.md` — crate knowledge pack work deepened around material basis, export policy, and excerpt-lineage honesty
+- `meta/frontier-salience-2026-03-22-189.md`
+- `meta/crate-knowledge-material-basis-export-plan-2026-03-22.md`
+- `meta/crate-knowledge-pack-frontier-2026-03-23.md`
+- `meta/crate-knowledge-pack-answerability-plan-2026-03-23.md`
+- `meta/crate-knowledge-pack-assistant-boundaries-2026-03-23.md`
+- `fixtures/crate-knowledge-pack-kit/assistant-context.pack.schema.json`
+- `fixtures/crate-knowledge-pack-kit/query-support.matrix.schema.json`
+- `fixtures/crate-knowledge-pack-kit/claim-trace.report.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/assistant_context_declares_supported_queries_and_manual_review_zones/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/assistant_context_declares_supported_queries_and_manual_review_zones/assistant-context.pack.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/query_support_matrix_separates_supported_partial_and_refused_question_classes/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/query_support_matrix_separates_supported_partial_and_refused_question_classes/query-support.matrix.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/claim_trace_keeps_machine_summary_claims_tied_to_excerpts_and_materials/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/claim_trace_keeps_machine_summary_claims_tied_to_excerpts_and_materials/claim-trace.report.example.json`
+- `fixtures/crate-knowledge-pack-kit/README.md`
+- `fixtures/crate-knowledge-pack-kit/material-basis.receipt.schema.json`
+- `fixtures/crate-knowledge-pack-kit/export-policy.receipt.schema.json`
+- `fixtures/crate-knowledge-pack-kit/excerpt-lineage.report.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/latest_or_semver_docsrs_url_requires_resolved_material_basis/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/latest_or_semver_docsrs_url_requires_resolved_material_basis/material-basis.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/pre_2025_release_lacks_docsrs_rustdoc_json_and_keeps_gap_explicit/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/pre_2025_release_lacks_docsrs_rustdoc_json_and_keeps_gap_explicit/material-basis.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/download_archive_material_basis_carries_static_root_and_target_caveats/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/download_archive_material_basis_carries_static_root_and_target_caveats/material-basis.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/support_export_policy_redacts_internal_playbooks_but_keeps_excerpt_lineage/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/support_export_policy_redacts_internal_playbooks_but_keeps_excerpt_lineage/export-policy.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/support_export_policy_redacts_internal_playbooks_but_keeps_excerpt_lineage/excerpt-lineage.report.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 377** — `entries/2026-03-22-377.md` — rebuild-causality work deepened around comparison scope, artifact-route drift, and portable support bundles
+- `meta/frontier-salience-2026-03-22-187.md`
+- `meta/cargo-rebuild-explanation-comparison-scope-plan-2026-03-22.md`
+- `fixtures/cargo-rebuild-why-kit/README.md`
+- `fixtures/cargo-rebuild-why-kit/comparison-scope.receipt.schema.json`
+- `fixtures/cargo-rebuild-why-kit/artifact-route-drift.report.schema.json`
+- `fixtures/cargo-rebuild-why-kit/rebuild-support-bundle.manifest.schema.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/cargo_check_baseline_needs_scope_gate_before_explaining_cargo_build/README.md`
+- `fixtures/cargo-rebuild-why-kit/scenarios/cargo_check_baseline_needs_scope_gate_before_explaining_cargo_build/comparison-scope.receipt.example.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/build_dir_split_changes_reuse_context_while_target_dir_stays_constant/README.md`
+- `fixtures/cargo-rebuild-why-kit/scenarios/build_dir_split_changes_reuse_context_while_target_dir_stays_constant/artifact-route-drift.report.example.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/portable_bundle_keeps_scope_route_and_adjacent_context_separate/README.md`
+- `fixtures/cargo-rebuild-why-kit/scenarios/portable_bundle_keeps_scope_route_and_adjacent_context_separate/rebuild-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 376** — `entries/2026-03-22-376.md` — toolchain/target support deepened around imported authority, public docs surface, and portable support bundles
+- `meta/frontier-salience-2026-03-22-186.md`
+- `meta/toolchain-target-support-authority-surface-plan-2026-03-22.md`
+- `fixtures/toolchain-target-support-contract-kit/README.md`
+- `fixtures/toolchain-target-support-contract-kit/upstream-support-authority.import.schema.json`
+- `fixtures/toolchain-target-support-contract-kit/public-docs-surface.receipt.schema.json`
+- `fixtures/toolchain-target-support-contract-kit/toolchain-support-bundle.manifest.schema.json`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/official_rustup_host_exists_but_project_unclaimed/upstream-support-authority.import.example.json`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/docsrs_default_target_drift_after_2025_change/public-docs-surface.receipt.example.json`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/portable_bundle_keeps_imported_authority_docs_surface_and_local_contract_separate/README.md`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/portable_bundle_keeps_imported_authority_docs_surface_and_local_contract_separate/toolchain-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+
+- **Entry 375** — `entries/2026-03-22-375.md` — debuggability support deepened around backend observations, source-material handoff, and portable debug-support bundles
+- `meta/frontier-salience-2026-03-22-185.md`
+- `meta/debuggability-support-artifact-completeness-plan-2026-03-22.md`
+- `fixtures/debuggability-support-contract-kit/README.md`
+- `fixtures/debuggability-support-contract-kit/backend-observation.receipt.schema.json`
+- `fixtures/debuggability-support-contract-kit/source-material.manifest.schema.json`
+- `fixtures/debuggability-support-contract-kit/debug-support-bundle.manifest.schema.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/windows_msvc_lane_observed_but_not_portable_to_other_backends/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/windows_msvc_lane_observed_but_not_portable_to_other_backends/backend-observation.receipt.example.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/trim_paths_keeps_paths_private_but_internal_source_archive_still_needed/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/trim_paths_keeps_paths_private_but_internal_source_archive_still_needed/source-material.manifest.example.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/portable_bundle_keeps_sidecars_backend_evidence_and_source_materials_separate/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/portable_bundle_keeps_sidecars_backend_evidence_and_source_materials_separate/debug-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 374** — `entries/2026-03-22-374.md` — MSRV workspace work deepened around effective workspace promises, policy-split drift, and portable support bundles
+- `meta/frontier-salience-2026-03-22-184.md`
+- `meta/msrv-artifact-completeness-plan-2026-03-22.md`
+- `fixtures/msrv-workspace-lab/README.md`
+- `fixtures/msrv-workspace-lab/effective-workspace-promise.manifest.schema.json`
+- `fixtures/msrv-workspace-lab/policy-split-diff.report.schema.json`
+- `fixtures/msrv-workspace-lab/msrv-support-bundle.manifest.schema.json`
+- `fixtures/msrv-workspace-lab/scenarios/virtual_workspace_resolver_expectation_needs_activation_receipt/README.md`
+- `fixtures/msrv-workspace-lab/scenarios/virtual_workspace_resolver_expectation_needs_activation_receipt/policy-activation.receipt.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/mixed_workspace_library_stays_low_cli_moves_higher_needs_effective_promise/README.md`
+- `fixtures/msrv-workspace-lab/scenarios/mixed_workspace_library_stays_low_cli_moves_higher_needs_effective_promise/effective-workspace-promise.manifest.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/inactive_target_edge_keeps_build_green_but_metadata_floor_higher/README.md`
+- `fixtures/msrv-workspace-lab/scenarios/inactive_target_edge_keeps_build_green_but_metadata_floor_higher/command-family-floor.report.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/lockfile_update_floor_rises_but_pinned_build_lane_stays_supported/README.md`
+- `fixtures/msrv-workspace-lab/scenarios/lockfile_update_floor_rises_but_pinned_build_lane_stays_supported/lockfile-floor.receipt.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/release_changes_only_cli_member_promise_not_library_baseline/README.md`
+- `fixtures/msrv-workspace-lab/scenarios/release_changes_only_cli_member_promise_not_library_baseline/policy-split-diff.report.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/release_changes_only_cli_member_promise_not_library_baseline/msrv-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 373** — `entries/2026-03-22-373.md` — async runtime assurance work deepened around qualification basis, runtime drift, and portable runtime-support bundles
+- `meta/frontier-salience-2026-03-22-183.md`
+- `meta/async-runtime-assurance-artifact-completeness-plan-2026-03-22.md`
+- `fixtures/async-runtime-assurance-profile-kit/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/qualification-basis.receipt.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/runtime-profile-diff.report.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/runtime-assurance-bundle.manifest.schema.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/tokio_docs_and_metrics_do_not_yet_make_on_target_claim/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/tokio_docs_and_metrics_do_not_yet_make_on_target_claim/qualification-basis.receipt.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/embassy_profile_is_docs_strong_but_board_scope_still_needs_imported_measurement/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/embassy_profile_is_docs_strong_but_board_scope_still_needs_imported_measurement/qualification-basis.receipt.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/tokio_to_rtic_transition_is_runtime_model_drift_not_only_evidence_drift/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/tokio_to_rtic_transition_is_runtime_model_drift_not_only_evidence_drift/runtime-profile-diff.report.example.json`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/mixed_host_tokio_and_target_embassy_need_bundle_not_uniform_runtime_story/README.md`
+- `fixtures/async-runtime-assurance-profile-kit/scenarios/mixed_host_tokio_and_target_embassy_need_bundle_not_uniform_runtime_story/runtime-assurance-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 372** — `entries/2026-03-22-372.md` — crate health work deepened around imported stewardship signals, routing drift, and portable support bundles
+- `meta/frontier-salience-2026-03-22-182.md`
+- `meta/crate-health-artifact-completeness-plan-2026-03-22.md`
+- `fixtures/crate-health-contract-kit/README.md`
+- `fixtures/crate-health-contract-kit/registry-signal.import.schema.json`
+- `fixtures/crate-health-contract-kit/routing-drift.diff.schema.json`
+- `fixtures/crate-health-contract-kit/health-support-bundle.manifest.schema.json`
+- `fixtures/crate-health-contract-kit/security_tab_trusted_publishing_and_private_reporting_do_not_define_release_or_docs_routes/README.md`
+- `fixtures/crate-health-contract-kit/security_tab_trusted_publishing_and_private_reporting_do_not_define_release_or_docs_routes/registry-signal.import.example.json`
+- `fixtures/crate-health-contract-kit/repository_transfer_and_team_backstop_change_need_routing_drift/README.md`
+- `fixtures/crate-health-contract-kit/repository_transfer_and_team_backstop_change_need_routing_drift/routing-drift.diff.example.json`
+- `fixtures/crate-health-contract-kit/portable_bundle_keeps_declared_imported_and_manual_gaps_separate/README.md`
+- `fixtures/crate-health-contract-kit/portable_bundle_keeps_declared_imported_and_manual_gaps_separate/health-support-bundle.manifest.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 371** — `entries/2026-03-22-371.md` — unsafe contract auditing deepened around authority imports, obligation drift, witness comparison, and callback-boundary honesty
+- `meta/frontier-salience-2026-03-22-181.md`
+- `meta/unsafe-contract-auditor-authority-drift-plan-2026-03-22.md`
+- `fixtures/unsafe-contract-auditor-kit/README.md`
+- `fixtures/unsafe-contract-auditor-kit/authority-import.receipt.schema.json`
+- `fixtures/unsafe-contract-auditor-kit/obligation-drift.diff.schema.json`
+- `fixtures/unsafe-contract-auditor-kit/witness-comparison.report.schema.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/std_contract_import_upgrades_authority_but_local_wrapper_keeps_manual_gap/README.md`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/std_contract_import_upgrades_authority_but_local_wrapper_keeps_manual_gap/authority-import.receipt.example.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/refactor_moves_unsafe_sites_without_closing_obligations/README.md`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/refactor_moves_unsafe_sites_without_closing_obligations/obligation-drift.diff.example.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/same_miri_pass_but_toolchain_or_target_shift_breaks_direct_comparison/README.md`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/same_miri_pass_but_toolchain_or_target_shift_breaks_direct_comparison/witness-comparison.report.example.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/ffi_callback_round_trip_keeps_boundary_partial_despite_green_run/README.md`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/ffi_callback_round_trip_keeps_boundary_partial_despite_green_run/interpreter-boundary.receipt.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 370** — `entries/2026-03-22-370.md` — dependency lifecycle work deepened around seam proof, transition posture, exception ledgers, and source-aware boundaries
+- `meta/frontier-salience-2026-03-22-180.md`
+- `meta/dependency-lifecycle-transition-seam-proof-plan-2026-03-22.md`
+- `fixtures/dependency-lifecycle-transition-kit/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/transition-plan.manifest.schema.json`
+- `fixtures/dependency-lifecycle-transition-kit/dependency-exception.ledger.schema.json`
+- `fixtures/dependency-lifecycle-transition-kit/imported-signal.receipt.schema.json`
+- `fixtures/dependency-lifecycle-transition-kit/lifecycle-support-bundle.manifest.schema.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/prototype_tools_lane_wide_but_control_core_restricted/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/prototype_tools_lane_wide_but_control_core_restricted/dependency-lane.snapshot.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/prototype_tools_lane_wide_but_control_core_restricted/criticality-boundary.report.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/trait_facade_contains_codec_until_owned_rewrite_ready/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/trait_facade_contains_codec_until_owned_rewrite_ready/abstraction-seam.receipt.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/trait_facade_contains_codec_until_owned_rewrite_ready/replacement-readiness.report.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/trait_facade_contains_codec_until_owned_rewrite_ready/transition-plan.manifest.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/owned_fork_plus_trusted_publishing_signal_still_needs_local_policy/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/owned_fork_plus_trusted_publishing_signal_still_needs_local_policy/dependency-exception.ledger.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/owned_fork_plus_trusted_publishing_signal_still_needs_local_policy/imported-signal.receipt.example.json`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/release_leaks_new_registry_crate_into_control_core/README.md`
+- `fixtures/dependency-lifecycle-transition-kit/scenarios/release_leaks_new_registry_crate_into_control_core/lifecycle-drift.diff.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 369** — `entries/2026-03-22-369.md` — crate knowledge pack work deepened around authority, hosted-doc truth, example lineage, slice policy, and cross-sector territory mapping
+- `meta/frontier-salience-2026-03-22-179.md`
+- `meta/crate-knowledge-pack-product-plan-2026-03-22.md`
+- `meta/crate-knowledge-pack-lane-boundaries-2026-03-22.md`
+- `meta/cross-sector-opportunity-map-2026-03-22.md`
+- `fixtures/crate-knowledge-pack-kit/README.md`
+- `fixtures/crate-knowledge-pack-kit/api-surface.receipt.schema.json`
+- `fixtures/crate-knowledge-pack-kit/docs-source.manifest.schema.json`
+- `fixtures/crate-knowledge-pack-kit/example-lineage.report.schema.json`
+- `fixtures/crate-knowledge-pack-kit/docsrs-presence.import.schema.json`
+- `fixtures/crate-knowledge-pack-kit/knowledge-slice.manifest.schema.json`
+- `fixtures/crate-knowledge-pack-kit/knowledge-diff.report.schema.json`
+- `fixtures/crate-knowledge-pack-kit/knowledge-pack.manifest.schema.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/docsrs_readme_and_target_choices_need_hosted_presence_import/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/docsrs_readme_and_target_choices_need_hosted_presence_import/docsrs-presence.import.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/example_lineage_separates_official_runnable_from_illustrative_snippets/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/example_lineage_separates_official_runnable_from_illustrative_snippets/example-lineage.report.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/feature_gated_api_needs_visibility_not_just_rustdoc_name/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/feature_gated_api_needs_visibility_not_just_rustdoc_name/api-surface.receipt.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/support_slice_excludes_internal_scaffolding_but_keeps_provenance/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/support_slice_excludes_internal_scaffolding_but_keeps_provenance/knowledge-slice.manifest.example.json`
+- `fixtures/crate-knowledge-pack-kit/scenarios/release_drift_changes_api_example_and_hosted_truth/README.md`
+- `fixtures/crate-knowledge-pack-kit/scenarios/release_drift_changes_api_example_and_hosted_truth/knowledge-diff.report.example.json`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 368** — `entries/2026-03-22-368.md` — broad frontier rerank deepened around ecosystem guidance, sustainability, build friction, and machine-consumable crate knowledge
+- `meta/frontier-salience-2026-03-22-178.md`
+- `meta/ecosystem-gap-map-2026-03-22.md`
+- `proposals/crate-knowledge-pack-kit.md`
+- `README.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/research-ledger.md`
+- `meta/decision-log.md`
+- `meta/llm-hygiene.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+
+- **Entry 367** — `entries/2026-03-22-367.md` — Cargo script work deepened around frontmatter authority, discovery scope, invocation interpretation, cache residency, and export lineage for P-0435
+- `meta/frontier-salience-2026-03-22-177.md`
+- `meta/cargo-script-workbench-frontier-2026-03-22.md`
+- `meta/cargo-script-workbench-product-plan-2026-03-22.md`
+- `meta/cargo-script-workbench-lane-boundaries-2026-03-22.md`
+- `proposals/cargo-script-workbench-kit.md`
+- `fixtures/cargo-script-workbench-kit/README.md`
+- `fixtures/cargo-script-workbench-kit/frontmatter-authority.receipt.schema.json`
+- `fixtures/cargo-script-workbench-kit/discovery-scope.receipt.schema.json`
+- `fixtures/cargo-script-workbench-kit/invocation-interpretation.receipt.schema.json`
+- `fixtures/cargo-script-workbench-kit/cache-residency.receipt.schema.json`
+- `fixtures/cargo-script-workbench-kit/export-lineage.plan.schema.json`
+- `fixtures/cargo-script-workbench-kit/script-support-bundle.manifest.schema.json`
+- `fixtures/cargo-script-workbench-kit/scenarios/embedded_manifest_defaults_need_authority_not_guessing/README.md`
+- `fixtures/cargo-script-workbench-kit/scenarios/embedded_manifest_defaults_need_authority_not_guessing/frontmatter-authority.receipt.example.json`
+- `fixtures/cargo-script-workbench-kit/scenarios/manifest_command_changes_config_root_and_verbosity/README.md`
+- `fixtures/cargo-script-workbench-kit/scenarios/manifest_command_changes_config_root_and_verbosity/invocation-interpretation.receipt.example.json`
+- `fixtures/cargo-script-workbench-kit/scenarios/workspace_autodiscovery_disabled_but_parent_config_still_influences/README.md`
+- `fixtures/cargo-script-workbench-kit/scenarios/workspace_autodiscovery_disabled_but_parent_config_still_influences/discovery-scope.receipt.example.json`
+- `fixtures/cargo-script-workbench-kit/scenarios/hashed_target_dir_and_lockfile_need_cache_residency_receipt/README.md`
+- `fixtures/cargo-script-workbench-kit/scenarios/hashed_target_dir_and_lockfile_need_cache_residency_receipt/cache-residency.receipt.example.json`
+- `fixtures/cargo-script-workbench-kit/scenarios/export_to_multifile_package_requires_lineage_and_choices/README.md`
+- `fixtures/cargo-script-workbench-kit/scenarios/export_to_multifile_package_requires_lineage_and_choices/export-lineage.plan.example.json`
+- `fixtures/cargo-script-workbench-kit/scenarios/support_bundle_joins_authority_scope_and_export/README.md`
+- `fixtures/cargo-script-workbench-kit/scenarios/support_bundle_joins_authority_scope_and_export/script-support-bundle.manifest.example.json`
+
+- **Entry 366** — `entries/2026-03-22-366.md` — Cargo lock-contention witness work deepened around root authority, actor command lanes, wait windows, and mitigation cost for P-0490
+- `meta/frontier-salience-2026-03-22-176.md`
+- `meta/cargo-lock-contention-frontier-2026-03-22.md`
+- `meta/cargo-lock-contention-witness-product-plan-2026-03-22.md`
+- `meta/cargo-lock-contention-witness-lane-boundaries-2026-03-22.md`
+- `proposals/cargo-lock-contention-witness-kit.md`
+- `fixtures/cargo-lock-contention-witness-kit/README.md`
+- `fixtures/cargo-lock-contention-witness-kit/root-authority.receipt.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/actor-command-lane.receipt.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/wait-window.receipt.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/mitigation-cost.report.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/contention-support-bundle.manifest.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/build_dir_split_requires_root_authority_not_path_guessing/README.md`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/build_dir_split_requires_root_authority_not_path_guessing/root-authority.receipt.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/override_command_per_workspace_expands_wait_surface/README.md`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/override_command_per_workspace_expands_wait_surface/actor-command-lane.receipt.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/compile_time_deps_actor_needs_narrower_wait_window_claim/README.md`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/compile_time_deps_actor_needs_narrower_wait_window_claim/wait-window.receipt.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/rust_analyzer_target_dir_true_avoids_lock_but_duplicates_artifacts/README.md`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/rust_analyzer_target_dir_true_avoids_lock_but_duplicates_artifacts/mitigation-cost.report.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/build_dir_v2_partial_relief_still_needs_honest_bundle/README.md`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/build_dir_v2_partial_relief_still_needs_honest_bundle/contention-support-bundle.manifest.example.json`
+
+- **Entry 365** — `entries/2026-03-22-365.md` — public dependency boundary work deepened around manifest intent, effective boundary verdicts, and migration posture for P-0431
+- `meta/frontier-salience-2026-03-22-175.md`
+- `meta/public-dependency-boundary-frontier-2026-03-22.md`
+- `meta/public-dependency-boundary-product-plan-2026-03-22.md`
+- `meta/public-dependency-boundary-lane-boundaries-2026-03-22.md`
+- `proposals/public-dependency-boundary-kit.md`
+- `fixtures/public-dependency-boundary-kit/README.md`
+- `fixtures/public-dependency-boundary-kit/manifest-intent.receipt.schema.json`
+- `fixtures/public-dependency-boundary-kit/boundary-verdict.report.schema.json`
+- `fixtures/public-dependency-boundary-kit/exposure-route.report.schema.json`
+- `fixtures/public-dependency-boundary-kit/evidence-provenance.receipt.schema.json`
+- `fixtures/public-dependency-boundary-kit/workspace-gap.receipt.schema.json`
+- `fixtures/public-dependency-boundary-kit/boundary-migration.plan.schema.json`
+- `fixtures/public-dependency-boundary-kit/public-dependency-drift.diff.schema.json`
+- `fixtures/public-dependency-boundary-kit/public-dependency-support-bundle.manifest.schema.json`
+- `fixtures/public-dependency-boundary-kit/scenarios/reexport_makes_private_dep_effectively_public/README.md`
+- `fixtures/public-dependency-boundary-kit/scenarios/reexport_makes_private_dep_effectively_public/boundary-verdict.report.example.json`
+- `fixtures/public-dependency-boundary-kit/scenarios/reexport_makes_private_dep_effectively_public/exposure-route.report.example.json`
+- `fixtures/public-dependency-boundary-kit/scenarios/workspace_inherited_dependency_cannot_carry_public_flag/README.md`
+- `fixtures/public-dependency-boundary-kit/scenarios/workspace_inherited_dependency_cannot_carry_public_flag/workspace-gap.receipt.example.json`
+- `fixtures/public-dependency-boundary-kit/scenarios/hidden_shim_allowlist_needs_provenance_not_just_silence/README.md`
+- `fixtures/public-dependency-boundary-kit/scenarios/hidden_shim_allowlist_needs_provenance_not_just_silence/evidence-provenance.receipt.example.json`
+- `fixtures/public-dependency-boundary-kit/scenarios/wrapper_migration_removes_effective_publicness_but_is_semver_sensitive/README.md`
+- `fixtures/public-dependency-boundary-kit/scenarios/wrapper_migration_removes_effective_publicness_but_is_semver_sensitive/boundary-migration.plan.example.json`
+- `fixtures/public-dependency-boundary-kit/scenarios/release_drift_changes_declared_and_effective_boundary/README.md`
+- `fixtures/public-dependency-boundary-kit/scenarios/release_drift_changes_declared_and_effective_boundary/public-dependency-drift.diff.example.json`
+
+## Current frontier additions
+
+- **P-0536 Crate Knowledge Pack Kit** — now treated as the archive’s dedicated lane for API-authority truth, docs-source provenance, example-lineage truth, hosted docs.rs presence, visibility/slice policy, and machine-consumable crate handoff bundles above raw rustdoc/docs.rs substrate, now sharpened around exact material basis, export policy, and excerpt-lineage review.
+
+- **P-0435 Cargo Script Workbench Kit** — now treated as the archive’s dedicated lane for frontmatter-authority truth, discovery-scope truth, invocation-interpretation truth, cache-residency truth, and export-lineage planning above Cargo script / single-file-package folklore.
+
+- **P-0490 Cargo Lock Contention Witness Kit** — now treated as the archive’s dedicated lane for root-authority truth, actor command-lane truth, wait-window exactness, blocker-identity honesty, and mitigation-cost reporting above Cargo/rust-analyzer locking folklore.
+
+- **P-0431 Public Dependency Boundary Kit** — now treated as the archive’s dedicated lane for manifest intent, effective publicness, exposure-route truth, workspace-gap honesty, and migration planning above the public/private dependency stabilization effort.
+
+- **P-0447 In-Place Initialization Adoption Kit** — now treated as the archive’s dedicated lane for placement-topology truth, constructor-family comparison, address-commit boundaries, and failure-cleanup evidence above `pin-init`, `moveit`, Crubit `Ctor`, and future language support.
+
+- **Entry 266** — `entries/2026-03-19-266.md` — crate ecosystem pathfinder sharpened around starter-set readiness, lock-in cost, and scope splits
+- `meta/frontier-salience-2026-03-19-86.md`
+- `meta/crate-ecosystem-pathfinder-product-plan-2026-03-19.md`
+- `meta/crate-ecosystem-pathfinder-lane-boundaries-2026-03-19.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/starter-set-readiness.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/lockin-cost.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/scope-split.receipt.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/teaching_default_and_production_default_diverge_but_both_are_legitimate/scope-split.receipt.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/starter_candidate_hides_required_companion_crate_and_blocks_freeze/starter-set-readiness.report.example.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/low_lockin_stack_loses_short_term_onboarding_but_wins_escape_cost/lockin-cost.report.example.json`
+
+- **Entry 263** — `entries/2026-03-19-263.md` — crate observability support sharpened around bridge routes, activation truth, and sensitivity boundaries
+- `meta/frontier-salience-2026-03-19-83.md`
+- `meta/crate-observability-surface-product-plan-2026-03-19.md`
+- `fixtures/crate-observability-surface-pack-kit/README.md`
+- `fixtures/crate-observability-surface-pack-kit/bridge-route.receipt.schema.json`
+- `fixtures/crate-observability-surface-pack-kit/env_filter_default_hides_advertised_signal/activation-recipe.receipt.example.json`
+- `fixtures/crate-observability-surface-pack-kit/console_recipe_requires_runtime_feature/activation-recipe.receipt.example.json`
+- `fixtures/crate-observability-surface-pack-kit/semconv_schema_upgrade_changes_query_surface/schema-convention.profile.example.json`
+- `fixtures/crate-observability-surface-pack-kit/otel_bridge_route_drops_logs_without_explicit_appender/README.md`
+- `fixtures/crate-observability-surface-pack-kit/otel_bridge_route_drops_logs_without_explicit_appender/bridge-route.receipt.example.json`
+- `fixtures/crate-observability-surface-pack-kit/untrusted_filter_input_requires_literal_mode_or_manual_review/README.md`
+- `fixtures/crate-observability-surface-pack-kit/untrusted_filter_input_requires_literal_mode_or_manual_review/observability-check.report.example.json`
+- `fixtures/crate-observability-surface-pack-kit/payload_derived_user_id_requires_hash_or_drop/README.md`
+- `fixtures/crate-observability-surface-pack-kit/payload_derived_user_id_requires_hash_or_drop/redaction-boundary.report.example.json`
+
+- **Entry 257** — `entries/2026-03-19-257.md` — crate example support sharpened around official quickstarts, prerequisite lineage, docs/example linkage, and witnessed first success
+- `meta/frontier-salience-2026-03-19-77.md`
+- `meta/crate-example-surface-product-plan-2026-03-19.md`
+- `fixtures/crate-example-surface-pack-kit/README.md`
+- `fixtures/crate-example-surface-pack-kit/cli_quickstart/quickstart-path.manifest.example.json`
+- `fixtures/crate-example-surface-pack-kit/cli_quickstart/success-witness.receipt.example.json`
+- `fixtures/crate-example-surface-pack-kit/async_client_happy_path/adoption-scenario.manifest.example.json`
+- `fixtures/crate-example-surface-pack-kit/async_client_happy_path/example-environment.report.example.json`
+- `fixtures/crate-example-surface-pack-kit/readme_quickstart_hidden_feature_origin/prerequisite-origin.receipt.example.json`
+- `fixtures/crate-example-surface-pack-kit/dynamic_cli_output_normalization/example-normalization.profile.example.json`
+- `fixtures/crate-example-surface-pack-kit/guide_book_plus_examples/docs-example-linkage.report.example.json`
+- `fixtures/crate-example-surface-pack-kit/proc_macro_getting_started/example-output.report.example.json`
+- `fixtures/crate-example-surface-pack-kit/embedded_no_std_demo/example-environment.report.example.json`
+- `fixtures/crate-example-surface-pack-kit/credentialed_service_only_path_needs_scenario_honesty/scenario-coverage.report.example.json`
+- `fixtures/crate-example-surface-pack-kit/scraped_example_present_but_no_official_success_witness/example-support-check.report.example.json`
+
+- **Entry 256** — `entries/2026-03-19-256.md` — crate diagnosis support sharpened around symptom identity, first-inspection order, instrumentation honesty, and safe capture boundaries
+- `meta/frontier-salience-2026-03-19-76.md`
+- `meta/crate-diagnosis-surface-product-plan-2026-03-19.md`
+- `fixtures/crate-diagnosis-surface-pack-kit/retry_storm_client/triage-sequence.manifest.example.json`
+- `fixtures/crate-diagnosis-surface-pack-kit/queue_growth_worker/signal-map.report.example.json`
+- `fixtures/crate-diagnosis-surface-pack-kit/local_cli_startup_stall/support-capture.report.example.json`
+- `fixtures/crate-diagnosis-surface-pack-kit/console_recipe_declared_but_runtime_not_instrumented/diagnosis-check.report.example.json`
+- `fixtures/crate-diagnosis-surface-pack-kit/bundle_capture_exports_secret_shaped_env/bundle-safety.report.example.json`
+
+- **Entry 248** — `entries/2026-03-18-248.md` — RubyGems native shipkit deepened around platform coverage, resolver routes, and extension residency
+- `meta/frontier-salience-2026-03-18-68.md`
+- `meta/rubygems-native-extension-shipkit-product-plan-2026-03-18.md`
+- `fixtures/rubygem-native-shipkit/platform-coverage.report.schema.json`
+- `fixtures/rubygem-native-shipkit/resolver-route.report.schema.json`
+- `fixtures/rubygem-native-shipkit/extension-residency.report.schema.json`
+- `fixtures/rubygem-native-shipkit/scenarios/fat_gem_claim_hides_missing_linux_aarch64_binary/README.md`
+- `fixtures/rubygem-native-shipkit/scenarios/fat_gem_claim_hides_missing_linux_aarch64_binary/platform-coverage.report.example.json`
+- `fixtures/rubygem-native-shipkit/scenarios/jruby_route_missing_from_lockfile_and_bundle_cache_story/README.md`
+- `fixtures/rubygem-native-shipkit/scenarios/jruby_route_missing_from_lockfile_and_bundle_cache_story/resolver-route.report.example.json`
+- `fixtures/rubygem-native-shipkit/scenarios/extension_copied_under_old_name_after_rename/README.md`
+- `fixtures/rubygem-native-shipkit/scenarios/extension_copied_under_old_name_after_rename/extension-residency.report.example.json`
+
+- **Entry 242** — `entries/2026-03-18-242.md` — Node-API package contract deepened around prebuild coverage, loader routes, and publish identity
+- `meta/frontier-salience-2026-03-18-62.md`
+- `meta/node-api-package-prebuild-contract-product-plan-2026-03-18.md`
+- `fixtures/node-api-package-prebuild-contract-kit/prebuild-coverage.report.schema.json`
+- `fixtures/node-api-package-prebuild-contract-kit/loader-route.receipt.schema.json`
+- `fixtures/node-api-package-prebuild-contract-kit/publish-identity.report.schema.json`
+- `fixtures/node-api-package-prebuild-contract-kit/scenarios/musl_gap_hidden_by_local_build_fallback/README.md`
+- `fixtures/node-api-package-prebuild-contract-kit/scenarios/musl_gap_hidden_by_local_build_fallback/prebuild-coverage.report.example.json`
+- `fixtures/node-api-package-prebuild-contract-kit/scenarios/node_addons_native_path_with_default_wasm_fallback/README.md`
+- `fixtures/node-api-package-prebuild-contract-kit/scenarios/node_addons_native_path_with_default_wasm_fallback/loader-route.receipt.example.json`
+- `fixtures/node-api-package-prebuild-contract-kit/scenarios/trusted_publisher_provenance_present_but_manual_runtime_claims_still_need_review/README.md`
+- `fixtures/node-api-package-prebuild-contract-kit/scenarios/trusted_publisher_provenance_present_but_manual_runtime_claims_still_need_review/publish-identity.report.example.json`
+
+- **Entry 241** — `entries/2026-03-18-241.md` — Wasm component shipkit deepened around tooling lineage, world locks, and composition closure
+- `meta/frontier-salience-2026-03-18-61.md`
+- `meta/wasm-component-artifact-conformance-product-plan-2026-03-18.md`
+- `fixtures/wasm-component-artifact-conformance-kit/tooling-lineage.report.schema.json`
+- `fixtures/wasm-component-artifact-conformance-kit/world-lock.report.schema.json`
+- `fixtures/wasm-component-artifact-conformance-kit/composition-closure.report.schema.json`
+- `fixtures/wasm-component-artifact-conformance-kit/scenarios/cargo_component_transitional_build_repacked_with_wac/README.md`
+- `fixtures/wasm-component-artifact-conformance-kit/scenarios/cargo_component_transitional_build_repacked_with_wac/tooling-lineage.report.example.json`
+- `fixtures/wasm-component-artifact-conformance-kit/scenarios/package_version_inference_breaks_interface_match/README.md`
+- `fixtures/wasm-component-artifact-conformance-kit/scenarios/package_version_inference_breaks_interface_match/world-lock.report.example.json`
+- `fixtures/wasm-component-artifact-conformance-kit/scenarios/native_wasip2_component_still_requires_host_supplied_imports/README.md`
+- `fixtures/wasm-component-artifact-conformance-kit/scenarios/native_wasip2_component_still_requires_host_supplied_imports/composition-closure.report.example.json`
+
+- **Entry 240** — `entries/2026-03-18-240.md` — Python wheel/free-threading shipkit deepened around ABI target class, thread-support declarations, and variant horizon
+- `meta/frontier-salience-2026-03-18-60.md`
+- `meta/python-wheel-abi-free-threading-shipkit-product-plan-2026-03-18.md`
+- `fixtures/python-wheel-abi-free-threading-shipkit/abi-target.report.schema.json`
+- `fixtures/python-wheel-abi-free-threading-shipkit/thread-support.report.schema.json`
+- `fixtures/python-wheel-abi-free-threading-shipkit/variant-horizon.report.schema.json`
+- `fixtures/python-wheel-abi-free-threading-shipkit/scenarios/abi3_nonfree_plus_cp314t_split/README.md`
+- `fixtures/python-wheel-abi-free-threading-shipkit/scenarios/abi3_nonfree_plus_cp314t_split/abi-target.report.example.json`
+- `fixtures/python-wheel-abi-free-threading-shipkit/scenarios/pymodule_gil_used_true_requires_runtime_optout_note/README.md`
+- `fixtures/python-wheel-abi-free-threading-shipkit/scenarios/pymodule_gil_used_true_requires_runtime_optout_note/thread-support.report.example.json`
+- `fixtures/python-wheel-abi-free-threading-shipkit/scenarios/abi3t_future_policy_waits_for_tooling/README.md`
+- `fixtures/python-wheel-abi-free-threading-shipkit/scenarios/abi3t_future_policy_waits_for_tooling/variant-horizon.report.example.json`
+
+- **Entry 239** — `entries/2026-03-18-239.md` — Rust Android Mobile Kit deepened around ABI coverage, load-doctor policy, and 16 KB page-size readiness
+- `meta/frontier-salience-2026-03-18-59.md`
+- `meta/rust-android-mobile-kit-product-plan-2026-03-18.md`
+- `fixtures/rust-android-mobile-kit/abi-coverage.report.schema.json`
+- `fixtures/rust-android-mobile-kit/load-doctor.report.schema.json`
+- `fixtures/rust-android-mobile-kit/page-size-compat.report.schema.json`
+- `fixtures/rust-android-mobile-kit/scenarios/aar_native_library_collision_requires_policy/README.md`
+- `fixtures/rust-android-mobile-kit/scenarios/aar_native_library_collision_requires_policy/load-doctor.report.example.json`
+- `fixtures/rust-android-mobile-kit/scenarios/page_size_16kb_release_gate/README.md`
+- `fixtures/rust-android-mobile-kit/scenarios/page_size_16kb_release_gate/page-size-compat.report.example.json`
+- `fixtures/rust-android-mobile-kit/scenarios/uniffi_kotlin_bindings_need_packaging_honesty/README.md`
+- `fixtures/rust-android-mobile-kit/scenarios/uniffi_kotlin_bindings_need_packaging_honesty/abi-coverage.report.example.json`
+
+- **Entry 238** — `entries/2026-03-18-238.md` — crate ecosystem pathfinder deepened around evidence origin, freshness windows, and starter-set scope
+- `meta/frontier-salience-2026-03-18-58.md`
+- `meta/epic-crate-portfolio-2026-03-18.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/evidence-origin.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/freshness-window.policy.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/starter-set-scope.report.schema.json`
+- `fixtures/crate-ecosystem-pathfinder-kit/pubtime_cooldown_prevents_fresh_release_overpromotion/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/docsrs_default_target_shift_changes_visible_support_story/README.md`
+- `fixtures/crate-ecosystem-pathfinder-kit/trusted_publishing_and_security_tab_do_not_equal_task_fit/README.md`
+
+## Recent updates
+
+- `entries/2026-03-22-390.md` — MC/DC coverage deepened around profile compatibility, campaign policy, and manual-review debt for P-0433
+- `meta/frontier-salience-2026-03-22-200.md` — fresh ranked frontier snapshot for MC/DC support-contract evidence above raw profile folklore or green-but-indebted automation
+- `meta/mcdc-coverage-profile-debt-plan-2026-03-22.md` — implementation-ready profile/policy/debt sketch for P-0433
+- `fixtures/mcdc-coverage-workbench-kit/README.md` + `profile-compatibility.receipt.schema.json` + `campaign-policy.receipt.schema.json` + `manual-review-debt.report.schema.json` + three scenario families — concrete artifacts for profile durability, explicit construct policy, and unresolved review debt
+
+- `entries/2026-03-22-385.md` — MC/DC coverage deepened around campaign scope, comparison basis, and qualification honesty for P-0433
+- `meta/frontier-salience-2026-03-22-195.md` — fresh ranked frontier snapshot for MC/DC support-contract evidence above raw trend claims or bundle-to-bundle folklore
+- `meta/mcdc-coverage-comparison-qualification-plan-2026-03-22.md` — implementation-ready scope/comparison/qualification sketch for P-0433
+- `fixtures/mcdc-coverage-workbench-kit/README.md` + `campaign-scope.receipt.schema.json` + `comparison-basis.receipt.schema.json` + `qualification-basis.receipt.schema.json` + three scenario families — concrete artifacts for campaign scope, like-for-like comparison gates, and qualification honesty
+
+- `entries/2026-03-22-363.md` — trait-solver drift deepened around solver-lane truth, obligation classes, and minimization lineage for P-0442
+- `entries/2026-03-22-364.md` — MC/DC coverage evidence deepened around decision authority, construct support, and independence-pair lineage for P-0433
+- `meta/frontier-salience-2026-03-22-174.md` — fresh ranked frontier snapshot for MC/DC support-contract evidence above raw coverage percentages or wrapper-only workflows
+- `meta/mcdc-coverage-workbench-product-plan-2026-03-22.md` — implementation-ready v0.1 sketch for P-0433
+- `fixtures/mcdc-coverage-workbench-kit/README.md` + core MC/DC support schemas + five scenario families — concrete artifacts for decision authority, construct support, independence evidence, caveat basis, and run lineage
+
+- `entries/2026-03-22-348.md` — in-place initialization deepened around placement topology, constructor lanes, address commit, and failure cleanup for P-0447
+- `meta/frontier-salience-2026-03-22-169.md` — fresh ranked frontier snapshot for in-place initialization adoption evidence above macro-only or proposal-only stories
+- `meta/in-place-initialization-adoption-product-plan-2026-03-22.md` — implementation-ready v0.1 sketch for P-0447
+- `fixtures/in-place-initialization-adoption-kit/placement-topology.receipt.schema.json` + `constructor-lane.report.schema.json` + `address-commit.receipt.schema.json` + `failure-cleanup.report.schema.json` — schemas for first-write/final-place truth, constructor-family semantics, pin/address commit, and rollback posture
+- `fixtures/in-place-initialization-adoption-kit/scenarios/heap_value_should_be_constructed_in_final_allocation_not_stack_bounced/` + `c_out_pointer_requires_immediate_pin_and_clean_error_path/` + `cxx_ctor_lane_is_not_plain_rust_move_semantics/` — scenario families for large-value placement honesty, pinned out-pointer cleanup, and C++ constructor-lane truth
+
+- `entries/2026-03-20-309.md` — channel-surface-contract-kit added for capacity posture, overflow policy, delivery obligation, and shutdown/drain truth
+- `meta/frontier-salience-2026-03-20-129.md` — fresh ranked frontier snapshot for channel semantics above bounded/unbounded folklore
+- `meta/channel-surface-contract-product-plan-2026-03-20.md` — implementation-ready v0.1 sketch for P-0529
+- `fixtures/channel-surface-contract-kit/README.md` + channel-surface schemas + six scenario families — concrete artifacts for bounded backpressure, lagging broadcast, latest-state watch, rendezvous, priority reorder, and drop-oldest semantics
+
+- `entries/2026-03-19-257.md` — crate example support sharpened around official quickstarts, prerequisite lineage, docs/example linkage, and witnessed first success
+- `meta/frontier-salience-2026-03-19-77.md` — fresh ranked frontier snapshot for first-success support above examples/tutorial/docs substrate
+- `meta/crate-example-surface-product-plan-2026-03-19.md` — implementation-ready v0.1 sketch for P-0524
+- `fixtures/crate-example-surface-pack-kit/README.md` + `cli_quickstart/quickstart-path.manifest.example.json` + `cli_quickstart/success-witness.receipt.example.json` + `async_client_happy_path/adoption-scenario.manifest.example.json` + `async_client_happy_path/example-environment.report.example.json` + `readme_quickstart_hidden_feature_origin/prerequisite-origin.receipt.example.json` + `dynamic_cli_output_normalization/example-normalization.profile.example.json` + `guide_book_plus_examples/docs-example-linkage.report.example.json` + `proc_macro_getting_started/example-output.report.example.json` + `embedded_no_std_demo/example-environment.report.example.json` + `credentialed_service_only_path_needs_scenario_honesty/scenario-coverage.report.example.json` + `scraped_example_present_but_no_official_success_witness/example-support-check.report.example.json` — concrete first-success artifacts for official quickstarts, hidden prerequisite lineage, docs/example drift, environment honesty, normalization boundaries, and scenario coverage
+
+- `entries/2026-03-19-253.md` — crate off-ramp planning sharpened around successor intent, stopgap horizons, and recipe witnesses
+- `meta/frontier-salience-2026-03-19-73.md` — fresh ranked frontier snapshot for successor-intent truth, stopgap horizons, and checked exit recipes
+- `meta/crate-offramp-product-plan-2026-03-19.md` — implementation-ready v0.1 sketch for P-0515
+- `fixtures/crate-offramp-pack-kit/README.md` + `crate_rename_shim/offramp-pack.example.toml` + `crate_rename_shim/successor-map.report.example.json` + `security_offramp/sunset-check.report.example.json` + `security_offramp/offramp-recipe.manifest.example.json` + `successor_split/successor-compat.report.example.json` + `no_successor_manual/deprecation-surface.receipt.example.json` — concrete scenario artifacts for renamed-crate shims, security stopgaps, successor splits, and honest no-successor retirements
+
+- `entries/2026-03-18-248.md` — RubyGems native shipkit deepened around platform coverage, resolver routes, and extension residency
+- `meta/frontier-salience-2026-03-18-68.md` — fresh ranked frontier snapshot for Ruby-native support truth above platform coverage, resolver routes, and extension residency
+- `meta/rubygems-native-extension-shipkit-product-plan-2026-03-18.md` — implementation-ready v0.1 sketch for P-0501
+
+- `entries/2026-03-18-242.md` — Node-API package contract deepened around prebuild coverage, loader routes, and publish identity
+- `meta/frontier-salience-2026-03-18-62.md` — fresh ranked frontier snapshot for npm-native support truth above prebuild, loader, and publish-identity drift
+- `meta/node-api-package-prebuild-contract-product-plan-2026-03-18.md` — implementation-ready v0.1 sketch for P-0498
+- `fixtures/node-api-package-prebuild-contract-kit/prebuild-coverage.report.schema.json` + `loader-route.receipt.schema.json` + `publish-identity.report.schema.json` — schemas for shipped-tuple truth, actual loader routing, and trusted-publisher/provenance posture
+- `fixtures/node-api-package-prebuild-contract-kit/scenarios/musl_gap_hidden_by_local_build_fallback/` + `node_addons_native_path_with_default_wasm_fallback/` + `trusted_publisher_provenance_present_but_manual_runtime_claims_still_need_review/` — scenario families for honest non-prebuilt gaps, explicit native/universal route splits, and release-identity-vs-runtime-claim boundaries
+
+- `entries/2026-03-18-241.md` — Wasm component shipkit deepened around tooling lineage, world locks, and composition closure
+- `meta/frontier-salience-2026-03-18-61.md` — fresh ranked frontier snapshot for Wasm component contract truth above shifting tooling paths
+- `meta/wasm-component-artifact-conformance-product-plan-2026-03-18.md` — implementation-ready v0.1 sketch for P-0206
+- `fixtures/wasm-component-artifact-conformance-kit/tooling-lineage.report.schema.json` + `world-lock.report.schema.json` + `composition-closure.report.schema.json` — schemas for build/composition lineage, versioned world truth, and closure/runnability classification
+- `fixtures/wasm-component-artifact-conformance-kit/scenarios/cargo_component_transitional_build_repacked_with_wac/` + `package_version_inference_breaks_interface_match/` + `native_wasip2_component_still_requires_host_supplied_imports/` — scenario families for transitional build honesty, version-shape mismatch, and “built but still open” closure truth
+
+- `entries/2026-03-18-240.md` — Python wheel/free-threading shipkit deepened around ABI target class, thread-support declarations, and variant horizon
+- `meta/frontier-salience-2026-03-18-60.md` — fresh ranked frontier snapshot for Python extension compatibility contracts, free-threading declarations, and variant-aware release truth
+- `meta/python-wheel-abi-free-threading-shipkit-product-plan-2026-03-18.md` — implementation-ready v0.1 sketch for P-0466
+- `fixtures/python-wheel-abi-free-threading-shipkit/abi-target.report.schema.json` + `thread-support.report.schema.json` + `variant-horizon.report.schema.json` — schemas for actual ABI target class, declared thread-support posture, and honest future-surface planning
+- `fixtures/python-wheel-abi-free-threading-shipkit/scenarios/abi3_nonfree_plus_cp314t_split/` + `pymodule_gil_used_true_requires_runtime_optout_note/` + `abi3t_future_policy_waits_for_tooling/` — scenario families for split free-threaded releases, explicit GIL-required opt-outs, and planned-but-blocked `abi3t` adoption
+
+- `entries/2026-03-18-239.md` — Rust Android Mobile Kit deepened around ABI coverage, load-doctor policy, and 16 KB page-size readiness
+- `meta/frontier-salience-2026-03-18-59.md` — fresh ranked frontier snapshot for Android library shipping, packaging collisions, and page-size readiness
+- `meta/rust-android-mobile-kit-product-plan-2026-03-18.md` — implementation-ready v0.1 sketch for P-0168
+- `fixtures/rust-android-mobile-kit/abi-coverage.report.schema.json` + `load-doctor.report.schema.json` + `page-size-compat.report.schema.json` — schemas for actually-built ABI coverage, conservative load-readiness/collision diagnosis, and Android page-size readiness
+- `fixtures/rust-android-mobile-kit/scenarios/aar_native_library_collision_requires_policy/` + `page_size_16kb_release_gate/` + `uniffi_kotlin_bindings_need_packaging_honesty/` — scenario families for AAR collision risk, policy-driven page-size gates, and “bindings generated ≠ packaging solved” honesty
+
+- `entries/2026-03-17-236.md` — crate persistence-surface deepening sharpened around compatibility authority, atomicity scope, and recovery witnesses
+- `meta/frontier-salience-2026-03-17-56.md` — fresh ranked frontier snapshot for compatibility authority, atomicity scope, and recovery-witness truth
+- `fixtures/crate-persistence-surface-pack-kit/compatibility-authority.policy.schema.json` + `atomicity-scope.report.schema.json` + `recovery-witness.receipt.schema.json` — schemas for trusted compatibility meaning, exact atomicity scope, and declared-versus-witnessed recovery evidence
+- `fixtures/crate-persistence-surface-pack-kit/atomic_no_intermediate_state_mistaken_for_power_loss_durability/` + `postcard_stable_wire_claim_vs_serde_shape_guard/` + `repair_path_documented_but_unwitnessed_for_current_surface/` — new fixture families for atomicity-vs-durability drift, stable-wire-authority honesty, and recovery-path witness gaps
+
+- `entries/2026-03-17-234.md` — crate example-surface planning sharpened around prerequisite provenance, success witnesses, and scenario coverage
+- `meta/frontier-salience-2026-03-17-54.md` — fresh ranked frontier snapshot for first-success contracts, prerequisite truth, and witnessed quickstarts
+- `fixtures/crate-example-surface-pack-kit/prerequisite-origin.receipt.schema.json` + `success-witness.receipt.schema.json` + `scenario-coverage.report.schema.json` — schemas for prerequisite provenance, witnessed quickstart success, and scenario-by-scenario coverage honesty
+- `fixtures/crate-example-surface-pack-kit/readme_quickstart_hidden_feature_origin/` + `scraped_example_present_but_no_official_success_witness/` + `credentialed_service_only_path_needs_scenario_honesty/` — new fixture families for hidden prerequisite origins, scraped-example-vs-official-start drift, and honest scenario gaps
+
+- `entries/2026-03-17-233.md` — crate diagnosis-surface planning sharpened around symptom meaning, triage provenance, and safe bundle evaluation
+- `meta/crate-support-surface-boundaries-2026-03-17.md` — hygiene note separating guidance, runtime handoff, observability, examples, and diagnosis
+- `meta/frontier-salience-2026-03-17-53.md` — fresh ranked frontier snapshot for diagnosis contracts, first-inspection provenance, and bundle safety
+- `fixtures/crate-diagnosis-surface-pack-kit/symptom-class.policy.schema.json` + `triage-origin.receipt.schema.json` + `bundle-safety.report.schema.json` — schemas for symptom meaning, triage-step provenance, and safe-to-attach bundle verdicts
+- `fixtures/crate-diagnosis-surface-pack-kit/console_recipe_declared_but_runtime_not_instrumented/` + `timeout_bucket_hides_dns_vs_tls_triage_split/` + `bundle_capture_exports_secret_shaped_env/` — new fixture families for console-path honesty, over-broad timeout buckets, and secret-safe support bundles
+
+- `entries/2026-03-17-232.md` — crate guidance-pack planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-guidance-pack-product-plan-2026-03-19.md` — refreshed command/artifact/adoption plan for P-0512 centered on message stability, guidance channels, and environment sensitivity
+- `meta/crate-guidance-pack-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0512
+- `meta/frontier-salience-2026-03-17-52.md` — fresh ranked frontier snapshot for guidance authority, recovery provenance, and checked recipe fidelity
+- `fixtures/crate-guidance-pack-kit/guidance-authority.policy.schema.json` + `recovery-origin.receipt.schema.json` + `recipe-fidelity.report.schema.json` — schemas for exact-vs-advisory guidance meaning, recovery-hint provenance, and checked recipe fidelity
+- `fixtures/crate-guidance-pack-kit/compile_fail_doctest_catches_failure_but_not_message_drift/` + `do_not_recommend_hides_blanket_impl_but_recipe_missing/` + `proc_macro_diagnostic_url_points_to_stale_syntax/` — new fixture families for failure-only docs checks, suppressed-bad-hint without smallest path, and proc-macro anchor drift
+
+- `entries/2026-03-17-231.md` — crate runtime-handoff planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-runtime-handoff-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0513
+- `fixtures/crate-runtime-handoff-pack-kit/capture-exactness.policy.schema.json` + `share-safety.receipt.schema.json` + `handoff-fidelity.report.schema.json` — schemas for runtime-capture exactness, safe-to-share classification, and post-failure bundle fidelity
+- `fixtures/crate-runtime-handoff-pack-kit/error_stack_attachment_secret_needs_hash_redaction/` + `spantrace_declared_but_error_layer_missing/` + `panic_hook_present_but_report_bundle_path_missing/` — new fixture families for attachment redaction, unsupported async-context drift, and panic-hook artifact-path honesty
+
+- `entries/2026-03-17-230.md` — crate interop-profile planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-interop-profile-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0511
+- `fixtures/crate-interop-profile-pack-kit/profile-class.policy.schema.json` + `boundary-obligation.receipt.schema.json` + `pair-fidelity.report.schema.json` — schemas for profile-class meaning, boundary obligations, and pairwise-verdict fidelity
+- `fixtures/crate-interop-profile-pack-kit/public_tokio_type_leaks_runtime_neutral_profile/` + `tower_http_pair_matches_service_but_misses_body_shape/` + `serde_models_expose_format_specific_helpers/` — new fixture families for public-runtime leaks, seam-vs-body-shape drift, and format-specific-helper lock-in
+
+- `entries/2026-03-17-229.md` — crate capability-contract planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-capability-contract-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0510
+- `fixtures/crate-capability-contract-kit/claim-class.policy.schema.json` + `support-obligation.receipt.schema.json` + `profile-fidelity.report.schema.json` — schemas for claim-class meaning, observed adoption obligations, and advertised-profile fidelity
+- `fixtures/crate-capability-contract-kit/tokio_internal_runtime_neutral_public_api/` + `no_std_alloc_with_docsrs_target_overlay/` + `build_rs_links_proc_macro_hidden_obligations/` — new fixture families for public-runtime neutrality, docs.rs-overlay drift, and hidden adoption-cost honesty
+
+- `entries/2026-03-17-228.md` — crate upgrade-pack planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-upgrade-pack-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0514
+- `fixtures/crate-upgrade-pack-kit/hazard-class.policy.schema.json` + `fixup-capability.receipt.schema.json` + `lane-fidelity.report.schema.json` — schemas for upgrade-hazard meaning, machine-fix provenance/scope, and checked-lane fidelity
+- `fixtures/crate-upgrade-pack-kit/machine_fix_applies_but_manifest_feature_rename_remains/` + `semver_green_but_behavior_review_required/` + `workspace_recipe_checks_lib_lane_not_binary_lane/` — new fixture families for code-fix vs manifest-edit boundaries, behavior-review-only upgrades, and lane-coverage honesty
+
+- `entries/2026-03-17-227.md` — crate configuration-scenario planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-configuration-scenario-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0516
+- `fixtures/crate-configuration-scenario-pack-kit/scenario-class.policy.schema.json` + `config-origin.receipt.schema.json` + `matrix-fidelity.report.schema.json` — schemas for scenario-class meaning, setup-fact provenance, and claimed-matrix fidelity
+- `fixtures/crate-configuration-scenario-pack-kit/docsrs_all_features_vs_minimal_default/` + `tls_backends_compile_together_but_policy_picks_one/` + `no_std_builds_but_examples_need_std/` — new fixture families for docs.rs/default drift, backend-choice policy, and `no_std`-vs-example honesty
+
+- `entries/2026-03-17-226.md` — memory-observability planning sharpened into an implementation-ready v0.1 shape
+- `meta/memory-observability-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0084
+- `fixtures/memory-observability-kit/capture-scope.policy.schema.json` + `symbolization-fidelity.report.schema.json` + `regression-gate.policy.schema.json` — schemas for capture boundaries, symbolization trust, and release-gate posture
+- `fixtures/memory-observability-kit/alloc_count_flat_but_peak_rss_regresses/` + `dhat_scope_guard_ends_before_background_phase/` + `jemalloc_stats_present_but_callsite_attribution_missing/` — new fixture families for RSS-vs-count drift, scope-boundary blind spots, and backend-capability honesty
+
+- `entries/2026-03-17-225.md` — crate authority-surface planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-authority-surface-product-plan-2026-03-19.md` — refreshed command/artifact/adoption plan for P-0519 centered on authority origin, fallback order, and refusal posture
+- `meta/crate-authority-surface-product-plan-2026-03-17.md` — earlier implementation sketch for P-0519
+- `fixtures/crate-authority-surface-pack-kit/authority-budget.policy.schema.json` + `injection-boundary.receipt.schema.json` + `profile-witness.report.schema.json` — schemas for authority-budget meaning, injection-boundary truth, and restricted-profile witnesses
+- `fixtures/crate-authority-surface-pack-kit/env_or_home_cache_fallback_breaks_offline_profile/` + `seeded_rng_but_system_clock_still_leaks_nondeterminism/` + `cap_std_dir_profile_blocks_absolute_path_escape/` — new fixture families for env/home fallback drift, clock-leak nondeterminism, and capability-profile absolute-path escapes
+
+
+- `entries/2026-03-17-224.md` — crate ecosystem pathfinder planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-ecosystem-pathfinder-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0509
+- `fixtures/crate-ecosystem-pathfinder-kit/evidence-weight.policy.schema.json` + `role-coverage.report.schema.json` + `decision-axis.report.schema.json` — schemas for evidence weighting, task-role coverage, and separated decision axes
+- `fixtures/crate-ecosystem-pathfinder-kit/async_http_service_tokio_lockin_tradeoff/` + `cli_baseline_newcomer_vs_power_stack/` + `embedded_no_std_alloc_split/` + `manual_review_required_conflicting_signals/` — new fixture families for runtime lock-in tradeoffs, onboarding-vs-power defaults, embedded constraint splits, and honest ambiguity
+
+- `entries/2026-03-17-223.md` — crate performance-envelope planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-performance-envelope-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0517
+- `fixtures/crate-performance-envelope-pack-kit/metric-authority.policy.schema.json` + `environment-fidelity.receipt.schema.json` + `noise-class.report.schema.json` — schemas for authoritative metrics, measurement-fidelity truth, and confidence/noise posture
+- `fixtures/crate-performance-envelope-pack-kit/release_claim_measured_with_bench_profile/` + `instruction_count_ci_authoritative_not_walltime/` + `compat_layer_skips_local_benchmark_semantics/` — new fixture families for bench-vs-release drift, CI instruction-count authority, and compatibility-layer semantic gaps
+
+- `entries/2026-03-17-222.md` — crate resource-surface planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-resource-surface-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0521
+- `fixtures/crate-resource-surface-pack-kit/boundedness-class.policy.schema.json` + `pressure-signal.profile.schema.json` + `saturation-evidence.receipt.schema.json` — schemas for boundedness meaning, pressure-signal guidance, and observed saturation truth
+- `fixtures/crate-resource-surface-pack-kit/unbounded_channel_receiver_falls_behind/` + `spawn_blocking_queue_after_thread_cap/` + `tower_concurrency_limit_upstream_backlog_external/` — new fixture families for unbounded queue growth risk, hidden blocking queues, and externally-owned backlog boundaries
+- `entries/2026-03-19-259.md` — crate resource support sharpened around admission order, backlog ownership, capacity shrink, and acquire fate
+- `meta/crate-resource-surface-product-plan-2026-03-19.md` — refreshed command/artifact/adoption plan for P-0521
+- `fixtures/crate-resource-surface-pack-kit/admission-path.report.schema.json` + `backlog-ownership.receipt.schema.json` + `capacity-shrink.report.schema.json` + `acquire-fate.report.schema.json` — schemas for layer order, waiting-room ownership, runtime-effective capacity loss, and boundary behavior
+- `fixtures/crate-resource-surface-pack-kit/servicebuilder_buffer_before_concurrency_limit/` + `servicebuilder_concurrency_limit_before_buffer/` + `semaphore_forget_reduces_effective_capacity/` + `sqlx_pool_waits_fairly_and_close_wakes_waiters/` — new fixture families for Tower layer-order drift, semaphore permit loss, and pool wait/close semantics
+
+- `entries/2026-03-17-221.md` — crate lifecycle-surface planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-lifecycle-surface-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0520
+- `fixtures/crate-lifecycle-surface-pack-kit/activation-boundary.policy.schema.json` + `stop-semantics.receipt.schema.json` + `teardown-evidence.report.schema.json` — schemas for activation meaning, stop-behavior truth, and cleanup evidence
+- `fixtures/crate-lifecycle-surface-pack-kit/lazy_background_worker_starts_on_first_request/` + `join_handle_drop_detaches_background_task/` + `protocol_writer_requires_shutdown_not_drop/` — new fixture families for lazy start boundaries, detach-on-drop truth, and protocol shutdown evidence
+
+- `entries/2026-03-17-220.md` — cfg availability-ledger planning sharpened into an implementation-ready v0.1 shape
+- `meta/cfg-availability-ledger-product-plan-2026-03-17.md` — concrete command/artifact/fidelity plan for P-0451
+- `fixtures/cfg-availability-ledger-kit/availability-class.policy.schema.json` + `availability-origin.receipt.schema.json` + `matrix-fidelity.report.schema.json` — schemas for availability-class meaning, visibility origin, and matrix fidelity
+- `fixtures/cfg-availability-ledger-kit/cfg_doc_visible_but_doctest_and_downstream_use_fail/` + `docsrs_custom_cfg_exposes_docs_only_api_slice/` + `minor_release_moves_public_item_behind_feature/` — new fixture families for docs-only visibility, docs.rs-only slices, and semver-sensitive feature drift
+
+
+- `entries/2026-03-17-219.md` — crate observability-surface planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-observability-surface-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0518
+- `fixtures/crate-observability-surface-pack-kit/signal-stability.policy.schema.json` + `activation-recipe.receipt.schema.json` + `schema-convention.profile.schema.json` — schemas for stability meaning, real activation requirements, and semconv/schema posture
+- `fixtures/crate-observability-surface-pack-kit/env_filter_default_hides_advertised_signal/` + `console_recipe_requires_runtime_feature/` + `semconv_schema_upgrade_changes_query_surface/` — new fixture families for filter-gated visibility, runtime-specific console recipes, and semconv/schema drift
+
+- `entries/2026-03-17-218.md` — crate test-surface planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-test-surface-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0523
+- `fixtures/crate-test-surface-pack-kit/support-level.policy.schema.json` + `test-environment.requirements.schema.json` + `scenario-witness.receipt.schema.json` — schemas for support-level meaning, host-capability requirements, and named-scenario witnesses
+- `fixtures/crate-test-surface-pack-kit/paused_time_claim_but_background_work_unowned/` + `wiremock_recipe_vs_official_fake_transport/` + `containerized_peer_required_for_wire_compat/` — new fixture families for paused-time drift, official-fake boundary confusion, and topology-requirement honesty
+
+- `entries/2026-03-19-262.md` — crate performance support sharpened around execution intent, workload lineage, and profile identity
+- `meta/crate-performance-envelope-product-plan-2026-03-19.md` — concrete refresh for execution intent, workload lineage, profile identity, and trust classes in P-0517
+- `fixtures/crate-performance-envelope-pack-kit/README.md` + `execution-intent.report.schema.json` + `workload-lineage.receipt.schema.json` — root guidance plus schemas for run intent and workload origin
+- `fixtures/crate-performance-envelope-pack-kit/nextest_criterion_test_mode_checks_compile_and_panic_not_budget/` + `custom_profile_changes_benchmark_story/` + `codspeed_unknown_environment_checks_suite_without_measurement/` + `captured_trace_sets_authoritative_workload_lineage/` + `divan_alloc_budget_metric_overrules_wall_time/` — new scenario families for test-mode-vs-measurement truth, custom-profile drift, unknown-environment runs, workload provenance, and allocation-budget metric authority
+
+- `entries/2026-03-19-261.md` — crate test support sharpened around witness lineage, topology honesty, and fixture support levels
+- `meta/crate-test-surface-product-plan-2026-03-19.md` — concrete refresh for imported evidence, witness lineage, topology honesty, and normalization boundaries in P-0523
+- `fixtures/crate-test-surface-pack-kit/README.md` + `witness-lineage.receipt.schema.json` — root guidance and schema for imported/direct scenario evidence lineage
+- `fixtures/crate-test-surface-pack-kit/nextest_portable_recording_replays_ci_failure_locally/` + `trybuild_compile_fail_contract_is_not_runtime_recipe/` + `assert_cmd_recipe_needs_integration_test_context/` + `insta_sorted_redaction_stabilizes_set_snapshot_but_not_order_semantics/` — new scenario families for replay imports, compile-fail lineage, CLI-context honesty, and snapshot-normalization boundaries
+
+- `entries/2026-03-17-217.md` — crate persistence-surface planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-persistence-surface-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0522
+- `fixtures/crate-persistence-surface-pack-kit/surface-contract.policy.schema.json` + `write-path.receipt.schema.json` + `failure-model.profile.schema.json` — schemas for public-vs-cache policy, save/commit-path truth, and failure-model coverage
+- `fixtures/crate-persistence-surface-pack-kit/atomic_replace_without_directory_sync/` + `serde_unknown_field_policy_narrowing/` + `copy_on_write_recovery_vs_external_corruption/` — new fixture families for replace-vs-durability drift, compatibility narrowing, and recovery-vs-repair honesty
+
+- `entries/2026-03-17-216.md` — docs.rs parity planning sharpened into an implementation-ready v0.1 shape
+- `meta/docsrs-build-parity-product-plan-2026-03-17.md` — concrete command/artifact/fidelity plan for P-0472
+- `fixtures/docsrs-build-parity-evidence-kit/preflight-fidelity.report.schema.json` + `hosted-build-import.receipt.schema.json` + `drift-cause.report.schema.json` — schemas for local-vs-hosted fidelity, hosted-summary import, and conservative drift-cause classification
+- `fixtures/docsrs-build-parity-evidence-kit/scenarios/network_blocked_but_local_preflight_green/` + `missing_native_dependency_in_docsrs_env/` + `build_log_truncation_masks_root_cause/` — new fixture families for network-policy drift, build-environment gaps, and truncated hosted logs
+
+- `entries/2026-03-17-215.md` — debuggability-support planning sharpened into an implementation-ready v0.1 shape
+- `meta/debuggability-support-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0486
+- `fixtures/debuggability-support-contract-kit/support-class.policy.schema.json` + `artifact-handoff.manifest.schema.json` + `source-lookup-impact.report.schema.json` — schemas for posture meaning, sidecar-handoff truth, and source-lookup impact
+- `fixtures/debuggability-support-contract-kit/release_debug_zero_implicit_strip_drift/` + `build_dir_layout_v2_sidecar_relocation/` + `trim_paths_with_source_lookup_boundary/` — new fixture families for subtle strip drift, artifact-location churn, and path-hygiene/source-lookup boundaries
+
+- `entries/2026-03-17-214.md` — toolchain/target support planning sharpened into an implementation-ready v0.1 shape
+- `meta/toolchain-target-support-product-plan-2026-03-17.md` — concrete command/artifact/evidence plan for P-0484
+- `meta/cargo-workspace-toolchain-manifest-product-plan-2026-03-21.md` — implementation-ready v0.1 sketch for P-0055 centered on install roots, tool-route authority, and rustup-context honesty
+- `fixtures/toolchain-target-support-contract-kit/support-class.policy.schema.json` + `support-evidence.report.schema.json` + `external-prerequisite.manifest.schema.json` — schemas for support-class meaning, evidence provenance, and non-Rust prerequisite honesty
+- `fixtures/toolchain-target-support-contract-kit/scenarios/virtual_workspace_resolver3_msrv_split/` + `cross_target_runner_required_for_tests/` + `official_rustup_host_exists_but_project_unclaimed/` — new fixture families for workspace policy split, runner requirements, and “rustup supports it but the project does not” honesty
+
+- `entries/2026-03-17-213.md` — crate diagnosis-surface planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-diagnosis-surface-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0525
+- `fixtures/crate-diagnosis-surface-pack-kit/symptom-taxonomy.profile.schema.json` + `capture-policy.profile.schema.json` + `triage-sequence.manifest.schema.json` — schemas for symptom vocabulary, safe bundle capture policy, and ordered troubleshooting flows
+- `fixtures/crate-diagnosis-surface-pack-kit/async_runtime_console_metrics_alignment/` + `auth_expiry_vs_endpoint_mismatch/` + `embedded_board_only_capture_boundary/` — new fixture families for runtime warnings, ambiguity boundaries, and board-only capture honesty
+
+- `entries/2026-03-17-212.md` — crate example-surface planning sharpened into an implementation-ready v0.1 shape
+- `meta/crate-example-surface-product-plan-2026-03-17.md` — concrete command/artifact/adoption plan for P-0524
+- `fixtures/crate-example-surface-pack-kit/example-normalization.profile.schema.json` — schema for dynamic-output normalization in official quickstarts
+- `fixtures/crate-example-surface-pack-kit/dynamic_cli_output_normalization/` + `guide_book_plus_examples/` — new fixture families for unstable CLI output and guide/example linkage
+
+- `entries/2026-03-17-208.md` — crate persistence surfaces promoted as the durable-bytes / recovery-truth lane
+- `meta/frontier-salience-2026-03-17-37.md` — fresh ranked frontier snapshot for crate persistence surfaces, durability receipts, and recovery/migration truth
+- `meta/crate-persistence-surface-lanes-2026-03-17.md` — lane boundaries for crate persistence surfaces versus upgrade packs, authority/lifecycle/resource support, serializer/storage substrate, and schema workbenches
+- `fixtures/crate-persistence-surface-pack-kit/` — new schema + scenario pack for persistence packs, format-compat reports, durability boundaries, recovery posture, and persistence diffs
+
+- `entries/2026-03-17-206.md` — crate lifecycle surfaces promoted as the background-work / shutdown-truth lane
+- `meta/frontier-salience-2026-03-17-35.md` — fresh ranked frontier snapshot for crate lifecycle surfaces, cancel-safety receipts, and drain obligations
+- `meta/crate-lifecycle-surface-lanes-2026-03-17.md` — lane boundaries for crate lifecycle surfaces versus runtime handoff, observability, authority, shutdown frameworks, and structured concurrency
+- `fixtures/crate-lifecycle-surface-pack-kit/` — new schema + scenario pack for lifecycle packs, background-work receipts, cancellation surfaces, and shutdown/diff reports
+
+- `entries/2026-03-17-205.md` — crate authority surfaces promoted as the sandbox/offline/determinism-support lane
+- `meta/frontier-salience-2026-03-17-34.md` — fresh ranked frontier snapshot for crate authority surfaces, ambient-authority budgets, and determinism receipts
+- `meta/crate-authority-surface-lanes-2026-03-17.md` — lane boundaries for crate authority surfaces versus capability contracts, configuration scenarios, observability, static analysis, and sandbox tooling
+- `fixtures/crate-authority-surface-pack-kit/` — new schema + scenario pack for authority packs, determinism reports, capability-injection reports, and authority diffs
+
+- `entries/2026-03-16-201.md` — crate off-ramp packs promoted as the deprecation/successor-support lane
+- `meta/frontier-salience-2026-03-16-30.md` — fresh ranked frontier snapshot for crate off-ramp packs, successor maps, and sunset receipts
+- `meta/crate-offramp-lanes-2026-03-16.md` — lane boundaries for crate off-ramp packs versus health metadata, advisory detection, upgrade packs, and publish/yank mechanics
+- `fixtures/crate-offramp-pack-kit/` — new schema + scenario pack for off-ramp packs, successor maps, checked exit recipes, and sunset diffs
+
+- `entries/2026-03-16-200.md` — crate upgrade packs promoted as the release-to-release supportiveness lane
+- `meta/frontier-salience-2026-03-16-29.md` — fresh ranked frontier snapshot for crate upgrade packs, migration recipes, and fixup receipts
+- `meta/crate-upgrade-lanes-2026-03-16.md` — lane boundaries for crate upgrade packs versus semver evidence, release automation, guidance packs, and runtime handoff
+- `fixtures/crate-upgrade-pack-kit/` — new schema + scenario pack for upgrade packs, hazard reports, fixup receipts, and migration-check diffs
+
+- `entries/2026-03-16-199.md` — crate runtime handoff packs promoted as the runtime-side supportiveness lane
+- `meta/frontier-salience-2026-03-16-28.md` — fresh ranked frontier snapshot for runtime handoff packs, redaction profiles, and failure-shape diffs
+- `meta/crate-runtime-handoff-lanes-2026-03-16.md` — lane boundaries for runtime handoff packs versus compile-time guidance, renderers, tracing stacks, and domain-specific incident bundles
+- `fixtures/crate-runtime-handoff-pack-kit/` — new schema + scenario pack for runtime handoff packs, panic receipts, redaction profiles, and failure-shape diffs
+
+
+- `entries/2026-03-16-198.md` — crate-authored guidance packs promoted as a receiver-facing ecosystem-supportiveness lane
+- `meta/frontier-salience-2026-03-16-27.md` — fresh ranked frontier snapshot for crate guidance packs, recovery recipes, and support-surface diffs
+- `meta/crate-guidance-lanes-2026-03-16.md` — lane boundaries for crate guidance packs versus decision packs, capability contracts, interop profiles, renderer crates, and docs portals
+- `fixtures/crate-guidance-pack-kit/` — new schema + scenario pack for guidance packs, compile-guidance receipts, recipe manifests, and guidance diffs
+
+- `entries/2026-03-16-197.md` — shared ecosystem interop profiles promoted as a distinct library-compatibility lane
+- `meta/frontier-salience-2026-03-16-26.md` — fresh ranked frontier snapshot for shared interop profile packs, pairwise compatibility, and migration-hazard truth
+- `meta/crate-interop-profile-lanes-2026-03-16.md` — lane boundaries for shared interop profiles versus capability contracts, decision packs, trait-evolution planners, and semver slice tools
+- `fixtures/crate-interop-profile-pack-kit/` — new schema + scenario pack for interop profile packs, conformance receipts, compatibility reports, and migration hazards
+
+- `entries/2026-03-16-196.md` — crate capability contracts promoted as a producer-side interop-truth lane
+- `meta/frontier-salience-2026-03-16-25.md` — fresh ranked frontier snapshot for producer-side capability contracts and interop-profile truth
+- `meta/crate-capability-contract-lanes-2026-03-16.md` — lane boundaries for producer-side capability contracts versus decision packs, availability truth, and slice tools
+- `fixtures/crate-capability-contract-kit/` — new schema + scenario pack for capability contracts, observed receipts, interop export maps, and conformance reports
+
+- `entries/2026-03-16-195.md` — crate ecosystem pathfinder promoted as a task-first decision-pack lane
+- `meta/frontier-salience-2026-03-16-24.md` — fresh ranked frontier snapshot for crate-selection supportiveness and starter-set decision packs
+- `meta/crate-decision-lanes-2026-03-16.md` — lane boundaries for task-first crate decision packs versus health, trust, façade crates, and blessing debates
+- `fixtures/crate-ecosystem-pathfinder-kit/` — expanded schema + scenario pack for task profiles, role coverage, decision axes, interop reports, and starter-set locks
+
+
+- `entries/2026-03-16-194.md` — build-std workbench promoted into a fixture-first stage-aware sysroot lane
+- `meta/frontier-salience-2026-03-16-23.md` — fresh ranked frontier snapshot for stage-aware sysroot recipes, locks, and review receipts
+- `meta/build-std-workbench-lanes-2026-03-16.md` — lane boundaries for build-std recipe capture versus ABI coherence, sanitizer evidence, source hygiene, and tool-surface parity
+- `fixtures/build-std-workbench-kit/` — new schema + scenario pack for stage-aware sysroot recipes, locks, receipts, and diffs
+
+- `entries/2026-03-16-193.md` — lock-contention witnesses promoted with exactness receipts and optional imported-session context
+- `meta/frontier-salience-2026-03-16-22.md` — fresh ranked frontier snapshot for lock-contention support bundles as a near-buildable crate lane
+- `meta/cargo-lock-contention-lanes-2026-03-16.md` — lane boundaries for live waits versus rebuild explanation, historical warehousing, compile-time-deps parity, and cache coordination
+- `fixtures/cargo-lock-contention-witness-kit/` — expanded schema + scenario pack for evidence-source receipts, exactness reports, and session-linked contention bundles
+
+- `entries/2026-03-16-191.md` — package review promoted into a fixture-first workspace-aware source-bundle lane
+- `meta/frontier-salience-2026-03-16-20.md` — fresh ranked frontier snapshot for workspace-aware package review and normalization truth
+- `meta/cargo-package-review-lanes-2026-03-16.md` — lane boundaries for package review versus trusted publishing, post-publish receipts, provenance, and SBOM/sidecar neighbors
+- `meta/cargo-package-review-product-plan-2026-03-20.md` — implementation-ready command/artifact plan for P-0470
+- `meta/cargo-package-review-extraction-boundaries-2026-03-20.md` — lane boundaries for archive authority versus extraction-only mutation
+- `fixtures/cargo-package-review-kit/` — expanded schema + scenario pack for workspace candidate sets, manifest-normalization reports, and path-explanation bundles
+- `fixtures/cargo-package-review-kit/packaged-surface.receipt.schema.json` + `archive-authority.report.schema.json` + `extraction-mutation.report.schema.json` — schemas for packaged-path lineage, authoritative review basis, and verification-only mutation classification
+- `fixtures/cargo-package-review-kit/scenarios/authored_manifest_and_packaged_manifest_must_not_share_same_hash_basis/` + `extracted_verification_tree_adds_cargo_ok_and_mtime_drift_after_unpack/` — new fixture families for generated-manifest lineage and extraction-only mutation honesty
+
+- `entries/2026-03-16-190.md` — build insights promoted into a fixture-first historical warehouse lane
+- `meta/frontier-salience-2026-03-16-19.md` — fresh ranked frontier snapshot for imported-session warehousing and build-regression adjudication
+- `meta/cargo-build-insights-lanes-2026-03-16.md` — lane boundaries for historical build warehousing versus per-run support, parity, and contention neighbors
+- `fixtures/cargo-build-insights/` — expanded schema + scenario pack for session-series indexes, comparability receipts, and trend-alert bundles
+
+- `entries/2026-03-16-189.md` — rebuild explanation promoted into a fixture-first support-bundle lane
+- `meta/frontier-salience-2026-03-16-18.md` — fresh ranked frontier snapshot for rebuild explanation as a near-buildable crate lane
+- `meta/cargo-rebuild-explanation-lanes-2026-03-16.md` — lane boundaries for per-run rebuild explanation versus history, contention, tool-parity, and input-manifest neighbors
+- `fixtures/cargo-rebuild-why-kit/` — expanded schema + scenario pack for evidence-source receipts, exactness ledgers, and rebuild-vs-contention honesty
+
+- `entries/2026-03-16-187.md` — artifact sidecar contracts promoted into a fixture-first shipping-policy lane
+- `meta/frontier-salience-2026-03-16-16.md` — fresh ranked frontier snapshot for artifact↔sidecar association, schema drift, and ship/local policy crates
+- `entries/2026-03-16-188.md` — artifact handoff promoted into a fixture-first produced-output lane
+- `meta/frontier-salience-2026-03-16-17.md` — fresh ranked frontier snapshot for produced-artifact handoff exactness
+- `meta/cargo-artifact-handoff-lanes-2026-03-16.md` — lane boundaries for artifact handoff versus sidecars versus build-dir migration versus build-analysis history
+- `fixtures/cargo-artifact-handoff-kit/` — expanded into a schema + scenario pack for manifests, origin receipts, and session-linked handoff bundles
+
+- `meta/cargo-artifact-sidecar-lanes-2026-03-16.md` — lane boundaries for artifact handoff versus sidecar contracts versus SBOM, publish, and debug/support neighbors
+- `fixtures/cargo-artifact-sidecar-contract-kit/` — expanded schema + scenario pack for sidecar association locks, attachment receipts, and sidecar-surface diffs
+
+- `entries/2026-03-16-186.md` — Cargo SBOM precursor workbench promoted into a fixture-first supply-chain lane
+- `meta/frontier-salience-2026-03-16-15.md` — fresh ranked frontier snapshot for Cargo SBOM precursor capture and normalization as a reviewable crate lane
+- `meta/cargo-sbom-lanes-2026-03-16.md` — lane boundaries for SBOM precursor capture versus sidecar contracts, publish identity, and provenance/policy neighbors
+- `fixtures/cargo-sbom-precursor-workbench-kit/` — new schema + scenario pack for precursor capture locks, normalized graph reports, and transform-loss receipts
+
+- `entries/2026-03-16-185.md` — future-incompat triage promoted into a fixture-first release-truth lane
+- `meta/frontier-salience-2026-03-16-14.md` — fresh ranked frontier snapshot for future-incompat triage as a memory-and-release gate crate lane
+- `meta/cargo-future-incompat-lanes-2026-03-16.md` — lane boundaries for official Cargo report substrate versus triage memory, fix orchestration, and build-history neighbors
+- `fixtures/cargo-future-incompat-triage-kit/` — expanded schema + scenario pack for capture locks, owner/waiver ledgers, and release-gate receipts
+
+- `entries/2026-03-16-184.md` — resolver explanation promoted into a fixture-first proof-carrying lane
+- `meta/frontier-salience-2026-03-16-13.md` — fresh ranked frontier snapshot for resolver explanation as a proof-carrying crate lane
+- `meta/cargo-resolver-proof-lanes-2026-03-16.md` — lane boundaries for resolver implementation versus proof-carrying explanation artifacts
+- `fixtures/cargo-resolver-explanation-kit/` — new schema + scenario pack for resolve-why locks, reason reports, and exactness receipts
+
+- `entries/2026-03-16-182.md` — rustc_public analysis workbench promoted into a fixture-first compatibility lane
+- `meta/frontier-salience-2026-03-16-11.md` — fresh ranked frontier snapshot for rustc_public compatibility-lock and analyzer-fixture crates
+- `meta/rustc-public-analysis-lanes-2026-03-16.md` — lane boundaries for rustc_public publication engineering versus tool compatibility artifacts versus semantics/spec neighbors
+- `fixtures/rustc-public-analysis-workbench-kit/` — new schema + scenario pack for rustc_public compatibility and analyzer-evidence artifacts
+
+- `entries/2026-03-16-181.md` — workspace tool manifests and install-policy cooldowns promoted into a first-class lane
+- `meta/frontier-salience-2026-03-16-10.md` — fresh ranked frontier snapshot for workspace tool manifests and install-policy cooldown crates
+- `meta/install-tooling-lanes-2026-03-16.md` — lane boundaries for workspace tool manifests versus install policy versus rustup/compiler/cache neighbors
+- `fixtures/cargo-toolchain-manifest-kit/` — new schema pack for workspace-managed crate-tool manifests and runner receipts
+- `fixtures/cargo-install-policy-kit/` — new schema pack for install cooldown, waiver, and install-receipt artifacts
+
+- `entries/2026-03-16-180.md` — delegated build-script units elevated into their own lane, with artifact-dependency adoption refreshed beside them
+- `meta/frontier-salience-2026-03-16-9.md` — fresh ranked frontier snapshot for delegated build-script and artifact-bridge crates
+- `meta/build-script-delegation-lanes-2026-03-16.md` — lane boundaries for buildscript UX/testing/export handoff versus artifact adoption versus delegated units versus host/target scope
+- `fixtures/cargo-build-script-delegation-kit/` — new schema + scenario pack for delegated build-script artifacts
+- `fixtures/cargo-artifact-dependency-adoption-kit/` — expanded into a schema-first pack for artifact-dependency bridge scenarios
+
+- `entries/2026-03-16-179.md` — fix orchestration elevated into its own crate lane, with Cargo plumbing refreshed underneath it
+- `meta/frontier-salience-2026-03-16-8.md` — fresh ranked frontier snapshot for fix orchestration and Cargo plumbing crates
+- `meta/fix-orchestration-lanes-2026-03-16.md` — lane boundaries for generic fix campaigns versus edition witnesses versus future-incompat triage versus plumbing receipts
+- `fixtures/cargo-fix-campaign-kit/` — new schema + scenario pack for lint-fix campaign artifacts
+- `fixtures/cargo-plumbing-interop-kit/` — new schema + scenario pack for blocker-aware Cargo plumbing artifacts
+
+- `entries/2026-03-16-178.md` — publish-surface truth sharpened around trusted-publisher rehearsal and joined release receipts
+- `meta/frontier-salience-2026-03-16-7.md` — fresh ranked frontier snapshot for publish-surface truth crates
+- `meta/publish-surface-identity-lanes-2026-03-16.md` — lane boundaries for trusted-publishing rehearsal versus post-publish receipts versus attestations and auth diagnosis
+- `fixtures/trusted-publishing-tooling-kit/` — provider-scope, claim-basis, trigger-policy, publish-mode, and rehearsal-result artifact pack
+- `fixtures/cargo-publish-receipt-join-kit/` — expanded into a schema + scenario pack for joined release-history receipts
+
+- `entries/2026-03-16-177.md` — release-surface truth sharpened via semver witness and public-boundary substrate
+- `meta/frontier-salience-2026-03-16-6.md` — fresh ranked frontier snapshot for release-surface truth crates
+- `meta/release-surface-truth-lanes-2026-03-16.md` — lane boundaries for semver evidence versus public dependency boundaries versus joined release bundles
+- `fixtures/semver-api-diff-evidence-kit/` — new schema + scenario pack for witness-aware SemVer evidence artifacts
+- `fixtures/public-dependency-boundary-kit/` — new schema + scenario pack for public/private dependency boundary artifacts
+
+- `entries/2026-03-16-176.md` — cargo script handoff sharpened and source parity honesty refreshed
+- `meta/frontier-salience-2026-03-16-5.md` — fresh ranked frontier snapshot for cargo-script and source-parity crates
+- `meta/cargo-script-lanes-2026-03-16.md` — lane boundaries for single-file-package portability versus workspace/source/support neighbors
+- `meta/source-parity-mirroring-lanes-2026-03-16.md` — lane boundaries for verified mirrors versus workspace-local source parity
+- `fixtures/cargo-script-workbench-kit/` — new schema + scenario pack for single-file package handoff artifacts
+- `fixtures/cargo-vendor-source-parity-kit/` — expanded with mirror-import and protocol-alias scenarios
+
+## Proposals
+
+- **P-0527** — `proposals/littlefs-native-adoption-kit.md` — LittleFS Native Adoption Kit — compatibility witnesses, async/blocking storage adapters, and power-cut evidence
+- **P-0001** — `proposals/cargo-snapshot.md` — Cargo Snapshot — reproducible offline mirrors & air-gap transfer
+- **P-0002** — `proposals/wasm-plugin-kit.md` — Wasm Plugin Kit — capability-based plugins via the Component Model
+- **P-0003** — `proposals/array-api.md` — Array API — semantic profiles, layout receipts, device/dtype inspection, and interop routes for Rust numerics
+- **P-0004** — `proposals/diagnostic-kit.md` — Diagnostic Kit — rustc-like errors for tools, parsers, compilers
+- **P-0005** — `proposals/telemetry-kit.md` — Telemetry Kit — tracing + OpenTelemetry that is correct by default
+- **P-0006** — `proposals/stdx-curated.md` — stdx-curated — dependency-minimal “missing batteries” facade
+- **P-0007** — `proposals/cargo-policy.md` — cargo-policy — enforce org security & compliance gates (SBOM/provenance/vetting)
+- **P-0008** — `proposals/scoped-tasks.md` — Scoped Tasks — structured concurrency + cancellation ergonomics for async Rust
+- **P-0009** — `proposals/deterministic-async-lab.md` — Deterministic Async Lab — record/replay + minimization harness for async concurrency bugs
+- **P-0010** — `proposals/cargo-sbom-kit.md` — Cargo SBOM Kit — shared foundation for SBOM/provenance verification across tools
+- **P-0011** — `proposals/crate-health.md` — Crate Health Contract Kit — support horizons, succession, and maintenance-duty coverage
+- **P-0012** — `proposals/desktop-shipkit.md` — Desktop ShipKit — release identity, update channels, and crash-symbol handoff for Rust apps
+- **P-0013** — `proposals/connector-kit.md` — Connector Kit — typed connector runtime for sources/sinks with test + observability baked in
+- **P-0014** — `proposals/license-bundle-kit.md` — License Bundle Kit — deterministic third‑party license + notice bundles for Rust artifacts
+- **P-0015** — `proposals/cargo-attest.md` — Cargo Attest — build provenance + in-toto attestations for Rust crates and binaries
+- **P-0016** — `proposals/audit-lens.md` — Audit Lens — effect-focused dependency auditing artifacts that compose with cargo-vet
+- **P-0017** — `proposals/trust-lens.md` — Trust Lens — identity-risk reports, assumption registers, and policy decisions for Rust dependency graphs
+- **P-0018** — `proposals/airgap-sdk.md` — Airgap SDK — one bundle for rustup toolchains + Cargo dependencies (verified, reproducible)
+- **P-0019** — `proposals/cargo-transparency-bundle.md` — Cargo Transparency Bundle — SBOM + auditable + provenance + signatures
+- **P-0020** — `proposals/embedded-hal-tck.md` — embedded-hal TCK — conformance + semantics test kit for HALs and drivers
+- **P-0021** — `proposals/mpi-typed.md` — mpi-typed — safer, more ergonomic typed MPI on top of rsmpi
+- **P-0022** — `proposals/privacy-metrics-kit.md` — privacy-metrics-kit
+- **P-0023** — `proposals/vet-workbench.md` — vet-workbench
+- **P-0024** — `proposals/data-contract-kit.md` — data-contract-kit
+- **P-0025** — `proposals/chaos-lab.md` — chaos-lab
+- **P-0026** — `proposals/cargo-tuf-mirror.md` — cargo-tuf-mirror — TUF-aware mirrors & verification for Rust artifacts
+- **P-0027** — `proposals/text-input-kit.md` — text-input-kit — reusable IME/composition + selection engine for Rust GUIs
+- **P-0028** — `proposals/open-table-format-kit.md` — open-table-format-kit — table-surface receipts, capability profiles, and adapter coupling for Iceberg/Delta/Hudi in Rust
+- **P-0029** — `proposals/audio-graph-kit.md` — audio-graph-kit — real-time safe DSP graph primitives + adapters for Rust
+- **P-0030** — `proposals/cargo-build-jail.md` — cargo-build-jail — sandbox build scripts & builds (secure + more deterministic)
+- **P-0031** — `proposals/isolate-kit.md` — isolate-kit — cross-platform process sandboxing primitives (Landlock/seccomp/AppContainer/etc.)
+- **P-0032** — `proposals/inference-kit.md` — inference-kit — stable Rust inference API with adapters (tract/ort/…)
+- **P-0033** — `proposals/cargo-capabilities.md` — cargo-capabilities — declarative capability manifests for build-time code (enforced by sandbox tools)
+- **P-0034** — `proposals/cargo-update-policy.md` — cargo-update-policy — safer dependency upgrades via holds, forbid-lists, and publish-time (“pubtime”) gating
+- **P-0035** — `proposals/cargo-build-insights.md` — cargo-build-insights — imported session warehouse, trend adjudication, and reviewable build-regression receipts
+- **P-0036** — `proposals/msrv-workspace-lab.md` — msrv-workspace-lab — mixed-workspace policy activation, command-floor reporting, and lockfile-authoring review
+- **P-0037** — `proposals/secrets-kit.md` — secrets-kit — secret-handling contract kit for revelation path, persistence posture, memory posture, and export posture
+- **P-0038** — `proposals/cargo-repro-pack.md` — cargo-repro-pack — reproducible `.crate` packaging and verification
+- **P-0039** — `proposals/i18n-icu-kit.md` — i18n-icu-kit — typed localization contract kit for message args, locale-data profiles, formatter coverage, and fallback witnesses
+- **P-0040** — `proposals/proc-macro-sandbox-kit.md` — proc-macro-sandbox-kit — tools to prepare for Wasm-sandboxed proc macros
+- **P-0041** — `proposals/cargo-prebuilt-artifacts.md` — cargo-prebuilt-artifacts — verified precompiled dependencies for faster, safer builds
+- **P-0042** — `proposals/cargo-event-stream.md` — cargo-event-stream — stable structured event stream for Cargo + rustc
+- **P-0043** — `proposals/winit-web-ime-kit.md` — winit-web-ime-kit — reliable IME/composition for canvas-based WASM apps
+- **P-0045** — `proposals/cargo-input-manifest.md` — cargo-input-manifest — build signatures & input manifests for Cargo builds
+- **P-0046** — `proposals/buildscript-ux-kit.md` — buildscript-ux-kit — structured build-script diagnostics, summaries, and policy hooks
+- **P-0047** — `proposals/cargo-binary-trust.md` — cargo-binary-trust — verification + policy layer for installing Rust CLI binaries
+- **P-0048** — `proposals/install-script-jail.md` — install-script-jail — policy-driven sandbox runner for third-party installer scripts (curl|sh, bootstrap scripts)
+- **P-0049** — `proposals/cargo-doc-portal.md` — cargo-doc-portal — local docs.rs-like portal for workspace + dependency docs
+- **P-0050** — `proposals/build-interop-kit.md` — build-interop-kit — standardized build-script exports for native interop artifacts
+- **P-0051** — `proposals/rustdoc-json-kit.md` — Rustdoc JSON Support Contract Kit — source-route receipts, format-window matrices, and normalization-loss reports
+- **P-0052** — `proposals/policy-kit.md` — policy-kit — safe, testable embedded policy engines (CEL + OPA/Rego Wasm adapters)
+- **P-0053** — `proposals/schedule-kit.md` — schedule-kit — DST-safe recurrence, business calendars, and a conformance suite
+- **P-0054** — `proposals/ipc-kit.md` — ipc-kit — safe cross-platform IPC primitives with bounded framing and transport plugins
+- **P-0055** — `proposals/cargo-toolchain-manifest.md` — Cargo Workspace Toolchain Manifest Kit — workspace-scoped tool dependencies, tool-route receipts, and install-root contracts
+- **P-0056** — `proposals/cargo-install-policy.md` — Cargo Install Policy & Cooldown Kit — lockfile stance, pubtime age-gates, and install receipts for Rust binary installs
+- **P-0057** — `proposals/run-record-kit.md` — run-record-kit — standard run recording artifacts (events + outputs + metadata) for CI replay and analysis
+- **P-0058** — `proposals/native-deps-kit.md` — native-deps-kit — declarative system dependency management across pkg-config/vcpkg/vendoring
+- **P-0059** — `proposals/buildscript-testkit.md` — buildscript-testkit — hermetic tests and fixtures for build.rs and -sys crates
+- **P-0060** — `proposals/openapi-sdk-kit.md` — openapi-sdk-kit — modern OpenAPI client/server codegen with conformance, mocks, and upgrade-friendly diffs
+- **P-0061** — `proposals/rclrs-extras-kit.md` — rclrs-extras-kit — ROS 2 “missing pieces” for Rust: actions, executors, launch ergonomics, and conformance fixtures
+- **P-0062** — `proposals/durable-workflow-kit.md` — Durable Workflow Kit — app-embedded durable execution with deterministic replay
+- **P-0063** — `proposals/passkey-stack-kit.md` — Passkey Stack Kit — batteries-included WebAuthn/passkeys integration for Rust web backends
+- **P-0064** — `proposals/ble-conformance-kit.md` — BLE Conformance Kit — capability model + cross-platform test harness for Bluetooth LE apps
+- **P-0065** — `proposals/http-cassette-kit.md` — HTTP Cassette Kit — standard record/replay format + adapters across Rust HTTP clients
+- **P-0066** — `proposals/determinism-sim-kit.md` — Determinism Sim Kit — state hashing, snapshots, and desync repro for rollback/prediction games
+- **P-0067** — `proposals/kube-integration-testkit.md` — Kube Integration Testkit — black-box integration tests for kube-rs controllers (Kind-first)
+- **P-0068** — `proposals/markdown-safe-kit.md` — Markdown Safe Kit — safe-by-default Markdown→HTML pipelines with XSS conformance tests
+- **P-0069** — `proposals/mail-transport-security-kit.md` — mail-transport-security-kit — MTA-STS/TLS-RPT/DANE “doctor” + evaluation engine
+- **P-0070** — `proposals/saml-stack-kit.md` — saml-stack-kit — secure SAML2 SP/IdP building blocks + XML signature primitives
+- **P-0071** — `proposals/mcp-guard-kit.md` — MCP Guard Kit — transport exposure, auth boundaries, and operation guards for MCP deployments
+- **P-0072** — `proposals/pdf-safe-kit.md` — pdf-safe-kit — safe-by-default PDF parsing/extraction patterns + fuzz/conformance scaffolding
+- **P-0073** — `proposals/async-replay-debugger-kit.md` — Async Replay Debugger Kit — schedule-basis receipts, time-basis receipts, effect-boundary capture, and replay-fidelity reports
+- **P-0074** — `proposals/capability-sandbox-kit.md` — Capability Sandbox Kit — cross-platform “least privilege” for Rust processes
+- **P-0075** — `proposals/cargo-provenance-suite.md` — Cargo Provenance Suite — one-stop SBOM + SLSA provenance + Sigstore verification for Rust artifacts
+- **P-0076** — `proposals/localfirst-sync-kit.md` — Local-first Sync Kit — repo contracts, presence/history receipts, transport/membership epochs, and redacted sync bundles
+- **P-0077** — `proposals/otel-batteries-kit.md` — OTel Batteries Kit — one “right way” to ship tracing/metrics/logs with Rust
+- **P-0078** — `proposals/structured-concurrency-standard-kit.md` — Structured Concurrency Standard Kit — portable nurseries + cancellation contracts for async Rust
+- **P-0079** — `proposals/rebuilder-network-kit.md` — Rebuilder Network Kit — reproducible build verification as a first-class Rust workflow
+- **P-0080** — `proposals/fuzz-workbench.md` — Fuzz + Property Testing Workbench — a unified harness for generative testing, fuzzing, shrinking, and bug bundles
+- **P-0081** — `proposals/stable-plugin-host.md` — Stable Plugin Host Kit — ergonomic ABI-stable plugins for Rust applications
+- **P-0082** — `proposals/realtime-audiograph-kit.md` — Realtime Audio Graph Standard Kit — real-time safe DSP graphs with a shared node model + conformance suite
+- **P-0083** — `proposals/debugger-ux-kit.md` — Debugger UX Kit (Rust pretty-printing + debug “doctor”)
+- **P-0084** — `proposals/memory-observability-kit.md` — Memory Observability Kit — capture scopes, symbolization fidelity, allocator evidence, and regression gates
+- **P-0085** — `proposals/gpu-compute-interop-kit.md` — GPU Compute Interop Kit (CUDA/ROCm/WGPU compute, unified ergonomics)
+- **P-0086** — `proposals/confidential-attestation-kit.md` — Confidential Attestation Kit (TEEs: Nitro/SEV/TDX/SGX, key binding, policy, conformance)
+- **P-0087** — `proposals/ui-accessibility-kit.md` — UI Accessibility Doctor Kit — AccessKit semantic contracts, cargo a11y doctor, and regression gating
+- **P-0088** — `proposals/columnar-data-interop-kit.md` — Columnar Data Interop Kit (Arrow/Parquet subset + adapters + conformance vectors)
+- **P-0089** — `proposals/compatibility-gate-kit.md` — Compatibility Gate Kit — semver/ABI/behavioral regression gating for Rust crate releases
+- **P-0090** — `proposals/deterministic-rollback-replay-kit.md` — Deterministic Rollback + Replay Kit — snapshots, netcode glue, and shareable bug bundles
+- **P-0091** — `proposals/observability-workbench-kit.md` — Observability Workbench Kit — cargo-native tracing + async console + profiler wiring with strong defaults
+- **P-0092** — `proposals/gui-testing-harness-kit.md` — GUI Testing & Snapshot Harness Kit (cross-GUI) — cargo-native render/snapshot/event playback with CI artifacts
+- **P-0093** — `proposals/differential-privacy-application-kit.md` — Differential Privacy Application Kit (OpenDP-powered) — budgets, policy, reports, and cargo doctor tooling
+- **P-0094** — `proposals/hermetic-build-capsule-kit.md` — Hermetic Build Capsule Kit (Cargo-focused) — portable frozen builds via a standard capsule artifact
+- **P-0095** — `proposals/task-supervision-restart-kit.md` — Task Supervision & Restart Kit — topology receipts, restart-policy receipts, health/source receipts, state-reset receipts, shutdown-escalation receipts, and failure bundles
+- **P-0096** — `proposals/capability-sandbox-policy-kit.md` — Capability Sandbox Policy Kit — portable capability DSL + audit feedback + “policy doctor”
+- **P-0097** — `proposals/determinism-lab-kit.md` — Determinism Lab Kit — capture/minimize/replay bundles for schedule-sensitive async bugs
+- **P-0098** — `proposals/pq-hybrid-transport-kit.md` — Hybrid Post‑Quantum Transport Kit — practical PQC/hybrid KEM+sig integration for rustls/QUIC/SSH stacks
+- **P-0099** — `proposals/schema-evolution-workbench-kit.md` — Schema Evolution Workbench Kit — versioned Serde data with verified migrations, reports, and fuzzable corpora
+- **P-0100** — `proposals/zero-copy-archive-safety-kit.md` — Zero‑Copy Archive Safety Kit — rkyv‑style fast formats with portable safety gates, validation, and compatibility evidence
+- **P-0101** — `proposals/crash-symbolication-workbench-kit.md` — Crash Artifact & Symbolication Workbench Kit — capture receipts, module identity, symbol routes, and share-safe replayable crash bundles
+- **P-0102** — `proposals/sbom-vex-workbench-kit.md` — SBOM + VEX Workbench Kit — generate, diff, and triage SBOMs with portable VEX outputs for Cargo projects
+- **P-0103** — `proposals/wasm-component-warmstart-kit.md` — Wasm Component Warmstart Kit — pre-initialize modules/components safely with build-time snapshots and conformance fixtures
+- **P-0104** — `proposals/deterministic-simulation-kit.md` — Deterministic Simulation Kit
+- **P-0105** — `proposals/secrets-envelope-policy-kit.md` — Secrets Envelope & Policy Kit
+- **P-0106** — `proposals/test-run-artifact-standard-kit.md` — Test Run Artifact Standard Kit
+- **P-0107** — `proposals/cargo-sandbox-capability-policy-kit.md` — Cargo Sandbox & Capability Policy Kit — policy authority, actor capabilities, ambient ingress, sanitization modes, launcher routes, and drift bundles
+- **P-0108** — `proposals/durable-execution-interop-conformance-kit.md` — Durable Execution Interop & Conformance Kit
+- **P-0109** — `proposals/cargo-workspace-policy-doctor-kit.md` — Cargo Workspace Policy Doctor Kit
+- **P-0110** — `proposals/passkey-platform-kit.md` — Passkey Platform Kit — storage-agnostic WebAuthn/Passkeys integration with adapters, diagnostics, and “credential bundles”
+- **P-0111** — `proposals/db-drift-migration-conformance-kit.md` — DB Drift & Migration Conformance Kit — standardized schema drift detection, migration replay, and CI artifacts for Rust DB stacks
+- **P-0112** — `proposals/tpm-keystore-attestation-kit.md` — TPM KeyStore & Attestation Flows Kit — safe, ergonomic high-level TPM2 flows with policy, portability, and test vectors
+- **P-0113** — `proposals/cdc-interop-conformance-kit.md` — CDC Interop & Conformance Kit
+- **P-0114** — `proposals/hardship-harness-kit.md` — Distributed Systems Hardship Harness Kit
+- **P-0115** — `proposals/buildtime-sandbox-runtime-api-kit.md` — Build-time Sandbox Runtime API Kit
+- **P-0116** — `proposals/policy-as-code-workbench-kit.md` — Policy-as-Code Workbench Kit (Rego in-process)
+- **P-0117** — `proposals/profiling-evidence-bundle-kit.md` — Profiling Evidence Bundle Kit (CPU + heap + async)
+- **P-0118** — `proposals/telemetry-schema-lint-kit.md` — Telemetry Schema Lint & Semantic Conventions Kit (OTel + tracing)
+- **P-0119** — `proposals/supply-chain-delivery-kit.md` — Supply-Chain Delivery Kit (TUF + in-toto + policy bundles)
+- **P-0120** — `proposals/unsafe-contract-auditor-kit.md` — Unsafe Contract Auditor Kit (Miri + evidence bundles)
+- **P-0121** — `proposals/ffi-boundary-conformance-kit.md` — FFI Boundary & Bindings Conformance Kit — callback-authority, callback-completion, ownership-transfer, unwind-posture, callback-execution, binding-coverage, layout-authority, and error-channel receipts
+- **P-0122** — `proposals/quic-http3-interop-capture-kit.md` — QUIC + HTTP/3 Interop & Capture Kit (qlog/pcap bundles)
+- **P-0123** — `proposals/energy-carbon-observability-kit.md` — Energy & Carbon Observability Kit (bench + CI diffs)
+- **P-0124** — `proposals/schema-compatibility-workbench-kit.md` — Schema Compatibility Workbench Kit (OpenAPI + JSON Schema + Protobuf)
+- **P-0125** — `proposals/cargo-sbom-precursor-workbench-kit.md` — Cargo SBOM Precursor Workbench Kit — precursor capture locks, normalized build-graph transforms, and diffable review bundles
+- **P-0126** — `proposals/qlog-insights-viz-kit.md` — qlog Insights & Visualization Kit (analyze + diff + shareable bundles)
+- **P-0127** — `proposals/deterministic-sim-storage-io-kit.md` — Deterministic Simulation Storage I/O Kit (disk/fs simulator + fault injection)
+- **P-0128** — `proposals/ebpf-shipkit.md` — eBPF ShipKit — production eBPF programs in Rust with repeatable build/deploy/verify
+- **P-0129** — `proposals/uefi-secure-boot-shipkit.md` — UEFI Secure Boot ShipKit — build/sign/test/upgrade Rust UEFI apps with confidence
+- **P-0130** — `proposals/mlir-pipeline-kit.md` — MLIR Pipeline Kit — ergonomic Rust APIs + cargo workflows for MLIR-based compilers
+- **P-0131** — `proposals/oci-artifact-evidence-distribution-kit.md` — OCI Artifact Evidence & Distribution Kit (cargo-native ORAS for bundles + referrer graphs)
+- **P-0132** — `proposals/formal-spec-rust-test-connector-kit.md` — Formal Spec ↔ Rust Test Connector Kit (TLA+/Apalache/embedded model checking → replayable corpora)
+- **P-0133** — `proposals/chaos-scenario-library-faultpoint-orchestrator-kit.md` — Chaos Scenario Library & Faultpoint Orchestrator Kit (CI-first chaos with portable failure bundles)
+- **P-0134** — `proposals/spiffe-identity-kit.md` — Zero‑Trust Workload Identity Kit — SPIFFE/SPIRE identity, rotation, and mTLS that “just works” in Rust services
+- **P-0135** — `proposals/sparse-registry-reference-server-kit.md` — Sparse Registry Reference Server Kit — open, compatible, self-hostable Cargo sparse registries + mirrors
+- **P-0136** — `proposals/localization-pipeline-kit.md` — Localization Pipeline Kit — modern Rust i18n with ICU4X + Fluent, extraction, testing, and shipping workflows
+- **P-0137** — `proposals/matter-certification-interop-kit.md` — Matter Certification & Interop Kit — a pragmatic Rust “device + controller” test harness and evidence bundle workflow
+- **P-0138** — `proposals/email-auth-lab-kit.md` — Email Authentication Lab Kit — DKIM/DMARC/SPF/ARC/BIMI verification + reports + reproducible evidence bundles
+- **P-0139** — `proposals/sql-dialect-conformance-kit.md` — SQL Dialect Conformance Kit — sqllogictest corpora + multi-engine diffs + portable failure bundles for Rust SQL engines
+- **P-0140** — `proposals/perfetto-trace-workbench-kit.md` — Perfetto Trace Workbench Kit — cargo-native performance tracing with shareable trace bundles
+- **P-0141** — `proposals/webgpu-cts-interop-triage-kit.md` — WebGPU CTS Interop & Triage Kit — run, minimize, and report conformance failures from Rust
+- **P-0142** — `proposals/hpke-envelope-interop-kit.md` — HPKE Envelope & Interop Kit — high-level hybrid encryption with test vectors and safe defaults
+- **P-0143** — `proposals/ros2-workcell-kit.md` — ROS2 Workcell Kit — cargo-native scaffolding, bag replay, and conformance for robotics apps
+- **P-0144** — `proposals/geospatial-tile-pipeline-kit.md` — Geospatial Tile Pipeline Kit — PMTiles/COG/GeoParquet ETL + conformance bundles in Rust
+- **P-0145** — `proposals/threshold-signing-service-kit.md` — Threshold Signing Service Kit — FROST-based signing flows with transcripts, policies, and test vectors
+- **P-0146** — `proposals/mls-deployment-kit.md` — MLS Deployment Kit
+- **P-0147** — `proposals/autotls-acme-rustls-kit.md` — Autotls (ACME + rustls) Kit
+- **P-0148** — `proposals/cose-cwt-sd-cwt-interop-kit.md` — COSE / CWT / SD-CWT Interop Kit
+- **P-0149** — `proposals/zkvm-workbench-kit.md` — ZKVM Workbench Kit
+- **P-0150** — `proposals/ble-interop-gatt-conformance-kit.md` — BLE Interop & GATT Conformance Kit
+- **P-0151** — `proposals/simd-kernel-suite-kit.md` — SIMD Kernel Suite & Verification Kit
+- **P-0152** — `proposals/webrtc-sfu-media-router-kit.md` — WebRTC SFU & Media Router Kit
+- **P-0153** — `proposals/gitops-secrets-interop-kit.md` — GitOps Secrets Interop Kit (SOPS/age compatible)
+- **P-0154** — `proposals/wasm-portability-deployment-evidence-kit.md` — Wasm Portability & Deployment Evidence Kit (Wasmtime + Pulley)
+- **P-0155** — `proposals/routing-security-workbench-kit.md` — Routing Security Workbench Kit
+- **P-0156** — `proposals/time-sync-clock-discipline-kit.md` — Time Sync & Clock Discipline Kit
+- **P-0157** — `proposals/fhe-application-workbench-kit.md` — FHE Application Workbench Kit
+- **P-0158** — `proposals/state-machine-replication-conformance-kit.md` — State Machine Replication Conformance Kit
+- **P-0159** — `proposals/embedded-hil-evidence-kit.md` — Embedded HIL Evidence Kit
+- **P-0160** — `proposals/codemod-api-migration-kit.md` — Codemod & API Migration Kit
+- **P-0161** — `proposals/xr-app-framework-kit.md` — XR App Framework & Runtime Doctor Kit
+- **P-0162** — `proposals/dns-transport-policy-matrix-kit.md` — DNS Transport & Policy Matrix Kit
+- **P-0163** — `proposals/dataflow-ergonomics-workbench-kit.md` — Dataflow Ergonomics Workbench Kit
+- **P-0164** — `proposals/industrial-opcua-deployment-kit.md` — Industrial OPC UA Deployment Kit — ops-grade OPC UA in Rust, with conformance and evidence bundles
+- **P-0165** — `proposals/automotive-diagnostics-isotp-kit.md` — Automotive Diagnostics & ISO-TP Workbench Kit — CAN + ISO-TP + UDS evidence bundles and replay
+- **P-0166** — `proposals/sensitive-data-redaction-policy-kit.md` — Sensitive Data Redaction & Policy Kit — correct-by-default PII handling for logs/traces/metrics in Rust
+- **P-0167** — `proposals/mqtt-conformance-interop-kit.md` — MQTT Conformance & Interop Kit — artifacts + harness to make MQTT correctness reproducible
+- **P-0168** — `proposals/rust-android-mobile-kit.md` — Rust Android Mobile Kit — cargo-native, reproducible Android builds + binding ergonomics
+- **P-0169** — `proposals/postgres-extension-shipkit.md` — Postgres Extension ShipKit — reproducible build/test/release for pgrx extensions
+- **P-0170** — `proposals/webtransport-interop-shipkit.md` — WebTransport Interop & ShipKit — “it just works” QUIC/HTTP3 transport for browsers + Rust servers
+- **P-0171** — `proposals/pkcs11-keystore-attestation-kit.md` — PKCS#11 KeyStore & HSM Workbench Kit — safe high-level flows + evidence bundles for tokens/HSMs
+- **P-0172** — `proposals/nats-jetstream-interop-kit.md` — NATS + JetStream Interop & Ops Kit — standard evidence bundles, stream policy linting, and deterministic repros
+- **P-0173** — `proposals/jmap-email-client-server-kit.md` — JMAP Email Client/Server Workbench Kit — modern email APIs with reproducible sync + push + attachment flows
+- **P-0174** — `proposals/masque-proxy-shipkit.md` — MASQUE Proxy ShipKit — CONNECT-UDP/CONNECT-IP proxying with qlog bundles, policies, and interop matrices
+- **P-0175** — `proposals/trusted-publishing-tooling-kit.md` — Trusted Publishing Tooling Kit — cargo-native OIDC CI publishing with local rehearsal and evidence bundles
+- **P-0176** — `proposals/fediverse-ops-kit.md` — Fediverse Ops Kit — production-ready ActivityPub federation “missing middle” (queueing, retries, safety, observability, test corpora)
+- **P-0177** — `proposals/usb-fuzzing-device-harness-kit.md` — USB Fuzzing & Device Emulation Harness Kit — reproducible external USB fuzzing workflows and portable crash bundles
+- **P-0178** — `proposals/ratatui-test-snapshot-kit.md` — Ratatui Test & Snapshot Kit — interaction replay + deterministic snapshots + CI diffs for terminal UIs
+- **P-0179** — `proposals/content-authenticity-c2pa-shipkit.md` — Content Authenticity (C2PA) ShipKit
+- **P-0180** — `proposals/http-message-signatures-interop-kit.md` — HTTP Message Signatures Interop Kit
+- **P-0181** — `proposals/riscv-emulation-conformance-kit.md` — RISC-V Emulation & ISA Conformance Kit
+- **P-0182** — `proposals/oauth-oidc-interop-hardening-kit.md` — OAuth/OIDC Interop & Hardening Kit (PAR + DPoP + Profiles)
+- **P-0183** — `proposals/scim-provisioning-workbench-kit.md` — SCIM Provisioning Workbench Kit (Server + Client + Conformance)
+- **P-0184** — `proposals/sd-jwt-vc-interop-workbench-kit.md` — SD-JWT & SD-JWT VC Interop Workbench Kit (Selective Disclosure)
+- **P-0185** — `proposals/matrix-sliding-sync-interop-kit.md` — Matrix Sliding Sync Interop Workbench Kit
+- **P-0186** — `proposals/certificate-transparency-v2-ops-kit.md` — Certificate Transparency v2 Ops & Monitor Kit
+- **P-0187** — `proposals/bioformats-conformance-pipelines-kit.md` — Bioformats Conformance & Pipelines Kit
+- **P-0188** — `proposals/activitypub-federation-test-harness-kit.md` — ActivityPub Federation Test Harness Kit — reproducible Fediverse interop, conformance, and bug bundles
+- **P-0189** — `proposals/ct-ops-migration-kit.md` — Certificate Transparency Ops & Migration Kit — monitor, verify, and transition CT ecosystems with evidence bundles
+- **P-0190** — `proposals/matrix-sliding-sync-test-diagnostics-kit.md` — Matrix Sliding Sync Test & Diagnostics Kit — interop harness + evidence bundles for long-polling sync correctness
+- **P-0191** — `proposals/terraform-provider-rust-sdk-kit.md` — Terraform Provider Rust SDK Kit
+- **P-0192** — `proposals/graphql-federation-subgraph-shipkit.md` — GraphQL Federation Subgraph ShipKit
+- **P-0193** — `proposals/verifiable-credentials-v2-interop-workbench-kit.md` — Verifiable Credentials v2 Interop Workbench Kit
+- **P-0194** — `proposals/ohttp-deploy-interop-kit.md` — OHTTP Deploy & Interop Kit — privacy gateways with reproducible bundles (OHTTP/BHTTP/HPKE)
+- **P-0195** — `proposals/oid4vc-interop-workbench-kit.md` — OID4VC Interop Workbench — OID4VP/OID4VCI + Presentation Exchange profiles with conformance bundles
+- **P-0196** — `proposals/chunked-ohttp-privacy-gateway-ops-kit.md` — Chunked OHTTP & Privacy Gateway Ops Kit — streaming, rate limits, and intermediation “doctor” tooling
+- **P-0197** — `proposals/text-layout-conformance-kit.md` — Text Layout & Shaping Conformance Kit — bidi/segment/linebreak/shaping + golden tests for Rust GUIs
+- **P-0198** — `proposals/network-cassette-impairment-kit.md` — Network Cassette & Impairment Kit — pcap/pcapng capture→replay + tc/netem profiles + redacted evidence bundles
+- **P-0199** — `proposals/messageformat2-localization-kit.md` — MessageFormat 2 Localization Kit — MF2 parser/formatter + ICU4X integration + conformance fixtures
+- **P-0200** — `proposals/webauthn-passkeys-interop-device-lab-kit.md` — WebAuthn & Passkeys Interop + Device Lab Kit
+- **P-0201** — `proposals/secure-email-interop-shipkit.md` — Secure Email Interop ShipKit
+- **P-0202** — `proposals/accessibility-interop-conformance-kit.md` — Accessibility Capture & Interop Lab — cross-platform tree capture, semantic diffs, and repro bundles
+- **P-0203** — `proposals/audio-plugin-interop-sandbox-golden-dsp-lab-kit.md` — Audio Plugin Interop, Sandbox, and Golden‑DSP Lab Kit (CLAP/VST3)
+- **P-0204** — `proposals/oci-image-layout-registry-interop-kit.md` — OCI Image Layout + Registry Interop Kit (reproducible images, diffs, redaction, conformance)
+- **P-0205** — `proposals/sigstore-slsa-attestation-provenance-kit.md` — Sigstore + in-toto + SLSA Provenance Kit (artifact attestations, bundles, policy, Cargo integration)
+- **P-0206** — `proposals/wasm-component-artifact-conformance-kit.md` — Wasm Component Contract & Conformance ShipKit — world locks, composition bundles, and deterministic exercise receipts
+- **P-0207** — `proposals/rpki-rov-interop-validation-kit.md` — RPKI / ROV Interop & Validation Kit — bundle-first route-origin validation replay and explanation
+- **P-0208** — `proposals/matter-controller-commissioning-lab-kit.md` — Matter Controller + Commissioning Lab Kit — reproducible commissioning/control scenarios and portable matter bundles
+- **P-0209** — `proposals/otel-semconv-lint-gen-kit.md` — OpenTelemetry SemConv Lint + Codegen Kit — validate, upgrade, and generate semantic-convention usage
+- **P-0210** — `proposals/usb-uvc-uac-interop-lab-kit.md` — USB UVC/UAC Host + Interop Lab Kit — cross-platform enumeration, control, capture, and reproducible device bundles
+- **P-0211** — `proposals/openmetrics-exposition-conformance-kit.md` — OpenMetrics / Prometheus Exposition Conformance Kit — parsers, canonicalization, fuzz corpora, and repro bundles
+- **P-0212** — `proposals/opcua-conformance-interop-lab-kit.md` — OPC UA Conformance & Interop Lab Kit
+- **P-0213** — `proposals/dicomweb-dimse-interop-evidence-kit.md` — DICOMweb + DIMSE Interop & Evidence Kit
+- **P-0214** — `proposals/dds-rtps-interop-idl-xtypes-toolchain-kit.md` — DDS/RTPS Interop + IDL/XTypes Toolchain Kit
+- **P-0215** — `proposals/quic-http3-interop-qlog-lab-kit.md` — QUIC + HTTP/3 Interop & qlog Evidence Lab Kit — scenario runner, canonical traces, and repro bundles
+- **P-0216** — `proposals/ebpf-core-verifier-portability-lab-kit.md` — eBPF CO-RE + Verifier Portability Lab Kit — deterministic verifier reports, CO-RE probes, and repro bundles
+- **P-0217** — `proposals/mls-interop-conformance-evidence-kit.md` — Messaging Layer Security (MLS) Interop & Conformance Evidence Kit — vectors, transcripts, and bundle-first debugging
+- **P-0218** — `proposals/sbom-spdx3-cyclonedx-interop-canonicalization-kit.md` — SBOM Interop & Canonicalization Kit (SPDX 3.x + CycloneDX 1.x) — normalize, diff, validate, and ship evidence bundles
+- **P-0219** — `proposals/verifiable-credentials-vc2-sd-jwt-interop-evidence-kit.md` — Verifiable Credentials 2.0 + SD-JWT VC Interop & Evidence Kit — profiles, validators, test vectors, and reproducible bundles
+- **P-0220** — `proposals/riscv-architectural-tests-conformance-evidence-kit.md` — RISC-V Architectural Tests Conformance & Evidence Kit — run ACT/arch-test suites, normalize results, and ship repro bundles
+- **P-0221** — `proposals/pkcs11-hsm-interop-evidence-kit.md` — PKCS #11 / HSM Interop & Evidence Kit — token matrix, deterministic traces, and repro bundles
+- **P-0222** — `proposals/webrtc-interop-conformance-evidence-kit.md` — WebRTC Interop & Evidence Lab Kit — JSEP scenarios, canonical traces, and repro bundles
+- **P-0223** — `proposals/bluetooth-le-gatt-interop-evidence-kit.md` — Bluetooth LE GATT Interop & Evidence Kit — canonical GATT traces, profile fixtures, and repro bundles
+- **P-0224** — `proposals/openapi31-jsonschema-toolchain-kit.md` — OpenAPI 3.1 + JSON Schema 2020-12 Toolchain Kit — bundle/lint/diff/validate/codegen with dialect fidelity
+- **P-0225** — `proposals/fmi-fmu-interop-evidence-lab-kit.md` — FMI / FMU Interop & Evidence Lab Kit — build, probe, and compare FMUs across tools with reproducible bundles
+- **P-0226** — `proposals/geopackage-interop-canonicalization-kit.md` — GeoPackage Interop & Canonicalization Kit — stable GeoPackage I/O, extension management, and diffable bundles
+- **P-0227** — `proposals/zarr-v3-interop-canonicalization-kit.md` — Zarr v3 Interop & Canonicalization Kit
+- **P-0228** — `proposals/iec61850-goose-sampledvalues-interop-evidence-kit.md` — IEC 61850 GOOSE/Sampled Values Interop & Evidence Kit
+- **P-0229** — `proposals/fhir-smart-conformance-interop-evidence-kit.md` — FHIR + SMART on FHIR Conformance & Interop Evidence Kit
+- **P-0231** — `proposals/openxr-cts-triage-evidence-kit.md` — OpenXR CTS Triage & Evidence Kit
+- **P-0232** — `proposals/nostr-interop-compliance-kit.md` — Nostr Relay/Client Interop & Compliance Kit
+- **P-0236** — `proposals/tuf-conformance-evidence-kit.md` — TUF Repository + Client Conformance & Evidence Kit
+- **P-0237** — `proposals/ipfs-cid-car-interop-kit.md` — IPFS CID/CAR Canonicalization & Interop Evidence Kit
+- **P-0238** — `proposals/mqtt-v5-interop-conformance-kit.md` — MQTT v5 Interop & Conformance Evidence Kit
+- **P-0239** — `proposals/dettrace-spec-kit.md` — Determinism Trace & Cassette Spec Kit — a shared artifact format + adapters for async record/replay tooling
+- **P-0240** — `proposals/hermetic-sandbox-testkit.md` — Hermetic Sandbox TestKit — reproducible, policy-driven Linux sandboxes for tests/CI with explainable syscall budgets
+- **P-0241** — `proposals/formal-trace-connector.md` — Formal Trace Connector — bridge TLA+/Apalache-style specs to Rust tests with witness bundles
+- **P-0242** — `proposals/reproducible-build-evidence-kit.md` — Reproducible Build Evidence Kit — Rust-first buildinfo capture + diffoscope-backed binary diffs + shareable repro bundles
+- **P-0243** — `proposals/fuzz-corpus-coverage-interop-kit.md` — Fuzz Corpus & Coverage Interop Kit — portable corpora, minimization pipelines, and evidence bundles for cargo-fuzz and beyond
+- **P-0244** — `proposals/semver-api-diff-evidence-kit.md` — SemVer API Diff Evidence Kit — stable public-API IR + explainable semver checks + shareable apibundles
+- **P-0245** — `proposals/attestation-evidence-kit.md` — Attestation Interop & Evidence Kit — RATS/EAT-oriented bundles + verifiable traces + policy explain
+- **P-0246** — `proposals/acvp-client-evidence-kit.md` — ACVP Client & Evidence Kit — spec-faithful ACVP sessions + vector processing + shareable acvpbundles
+- **P-0247** — `proposals/scitt-transparency-kit.md` — SCITT Transparency & Receipts Kit — interoperable statement submission + receipt verification + scittbundles
+- **P-0248** — `proposals/caldav-carddav-interop-evidence-kit.md` — CalDAV/CardDAV Interop & Evidence ShipKit — canonical DAV traces + sync scenario runner
+- **P-0249** — `proposals/saml2-federation-xmlsec-evidence-kit.md` — SAML2 Federation Interop & XML Security Evidence Kit — metadata validation + signed/encrypted assertions with explainable failures
+- **P-0250** — `proposals/ldapv3-interop-conformance-kit.md` — LDAPv3 Interop & Schema/Control Conformance Kit — canonical operation traces + server capability matrices
+- **P-0251** — `proposals/dnssec-encrypted-dns-interop-evidence-kit.md` — DNSSEC + Encrypted DNS (DoH/DoQ/DoT) Interop & Evidence Kit — canonical traces, policy explainers, and repro bundles
+- **P-0252** — `proposals/jose-jwt-security-profile-interop-evidence-kit.md` — JOSE/JWT Security Profile & Interop Evidence Kit — canonical JOSE IR, policy explainers, and vector bundles
+- **P-0253** — `proposals/git-wire-pack-conformance-evidence-kit.md` — Git Wire/Pack Conformance & Evidence Kit — protocol-v2 + pack-format corpora, canonical traces, and repro bundles
+- **P-0254** — `proposals/bgp-bmp-interop-evidence-kit.md` — BGP + BMP Interop & Evidence Kit — canonical control-plane captures, policy explainers, and repro bundles
+- **P-0255** — `proposals/graphql-over-http-interop-evidence-kit.md` — GraphQL over HTTP Interop & Evidence Kit — request/response canonicalization, multipart upload traces, and conformance bundles
+- **P-0256** — `proposals/evidence-bundle-core-kit.md` — Evidence Bundle Core Kit — signed, redactable, diffable repro bundles for Rust tooling
+- **P-0257** — `proposals/cbor-cose-oscore-edhoc-interop-evidence-kit.md` — CBOR/COSE/OSCORE/EDHOC Interop & Evidence Kit — portable, constrained security test suites
+- **P-0258** — `proposals/smb2-smb3-interop-evidence-kit.md` — SMB2/SMB3 Interop & Evidence Kit — canonical trace bundles, capability matrices, and replay harness
+- **P-0259** — `proposals/spdm-secured-messages-interop-evidence-kit.md` — SPDM + Secured Messages Interop & Evidence Kit
+- **P-0260** — `proposals/redfish-schema-service-interop-evidence-kit.md` — Redfish Schema + Service Interop & Evidence Kit
+- **P-0261** — `proposals/amqp10-interop-conformance-evidence-kit.md` — AMQP 1.0 Interop & Conformance Evidence Kit
+- **P-0262** — `proposals/kafka-protocol-interop-evidence-kit.md` — Kafka Protocol Interop & Evidence Kit — wire-protocol conformance, deterministic traces, and semantic diffs
+- **P-0263** — `proposals/xds-controlplane-interop-evidence-kit.md` — xDS Control-Plane Interop & Evidence Kit — ADS/delta stream capture, replay, and semantic diffs
+- **P-0264** — `proposals/rust-conformance-harness-toolkit.md` — Rust Conformance Harness Toolkit — reusable conformance suites, custom runners, and evidence bundles
+- **P-0265** — `proposals/webtransport-interop-evidence-kit.md` — WebTransport Interop & Evidence Kit — canonical transcripts + replay bundles for WebTransport over HTTP/3
+- **P-0266** — `proposals/rdp-interop-evidence-kit.md` — RDP Interop & Evidence Kit — canonical RDP traces + capability matrices + replay bundles
+- **P-0267** — `proposals/kubernetes-cri-interop-evidence-kit.md` — Kubernetes CRI Interop & Evidence Kit — canonical CRI gRPC sessions + runtime compatibility matrices
+- **P-0268** — `proposals/pgwire-evidence-kit.md` — PostgreSQL Wire Protocol Interop & Evidence Kit (pgbundle)
+- **P-0269** — `proposals/s3-interop-evidence-kit.md` — S3-Compatible Object Storage Interop & Evidence Kit (s3bundle)
+- **P-0270** — `proposals/otlp-interop-evidence-kit.md` — OTLP (OpenTelemetry Protocol) Interop & Evidence Kit (otlpbundle)
+- **P-0271** — `proposals/webgpu-cts-triage-evidence-kit.md` — WebGPU CTS Triage & Evidence Kit (webgpubundle)
+- **P-0272** — `proposals/arrow-flight-interop-evidence-kit.md` — Apache Arrow Flight / Flight SQL Interop & Evidence Kit (flightbundle)
+- **P-0273** — `proposals/gnmi-interop-evidence-kit.md` — gNMI (gRPC Network Management Interface) Interop & Evidence Kit (gnmibundle)
+- **P-0274** — `proposals/wifi-easy-connect-dpp-interop-evidence-kit.md` — Wi‑Fi Easy Connect (DPP) Interop & Evidence Kit — canonical onboarding transcripts + dppbundle.zip
+- **P-0275** — `proposals/did-resolution-interop-evidence-kit.md` — DID Resolution Interop & Evidence Kit — resolver conformance packs + didbundle.zip
+- **P-0276** — `proposals/modbus-rtu-tcp-interop-evidence-kit.md` — Modbus RTU/TCP Interop & Evidence Kit — canonical PDUs + modbusbundle.zip
+- **P-0277** — `proposals/ssh-interop-evidence-kit.md` — SSH Interop & Evidence Kit — canonical transcripts, redaction, and replay bundles across SSH implementations
+- **P-0278** — `proposals/activitypub-federation-interop-evidence-kit.md` — ActivityPub Federation Interop & Evidence Kit — canonical federation traces, replay, and redaction-first bundles
+- **P-0279** — `proposals/nats-jetstream-interop-evidence-kit.md` — NATS + JetStream Interop & Evidence Kit — canonical protocol traces and reproducible replay bundles
+- **P-0280** — `proposals/fapi2-interop-evidence-kit.md` — FAPI 2.0 / OAuth High-Security Profile Interop & Evidence Kit — conformance packs, explainable policy checks, and replayable auth traces
+- **P-0281** — `proposals/sqlite-fileformat-integrity-evidence-kit.md` — SQLite File-Format + Integrity Interop & Evidence Kit — canonical dumps, page-level diffs, and corruption triage bundles
+- **P-0282** — `proposals/bacnet-interop-evidence-kit.md` — BACnet/BACnet-IP Interop & Evidence Kit — device simulation matrices, canonical traces, and replayable building-automation bundles
+- **P-0283** — `proposals/tls-x509-interop-evidence-kit.md` — TLS 1.3 + X.509 Path Validation Interop & Evidence Kit — canonical handshakes, chain verdict diffs, and redaction-safe repro bundles
+- **P-0284** — `proposals/iec60870-5-104-interop-evidence-kit.md` — IEC 60870-5-104 Interop & Evidence Kit — canonical ASDU traces, timing checks, and replayable SCADA repro bundles
+- **P-0285** — `proposals/hl7v2-mllp-interop-evidence-kit.md` — HL7 v2 + MLLP Interop & Evidence Kit — canonical framing, ACK semantics, and PHI-safe replay bundles
+- **P-0286** — `proposals/snmpv3-interop-evidence-kit.md` — SNMPv3 Interop & Evidence Kit — canonical, redactable transcripts + capability matrices + replay/diff
+- **P-0287** — `proposals/radius-eap-interop-evidence-kit.md` — RADIUS + EAP Interop & Evidence Kit — canonical exchange bundles + attribute registries + replay/diff
+- **P-0288** — `proposals/can-uds-interop-evidence-kit.md` — CAN + ISO-TP + UDS Interop & Evidence Kit — canonical traces, timing checks, and reproducible diagnostic bundles
+- **P-0289** — `proposals/dnp3-secure-auth-interop-evidence-kit.md` — DNP3 Secure Authentication Interop & Evidence Kit — canonical, redactable SA transcripts + capability matrices + replay/diff
+- **P-0290** — `proposals/openid-federation-interop-evidence-kit.md` — OpenID Federation 1.0 Interop & Evidence Kit — trust-chain resolution, policy diffs, and reproducible federation bundles
+- **P-0291** — `proposals/jpegxl-conformance-evidence-kit.md` — JPEG XL Conformance & Evidence Kit — decoder/encoder golden tests, fuzz corpus bundles, and reproducible divergence triage
+- **P-0292** — `proposals/openrtb-adcom-interop-evidence-kit.md` — OpenRTB 2.6 + AdCOM Interop & Evidence Kit — canonical bid traces + profile-as-code + replay/diff
+- **P-0293** — `proposals/mavlink-microservices-interop-evidence-kit.md` — MAVLink Microservices Interop & Evidence Kit — canonical mission/parameter/file traces + signing-aware replay
+- **P-0294** — `proposals/as2-mdn-interop-evidence-shipkit.md` — AS2 + MDN Interop & Evidence ShipKit — signed/encrypted EDI transport with replayable receipts and partner profiles
+- **P-0295** — `proposals/orc-interop-canonicalization-kit.md` — ORC Interop & Canonicalization Kit — stable Arrow/ORC round-trips, semantic diffs, and evidence bundles
+- **P-0296** — `proposals/bpmn-dmn-conformance-workbench-kit.md` — BPMN 2.0 + DMN Conformance Workbench Kit — model linting, FEEL/decision fixtures, and replayable process evidence
+- **P-0297** — `proposals/fix-orchestra-interop-workbench-kit.md` — FIX + FIXT + Orchestra Interop Workbench Kit — rules-of-engagement ingestion, canonical transcripts, and certification bundles
+- **P-0298** — `proposals/xbrl-ixbrl-conformance-evidence-kit.md` — XBRL + Inline XBRL Conformance & Evidence Kit — taxonomy-aware validation, canonical facts, and filing repro bundles
+- **P-0299** — `proposals/ipp-everywhere-interop-conformance-kit.md` — IPP Everywhere Interop & Conformance Kit — driverless printing profiles, canonical jobs, and certification bundles
+- **P-0300** — `proposals/secs-gem-interop-evidence-kit.md` — SECS-II + HSMS + GEM Interop & Evidence Kit — semiconductor equipment transcripts, state-machine replay, and fab-safe bundles
+- **P-0301** — `proposals/ebics-banking-interop-evidence-kit.md` — EBICS Banking Interop & Evidence Kit — bank-profile pinning, signature-aware transfers, and reproducible payment exchange bundles
+- **P-0302** — `proposals/ocpp-interop-certification-evidence-kit.md` — OCPP 2.1 / 2.0.1 Interop, Certification, and Evidence Kit — profile-aware CS↔CSMS replay with redactable charging incident bundles
+- **P-0303** — `proposals/fhir-smart-conformance-evidence-kit.md` — FHIR + SMART App Launch Conformance & Evidence Kit — IG-pinned validation, launch replay, and redactable health API bundles
+- **P-0304** — `proposals/rdap-epp-registry-interop-evidence-kit.md` — RDAP + EPP Registry Interop & Evidence Kit — registrar/registry profile packs, canonical exchanges, and reproducible delegation bundles
+- **P-0305** — `proposals/ifc-bim-conformance-evidence-kit.md` — IFC / BIM Conformance & Evidence Kit — schema-aware validation, model diffs, and reproducible exchange bundles for building data
+- **P-0306** — `proposals/openadr-demand-response-interop-evidence-kit.md` — OpenADR 3.0 Demand-Response Interop & Evidence Kit — VEN↔VTN profile packs, scenario replay, and grid-event repro bundles
+- **P-0307** — `proposals/as4-peppol-edelivery-interop-evidence-kit.md` — AS4 + Peppol eDelivery Interop & Evidence Kit — partner-profiled message exchange, SMP/SML diagnostics, and reproducible onboarding bundles
+- **P-0308** — `proposals/gs1-epcis-cbv-conformance-evidence-kit.md` — GS1 EPCIS 2.0 + CBV Conformance & Evidence Kit — canonical supply-chain events, vocabulary-aware validation, and recall-ready trace bundles
+- **P-0309** — `proposals/onvif-rtsp-interop-evidence-kit.md` — ONVIF + RTSP Interop & Evidence Kit — profile-aware camera discovery, streaming diagnostics, and reproducible surveillance bundles
+- **P-0310** — `proposals/dlms-cosem-smart-meter-interop-evidence-kit.md` — DLMS/COSEM Smart Meter Interop & Evidence Kit — profile-pinned meter dialogues, object-model diagnostics, and utility-safe exchange bundles
+- **P-0311** — `proposals/sip-sdp-rtp-interop-evidence-kit.md` — SIP + SDP + RTP Interop & Evidence Kit — profile-aware call flows, media-negotiation diagnostics, and replayable VoIP bundles
+- **P-0312** — `proposals/opcua-pubsub-uafx-interop-evidence-kit.md` — OPC UA PubSub + UAFX Interop & Evidence Kit — deterministic industrial PubSub traces, profile pinning, and explainable divergence reports
+- **P-0313** — `proposals/gtfs-realtime-conformance-replay-kit.md` — GTFS + GTFS Realtime Conformance & Replay Kit — schedule-aware transit feeds, semantic trip diffs, and public-shareable evidence bundles
+- **P-0314** — `proposals/ogcapi-features-cql2-conformance-evidence-kit.md` — OGC API Features + CQL2 Conformance & Evidence Kit — geospatial query lockfiles, semantic result diffs, and profile-aware shareable bug bundles
+- **P-0315** — `proposals/dcsa-ebl-pint-interop-evidence-kit.md` — DCSA eBL + PINT Interop & Evidence Kit — cross-platform bill-of-lading exchange, legal-profile pinning, and portable dispute bundles
+- **P-0316** — `proposals/stix-taxii-interop-evidence-kit.md` — STIX 2.1 + TAXII 2.1 Interop & Evidence Kit — threat-intel profile packs, collection replay, and explainable CTI bundle diffs
+- **P-0317** — `proposals/asset-administration-shell-aas-conformance-evidence-kit.md` — Asset Administration Shell (AAS) + AASX Conformance & Evidence Kit — profile-pinned digital-twin payloads, semantic diffs, and portable exchange bundles
+- **P-0318** — `proposals/sensorthings-api-mqtt-conformance-replay-kit.md` — OGC SensorThings API + MQTT Conformance & Replay Kit — geospatial IoT profile lockfiles, observation semantics, and portable incident bundles
+- **P-0319** — `proposals/iiif-image-presentation-interop-evidence-kit.md` — IIIF Image + Presentation Interop & Evidence Kit — compliance-aware manifests, image-request lockfiles, and portable library-tech bundles
+- **P-0320** — `proposals/hls-llhls-cmaf-interop-evidence-kit.md` — HLS + Low-Latency HLS + CMAF Interop & Evidence Kit — playlist/profile lockfiles, rendition diffs, and replayable streaming bug bundles
+- **P-0321** — `proposals/ro-crate-conformance-packaging-kit.md` — RO-Crate Conformance & Packaging Kit — profile-aware research-object bundles, JSON-LD sanity checks, and reproducible archival diffs
+- **P-0322** — `proposals/amwa-nmos-interop-evidence-kit.md` — AMWA NMOS Interop & Evidence Kit — IS-04/05 profile lockfiles, topology diffs, and replayable broadcast-control bug bundles
+- **P-0323** — `proposals/ubl-en16931-peppol-pint-conformance-evidence-kit.md` — UBL + EN16931 + Peppol/PINT Conformance & Evidence Kit — profile-pinned e-invoice validation, explainable rule failures, and portable trading-partner bundles
+- **P-0324** — `proposals/sdmx3-conformance-canonicalization-kit.md` — SDMX 3.0 Conformance & Canonicalization Kit — structure-aware query lockfiles, semantic dataset diffs, and reproducible statistics-exchange bundles
+- **P-0325** — `proposals/threemf-conformance-packaging-evidence-kit.md` — 3MF Conformance & Packaging Evidence Kit — extension-aware model validation, package diffs, and reproducible additive-manufacturing bug bundles
+- **P-0326** — `proposals/lti13-lti-advantage-conformance-evidence-kit.md` — LTI 1.3 + LTI Advantage Conformance & Evidence Kit — profile-pinned launches, service replay, and LMS/tool interoperability bundles
+- **P-0327** — `proposals/crossref-jats-deposit-validation-workbench-kit.md` — Crossref 5.4.0 + JATS 1.4 Deposit & Validation Workbench Kit — profile-pinned scholarly XML transforms, explainable deposit failures, and replayable registration bundles
+- **P-0328** — `proposals/ocfl-bagit-preservation-evidence-kit.md` — OCFL 1.1 + BagIt Profiles Preservation Interop & Evidence Kit — canonical object diffs, profile-pinned transfers, and replayable ingest bundles
+- **P-0329** — `proposals/ddex-ern-mead-interop-evidence-kit.md` — DDEX ERN 4.3 + MEAD Interop & Evidence Kit — profile-pinned release deliveries, explainable metadata failures, and portable DSP onboarding bundles
+- **P-0330** — `proposals/opendrive-openscenario-replay-conformance-kit.md` — ASAM OpenDRIVE 1.8.1 + OpenSCENARIO Replay & Conformance Kit — road/scenario lockfiles, semantic diffs, and simulator-neutral evidence bundles
+- **P-0331** — `proposals/ccsds-cfdp-interop-evidence-kit.md` — CCSDS CFDP Interop & Evidence Kit — mission-profiled transaction replay, fault-handler diagnostics, and portable space-link file-transfer bundles
+- **P-0332** — `proposals/epub33-epubcheck-opds-interop-evidence-kit.md` — EPUB 3.3 + EPUBCheck + OPDS 2.0 Interop & Evidence Kit — profile-pinned publications, explainable validation failures, and replayable reading-system bug bundles
+- **P-0333** — `proposals/bids-nifti-conformance-dataset-evidence-kit.md` — BIDS + NIfTI Conformance & Dataset Evidence Kit — profile-pinned neuroimaging datasets, explainable validator findings, and replayable curation bundles
+- **P-0334** — `proposals/stac-stacapi-validation-replay-kit.md` — STAC 1.1 + STAC API Validation & Replay Kit — profile-pinned geospatial catalogs, semantic item diffs, and reproducible search/evidence bundles
+- **P-0335** — `proposals/las-laz-copc-interop-evidence-kit.md` — LAS 1.4/1.5 + LAZ 1.4 + COPC Interop & Evidence Kit — profile-pinned point clouds, semantic header diffs, and reproducible spatial bug bundles
+- **P-0336** — `proposals/marc21-bibframe-conversion-workbench-kit.md` — MARC 21 + BIBFRAME Conversion Workbench Kit — profile-pinned cataloging transforms, explainable graph/record diffs, and replayable library-metadata bundles
+- **P-0337** — `proposals/ga4gh-htsget-refget-crypt4gh-interop-evidence-kit.md` — GA4GH htsget + refget + Crypt4GH Interop & Evidence Kit — profile-pinned genomic streaming, reference integrity checks, and redactable evidence bundles
+- **P-0338** — `proposals/xapi20-cmi5-conformance-replay-kit.md` — xAPI 2.0 + cmi5 Conformance & Replay Kit — profile-pinned learning-event interoperability, explainable statement failures, and portable LMS/content bundles
+- **P-0339** — `proposals/netconf-yang-restconf-conformance-evidence-kit.md` — NETCONF + YANG + RESTCONF Conformance & Evidence Kit — model-driven network-management lockfiles, explainable capability drift, and replayable device bundles
+- **P-0340** — `proposals/asyncapi30-cloudevents-interop-evidence-kit.md` — AsyncAPI 3.0 + CloudEvents Interop & Evidence Kit — event-contract lockfiles, binding-aware diffs, and replayable cross-transport bundles
+- **P-0341** — `proposals/datacite47-codemeta-cff-crosswalk-workbench-kit.md` — DataCite 4.7 + CodeMeta + CITATION.cff Crosswalk Workbench Kit — deterministic software-metadata translation, citation-quality diffs, and repository-to-DOI evidence bundles
+- **P-0342** — `proposals/openusd-core10-usdz-conformance-evidence-kit.md` — OpenUSD Core Spec 1.0 + USDZ Conformance & Evidence Kit — validator-aware scene/package replay, semantic diffs, and portable asset bug bundles
+- **P-0343** — `proposals/citygml30-cityjson20-conformance-conversion-workbench-kit.md` — CityGML 3.0 + CityJSON 2.0 Conformance & Conversion Workbench Kit — schema-aware validation, semantic diffs, and explainable GML↔JSON evidence bundles
+- **P-0344** — `proposals/netcdf-cf-opendap-interop-evidence-kit.md` — netCDF + CF Conventions + OPeNDAP Interop & Evidence Kit — profile-pinned dataset validation, subset replay, and science-data compatibility bundles
+- **P-0345** — `proposals/cap12-ipaws-interop-evidence-kit.md` — CAP 1.2 + IPAWS Interop & Evidence Kit — profile-aware emergency-alert validation, redactable exchange bundles, and explainable warning-system diffs
+- **P-0346** — `proposals/musicxml40-mei-interop-evidence-kit.md` — MusicXML 4.0 + MEI Interop & Evidence Kit — schema-aware notation conversion, semantic loss reports, and portable score bug bundles
+- **P-0347** — `proposals/gltf-ktx2-asset-conformance-evidence-kit.md` — glTF 2.0 + KTX 2.0 Asset Conformance & Evidence Kit — validator-aware asset profiles, texture/package checks, and portable repro bundles
+- **P-0348** — `proposals/warc-cdxj-wacz-webarchive-evidence-kit.md` — WARC 1.1 + CDXJ + WACZ Web-Archive Interop & Evidence Kit — replayable archive packages, index/package audits, and portable preservation bug bundles
+- **P-0349** — `proposals/miniseed3-stationxml-seedlink-interop-evidence-kit.md` — FDSN miniSEED 3 + StationXML + SeedLink Interop & Evidence Kit — waveform/inventory alignment, realtime replay, and transport-aware seismology bug bundles
+- **P-0350** — `proposals/mcap-rosbag2-replay-evidence-kit.md` — MCAP + rosbag2 Replay & Evidence Kit — schema/channel lockfiles, conversion audits, and reproducible robot-data bug bundles
+- **P-0351** — `proposals/mpegdash-dashif-conformance-evidence-kit.md` — MPEG-DASH + DASH-IF Conformance & Evidence Kit — MPD/segment profile locks, validator wrapping, and replayable streaming bug bundles
+- **P-0352** — `proposals/iso20022-cbpr-hvps-sepa-conformance-evidence-kit.md` — ISO 20022 + CBPR+ / HVPS+ / SEPA Conformance & Evidence Kit — schema/profile locks, market-practice validation, and replayable payment bug bundles
+- **P-0353** — `proposals/omezarr-ngff-conformance-dataset-evidence-kit.md` — OME-Zarr / NGFF 0.5 Conformance & Dataset Evidence Kit — metadata/profile locks, validator wrapping, and reproducible bioimaging bug bundles
+- **P-0354** — `proposals/wmo-grib2-bufr-interop-evidence-kit.md` — WMO GRIB2 + BUFR Interop & Evidence Kit — table/version locks, ecCodes normalization, and replayable meteorology bug bundles
+- **P-0355** — `proposals/fits-wcs-votable-interop-evidence-kit.md` — FITS 4.0 + WCS + VOTable Interop & Evidence Kit — coordinate-aware validation, semantic diffs, and archive-grade astronomy bug bundles
+- **P-0356** — `proposals/lsp-dap-lsif-interop-replay-kit.md` — LSP 3.17 + DAP + LSIF Interop & Replay Kit — capability locks, transcript replay, and editor/debugger evidence bundles
+- **P-0357** — `proposals/rdf12-sparql12-shacl12-conformance-evidence-kit.md` — RDF 1.2 + SPARQL 1.2 + SHACL 1.2 Conformance & Evidence Kit — graph canonicalization, validator normalization, and replayable linked-data bug bundles
+- **P-0358** — `proposals/odata402-csdl-conformance-replay-kit.md` — OData 4.01/4.02 + CSDL Conformance & Replay Kit — query lockfiles, metadata drift diffs, and portable API evidence bundles
+- **P-0359** — `proposals/iceberg-rest-delta-kernel-uniform-interop-evidence-kit.md` — Apache Iceberg REST Catalog + Delta Kernel / UniForm Interop & Evidence Kit — catalog locks, metadata drift diffs, and replayable lakehouse bundles
+- **P-0360** — `proposals/vcf45-bcf22-csi-tabix-interop-evidence-kit.md` — VCF 4.5 + BCF 2.2 + CSI/Tabix Interop & Evidence Kit — annotation-aware diffs, index locks, and replayable variant-exchange bundles
+- **P-0361** — `proposals/ion-partiql-canonicalization-evidence-kit.md` — Amazon Ion + PartiQL Canonicalization & Evidence Kit — query/data lockfiles, semantic diffs, and replayable semi-structured bundles
+- **P-0362** — `proposals/onnx-onnxruntime-backendtest-conformance-replay-kit.md` — ONNX + ONNX Runtime + Backend Test Conformance & Replay Kit — model/opset locks, backend diffs, and replayable inference evidence bundles
+- **P-0363** — `proposals/lwm2m12-omna-object-registry-conformance-evidence-kit.md` — OMA LwM2M 1.2 + OMNA Object Registry Conformance & Evidence Kit — object/version locks, bootstrap replay, and device-management bug bundles
+- **P-0364** — `proposals/hl7v2-mllp-messageprofile-conformance-replay-kit.md` — HL7 v2.x + MLLP + Message Profile Conformance & Replay Kit — ACK semantics, profile locks, and shareable hospital-interface bug bundles
+- **P-0365** — `proposals/unedifact-syntax-directory-interop-evidence-kit.md` — UN/EDIFACT Syntax + Directory Interop & Evidence Kit — release locks, code-list diffs, and replayable B2B document bug bundles
+- **P-0366** — `proposals/oscal11-component-ssp-assessment-workbench-kit.md` — OSCAL 1.1.x Component + SSP + Assessment Workbench Kit — cross-model locks, validation diffs, and audit-ready evidence bundles
+
+
+- **P-0367** — `proposals/sarif-subset-baseline-evidence-kit.md` — SARIF 2.1.0 Subset + Baseline + Evidence Kit — subset locks, fingerprint-normalized diffs, and replayable static-analysis bundles
+- **P-0368** — `proposals/xes-ocel2-pnml-process-mining-interop-workbench-kit.md` — XES + OCEL 2.0 + PNML Process-Mining Interop Workbench Kit — log/model locks, loss-aware transforms, and replayable conformance bundles
+- **P-0369** — `proposals/csaf-openvex-osv-advisory-workbench-kit.md` — CSAF 2.0 + OpenVEX + OSV Advisory Workbench Kit — product matching, status crosswalks, and explainable vulnerability evidence bundles
+- **P-0370** — `proposals/uptane21-tuf-suit-deployment-evidence-kit.md` — Uptane 2.1 + TUF / SUIT Deployment & Evidence Kit — role-aware campaign locks, ECU replay, and explainable OTA failure bundles
+- **P-0371** — `proposals/ooxml-opc-conformance-evidence-workbench-kit.md` — OOXML + OPC Conformance & Evidence Workbench Kit — package-relationship locks, validator normalization, and safe document bug bundles
+- **P-0372** — `proposals/openfeature-ofrep-conformance-incident-replay-kit.md` — OpenFeature + OFREP Conformance & Incident Replay Kit — profile locks, evaluation traces, and portable flag-behavior bug bundles
+- **P-0373** — `proposals/protobuf-editions-protojson-transcoding-conformance-workbench-kit.md` — Protobuf Editions + ProtoJSON + gRPC Transcoding Conformance Workbench Kit — descriptor locks, cross-format diffs, and gateway replay artifacts
+- **P-0374** — `proposals/jupyter-notebook-messaging-kernel-replay-workbench-kit.md` — Jupyter Notebook Format + Messaging + Kernel Replay Workbench Kit — notebook/profile locks, protocol traces, and reproducible kernel bug bundles
+- **P-0375** — `proposals/reapi-cas-remote-asset-interop-evidence-kit.md` — Remote Execution API (REv2) + CAS + Remote Asset Interop & Evidence Kit — action/profile locks, digest-path diagnostics, and portable remote-build bug bundles
+- **P-0376** — `proposals/threedtiles11-implicittiling-metadata-conformance-evidence-kit.md` — 3D Tiles 1.1 + Implicit Tiling + Metadata Conformance & Evidence Kit — tileset/profile locks, subtree diagnostics, and portable 3D geospatial bug bundles
+
+- **P-0377** — `proposals/geoparquet-geoarrow-flatgeobuf-interop-canonicalization-kit.md` — GeoParquet + GeoArrow + FlatGeobuf Interop & Canonicalization Workbench Kit — CRS/profile locks, conversion-loss diffs, and portable geospatial evidence bundles
+- **P-0378** — `proposals/fido-device-onboard-interop-certification-evidence-kit.md` — FIDO Device Onboard 2.0 / 1.1 Interop & Certification Evidence Kit — ownership-voucher locks, serviceinfo replay, and safe onboarding incident bundles
+- **P-0379** — `proposals/rinex-ntrip-replay-evidence-kit.md` — RINEX 4.02 + NTRIP v2 Replay & Evidence Kit — stream/file parity, station-profile locks, and portable GNSS incident bundles
+- **P-0380** — `proposals/safetensors-gguf-model-artifact-interop-workbench-kit.md` — SafeTensors + GGUF Model Artifact Interop Workbench Kit — shard/profile locks, conversion-loss diffs, and portable model-file evidence bundles
+- **P-0381** — `proposals/usb-hid-report-descriptor-usage-conformance-kit.md` — USB HID Report Descriptor + Usage Tables Conformance Kit — descriptor locks, host-quirk diffs, and portable firmware evidence bundles
+
+- `proposals/atproto-repo-sync-firehose-lexicon-evidence-kit.md`
+- `proposals/ocpi23-booking-afir-conformance-evidence-kit.md`
+- `proposals/substrait-flightsql-adbc-interop-workbench-kit.md`
+- `proposals/pdfa-pades-validation-evidence-workbench-kit.md`
+- `proposals/mctp20-pldm-fw-filetransfer-interop-evidence-kit.md`
+
+- **P-0387** — `proposals/openlineage-marquez-facet-evidence-kit.md` — OpenLineage + Marquez + Facet Evidence Kit — lineage locks, facet-schema discipline, and replayable incident bundles
+- **P-0388** — `proposals/didcomm-v2-oob-mediator-interop-evidence-kit.md` — DIDComm v2 + Out-of-Band + Mediation Interop & Evidence Kit — profile locks, routing receipts, and redactable message bundles
+- **P-0389** — `proposals/fdc3-desktop-agent-bridging-interop-kit.md` — FDC3 2.2 + Desktop Agent Bridging Interop Kit — intent locks, app-directory diffs, and portable desktop-workflow receipts
+- **P-0390** — `proposals/webdriver-bidi-cdp-replay-diagnostics-kit.md` — WebDriver BiDi + CDP Replay & Diagnostics Kit — browser capability locks, fallback diffs, and flake-minimizing evidence bundles
+- **P-0391** — `proposals/opendal-objectstore-capability-portability-kit.md` — OpenDAL + object_store Capability Portability Kit — storage locks, semantics tests, and backend-incident bundles
+- **P-0392** — `proposals/mcp-protocol-conformance-transcript-capability-kit.md` — MCP Protocol Conformance, Transcript & Capability Kit — spec-pinned traces, transport-neutral evidence, and server/client drift receipts
+- **P-0393** — `proposals/sigma-ocsf-detection-interop-workbench-kit.md` — Sigma + OCSF Detection Interop Workbench Kit — rule locks, mapping receipts, and backend-portable evidence bundles
+- **P-0394** — `proposals/wot-thing-description-binding-profile-interop-kit.md` — WoT Thing Description, Binding & Profile Interop Kit — TD locks, affordance replay, and profile-aware evidence bundles
+- **P-0395** — `proposals/ga4gh-drs-tes-wes-portability-evidence-kit.md` — GA4GH DRS + TES + WES Portability Evidence Kit — object locks, run receipts, and cloud-genomics handoff bundles
+- **P-0396** — `proposals/frictionless-datapackage-tableschema-workbench-kit.md` — Frictionless Data Package + Table Schema Workbench Kit — package locks, validation receipts, and profile-aware dataset bundles
+- **P-0397** — `proposals/lorawan104-11-regional-parameters-certification-replay-kit.md` — LoRaWAN 1.0.4 / 1.1 + Regional Parameters + Certification Replay Kit — region/profile locks, MAC-command receipts, and portable field-debug bundles
+- **P-0398** — `proposals/midi20-midi-ci-profiles-property-exchange-interop-kit.md` — MIDI 2.0 + MIDI-CI + Profiles + Property Exchange Interop Kit — UMP traces, capability-negotiation receipts, and profile/property conformance bundles
+- **P-0399** — `proposals/webextensions-mv3-capability-portability-kit.md` — WebExtensions MV3 Capability Portability Kit — manifest locks, permission/API coverage diffs, and cross-browser evidence bundles
+- **P-0400** — `proposals/vda5050-master-control-agv-interop-evidence-kit.md` — VDA 5050 Master-Control ↔ AGV Interop & Evidence Kit — MQTT topic captures, order/state diffs, and fleet-onboarding receipts
+- **P-0401** — `proposals/fix-sbe-schema-evolution-interop-kit.md` — FIX SBE Schema-Evolution Interop Kit — template locks, acting-version receipts, and zero-copy message evidence bundles
+- **P-0402** — `proposals/openapi-overlay-arazzo-workbench-kit.md` — OpenAPI Overlay + Arazzo Workflow Workbench Kit — deterministic transforms, workflow locks, and explainable API-pipeline receipts
+- **P-0403** — `proposals/cmsis-svd-ipxact-register-interop-workbench-kit.md` — CMSIS-SVD + IP-XACT Register Interop Workbench Kit — register-map locks, semantic diffs, and codegen receipts across firmware and IP flows
+- **P-0404** — `proposals/openpgp-wkd-autocrypt-policy-evidence-kit.md` — OpenPGP Discovery + WKD + Autocrypt Policy & Evidence Kit — trust-policy locks, discovery receipts, and mailbox-safe interoperability bundles
+- **P-0405** — `proposals/asam-mdf-a2l-dbc-interop-workbench-kit.md` — ASAM MDF + A2L + DBC Interop Workbench Kit — measurement locks, signal-mapping diffs, and calibration-grade evidence bundles
+- **P-0406** — `proposals/web-push-vapid-ece-interop-evidence-kit.md` — Web Push + VAPID + HTTP ECE Interop & Evidence Kit — subscription locks, endpoint receipts, and browser-safe delivery evidence
+
+- **P-0407** — `proposals/iso15118-plug-charge-v2g-pki-interop-evidence-kit.md` — ISO 15118 Plug & Charge + V2G PKI Interop & Evidence Kit
+- **P-0408** — `proposals/xdg-desktop-portal-capability-portability-kit.md` — XDG Desktop Portal Capability Portability Kit
+- **P-0409** — `proposals/openfga-authorization-model-tuple-replay-kit.md` — OpenFGA Authorization Model + Tuple Replay Kit
+- **P-0410** — `proposals/e57-las-copc-loss-aware-interop-workbench-kit.md` — E57 + LAS/LAZ + COPC Loss-Aware Interop Workbench Kit
+- **P-0411** — `proposals/opendocument-odf-openformula-conformance-workbench-kit.md` — OpenDocument ODF + OpenFormula Conformance Workbench Kit
+- **P-0412** — `proposals/cwl-workflowrun-rocrate-conformance-evidence-kit.md` — CWL + Workflow Run RO-Crate Conformance & Evidence Kit
+- **P-0413** — `proposals/vss-vissv2-capability-replay-kit.md` — VSS + VISS v2 Capability & Replay Kit
+- **P-0414** — `proposals/exif30-xmp-iptc-photo-metadata-interop-workbench-kit.md` — Exif 3.0 + XMP + IPTC Photo Metadata Interop Workbench Kit
+- **P-0415** — `proposals/cnab-oci-relocation-evidence-kit.md` — CNAB + OCI Relocation & Evidence Kit
+- **P-0416** — `proposals/cloudevents-cesql-cdevents-interop-workbench-kit.md` — CloudEvents + CESQL + CDEvents Interop Workbench Kit
+- **P-0417** — `proposals/opencost-focus-finops-portability-evidence-kit.md` — OpenCost + FOCUS FinOps Portability & Evidence Kit — cost locks, allocation receipts, and explainable cloud-billing diffs
+- **P-0418** — `proposals/ngsild-smart-data-models-context-interop-workbench-kit.md` — NGSI-LD + Smart Data Models Context Interop Workbench Kit — context locks, @context receipts, and broker-portable semantic diffs
+- **P-0419** — `proposals/sigmf-vita49-soapysdr-replay-evidence-kit.md` — SigMF + VITA-49 + SoapySDR Replay & Evidence Kit — RF capture locks, transport receipts, and device-portable signal bundles
+- **P-0420** — `proposals/gs1-digital-link-epc-uri-translation-workbench-kit.md` — GS1 Digital Link + EPC URI Translation Workbench Kit — barcode/web locks, resolver receipts, and explainable identifier transforms
+- **P-0421** — `proposals/pprof-otel-profiling-parca-interop-workbench-kit.md` — pprof + OpenTelemetry Profiling + Parca Interop Workbench Kit — profile locks, symbolization receipts, and cross-signal performance evidence
+
+- **P-0422** — `proposals/cel-conformance-portability-kit.md` — Common Expression Language (CEL) Conformance & Portability Kit — env locks, extension packs, and explainable evaluation diffs
+- **P-0423** — `proposals/urdf-sdformat-xacro-loss-aware-interop-workbench-kit.md` — URDF + SDFormat + xacro Loss-Aware Interop Workbench Kit — robot-description locks, expansion receipts, and simulator-aware diffs
+- **P-0424** — `proposals/smpte-imf-opl-validation-evidence-kit.md` — SMPTE IMF Package + OPL Validation & Evidence Kit — package locks, application receipts, and deliverable-safe diffs
+- **P-0425** — `proposals/a2a-protocol-conformance-transcript-capability-kit.md` — A2A Protocol Conformance, Transcript & Capability Kit — agent-card locks, task receipts, and explainable multi-agent traces
+- **P-0426** — `proposals/openqasm3-qir-interop-evidence-kit.md` — OpenQASM 3 + QIR Interop & Evidence Kit — program locks, lowering receipts, and target-profile diffs
+- **P-0427** — `proposals/rust-spec-witness-kit.md` — Rust Specification Witness Kit — clause-linked executable examples, drift receipts, and qualification-friendly witness bundles
+- **P-0428** — `proposals/cargo-impact-planner-kit.md` — Cargo Impact Planner Kit — explainable affected-package/test plans and workspace blast-radius receipts
+- **P-0429** — `proposals/rustc-public-analysis-workbench-kit.md` — rustc_public Analysis Workbench Kit — compatibility locks, analyzer fixtures, and cross-tool evidence bundles
+- **P-0430** — `proposals/build-std-workbench-kit.md` — Build-Std Workbench Kit — sysroot recipes, profile-aware rebuild bundles, and ABI/hardening receipts
+- **P-0431** — `proposals/public-dependency-boundary-kit.md` — Public Dependency Boundary Kit — public/private dependency planning, re-export receipts, and manifest migration assists
+- **P-0432** — `proposals/cargo-plumbing-interop-kit.md` — Cargo Plumbing Interop Kit — phase-shaped schemas, adapters, and receipts above emerging Cargo plumbing commands
+- **P-0433** — `proposals/mcdc-coverage-workbench-kit.md` — MC/DC Coverage Workbench Kit — decision maps, caveat-aware receipts, and qualification-friendly evidence above Rust coverage tooling
+- **P-0434** — `proposals/sanitizer-profile-evidence-kit.md` — Sanitizer Profile & Evidence Kit — version-pinned profiles, suppressions, symbolized receipts, and CI bundles for Rust sanitizer workflows
+- **P-0435** — `proposals/cargo-script-workbench-kit.md` — Cargo Script Workbench Kit — lock receipts, portability bundles, and export plans for single-file Rust packages
+- **P-0436** — `proposals/target-dir-lease-shared-cache-kit.md` — Target-Dir Lease & Shared Cache Coordination Kit — lease manifests, GC receipts, and safer cache sharing above Cargo’s evolving build-dir model
+- **P-0437** — `proposals/codegen-backend-matrix-workbench-kit.md` — Codegen Backend Matrix Workbench Kit — comparable receipts, diff bundles, and fallback policies across LLVM, Cranelift, and GCC backends
+- **P-0438** — `proposals/relink-witness-kit.md` — Relink Witness Kit — interface fingerprints, private-change receipts, and dependent-impact evidence above Cargo’s smarter rebuild future
+- **P-0439** — `proposals/comptime-reflection-bridge-kit.md` — Comptime Reflection Bridge Kit — type-schema IR, generated metadata tables, and migration receipts from today’s derives to tomorrow’s const reflection
+- **P-0440** — `proposals/projection-reborrow-semantics-kit.md` — Projection & Reborrow Semantics Kit — field-projection fixtures, aliasing witnesses, and Miri-backed regression corpora for smart-pointer APIs
+- **P-0441** — `proposals/cxx-boundary-evidence-kit.md` — C++ Boundary Evidence Kit — toolchain/header receipts, ownership matrices, and replayable boundary tests across cxx, autocxx, bindgen, and cbindgen
+- **P-0442** — `proposals/trait-solver-drift-witness-kit.md` — Trait Solver Drift Witness Kit — old/new-solver result ledgers, obligation-class receipts, and minimized witness bundles for trait-system regressions
+- **P-0443** — `proposals/open-namespace-migration-planner-kit.md` — Open Namespace Migration Planner Kit — RFC-3243 adoption plans, alias receipts, and import-migration bundles for namespaced crates
+- **P-0444** — `proposals/rust-for-linux-stable-readiness-kit.md` — Rust-for-Linux Stable Readiness Kit — kernel toolchain profiles, rustavailable receipts, and subsystem-ready evidence bundles for stable-Rust adoption
+- **P-0445** — `proposals/const-capability-ledger-kit.md` — Const Capability Ledger Kit — const-callable API ledgers, toolchain receipts, and upgrade diffs above const traits and rustdoc JSON
+- **P-0446** — `proposals/polonius-borrowck-transition-witness-kit.md` — Polonius Borrowck Transition Witness Kit — borrow-check outcome ledgers, NLL-vs-Polonius receipts, and minimized witness bundles for lifetime-analysis drift
+- **P-0447** — `proposals/in-place-initialization-adoption-kit.md` — In-Place Initialization Adoption Kit — constructor profiles, address-stability receipts, and fallible-init bundles above pin-init, Crubit ctor, and future language support
+- **P-0448** — `proposals/ergonomic-refcount-migration-kit.md` — Ergonomic Ref-Counting Migration Kit — Share-trait ledgers, capture audits, and closure-migration receipts above today’s Rc/Arc idioms
+- **P-0449** — `proposals/trait-hierarchy-evolution-migration-kit.md` — Trait Hierarchy Evolution Migration Kit — supertrait-split ledgers, Receiver capability maps, and semver-aware migration receipts for evolving library APIs
+- **P-0450** — `proposals/parallel-front-end-parity-lab-kit.md` — Parallel Front-End Parity Lab Kit — single-vs-parallel receipts, deadlock repro bundles, and workload-aware performance ledgers for rustc front-end adoption
+- **P-0451** — `proposals/cfg-availability-ledger-kit.md` — Cfg Availability Ledger Kit — feature/target availability matrices, rustdoc-JSON receipts, and semver-aware API-surface diffs for conditional Rust APIs
+- **P-0452** — `proposals/externally-implementable-item-adoption-kit.md` — Externally Implementable Item Adoption Kit — customization-point registries, semver-aware migration receipts, and override bundles for Rust’s emerging EII substrate
+- **P-0453** — `proposals/safety-contract-consumer-kit.md` — Safety Contract Consumer Kit — contract authority, consumer-coverage matrices, and semantic-lane receipts above Rust’s emerging contract attributes
+
+
+- **P-0454** — `proposals/abi-coherence-profile-kit.md` — ABI Coherence Profile Kit — target-modifier profiles, exemption ledgers, and sysroot-coherence receipts for ABI-affecting compiler-flag workflows
+- **P-0455** — `proposals/doctest-extraction-pipeline-kit.md` — Doctest Extraction & Pipeline Kit — extracted doctest manifests, runner adapters, and rewrite receipts above rustdoc’s emerging doctest JSON
+- **P-0456** — `proposals/formality-counterexample-bridge-kit.md` — Formality Counterexample Bridge Kit — rustc/a-mir-formality/MiniRust witness bundles and minimized divergence cases for language-model validation
+- **P-0457** — `proposals/external-toolchain-handshake-kit.md` — External Toolchain Handshake Kit — dep-info normalization, injected-attribute receipts, and source-pure no_std manifests for non-Cargo orchestrators
+- **P-0458** — `proposals/async-dyn-transition-kit.md` — Async Dyn Transition Kit — dispatch-recipe ledgers, async-trait/dynosaur migration receipts, and future-proof trait-object adoption bundles
+- **P-0459** — `proposals/clippy-safety-profile-waiver-kit.md` — Clippy Safety Profile & Waiver Kit — versioned lint profiles, feature-matrix receipts, and reviewable waiver bundles for safety-critical Rust teams
+- **P-0460** — `proposals/unsafe-field-invariant-ledger-kit.md` — Unsafe Field Invariant Ledger Kit — field-authority receipts, mutation-lane reports, trusted-constructor witnesses, and drift-aware invariant bundles above Rust’s emerging unsafe-field model
+- **P-0461** — `proposals/edition-drift-witness-kit.md` — Edition Drift Witness Kit — cargo-fix rehearsal bundles, lint-ledger receipts, and macro-sensitive migration witnesses for Rust edition upgrades
+- **P-0462** — `proposals/crate-slicing-soundness-adoption-kit.md` — Crate Slicing Soundness & Adoption Kit — slice-eligibility ledgers, predicted-benefit receipts, and fallback-aware review bundles above `cargo-slicer` and rustc-native slicing work
+- **P-0463** — `proposals/libtest-json-interop-kit.md` — Libtest JSON Interop Kit — schema locks, suite-aware run receipts, and harness-bridge bundles for Cargo, nextest, libtest-mimic, and future programmatic test runners
+- **P-0464** — `proposals/sized-hierarchy-extern-type-readiness-kit.md` — Sized Hierarchy & Extern-Type Readiness Kit — sizedness-surface audits, opaque-type migration receipts, and trait-bound readiness bundles for the refined `Sized` hierarchy
+- **P-0465** — `proposals/borrowsanitizer-workflow-evidence-kit.md` — BorrowSanitizer Workflow & Evidence Kit — aliasing-profile manifests, FFI-boundary receipts, and minimized provenance-violation bundles for BorrowSanitizer-era Rust
+- **P-0466** — `proposals/python-wheel-abi-free-threading-shipkit.md` — Python Extension Compatibility Contract ShipKit — ABI target classes, thread-support declarations, and variant-aware release bundles for PyO3 + maturin
+- **P-0467** — `proposals/apple-xcframework-swiftpm-shipkit.md` — Apple XCFramework & SwiftPM ShipKit — slice manifests, origin-verification receipts, privacy-manifest checks, and SwiftPM-ready Rust release bundles
+- **P-0468** — `proposals/cargo-resolver-explanation-kit.md` — Cargo Resolver Explanation Kit — feature-cause chains, duplicate-build receipts, and lockfile-aware why-bundles
+- **P-0469** — `proposals/cargo-rebuild-explanation-kit.md` — Cargo Rebuild Explanation Kit — fingerprint-delta receipts, cache-conflict witnesses, and why-did-this-rebuild bundles
+- **P-0470** — `proposals/cargo-package-review-kit.md` — Cargo Package Review Kit — packaged-surface receipts, archive-authority reports, extraction-mutation witnesses, and `.crate` review bundles
+- **P-0471** — `proposals/cargo-artifact-handoff-kit.md` — Cargo Artifact Handoff Kit — stable build receipts, copied-output manifests, and CI/package-manager handoff bundles
+- **P-0472** — `proposals/docsrs-build-parity-evidence-kit.md` — Docs.rs Build Parity & Evidence Kit — docs.rs preflight receipts, sandbox-limit reports, and local-vs-hosted diff bundles
+- **P-0473** — `proposals/cargo-lints-adoption-receipt-kit.md` — Cargo Lints Adoption Receipt Kit — workspace-lint rollout plans, inheritance matrices, and waiver bundles
+- **P-0474** — `proposals/cargo-config-layer-receipt-kit.md` — Cargo Config Layer Receipt Kit — effective-config traces, include graphs, override explanations, and redacted support bundles
+- **P-0475** — `proposals/rustdoc-mergeable-info-handoff-kit.md` — Rustdoc Mergeable Info Handoff Kit — `doc.parts` manifests, finalize receipts, and cross-crate documentation handoff bundles
+- **P-0476** — `proposals/rustdoc-coverage-review-bundle-kit.md` — Rustdoc Coverage Review Bundle Kit — coverage snapshots, API-surface debt ledgers, example-coverage diffs, and docs-regression receipts
+- **P-0477** — `proposals/cargo-publish-receipt-join-kit.md` — Cargo Publish Receipt Join Kit — `.crate` digests, registry/index confirmations, trusted-publisher facts, and post-publish release receipts
+- **P-0478** — `proposals/cargo-future-incompat-triage-kit.md` — Cargo Future-Incompat Triage Kit — dependency-risk ledgers, owner-aware waivers, and upgrade-path bundles
+- **P-0479** — `proposals/cargo-artifact-sidecar-contract-kit.md` — Cargo Artifact Sidecar Contract Kit — association locks, schema drift receipts, and ship-vs-local attachment bundles
+- **P-0480** — `proposals/cargo-global-cache-policy-gc-kit.md` — Cargo Global Cache Policy & GC Receipt Kit — cache inventories, dry-run cleanup plans, exemption ledgers, and cleanup receipts
+- **P-0481** — `proposals/doctest-runtool-profile-kit.md` — Doctest Runtool Profile Kit — target-aware runner profiles, ignore-target matrices, and emulator/VM receipts
+- **P-0482** — `proposals/sdk-release-promise-drift-kit.md` — SDK Release Promise Drift Kit — Python-wheel/XCFramework promise ledgers, consumer-compat diffs, and cross-ecosystem release review bundles
+- **P-0483** — `proposals/public-api-readiness-bundle-kit.md` — Public API Readiness Bundle Kit — public-surface snapshots, dependency-boundary receipts, docs debt triage, and release-review bundles
+- **P-0484** — `proposals/toolchain-target-support-contract-kit.md` — Toolchain & Target Support Contract Kit — rust-toolchain intent, component/target receipts, and support-drift bundles
+- **P-0485** — `proposals/verification-campaign-workbench-kit.md` — Verification Campaign Workbench Kit — multi-tool proof receipts, trust ledgers, policy gates, and verification-drift bundles
+- **P-0486** — `proposals/debuggability-support-contract-kit.md` — Debuggability Support Contract Kit — debuginfo profiles, visualizer manifests, symbol-sidecar receipts, and debugger-ready support bundles
+- **P-0487** — `proposals/foreign-sdk-consumer-doctor-kit.md` — Foreign SDK Consumer Doctor Kit — wheel/XCFramework installability audits, environment snapshots, and downstream-use diagnosis bundles
+- **P-0488** — `proposals/cargo-minimal-version-witness-kit.md` — Cargo Minimal-Version Witness Kit — lower-bound receipts, direct-minimal CI bundles, and dependency-floor blame reports
+- **P-0489** — `proposals/cargo-build-dir-consumer-transition-kit.md` — Cargo Build-Dir Consumer Transition Kit — path-adapter manifests, internal-layout dependency audits, and upgrade-safe transition receipts
+- **P-0490** — `proposals/cargo-lock-contention-witness-kit.md` — Cargo Lock Contention Witness Kit — root-sharing reports, lock-wait receipts, and mitigation bundles
+- **P-0491** — `proposals/debugger-visualizer-compatibility-kit.md` — Debugger Visualizer Compatibility Kit — NatVis/GDB conformance receipts, activation/probe-surface matrices, and comparison-honest support bundles
+
+- **P-0492** — `proposals/cargo-registry-auth-doctor-kit.md` — Cargo Registry Auth Doctor Kit — provider-chain receipts, auth-required sparse-registry diagnosis, and redacted login/fetch/publish support bundles
+- **P-0493** — `proposals/source-path-hygiene-debug-source-kit.md` — Source Path Hygiene & Debug Source Kit — trim-path receipts, virtual-source manifests, and rust-src/rustc-dev diagnosis bundles
+- **P-0494** — `proposals/cargo-compile-time-deps-workflow-kit.md` — Cargo Compile-Time-Deps Workflow Kit — tool-surface parity receipts, root-lane evidence, and fallback-to-full-build diagnosis
+- **P-0495** — `proposals/cargo-artifact-dependency-adoption-kit.md` — Cargo Artifact Dependency Adoption Kit — bindeps manifests, target-matrix env-var receipts, and stable-fallback bundles
+- **P-0496** — `proposals/cargo-vendor-source-parity-kit.md` — Cargo Vendor & Source Parity Kit — source-identity locks, mirror-honesty reports, and offline coverage bundles
+- **P-0497** — `proposals/cpu-baseline-runtime-dispatch-contract-kit.md` — CPU Baseline & Runtime Dispatch Contract Kit — target-cpu receipts, feature-gate support promises, and illegal-instruction risk bundles
+- **P-0498** — `proposals/node-api-package-prebuild-contract-kit.md` — Node-API Package & Prebuild Contract Kit — npm prebuild matrices, loader receipts, and runtime-claim support bundles
+- **P-0499** — `proposals/nuget-native-interop-shipkit.md` — NuGet Native Interop ShipKit — RID coverage, loader-route receipts, and deployment-posture contracts for Rust-built .NET packages
+- **P-0500** — `proposals/jar-jni-native-shipkit.md` — JAR/JNI Native ShipKit — Maven classifiers, native-access contracts, and JVM loader receipts
+- **P-0501** — `proposals/rubygems-native-extension-shipkit.md` — RubyGems Native Extension ShipKit — platform coverage, resolver routes, and extension residency for Rust-backed gems
+- **P-0502** — `proposals/hex-native-nif-shipkit.md` — Hex Native NIF ShipKit — Hex tarball receipts, precompiled-NIF matrices, and BEAM loader/fallback support bundles
+- **P-0503** — `proposals/assurance-case-workbench-kit.md` — Assurance Case Workbench Kit — claim/evidence graphs, GSN/SACM exports, and change-impact review packs for safety-critical Rust
+- **P-0504** — `proposals/linker-lane-contract-diagnosis-kit.md` — Linker Lane Contract & Diagnosis Kit — per-target linker receipts, lane-switch diffs, and cross-link support bundles
+- **P-0505** — `proposals/cargo-host-target-scope-contract-kit.md` — Cargo Host/Target Scope Contract Kit — config-scope receipts, mixed-build diffs, and host-target diagnosis
+- **P-0506** — `proposals/cargo-workspace-boundary-doctor-kit.md` — Cargo Workspace Boundary Doctor Kit — parent-probe receipts, membership diagnosis, and isolated invocation hints
+- **P-0507** — `proposals/cargo-fix-campaign-kit.md` — Cargo Fix Campaign Kit — target-batch plans, lint-selection ledgers, and per-pass receipts for Rust lint-fix orchestration
+- **P-0508** — `proposals/cargo-build-script-delegation-kit.md` — Cargo Build Script Delegation Kit — delegate contracts, metadata-parameter receipts, and multi-script bridge bundles
+
+- **P-0509** — `proposals/crate-ecosystem-pathfinder-kit.md` — Crate Ecosystem Pathfinder & Decision-Pack Kit — task-oriented crate selection, interop-aware starter sets, and reviewable decision receipts
+- **P-0510** — `proposals/crate-capability-contract-kit.md` — Crate Capability Contract & Interop Profile Kit — machine-readable support claims, interop export maps, and reviewable profile-conformance receipts
+- **P-0511** — `proposals/crate-interop-profile-pack-kit.md` — Crate Interop Profile Pack Kit — shared library-ecosystem contracts, pairwise compatibility receipts, and migration-hazard reports
+- **P-0512** — `proposals/crate-guidance-pack-kit.md` — Crate Guidance Pack Kit — supportive diagnostics, recovery recipes, message-stability classes, guidance-channel receipts, and support-surface diffs
+- **P-0513** — `proposals/crate-runtime-handoff-pack-kit.md` — Crate Runtime Handoff Pack Kit — redacted runtime context, panic handoff receipts, and support-bundle diffs for crate authors
+- **P-0514** — `proposals/crate-upgrade-pack-kit.md` — Crate Upgrade Pack Kit — downstream migration recipes, fixup receipts, and release-to-release hazard reports for library authors
+- **P-0515** — `proposals/crate-offramp-pack-kit.md` — Crate Off-Ramp Pack Kit — successor maps, sunset receipts, and checked exit recipes for library authors
+- **P-0516** — `proposals/crate-configuration-scenario-pack-kit.md` — Crate Configuration Scenario Pack Kit — checked feature/profile/env recipes, scenario receipts, and config diffs for library authors
+- **P-0517** — `proposals/crate-performance-envelope-pack-kit.md` — Crate Performance Envelope Pack Kit — checked workload profiles, budget receipts, and perf diffs for library authors
+- **P-0518** — `proposals/crate-observability-surface-pack-kit.md` — Crate Observability Surface Pack Kit — signal catalogs, route/delivery truth, cost/redaction receipts, and observability diffs for library authors
+- **P-0519** — `proposals/crate-authority-surface-pack-kit.md` — Crate Authority Surface Pack Kit — ambient-power maps, determinism receipts, and sandbox/profile diffs for library authors
+- **P-0520** — `proposals/crate-lifecycle-surface-pack-kit.md` — Crate Lifecycle Surface Pack Kit — background-work maps, cancel-safety receipts, and shutdown/drain diffs for library authors
+- **P-0521** — `proposals/crate-resource-surface-pack-kit.md` — Crate Resource Surface Pack Kit — queue/pool/cache/thread maps, saturation receipts, and budget diffs for library authors
+- **P-0522** — `proposals/crate-persistence-surface-pack-kit.md` — Crate Persistence Surface Pack Kit — on-disk/wire maps, durability receipts, and recovery/migration diffs for library authors
+- **P-0523** — `proposals/crate-test-surface-pack-kit.md` — Crate Test Surface Pack Kit — fixture catalogs, fake-backend receipts, scenario corpora, and test-support diffs for library authors
+- **P-0524** — `proposals/crate-example-surface-pack-kit.md` — Crate Example Surface Pack Kit — official quickstarts, runnable example manifests, and example-surface diffs for library authors
+- **P-0525** — `proposals/crate-diagnosis-surface-pack-kit.md` — Crate Diagnosis Surface Pack Kit — symptom catalogs, self-check receipts, and diagnosis-surface diffs for library authors
+- **P-0528** — `proposals/cargo-feature-surface-contract-kit.md` — Cargo Feature Surface Contract Kit — public feature maps, activation profiles, unification-risk receipts, and conflict-policy witnesses
+- **P-0529** — `proposals/channel-surface-contract-kit.md` — Channel Surface Contract Kit — capacity posture, overflow policy, delivery obligation, and shutdown/drain witnesses
+- **P-0530** — `proposals/request-execution-policy-contract-kit.md` — Request Execution Policy Contract Kit — idempotency basis, attempt budgets, admission paths, and hedge/retry topology
+- **P-0531** — `proposals/cli-surface-contract-kit.md` — CLI Surface Contract Kit — command-surface maps, output-mode receipts, terminal-posture truth, and exit-semantics witnesses
+
+## Entries
+
+- **Entry 333** — `entries/2026-03-21-333.md` — task-supervision-restart-kit deepened for topology, restart-policy, health/readiness, state-reset, shutdown escalation, and failure bundles
+- **Entry 311** — `entries/2026-03-21-311.md` — cli-surface-contract-kit added for command surface, output modes, terminal posture, and exit semantics
+- **Entry 310** — `entries/2026-03-20-310.md` — request-execution-policy-contract-kit added for idempotency basis, attempt budgets, admission paths, and hedge/retry topology
+- **Entry 309** — `entries/2026-03-20-309.md` — channel-surface-contract-kit added for capacity posture, overflow policy, delivery obligation, and shutdown/drain truth
+- **Entry 308** — `entries/2026-03-20-308.md` — cargo-feature-surface-contract-kit added for public feature maps, activation profiles, and unification-risk truth
+- **Entry 265** — `entries/2026-03-19-265.md` — crate guidance support sharpened around message stability, guidance channels, and environment-sensitive drift
+- **Entry 262** — `entries/2026-03-19-262.md` — crate performance support sharpened around execution intent, workload lineage, and profile identity
+- **Entry 261** — `entries/2026-03-19-261.md` — crate test support sharpened around witness lineage, topology honesty, and fixture support levels
+- **Entry 260** — `entries/2026-03-19-260.md` — crate persistence support sharpened around publication target, identity retention, and witnessed recovery
+- **Entry 259** — `entries/2026-03-19-259.md` — crate resource support sharpened around admission order, backlog ownership, capacity shrink, and acquire fate
+- **Entry 258** — `entries/2026-03-19-258.md` — crate lifecycle support sharpened around activation boundaries, stop verbs, blocking-work limits, and teardown evidence
+- **Entry 253** — `entries/2026-03-19-253.md` — crate off-ramp planning sharpened around successor intent, stopgap horizons, and recipe witnesses
+- **Entry 252** — `entries/2026-03-19-252.md` — desktop-shipkit deepened around release identity, update channels, and crash-symbol handoff
+- **Entry 251** — `entries/2026-03-19-251.md` — littlefs-native-adoption deepened around compatibility witnesses, power-cut evidence, and storage-adapter truth
+- **Entry 239** — `entries/2026-03-18-239.md` — Rust Android Mobile Kit deepened around ABI coverage, load-doctor policy, and 16 KB page-size readiness
+- **Entry 238** — `entries/2026-03-18-238.md` — crate ecosystem pathfinder deepened around evidence origin, freshness windows, and starter-set scope
+- **Entry 237** — `entries/2026-03-17-237.md` — toolchain/target support deepened with override lineage, component availability, and exercise scope
+- **Entry 236** — `entries/2026-03-17-236.md` — crate persistence-surface deepening sharpened around compatibility authority, atomicity scope, and recovery witnesses
+- **Entry 235** — `entries/2026-03-17-235.md` — crate lifecycle-surface planning sharpened around cancellation authority, drain witnesses, and background-work exactness
+- **Entry 234** — `entries/2026-03-17-234.md` — crate example-surface planning sharpened around prerequisite provenance, success witnesses, and scenario coverage
+- **Entry 233** — `entries/2026-03-17-233.md` — crate diagnosis-surface planning sharpened around symptom meaning, triage provenance, and safe bundle evaluation
+- **Entry 232** — `entries/2026-03-17-232.md` — crate guidance-pack planning sharpened into an implementation-ready v0.1 shape
+- **Entry 231** — `entries/2026-03-17-231.md` — crate runtime-handoff planning sharpened into an implementation-ready v0.1 shape
+- **Entry 230** — `entries/2026-03-17-230.md` — crate interop-profile planning sharpened into an implementation-ready v0.1 shape
+- **Entry 229** — `entries/2026-03-17-229.md` — crate capability-contract planning sharpened into an implementation-ready v0.1 shape
+- **Entry 228** — `entries/2026-03-17-228.md` — crate upgrade-pack planning sharpened into an implementation-ready v0.1 shape
+- **Entry 227** — `entries/2026-03-17-227.md` — crate configuration-scenario planning sharpened into an implementation-ready v0.1 shape
+- **Entry 226** — `entries/2026-03-17-226.md` — memory-observability planning sharpened into an implementation-ready v0.1 shape
+- **Entry 225** — `entries/2026-03-17-225.md` — crate authority-surface planning sharpened into an implementation-ready v0.1 shape
+- **Entry 224** — `entries/2026-03-17-224.md` — crate ecosystem pathfinder planning sharpened into an implementation-ready v0.1 shape
+- **Entry 223** — `entries/2026-03-17-223.md` — crate performance-envelope planning sharpened into an implementation-ready v0.1 shape
+- **Entry 218** — `entries/2026-03-17-218.md` — crate test-surface planning sharpened into an implementation-ready v0.1 shape
+- **Entry 211** — `entries/2026-03-17-211.md` — crate diagnosis surfaces promoted as the troubleshooting / symptom-support lane
+- **Entry 210** — `entries/2026-03-17-210.md` — crate example surfaces promoted as the adoption / quickstart-support lane
+- **Entry 209** — `entries/2026-03-17-209.md` — crate test surfaces promoted as the downstream-testing-support lane
+- **Entry 208** — `entries/2026-03-17-208.md` — crate persistence surfaces promoted as the durable-bytes / recovery-truth lane
+- **Entry 207** — `entries/2026-03-17-207.md` — crate resource surfaces promoted as the capacity / saturation-truth lane
+- **Entry 206** — `entries/2026-03-17-206.md` — crate lifecycle surfaces promoted as the background-work / shutdown-truth lane
+- **Entry 205** — `entries/2026-03-17-205.md` — crate authority surfaces promoted as the sandbox/offline/determinism-support lane
+- **Entry 203** — `entries/2026-03-17-203.md` — crate performance envelopes promoted as the performance-support lane
+- **Entry 204** — `entries/2026-03-17-204.md` — crate observability surfaces promoted as the operability-support lane
+- **Entry 202** — `entries/2026-03-16-202.md` — crate configuration scenarios promoted as the setup-support lane
+- **Entry 201** — `entries/2026-03-16-201.md` — crate off-ramp packs promoted as the deprecation/successor-support lane
+- **Entry 200** — `entries/2026-03-16-200.md` — crate upgrade packs promoted as the release-to-release supportiveness lane
+- **Entry 199** — `entries/2026-03-16-199.md` — crate runtime handoff packs promoted as the runtime-side supportiveness lane
+- **Entry 198** — `entries/2026-03-16-198.md` — crate-authored guidance packs promoted as a receiver-facing ecosystem-supportiveness lane
+- **Entry 197** — `entries/2026-03-16-197.md` — shared ecosystem interop profiles promoted as a distinct library-compatibility lane
+- **Entry 196** — `entries/2026-03-16-196.md` — crate capability contracts promoted as a producer-side interop-truth lane
+- **Entry 195** — `entries/2026-03-16-195.md` — crate ecosystem pathfinder promoted as a task-first decision-pack lane
+- `entries/2026-03-16-192.md` — compile-time-deps lane upgraded with root-lane truth and optional session imports
+- `entries/2026-03-16-175.md` — support-surface truth refresh around toolchain contracts and docs.rs parity
+- `entries/2026-03-09-157.md` — broad portfolio rebalance, with deeper planning for conformance and local-first
+- `entries/2026-03-09-158.md` — bundle substrate push, with deeper planning for evidence and verification
+
+- `entries/2026-02-28.md`
+- `entries/2026-03-01-02.md`
+- `entries/2026-03-01-03.md`
+- `entries/2026-03-01-04.md`
+- `entries/2026-03-01-05.md`
+- `entries/2026-03-01-06.md`
+- `entries/2026-03-01-07.md`
+- `entries/2026-03-01-08.md`
+- `entries/2026-03-01-09.md`
+- `entries/2026-03-01-10.md`
+- `entries/2026-03-01-11.md`
+- `entries/2026-03-01-12.md`
+- `entries/2026-03-01-13.md`
+- `entries/2026-03-01-14.md`
+- `entries/2026-03-01-15.md`
+- `entries/2026-03-01-16.md`
+- `entries/2026-03-01-17.md`
+- `entries/2026-03-01-18.md`
+- `entries/2026-03-01.md`
+- `entries/2026-03-04-23-2.md`
+- `entries/2026-03-04-23-3.md`
+- `entries/2026-03-04-23.md`
+- `entries/2026-03-04.md`
+- `entries/2026-03-05-00-1.md`
+- `entries/2026-03-05-00.md`
+- `entries/2026-03-05-01.md`
+- `entries/2026-03-05-02.md`
+- `entries/2026-03-05-03.md`
+- `entries/2026-03-05-04.md`
+- `entries/2026-03-05-05.md`
+- `entries/2026-03-05-06.md`
+- `entries/2026-03-05-07.md`
+- `entries/2026-03-05-08.md`
+- `entries/2026-03-05-09.md`
+- `entries/2026-03-05-10.md`
+- `entries/2026-03-05-11.md`
+- `entries/2026-03-05-12.md`
+- `entries/2026-03-05-13.md`
+- `entries/2026-03-05-14.md`
+- `entries/2026-03-05-15.md`
+- `entries/2026-03-05-16.md`
+- `entries/2026-03-05-17.md`
+- `entries/2026-03-05-18.md`
+- `entries/2026-03-05-19.md`
+- `entries/2026-03-05-20.md`
+- `entries/2026-03-05-21.md`
+- `entries/2026-03-05-22.md`
+- `entries/2026-03-05-23.md`
+- `entries/2026-03-05-24.md`
+- `entries/2026-03-05-25.md`
+- `entries/2026-03-05-26.md`
+- `entries/2026-03-05-27.md`
+- `entries/2026-03-05-28.md`
+- `entries/2026-03-05-29.md`
+- `entries/2026-03-05-30.md`
+- `entries/2026-03-05-31.md`
+- `entries/2026-03-05-32.md`
+- `entries/2026-03-05-33.md`
+- `entries/2026-03-05-34.md`
+- `entries/2026-03-05-35.md`
+- `entries/2026-03-05-36.md`
+- `entries/2026-03-05-37.md`
+- `entries/2026-03-05-38.md`
+- `entries/2026-03-05-39.md`
+- `entries/2026-03-05-40.md`
+- `entries/2026-03-05-41.md`
+- `entries/2026-03-05-42.md`
+- `entries/2026-03-05-43.md`
+- `entries/2026-03-05-44.md`
+- `entries/2026-03-05-45.md`
+- `entries/2026-03-05-46.md`
+- `entries/2026-03-05-47.md`
+- `entries/2026-03-05-48.md`
+- `entries/2026-03-05-49.md`
+- `entries/2026-03-05-50.md`
+- `entries/2026-03-05-51.md`
+- `entries/2026-03-05-52.md`
+- `entries/2026-03-05-53.md`
+- `entries/2026-03-05-54.md`
+- `entries/2026-03-05-55.md`
+- `entries/2026-03-05-56.md`
+- `entries/2026-03-05-57.md`
+- `entries/2026-03-05-58.md`
+- `entries/2026-03-05-59.md`
+- `entries/2026-03-05-60.md`
+- `entries/2026-03-05-61.md`
+- `entries/2026-03-05-62.md`
+- `entries/2026-03-05-63.md`
+- `entries/2026-03-05-64.md`
+- `entries/2026-03-05-65.md`
+- `entries/2026-03-05-66.md`
+- `entries/2026-03-05-67.md`
+- `entries/2026-03-06-68.md`
+- `entries/2026-03-06-69.md`
+- `entries/2026-03-06-70.md`
+- `entries/2026-03-06-71.md`
+- `entries/2026-03-06-72.md`
+- `entries/2026-03-06-73.md`
+- `entries/2026-03-06-74.md`
+- `entries/2026-03-06-75.md`
+- `entries/2026-03-06-76.md`
+- `entries/2026-03-06-77.md`
+- `entries/2026-03-06-78.md`
+- `entries/2026-03-06-79.md`
+- `entries/2026-03-06-80.md`
+- `entries/2026-03-06-81.md`
+- `entries/2026-03-06-82.md`
+- `entries/2026-03-06-83.md`
+- `entries/2026-03-06-84.md`
+- `entries/2026-03-06-85.md`
+
+
+- `entries/2026-03-06-86.md`
+- `entries/2026-03-06-87.md`
+- `entries/2026-03-06-88.md`
+- `entries/2026-03-06-89.md`
+- `entries/2026-03-06-90.md`
+- `entries/2026-03-06-91.md`
+- `entries/2026-03-06-92.md`
+- `entries/2026-03-06-93.md`
+
+- `entries/2026-03-06-94.md`
+- `entries/2026-03-07-95.md`
+- `entries/2026-03-07-96.md`
+- `entries/2026-03-07-97.md`
+- `entries/2026-03-07-98.md`
+- `entries/2026-03-07-99.md`
+- `entries/2026-03-07-100.md`
+- `entries/2026-03-07-101.md`
+- `entries/2026-03-07-102.md`
+- `entries/2026-03-07-103.md`
+- `entries/2026-03-07-104.md`
+- `entries/2026-03-07-105.md`
+- `entries/2026-03-07-106.md`
+- `entries/2026-03-07-107.md`
+- `entries/2026-03-07-108.md`
+- `entries/2026-03-07-109.md`
+- `entries/2026-03-07-110.md`
+- `entries/2026-03-07-111.md`
+- `entries/2026-03-07-112.md`
+- `entries/2026-03-07-113.md`
+- `entries/2026-03-07-114.md`
+- `entries/2026-03-07-115.md`
+- `entries/2026-03-07-116.md`
+
+## Meta
+
+- `meta/frontier-salience-2026-03-19-73.md`
+- `meta/crate-offramp-product-plan-2026-03-19.md`
+- `meta/frontier-salience-2026-03-19-72.md`
+- `meta/desktop-shipkit-product-plan-2026-03-19.md`
+- `meta/desktop-shipkit-lane-boundaries-2026-03-19.md`
+- `meta/frontier-salience-2026-03-19-71.md`
+- `meta/littlefs-native-adoption-product-plan-2026-03-19.md`
+- `meta/littlefs-lane-boundaries-2026-03-19.md`
+- `meta/crate-guidance-pack-product-plan-2026-03-17.md`
+- `meta/frontier-salience-2026-03-17-52.md`
+- `meta/crate-runtime-handoff-product-plan-2026-03-17.md`
+- `meta/frontier-salience-2026-03-17-51.md`
+- `meta/frontier-salience-2026-03-16-4.md`
+- `meta/toolchain-docs-support-lanes-2026-03-16.md`
+- `meta/prioritization.md`
+- `meta/roadmap.md`
+- `meta/known-existing.md`
+- `meta/research-ledger.md`
+- `meta/llm-hygiene.md`
+- `meta/frontier-salience-2026-03-07.md`
+- `meta/frontier-salience-2026-03-08.md`
+- `meta/foreign-package-contract-vocabulary.md`
+
+- `entries/2026-03-07-117.md`
+
+- `entries/2026-03-07-118.md`
+
+- `entries/2026-03-07-119.md`
+- `entries/2026-03-07-120.md`
+- `entries/2026-03-07-121.md`
+- `entries/2026-03-08-122.md`
+- `entries/2026-03-08-123.md`
+
+- `meta/frontier-salience-2026-03-08-2.md`
+- `fixtures/rubygem-native-shipkit/README.md`
+- `fixtures/rubygem-native-shipkit/runtime-support.schema.json`
+- `fixtures/desktop-shipkit/README.md`
+- `fixtures/desktop-shipkit/release-identity.receipt.schema.json`
+- `fixtures/desktop-shipkit/update-channel.contract.schema.json`
+- `fixtures/desktop-shipkit/crash-symbol-handoff.manifest.schema.json`
+
+- `entries/2026-03-08-124.md`
+
+- `meta/frontier-salience-2026-03-08-3.md`
+
+- `fixtures/hex-nif-shipkit/README.md`
+
+- `fixtures/hex-nif-shipkit/runtime-support.schema.json`
+
+- `fixtures/hex-nif-shipkit/package.receipt.schema.json`
+
+- `meta/frontier-salience-2026-03-08-4.md`
+- `meta/cargo-explainability-stack-2026-03-08.md`
+- `fixtures/cargo-rebuild-why-kit/README.md`
+- `fixtures/cargo-rebuild-why-kit/unit-rebuilds.schema.json`
+- `fixtures/cargo-rebuild-why-kit/rebuild.receipt.schema.json`
+- `fixtures/cargo-resolve-why-kit/README.md`
+- `fixtures/cargo-resolve-why-kit/feature-causes.schema.json`
+- `fixtures/cargo-resolve-why-kit/duplicate-builds.schema.json`
+- `entries/2026-03-08-125.md`
+- `meta/frontier-salience-2026-03-08-5.md`
+- `meta/debug-support-stack-2026-03-08.md`
+- `fixtures/debuggability-support-contract-kit/symbol-layout.manifest.schema.json`
+- `fixtures/debuggability-support-contract-kit/support-posture.report.schema.json`
+- `fixtures/debuggability-support-contract-kit/debuggability-drift.diff.schema.json`
+- `fixtures/source-path-hygiene-debug-source-kit/virtual-source.manifest.schema.json`
+- `fixtures/source-path-hygiene-debug-source-kit/source-availability.report.schema.json`
+- `entries/2026-03-08-126.md`
+- `entries/2026-03-08-127.md` — Entry 127
+- `meta/native-build-contracts-2026-03-08.md`
+- `fixtures/buildscript-ux/buildscript-summary.schema.json`
+- `fixtures/buildscript-testkit/fixture-manifest.schema.json`
+- `fixtures/native-deps-kit/consumer-doctor.report.schema.json`
+- `entries/2026-03-08-128.md` — Entry 128
+
+- `meta/native-build-upstream-fit-2026-03-08.md`
+- `meta/native-build-receipt-matrix-2026-03-08.md`
+- `fixtures/buildscript-ux/scenarios/transitive_warning_hidden/buildscript-report.example.json`
+- `fixtures/buildscript-testkit/scenarios/fake_pkg_config_success/directives.normalized.example.json`
+- `fixtures/native-deps-kit/scenarios/pkg_config_then_vendored/native-resolution.report.example.json`
+- `entries/2026-03-08-129.md` — Entry 129
+- `meta/cargo-build-analysis-adoption-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-7.md`
+- `fixtures/cargo-rebuild-why-kit/session-index.schema.json`
+- `fixtures/cargo-rebuild-why-kit/timings-pointer.schema.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/build_analysis_import_only/session-index.example.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/build_analysis_import_only/rebuild.receipt.example.json`
+- `entries/2026-03-08-130.md` — Entry 130
+- `entries/2026-03-08-131.md`
+
+- `meta/cargo-tool-workflow-stack-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-9.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/compile-surface.manifest.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/parity-check.report.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/fallback.plan.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/rust_analyzer_separate_target_dir/tool-build.receipt.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/missing_sysroot_src/parity-check.report.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/target_mismatch_editor_vs_terminal/fallback.plan.example.json`
+- `entries/2026-03-08-132.md`
+- `meta/cargo-resolver-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-10.md`
+- `fixtures/cargo-resolve-why-kit/version-choices.schema.json`
+- `fixtures/cargo-resolve-why-kit/resolver-choice.receipt.schema.json`
+- `fixtures/cargo-resolve-why-kit/resolution-diff.report.schema.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_feature_forwarding/feature-causes.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/package_mode_feature_split/duplicate-builds.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/lockfile_precise_update/version-choices.example.json`
+- `entries/2026-03-08-133.md`
+- `meta/cargo-lock-contention-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-11.md`
+- `fixtures/cargo-lock-contention-witness-kit/cache-root.manifest.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/lock-wait.receipt.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/process-role.snapshot.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/collision-diagnosis.report.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/mitigation.plan.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/contention.diff.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/shared_target_dir_editor_manual/lock-wait.receipt.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/package_cache_fetch_wait/collision-diagnosis.report.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/separate_target_dir_mitigated/mitigation.plan.example.json`
+- `entries/2026-03-08-134.md`
+- `meta/cargo-build-dir-transition-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-12.md`
+- `fixtures/cargo-build-dir-consumer-transition-kit/consumer-inventory.manifest.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/layout.snapshot.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/consumer-audit.report.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/path-contract.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/adapter-plan.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/adapter-viability.report.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/transition.receipt.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/transition.diff.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/deps_scrape_ci/consumer-audit.report.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/out_dir_helper/path-contract.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/new_layout_rehearsal/transition.diff.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/redirect_to_artifact_handoff/adapter-plan.example.json`
+- `entries/2026-03-08-135.md`
+
+- `meta/buildscript-ux-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-13.md`
+- `fixtures/buildscript-ux/scenarios/cargo_error_exitcode_mismatch/buildscript-report.example.json`
+- `fixtures/buildscript-ux/scenarios/rerun_noise_overwhelms_failure/buildscript-report.example.json`
+- `fixtures/buildscript-ux/scenarios/cached_buildscript_output_not_run/buildscript-report.example.json`
+- `fixtures/buildscript-ux/scenarios/workspace_policy_gate/policy-gate.report.example.json`
+- `entries/2026-03-08-136.md`
+
+- `meta/debuggability-support-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-14.md`
+- `fixtures/debuggability-support-contract-kit/debuggability-policy.schema.json`
+- `fixtures/debuggability-support-contract-kit/visualizer.manifest.schema.json`
+- `entries/2026-03-08-137.md`
+
+- `meta/debugger-visualizer-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-15.md`
+- `fixtures/debugger-visualizer-compatibility-kit/visualizer-policy.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/visualizer-assets.manifest.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/backend-matrix.receipt.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/render-golden.report.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/embed-vs-external.report.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/visualizer-drift.diff.schema.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/natvis_msvc_supported/backend-matrix.receipt.example.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/gdb_safe_path_blocked/backend-matrix.receipt.example.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/external_backend_route/embed-vs-external.report.example.json`
+- `fixtures/debugger-visualizer-compatibility-kit/scenarios/malformed_asset_manual_review/visualizer-drift.diff.example.json`
+- `entries/2026-03-08-138.md`
+- `meta/frontier-salience-2026-03-08-16.md`
+- `entries/2026-03-08-139.md`
+- `entries/2026-03-08-140.md`
+- `meta/frontier-salience-2026-03-08-17.md`
+- `meta/linker-lane-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-18.md`
+- `fixtures/linker-lane-contract-kit/README.md`
+- `fixtures/linker-lane-contract-kit/linker-lane.manifest.schema.json`
+- `fixtures/linker-lane-contract-kit/link-diagnosis.report.schema.json`
+- `entries/2026-03-08-141.md`
+
+- `meta/host-target-scope-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-19.md`
+- `fixtures/host-target-scope-contract-kit/README.md`
+- `fixtures/host-target-scope-contract-kit/scope-snapshot.manifest.schema.json`
+- `fixtures/host-target-scope-contract-kit/scope-diagnosis.report.schema.json`
+- `entries/2026-03-08-142.md`
+
+
+- `meta/rebuild-explanation-upstream-fit-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-20.md`
+- `fixtures/cargo-rebuild-why-kit/fingerprint-delta.schema.json`
+- `fixtures/cargo-rebuild-why-kit/cache-conflict.report.schema.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/check_then_build_workspace/unit-rebuilds.example.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/check_then_build_workspace/fingerprint-delta.example.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/check_then_build_workspace/notes.md`
+- `fixtures/cargo-rebuild-why-kit/scenarios/wrapper_rustflags_drift/rebuild.receipt.example.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/wrapper_rustflags_drift/fingerprint-delta.example.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/wrapper_rustflags_drift/notes.md`
+- `fixtures/cargo-rebuild-why-kit/scenarios/shared_target_lock_hint/cache-conflict.report.example.json`
+- `fixtures/cargo-rebuild-why-kit/scenarios/shared_target_lock_hint/notes.md`
+- `entries/2026-03-08-143.md`
+
+- `meta/host-target-scope-implementation-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-21.md`
+- `fixtures/host-target-scope-contract-kit/scope-observation.receipt.schema.json`
+- `fixtures/host-target-scope-contract-kit/scope-diff.report.schema.json`
+- `fixtures/host-target-scope-contract-kit/scenarios/flags_leak_to_build_script_without_explicit_target/scope-observation.receipt.json`
+- `fixtures/host-target-scope-contract-kit/scenarios/flags_leak_to_build_script_without_explicit_target/scope-diagnosis.report.json`
+- `fixtures/host-target-scope-contract-kit/scenarios/explicit_target_same_triple_changes_scope/scope-diff.report.json`
+- `fixtures/host-target-scope-contract-kit/scenarios/rustdoc_buildscript_scope_split/scope-observation.receipt.json`
+- `fixtures/host-target-scope-contract-kit/scenarios/nightly_host_config_split/scope-diff.report.json`
+- `entries/2026-03-08-144.md`
+
+- `meta/cargo-resolver-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-22.md`
+- `fixtures/cargo-resolve-why-kit/resolve-why.lock.schema.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/msrv_workspace_version_choice/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/msrv_workspace_version_choice/resolve-why.lock.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/msrv_workspace_version_choice/version-choices.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/msrv_workspace_version_choice/resolver-choice.receipt.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_selection_masks_missing_feature/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_selection_masks_missing_feature/resolve-why.lock.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_selection_masks_missing_feature/feature-causes.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_selection_masks_missing_feature/resolver-choice.receipt.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_selection_masks_missing_feature/resolution-diff.report.example.json`
+- `entries/2026-03-08-145.md`
+- `meta/native-vendoring-mode-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-23.md`
+- `fixtures/native-deps-kit/resolution-mode.lock.schema.json`
+- `fixtures/native-deps-kit/vendoring-policy.report.schema.json`
+- `fixtures/native-deps-kit/scenarios/feature_unification_forces_vendoring_blocked_by_policy/notes.md`
+- `fixtures/native-deps-kit/scenarios/feature_unification_forces_vendoring_blocked_by_policy/resolution-mode.lock.example.json`
+- `fixtures/native-deps-kit/scenarios/feature_unification_forces_vendoring_blocked_by_policy/vendoring-policy.report.example.json`
+- `fixtures/native-deps-kit/scenarios/build_internal_env_forces_vendored_mode/notes.md`
+- `fixtures/native-deps-kit/scenarios/build_internal_env_forces_vendored_mode/resolution-mode.lock.example.json`
+- `fixtures/native-deps-kit/scenarios/build_internal_env_forces_vendored_mode/vendoring-policy.report.example.json`
+- `fixtures/native-deps-kit/scenarios/build_internal_env_forces_vendored_mode/backend-attempts.receipt.example.json`
+- `fixtures/native-deps-kit/scenarios/build_internal_env_forces_vendored_mode/native-resolution.report.example.json`
+- `entries/2026-03-08-146.md`
+- `meta/cargo-source-parity-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-24.md`
+- `fixtures/cargo-vendor-source-parity-kit/source-parity.lock.schema.json`
+- `fixtures/cargo-vendor-source-parity-kit/source-coverage.report.schema.json`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/multi_registry_alias_split/notes.md`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/multi_registry_alias_split/source-parity.lock.example.json`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/multi_registry_alias_split/source-coverage.report.example.json`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/git_workspace_history_required/notes.md`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/git_workspace_history_required/source-parity.lock.example.json`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/git_workspace_history_required/source-coverage.report.example.json`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/path_dependency_outside_vendor_boundary/notes.md`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/path_dependency_outside_vendor_boundary/source-parity.lock.example.json`
+- `fixtures/cargo-vendor-source-parity-kit/scenarios/path_dependency_outside_vendor_boundary/source-coverage.report.example.json`
+- `entries/2026-03-08-147.md`
+
+- `meta/cargo-contention-topology-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-25.md`
+- `fixtures/cargo-lock-contention-witness-kit/root-sharing.report.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/wrapper-context.receipt.schema.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/build_dir_separated_target_still_shared/notes.md`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/build_dir_separated_target_still_shared/root-sharing.report.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/build_dir_separated_target_still_shared/collision-diagnosis.report.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/wrapper_hash_split_same_target/notes.md`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/wrapper_hash_split_same_target/wrapper-context.receipt.example.json`
+- `fixtures/cargo-lock-contention-witness-kit/scenarios/wrapper_hash_split_same_target/root-sharing.report.example.json`
+- `entries/2026-03-08-148.md`
+
+
+- `meta/cargo-compile-time-deps-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-26.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/comparison-baseline.lock.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/override-command.receipt.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/label_scoped_override_vs_workspace_baseline/notes.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/label_scoped_override_vs_workspace_baseline/comparison-baseline.lock.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/label_scoped_override_vs_workspace_baseline/override-command.receipt.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/relative_override_command_manual_review/notes.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/relative_override_command_manual_review/override-command.receipt.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/paired_buildscripts_override_toolchain_specific/notes.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/paired_buildscripts_override_toolchain_specific/comparison-baseline.lock.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/paired_buildscripts_override_toolchain_specific/override-command.receipt.example.json`
+- `entries/2026-03-08-149.md`
+
+- `meta/cargo-tool-workflow-coverage-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-27.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/selection-coverage.report.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/workspace-invocation.receipt.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/alltargets_false_dev_proc_macro_gap/notes.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/alltargets_false_dev_proc_macro_gap/selection-coverage.report.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/alltargets_false_dev_proc_macro_gap/workspace-invocation.receipt.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/check_workspace_false_first_run_leakage/notes.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/check_workspace_false_first_run_leakage/selection-coverage.report.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/check_workspace_false_first_run_leakage/workspace-invocation.receipt.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/linked_projects_once_opened_root_scope/notes.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/linked_projects_once_opened_root_scope/workspace-invocation.receipt.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/linked_projects_once_opened_root_scope/comparison-baseline.lock.example.json`
+- `entries/2026-03-08-150.md`
+
+
+- `meta/cargo-resolver-lane-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-28.md`
+- `fixtures/cargo-resolve-why-kit/lane-partition.report.schema.json`
+- `fixtures/cargo-resolve-why-kit/platform-coverage.report.schema.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/resolver2_dev_normal_tree_merge_warning/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/resolver2_dev_normal_tree_merge_warning/lane-partition.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/resolver2_dev_normal_tree_merge_warning/resolver-choice.receipt.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/nonmatching_target_specific_dependency_omitted/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/nonmatching_target_specific_dependency_omitted/platform-coverage.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/nonmatching_target_specific_dependency_omitted/resolver-choice.receipt.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/proc_macro_build_normal_lane_manual_review/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/proc_macro_build_normal_lane_manual_review/lane-partition.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/proc_macro_build_normal_lane_manual_review/resolver-choice.receipt.example.json`
+- `entries/2026-03-08-151.md`
+
+
+- `meta/cargo-resolver-unification-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-29.md`
+- `fixtures/cargo-resolve-why-kit/unification-scope.report.schema.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_mode_out_of_selection_feature_pressure/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_mode_out_of_selection_feature_pressure/unification-scope.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_mode_out_of_selection_feature_pressure/resolve-why.lock.example.json`
+- `entries/2026-03-08-152.md`
+
+- `meta/cargo-resolver-feature-intent-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-30.md`
+- `fixtures/cargo-resolve-why-kit/feature-intent.report.schema.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/default_features_false_masked_by_workspace/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/default_features_false_masked_by_workspace/feature-intent.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/default_features_false_masked_by_workspace/unification-scope.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/bin_subject_feature_pressure/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/bin_subject_feature_pressure/feature-intent.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/bin_subject_feature_pressure/resolve-why.lock.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/bin_subject_feature_pressure/unification-scope.report.example.json`
+- `entries/2026-03-08-153.md`
+
+- `meta/cargo-resolver-workspace-inheritance-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-31.md`
+- `fixtures/cargo-resolve-why-kit/dependency-origin.report.schema.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_inherited_default_features_reenabled/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_inherited_default_features_reenabled/dependency-origin.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/target_specific_inherited_dependency_scope/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/target_specific_inherited_dependency_scope/dependency-origin.report.example.json`
+- `entries/2026-03-08-154.md`
+- `entries/2026-03-08-155.md`
+
+- `meta/cargo-resolver-dependency-identity-boundaries-2026-03-08.md`
+- `meta/frontier-salience-2026-03-08-33.md`
+- `fixtures/cargo-resolve-why-kit/dependency-identity.report.schema.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/renamed_optional_dependency_feature_namespace/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/renamed_optional_dependency_feature_namespace/dependency-identity.report.example.json`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_inherited_dependency_rename_ignored/notes.md`
+- `fixtures/cargo-resolve-why-kit/scenarios/workspace_inherited_dependency_rename_ignored/dependency-identity.report.example.json`
+- `entries/2026-03-08-156.md`
+- `entries/2026-03-09-159.md`
+
+- `meta/conformance-assurance-stack-2026-03-09.md`
+- `fixtures/rust-conformance-harness-toolkit/README.md`
+- `fixtures/rust-conformance-harness-toolkit/suite-manifest.schema.json`
+- `fixtures/rust-conformance-harness-toolkit/case-result.schema.json`
+- `fixtures/rust-conformance-harness-toolkit/environment.receipt.schema.json`
+- `fixtures/rust-conformance-harness-toolkit/comparison.report.schema.json`
+- `fixtures/rust-conformance-harness-toolkit/scenarios/capability_missing_not_failure/notes.md`
+- `fixtures/rust-conformance-harness-toolkit/scenarios/capability_missing_not_failure/suite-manifest.example.json`
+- `fixtures/rust-conformance-harness-toolkit/scenarios/capability_missing_not_failure/environment.receipt.example.json`
+- `fixtures/rust-conformance-harness-toolkit/scenarios/capability_missing_not_failure/case-result.example.json`
+- `fixtures/rust-conformance-harness-toolkit/scenarios/same_case_two_impls_diverge/notes.md`
+- `fixtures/rust-conformance-harness-toolkit/scenarios/same_case_two_impls_diverge/case-result.left.example.json`
+- `fixtures/rust-conformance-harness-toolkit/scenarios/same_case_two_impls_diverge/case-result.right.example.json`
+- `fixtures/rust-conformance-harness-toolkit/scenarios/same_case_two_impls_diverge/comparison.report.example.json`
+- `entries/2026-03-09-160.md`
+
+
+- `meta/repro-evidence-layering-2026-03-09.md`
+- `fixtures/reprobuildbundle/build-recipe.schema.json`
+- `fixtures/reprobuildbundle/rebuild-verdict.schema.json`
+- `fixtures/reprobuildbundle/diff-summary.schema.json`
+- `fixtures/reprobuildbundle/scenarios/absolute_path_leak_manual_review/notes.md`
+- `fixtures/reprobuildbundle/scenarios/absolute_path_leak_manual_review/build-recipe.official.example.json`
+- `fixtures/reprobuildbundle/scenarios/absolute_path_leak_manual_review/build-recipe.rebuild.example.json`
+- `fixtures/reprobuildbundle/scenarios/absolute_path_leak_manual_review/rebuild-verdict.example.json`
+- `fixtures/reprobuildbundle/scenarios/absolute_path_leak_manual_review/diff-summary.example.json`
+- `fixtures/reprobuildbundle/scenarios/compression_only_semantic_match/notes.md`
+- `fixtures/reprobuildbundle/scenarios/compression_only_semantic_match/build-recipe.official.example.json`
+- `fixtures/reprobuildbundle/scenarios/compression_only_semantic_match/build-recipe.rebuild.example.json`
+- `fixtures/reprobuildbundle/scenarios/compression_only_semantic_match/rebuild-verdict.example.json`
+- `fixtures/reprobuildbundle/scenarios/compression_only_semantic_match/diff-summary.example.json`
+- `entries/2026-03-09-161.md`
+
+
+- `meta/evidence-bundle-boundaries-2026-03-09.md`
+- `fixtures/evidencebundle-core-kit/README.md`
+- `fixtures/evidencebundle-core-kit/bundle-manifest.schema.json`
+- `fixtures/evidencebundle-core-kit/profile-contract.schema.json`
+- `fixtures/evidencebundle-core-kit/redaction-receipt.schema.json`
+- `fixtures/evidencebundle-core-kit/verification-report.schema.json`
+- `fixtures/evidencebundle-core-kit/diff-report.schema.json`
+- `fixtures/evidencebundle-core-kit/scenarios/redacted_support_export/notes.md`
+- `fixtures/evidencebundle-core-kit/scenarios/redacted_support_export/bundle-manifest.example.json`
+- `fixtures/evidencebundle-core-kit/scenarios/redacted_support_export/redaction-receipt.example.json`
+- `fixtures/evidencebundle-core-kit/scenarios/redacted_support_export/verification-report.example.json`
+- `fixtures/evidencebundle-core-kit/scenarios/redacted_support_export/diff-report.example.json`
+- `fixtures/evidencebundle-core-kit/scenarios/publishable_signed_profile/notes.md`
+- `fixtures/evidencebundle-core-kit/scenarios/publishable_signed_profile/bundle-manifest.example.json`
+- `fixtures/evidencebundle-core-kit/scenarios/publishable_signed_profile/profile-contract.example.json`
+- `fixtures/evidencebundle-core-kit/scenarios/publishable_signed_profile/verification-report.example.json`
+- `entries/2026-03-09-162.md`
+
+
+- `meta/verification-campaign-boundaries-2026-03-09.md`
+- `fixtures/verification-campaign-workbench-kit/campaign-manifest.schema.json`
+- `fixtures/verification-campaign-workbench-kit/obligation-record.schema.json`
+- `fixtures/verification-campaign-workbench-kit/trust-ledger.schema.json`
+- `fixtures/verification-campaign-workbench-kit/lane-result.schema.json`
+- `fixtures/verification-campaign-workbench-kit/policy-evaluation.report.schema.json`
+- `fixtures/verification-campaign-workbench-kit/campaign-diff.report.schema.json`
+- `fixtures/verification-campaign-workbench-kit/scenarios/miri_kani_verus_split_truth/notes.md`
+- `fixtures/verification-campaign-workbench-kit/scenarios/miri_kani_verus_split_truth/campaign-manifest.example.json`
+- `fixtures/verification-campaign-workbench-kit/scenarios/miri_kani_verus_split_truth/lane-result.miri.example.json`
+- `fixtures/verification-campaign-workbench-kit/scenarios/miri_kani_verus_split_truth/lane-result.kani.example.json`
+- `fixtures/verification-campaign-workbench-kit/scenarios/miri_kani_verus_split_truth/lane-result.verus.example.json`
+- `fixtures/verification-campaign-workbench-kit/scenarios/miri_kani_verus_split_truth/policy-evaluation.report.example.json`
+- `fixtures/verification-campaign-workbench-kit/scenarios/new_trusted_axiom_blocks_green/notes.md`
+- `fixtures/verification-campaign-workbench-kit/scenarios/new_trusted_axiom_blocks_green/trust-ledger.example.json`
+- `fixtures/verification-campaign-workbench-kit/scenarios/new_trusted_axiom_blocks_green/policy-evaluation.report.example.json`
+- `fixtures/verification-campaign-workbench-kit/scenarios/new_trusted_axiom_blocks_green/campaign-diff.report.example.json`
+- `entries/2026-03-09-163.md`
+- `entries/2026-03-09-164.md` — assurance-case workbench becomes review-contract-first
+- `fixtures/ui-accessibility-kit/README.md`
+- `fixtures/ui-accessibility-kit/toolkit-profile.schema.json`
+- `fixtures/ui-accessibility-kit/a11ydoctor.report.schema.json`
+- `fixtures/ui-accessibility-kit/a11ygate.result.schema.json`
+- `fixtures/ui-accessibility-kit/scenarios/missing_accessible_name_in_dialog/notes.md`
+- `fixtures/ui-accessibility-kit/scenarios/missing_accessible_name_in_dialog/toolkit-profile.example.json`
+- `fixtures/ui-accessibility-kit/scenarios/missing_accessible_name_in_dialog/a11ydoctor.report.example.json`
+- `fixtures/ui-accessibility-kit/scenarios/missing_accessible_name_in_dialog/a11ygate.result.example.json`
+- `fixtures/ui-accessibility-kit/scenarios/focus_order_regression/notes.md`
+- `fixtures/ui-accessibility-kit/scenarios/focus_order_regression/a11ydoctor.report.example.json`
+- `fixtures/ui-accessibility-kit/scenarios/focus_order_regression/a11ygate.result.example.json`
+- `fixtures/a11ybundle/bundle-manifest.schema.json`
+- `fixtures/a11ybundle/tree.snapshot.schema.json`
+- `fixtures/a11ybundle/event-stream.schema.json`
+- `fixtures/a11ybundle/semantic-diff.report.schema.json`
+- `fixtures/a11ybundle/scenarios/dialog_focus_linux_capture/notes.md`
+- `fixtures/a11ybundle/scenarios/dialog_focus_linux_capture/bundle-manifest.example.json`
+- `fixtures/a11ybundle/scenarios/dialog_focus_linux_capture/tree.snapshot.example.json`
+- `fixtures/a11ybundle/scenarios/dialog_focus_linux_capture/event-stream.example.json`
+- `fixtures/a11ybundle/scenarios/menu_role_mismatch_expected_vs_observed/notes.md`
+- `fixtures/a11ybundle/scenarios/menu_role_mismatch_expected_vs_observed/bundle-manifest.example.json`
+- `fixtures/a11ybundle/scenarios/menu_role_mismatch_expected_vs_observed/semantic-diff.report.example.json`
+- `entries/2026-03-09-165.md` — local-first sync becomes lane-explicit and fixture-first
+- `entries/2026-03-09-166.md` — accessibility frontier splits into doctor/gating and capture/interop lab
+
+
+- `meta/accessibility-stack-2026-03-09.md`
+- `fixtures/accessibility-interop-conformance-kit/README.md`
+- `fixtures/accessibility-interop-conformance-kit/capture-profile.schema.json`
+- `fixtures/accessibility-interop-conformance-kit/normalized-tree.schema.json`
+- `fixtures/accessibility-interop-conformance-kit/event-stream.record.schema.json`
+- `fixtures/accessibility-interop-conformance-kit/conformance-result.report.schema.json`
+- `fixtures/accessibility-interop-conformance-kit/interop-diff.report.schema.json`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/menu_focus_traversal_cross_platform/notes.md`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/menu_focus_traversal_cross_platform/capture-profile.example.toml`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/menu_focus_traversal_cross_platform/normalized-tree.linux.example.json`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/menu_focus_traversal_cross_platform/normalized-tree.windows.example.json`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/menu_focus_traversal_cross_platform/conformance-result.report.example.json`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/menu_focus_traversal_cross_platform/interop-diff.report.example.json`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/virtualized_table_name_regression/notes.md`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/virtualized_table_name_regression/capture-profile.example.toml`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/virtualized_table_name_regression/normalized-tree.before.example.json`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/virtualized_table_name_regression/normalized-tree.after.example.json`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/virtualized_table_name_regression/event-stream.example.jsonl`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/virtualized_table_name_regression/conformance-result.report.example.json`
+- `fixtures/accessibility-interop-conformance-kit/scenarios/virtualized_table_name_regression/interop-diff.report.example.json`
+- `entries/2026-03-09-166.md` — accessibility interop becomes lane-explicit and less duplicative
+
+- `meta/local-first-transport-bootstrap-boundaries-2026-03-09.md`
+- `fixtures/localfirst-sync-kit/README.md`
+- `fixtures/localfirst-sync-kit/repo-manifest.schema.json`
+- `fixtures/localfirst-sync-kit/sync-state.report.schema.json`
+- `fixtures/localfirst-sync-kit/transport-session.receipt.schema.json`
+- `fixtures/localfirst-sync-kit/membership-ledger.schema.json`
+- `fixtures/localfirst-sync-kit/divergence-triage.report.schema.json`
+- `fixtures/localfirst-sync-kit/scenarios/offline_fork_then_reconnect/notes.md`
+- `fixtures/localfirst-sync-kit/scenarios/offline_fork_then_reconnect/repo-manifest.example.toml`
+- `fixtures/localfirst-sync-kit/scenarios/offline_fork_then_reconnect/sync-state.report.example.json`
+- `fixtures/localfirst-sync-kit/scenarios/offline_fork_then_reconnect/transport-session.receipt.example.json`
+- `fixtures/localfirst-sync-kit/scenarios/offline_fork_then_reconnect/divergence-triage.report.example.json`
+- `fixtures/localfirst-sync-kit/scenarios/revoked_device_after_key_epoch/notes.md`
+- `fixtures/localfirst-sync-kit/scenarios/revoked_device_after_key_epoch/membership-ledger.example.json`
+- `fixtures/localfirst-sync-kit/scenarios/revoked_device_after_key_epoch/transport-session.receipt.example.json`
+- `fixtures/localfirst-sync-kit/scenarios/revoked_device_after_key_epoch/divergence-triage.report.example.json`
+- `entries/2026-03-09-167.md` — local-first fixture pack restored and transport/bootstrap truth tightened
+
+- **Entry 168** — `entries/2026-03-09-168.md` — async determinism stack clarified and simulation kit made fixture-first
+
+- `meta/text-layout-stack-boundaries-2026-03-09.md`
+- `fixtures/text-layout-conformance-kit/layout-case.schema.json`
+- `fixtures/text-layout-conformance-kit/layout-profile.schema.json`
+- `fixtures/text-layout-conformance-kit/fontset-lock.schema.json`
+- `fixtures/text-layout-conformance-kit/corpus-import.receipt.schema.json`
+- `fixtures/text-layout-conformance-kit/backend-capability.receipt.schema.json`
+- `fixtures/text-layout-conformance-kit/decision-origin.receipt.schema.json`
+- `fixtures/text-layout-conformance-kit/font-resolution.receipt.schema.json`
+- `fixtures/text-layout-conformance-kit/layout-diff.report.schema.json`
+- `fixtures/text-layout-conformance-kit/diagnosis.report.schema.json`
+- `fixtures/text-layout-conformance-kit/scenarios/thai_emoji_wrap_upgrade/notes.md`
+- `fixtures/text-layout-conformance-kit/scenarios/thai_emoji_wrap_upgrade/layout-case.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/thai_emoji_wrap_upgrade/corpus-import.receipt.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/thai_emoji_wrap_upgrade/backend-capability.parley.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/thai_emoji_wrap_upgrade/layout-output.parley.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/thai_emoji_wrap_upgrade/layout-output.cosmic-text.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/thai_emoji_wrap_upgrade/layout-diff.report.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/thai_emoji_wrap_upgrade/manifest.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/arabic_latin_bidi_fallback_regression/notes.md`
+- `fixtures/text-layout-conformance-kit/scenarios/arabic_latin_bidi_fallback_regression/layout-case.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/arabic_latin_bidi_fallback_regression/fontset-lock.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/arabic_latin_bidi_fallback_regression/backend-capability.cosmic-text.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/arabic_latin_bidi_fallback_regression/layout-output.before.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/arabic_latin_bidi_fallback_regression/layout-output.after.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/arabic_latin_bidi_fallback_regression/diagnosis.report.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/notes.md`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/layout-case.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/layout-profile.unicode-default.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/layout-profile.css-strict.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/corpus-import.receipt.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/backend-capability.parley.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/decision-origin.unicode-default.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/decision-origin.css-strict.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/font-resolution.receipt.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/layout-output.unicode-default.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/layout-output.css-strict.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/layout-diff.report.example.json`
+- `fixtures/text-layout-conformance-kit/scenarios/cjk_unknown_lang_linebreak_policy/manifest.example.json`
+- **Entry 169** — `entries/2026-03-09-169.md` — text layout stack clarified and conformance kit made fixture-first
+- **Entry 170** — `entries/2026-03-09-170.md` — text layout profiles and decision-origin receipts made explicit
+- `meta/webauthn-lab-lane-boundaries-2026-03-09.md`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenario-profile.schema.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/runner-capability.receipt.schema.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/ceremony-transcript.schema.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/diagnosis.report.schema.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/compatibility-matrix.report.schema.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/discoverable_passkey_uv_required_chromium_virtual/notes.md`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/discoverable_passkey_uv_required_chromium_virtual/scenario-profile.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/discoverable_passkey_uv_required_chromium_virtual/runner-capability.chromium-webdriver.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/discoverable_passkey_uv_required_chromium_virtual/ceremony-transcript.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/discoverable_passkey_uv_required_chromium_virtual/diagnosis.report.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/discoverable_passkey_uv_required_chromium_virtual/compatibility-matrix.report.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/discoverable_passkey_uv_required_chromium_virtual/manifest.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/firefox_virtual_authenticator_capability_warning/notes.md`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/firefox_virtual_authenticator_capability_warning/scenario-profile.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/firefox_virtual_authenticator_capability_warning/runner-capability.firefox-geckodriver.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/firefox_virtual_authenticator_capability_warning/diagnosis.report.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/firefox_virtual_authenticator_capability_warning/compatibility-matrix.report.example.json`
+- `fixtures/webauthn-passkeys-interop-device-lab-kit/scenarios/firefox_virtual_authenticator_capability_warning/manifest.example.json`
+- **Entry 171** — `entries/2026-03-09-171.md` — passkey lab upgraded into capability receipts and comparability truth
+
+- **Entry 172** — `entries/2026-03-16-172.md` — async dyn transition work and BorrowSanitizer evidence made more implementation-shaped
+- **Entry 173** — `entries/2026-03-16-173.md` — build-dir transition lanes and debug support posture tightened
+- `meta/msrv-lane-boundaries-2026-03-16.md`
+- `meta/workspace-boundary-discovery-lanes-2026-03-16.md`
+- `meta/frontier-salience-2026-03-16-3.md`
+- `fixtures/msrv-workspace-lab/README.md`
+- `fixtures/msrv-workspace-lab/msrv-policy.schema.json`
+- `fixtures/msrv-workspace-lab/toolchain-matrix.plan.schema.json`
+- `fixtures/msrv-workspace-lab/msrv-observation.receipt.schema.json`
+- `fixtures/msrv-workspace-lab/msrv-blame.report.schema.json`
+- `fixtures/msrv-workspace-lab/resolver-lane.diff.schema.json`
+- `fixtures/msrv-workspace-lab/policy-activation.receipt.schema.json`
+- `fixtures/msrv-workspace-lab/command-family-floor.report.schema.json`
+- `fixtures/msrv-workspace-lab/lockfile-floor.receipt.schema.json`
+- `fixtures/msrv-workspace-lab/scenarios/mixed_workspace_policy_split/notes.md`
+- `fixtures/msrv-workspace-lab/scenarios/mixed_workspace_policy_split/msrv-policy.example.toml`
+- `fixtures/msrv-workspace-lab/scenarios/mixed_workspace_policy_split/toolchain-matrix.plan.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/mixed_workspace_policy_split/msrv-observation.receipt.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/mixed_workspace_policy_split/msrv-blame.report.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/inactive_target_edge_metadata_break/notes.md`
+- `fixtures/msrv-workspace-lab/scenarios/inactive_target_edge_metadata_break/msrv-observation.receipt.build.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/inactive_target_edge_metadata_break/msrv-observation.receipt.metadata.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/inactive_target_edge_metadata_break/msrv-blame.report.example.json`
+- `fixtures/msrv-workspace-lab/scenarios/inactive_target_edge_metadata_break/resolver-lane.diff.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/README.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/boundary-context.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/discovery-trace.receipt.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/workspace-membership.report.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/config-probe.report.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/boundary-diagnosis.report.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/boundary-diff.report.schema.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/parent_home_manifest_poisoning/notes.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/parent_home_manifest_poisoning/boundary-context.example.toml`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/parent_home_manifest_poisoning/discovery-trace.receipt.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/parent_home_manifest_poisoning/workspace-membership.report.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/parent_home_manifest_poisoning/boundary-diagnosis.report.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/manifest_path_local_config_split/notes.md`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/manifest_path_local_config_split/boundary-context.example.toml`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/manifest_path_local_config_split/config-probe.report.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/manifest_path_local_config_split/boundary-diagnosis.report.example.json`
+- `fixtures/cargo-workspace-boundary-doctor-kit/scenarios/manifest_path_local_config_split/boundary-diff.report.example.json`
+- **Entry 174** — `entries/2026-03-16-174.md` — MSRV lanes sharpened and workspace boundary doctor added
+
+- `meta/cargo-tool-workflow-root-lanes-2026-03-16.md`
+- `meta/frontier-salience-2026-03-16-21.md`
+- `fixtures/cargo-compile-time-deps-workflow-kit/root-lane.receipt.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/evidence-source.receipt.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/tool-session.link.schema.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/build_dir_separated_target_dir_still_shared/root-lane.receipt.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/build_dir_new_layout_manual_review/root-lane.receipt.example.json`
+- `fixtures/cargo-compile-time-deps-workflow-kit/scenarios/imported_build_analysis_session/tool-session.link.example.json`
+
+- **Entry 235** — `entries/2026-03-17-235.md` — cfg availability-ledger deepened with slice witnesses, gate normalization, and re-export lineage
+- `meta/frontier-salience-2026-03-17-55.md`
+- `meta/cfg-availability-ledger-lanes-2026-03-17.md`
+- `fixtures/cfg-availability-ledger-kit/README.md`
+- `fixtures/cfg-availability-ledger-kit/slice-witness.receipt.schema.json`
+- `fixtures/cfg-availability-ledger-kit/gate-normalization.report.schema.json`
+- `fixtures/cfg-availability-ledger-kit/reexport-lineage.report.schema.json`
+- `fixtures/cfg-availability-ledger-kit/doc_auto_cfg_hide_simplifies_real_gate_surface/README.md`
+- `fixtures/cfg-availability-ledger-kit/doc_auto_cfg_hide_simplifies_real_gate_surface/slice-witness.receipt.example.json`
+- `fixtures/cfg-availability-ledger-kit/doc_auto_cfg_hide_simplifies_real_gate_surface/gate-normalization.report.example.json`
+- `fixtures/cfg-availability-ledger-kit/docsrs_cfg_final_crate_scope_hides_dependency_slice_gap/README.md`
+- `fixtures/cfg-availability-ledger-kit/docsrs_cfg_final_crate_scope_hides_dependency_slice_gap/slice-witness.receipt.example.json`
+- `fixtures/cfg-availability-ledger-kit/docsrs_cfg_final_crate_scope_hides_dependency_slice_gap/gate-normalization.report.example.json`
+- `fixtures/cfg-availability-ledger-kit/reexported_item_inherits_hidden_target_gate/README.md`
+- `fixtures/cfg-availability-ledger-kit/reexported_item_inherits_hidden_target_gate/reexport-lineage.report.example.json`
+- `fixtures/cfg-availability-ledger-kit/reexported_item_inherits_hidden_target_gate/gate-normalization.report.example.json`
+
+- **Entry 237** — `entries/2026-03-17-237.md` — toolchain/target support deepened with override lineage, component availability, and exercise scope
+- `meta/frontier-salience-2026-03-17-57.md`
+- `fixtures/toolchain-target-support-contract-kit/override-lineage.receipt.schema.json`
+- `fixtures/toolchain-target-support-contract-kit/component-availability.report.schema.json`
+- `fixtures/toolchain-target-support-contract-kit/exercise-scope.report.schema.json`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/env_override_masks_repo_pin/README.md`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/env_override_masks_repo_pin/override-lineage.receipt.example.json`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/nightly_component_fallback_changes_effective_channel/README.md`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/nightly_component_fallback_changes_effective_channel/component-availability.report.example.json`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/explicit_target_build_splits_host_helper_scope/README.md`
+- `fixtures/toolchain-target-support-contract-kit/scenarios/explicit_target_build_splits_host_helper_scope/exercise-scope.report.example.json`
+
+- **Entry 243** — `entries/2026-03-18-243.md` — Apple XCFramework shipkit deepened around slice coverage, package alignment, and trust posture
+- `meta/frontier-salience-2026-03-18-63.md`
+- `meta/apple-xcframework-swiftpm-shipkit-product-plan-2026-03-18.md`
+- `fixtures/apple-xcframework-swiftpm-shipkit/README.md`
+- `fixtures/apple-xcframework-swiftpm-shipkit/slice-coverage.report.schema.json`
+- `fixtures/apple-xcframework-swiftpm-shipkit/package-alignment.report.schema.json`
+- `fixtures/apple-xcframework-swiftpm-shipkit/trust-posture.report.schema.json`
+- `fixtures/apple-xcframework-swiftpm-shipkit/scenarios/ios_binary_target_checksum_matches_but_simulator_slice_missing/README.md`
+- `fixtures/apple-xcframework-swiftpm-shipkit/scenarios/ios_binary_target_checksum_matches_but_simulator_slice_missing/slice-coverage.report.example.json`
+- `fixtures/apple-xcframework-swiftpm-shipkit/scenarios/wrapper_module_name_drift_after_rebinding/README.md`
+- `fixtures/apple-xcframework-swiftpm-shipkit/scenarios/wrapper_module_name_drift_after_rebinding/package-alignment.report.example.json`
+- `fixtures/apple-xcframework-swiftpm-shipkit/scenarios/signed_xcframework_with_privacy_manifest_gap/README.md`
+- `fixtures/apple-xcframework-swiftpm-shipkit/scenarios/signed_xcframework_with_privacy_manifest_gap/trust-posture.report.example.json`
+
+
+## 2026-03-18 — Entry 244
+
+- **Entry 244** — `entries/2026-03-18-244.md` — NuGet native interop shipkit deepened around RID coverage, loader routes, and deployment posture
+- `meta/frontier-salience-2026-03-18-64.md`
+- `meta/nuget-native-interop-shipkit-product-plan-2026-03-18.md`
+- `fixtures/nuget-native-interop-shipkit/README.md`
+- `fixtures/nuget-native-interop-shipkit/rid-coverage.report.schema.json`
+- `fixtures/nuget-native-interop-shipkit/loader-route.report.schema.json`
+- `fixtures/nuget-native-interop-shipkit/deployment-posture.report.schema.json`
+- `fixtures/nuget-native-interop-shipkit/scenarios/portable_rid_claim_exceeds_shipped_assets/README.md`
+- `fixtures/nuget-native-interop-shipkit/scenarios/portable_rid_claim_exceeds_shipped_assets/rid-coverage.report.example.json`
+- `fixtures/nuget-native-interop-shipkit/scenarios/plugin_host_requires_custom_unmanaged_resolution/README.md`
+- `fixtures/nuget-native-interop-shipkit/scenarios/plugin_host_requires_custom_unmanaged_resolution/loader-route.report.example.json`
+- `fixtures/nuget-native-interop-shipkit/scenarios/single_file_and_native_aot_claims_exceed_package_evidence/README.md`
+- `fixtures/nuget-native-interop-shipkit/scenarios/single_file_and_native_aot_claims_exceed_package_evidence/deployment-posture.report.example.json`
+
+## 2026-03-18 — Entry 245
+
+- **Entry 245** — `entries/2026-03-18-245.md` — Hex native NIF shipkit deepened around checksum residency, NIF-version windows, and fallback triggers
+- **Entry 246** — `entries/2026-03-18-246.md` — JAR/JNI native shipkit deepened around classifier dialect, native-access posture, and loader residency
+- `meta/frontier-salience-2026-03-18-65.md`
+- `meta/hex-native-nif-shipkit-product-plan-2026-03-18.md`
+- `fixtures/hex-nif-shipkit/checksum-residency.report.schema.json`
+- `fixtures/hex-nif-shipkit/nif-version-window.report.schema.json`
+- `fixtures/hex-nif-shipkit/fallback-trigger.report.schema.json`
+- `fixtures/hex-nif-shipkit/scenarios/checksum_file_missing_from_hex_tarball/README.md`
+- `fixtures/hex-nif-shipkit/scenarios/checksum_file_missing_from_hex_tarball/checksum-residency.report.example.json`
+- `fixtures/hex-nif-shipkit/scenarios/nif_version_floor_overclaims_otp_window/README.md`
+- `fixtures/hex-nif-shipkit/scenarios/nif_version_floor_overclaims_otp_window/nif-version-window.report.example.json`
+- `fixtures/hex-nif-shipkit/scenarios/unsupported_target_forces_local_build_without_honest_contract/README.md`
+- `fixtures/hex-nif-shipkit/scenarios/unsupported_target_forces_local_build_without_honest_contract/fallback-trigger.report.example.json`
+
+
+## 2026-03-18 — Entry 247
+
+- **Entry 247** — `entries/2026-03-18-247.md` — R package native shipkit deepened around registration posture, DLL load contracts, and install posture
+- `proposals/r-package-native-shipkit.md`
+- `meta/frontier-salience-2026-03-18-67.md`
+- `meta/r-package-native-shipkit-product-plan-2026-03-18.md`
+- `fixtures/r-package-native-shipkit/README.md`
+- `fixtures/r-package-native-shipkit/registration-posture.report.schema.json`
+- `fixtures/r-package-native-shipkit/dll-load-contract.report.schema.json`
+- `fixtures/r-package-native-shipkit/install-posture.report.schema.json`
+- `fixtures/r-package-native-shipkit/scenarios/usedynlib_registration_missing_after_wrapper_regeneration/README.md`
+- `fixtures/r-package-native-shipkit/scenarios/usedynlib_registration_missing_after_wrapper_regeneration/registration-posture.report.example.json`
+- `fixtures/r-package-native-shipkit/scenarios/lib_name_drift_breaks_dll_load_alignment/README.md`
+- `fixtures/r-package-native-shipkit/scenarios/lib_name_drift_breaks_dll_load_alignment/dll-load-contract.report.example.json`
+- `fixtures/r-package-native-shipkit/scenarios/source_install_requires_cargo_but_posture_claims_boring_binary/README.md`
+- `fixtures/r-package-native-shipkit/scenarios/source_install_requires_cargo_but_posture_claims_boring_binary/install-posture.report.example.json`
+
+
+## 2026-03-18 — Entry 248
+
+- **Entry 248** — `entries/2026-03-18-248.md` — RubyGems native shipkit deepened around platform coverage, resolver routes, and extension residency
+- `meta/frontier-salience-2026-03-18-68.md`
+- `meta/rubygems-native-extension-shipkit-product-plan-2026-03-18.md`
+- `fixtures/rubygem-native-shipkit/platform-coverage.report.schema.json`
+- `fixtures/rubygem-native-shipkit/resolver-route.report.schema.json`
+- `fixtures/rubygem-native-shipkit/extension-residency.report.schema.json`
+- `fixtures/rubygem-native-shipkit/scenarios/fat_gem_claim_hides_missing_linux_aarch64_binary/README.md`
+- `fixtures/rubygem-native-shipkit/scenarios/fat_gem_claim_hides_missing_linux_aarch64_binary/platform-coverage.report.example.json`
+- `fixtures/rubygem-native-shipkit/scenarios/jruby_route_missing_from_lockfile_and_bundle_cache_story/README.md`
+- `fixtures/rubygem-native-shipkit/scenarios/jruby_route_missing_from_lockfile_and_bundle_cache_story/resolver-route.report.example.json`
+- `fixtures/rubygem-native-shipkit/scenarios/extension_copied_under_old_name_after_rename/README.md`
+- `fixtures/rubygem-native-shipkit/scenarios/extension_copied_under_old_name_after_rename/extension-residency.report.example.json`
+
+
+## 2026-03-19 — Entry 254
+
+- **Entry 254** — `entries/2026-03-19-254.md` — MCP guard planning sharpened around transport exposure, auth boundaries, and operation guards
+- `meta/frontier-salience-2026-03-19-74.md`
+- `meta/mcp-guard-kit-product-plan-2026-03-19.md`
+- `meta/mcp-guard-kit-lane-boundaries-2026-03-19.md`
+- `fixtures/mcp-guard-kit/README.md`
+- `fixtures/mcp-guard-kit/transport-exposure.receipt.schema.json`
+- `fixtures/mcp-guard-kit/auth-boundary.receipt.schema.json`
+- `fixtures/mcp-guard-kit/operation-guard.contract.schema.json`
+- `fixtures/mcp-guard-kit/scenarios/localhost_http_origin_validation_missing/README.md`
+- `fixtures/mcp-guard-kit/scenarios/localhost_http_origin_validation_missing/transport-exposure.receipt.example.json`
+- `fixtures/mcp-guard-kit/scenarios/remote_proxy_token_passthrough_and_missing_audience_binding/README.md`
+- `fixtures/mcp-guard-kit/scenarios/remote_proxy_token_passthrough_and_missing_audience_binding/auth-boundary.receipt.example.json`
+- `fixtures/mcp-guard-kit/scenarios/tool_sampling_enabled_without_approval_or_loop_limits/README.md`
+- `fixtures/mcp-guard-kit/scenarios/tool_sampling_enabled_without_approval_or_loop_limits/operation-guard.contract.example.json`
+
+
+## 2026-03-19 — Entry 260
+
+- **Entry 260** — `entries/2026-03-19-260.md` — crate persistence support sharpened around publication target, identity retention, and witnessed recovery
+- `meta/frontier-salience-2026-03-19-80.md`
+- `meta/crate-persistence-surface-product-plan-2026-03-19.md`
+- `meta/crate-persistence-surface-lane-boundaries-2026-03-19.md`
+- `fixtures/crate-persistence-surface-pack-kit/README.md`
+- `fixtures/crate-persistence-surface-pack-kit/publication-target.report.schema.json`
+- `fixtures/crate-persistence-surface-pack-kit/identity-retention.report.schema.json`
+- `fixtures/crate-persistence-surface-pack-kit/symlink_replace_changes_link_not_target/README.md`
+- `fixtures/crate-persistence-surface-pack-kit/symlink_replace_changes_link_not_target/publication-target.report.example.json`
+- `fixtures/crate-persistence-surface-pack-kit/atomic_replace_loses_xattrs_acls_and_timestamps/README.md`
+- `fixtures/crate-persistence-surface-pack-kit/atomic_replace_loses_xattrs_acls_and_timestamps/identity-retention.report.example.json`
+- `fixtures/crate-persistence-surface-pack-kit/tokio_fs_async_surface_does_not_upgrade_commit_contract/README.md`
+- `fixtures/crate-persistence-surface-pack-kit/tokio_fs_async_surface_does_not_upgrade_commit_contract/durability-boundary.report.example.json`
+
+- **Entry 267** — `entries/2026-03-19-267.md` — crate upgrade support sharpened around hazard authority, workspace scope, and follow-through coverage
+
+
+- **Entry 275** — `entries/2026-03-20-275.md` — crate upgrade support sharpened around summary-claim traceability and fallback refs
+- `meta/frontier-salience-2026-03-20-95.md`
+- `meta/crate-upgrade-pack-product-plan-2026-03-20.md`
+- `proposals/crate-upgrade-pack-kit.md`
+- `fixtures/crate-upgrade-pack-kit/README.md`
+- `fixtures/crate-upgrade-pack-kit/summary-claim.register.schema.json`
+- `fixtures/crate-upgrade-pack-kit/public_summary_claims_trace_to_exact_receipts/README.md`
+- `fixtures/crate-upgrade-pack-kit/public_summary_claims_trace_to_exact_receipts/summary-claim.register.example.json`
+- `fixtures/crate-upgrade-pack-kit/mixed_synthesis_summary_claim_requires_fallback_and_warning_link/README.md`
+- `fixtures/crate-upgrade-pack-kit/mixed_synthesis_summary_claim_requires_fallback_and_warning_link/summary-claim.register.example.json`
+
+- **Entry 281** — `entries/2026-03-20-281.md` — crate upgrade support sharpened around review provenance and maker/checker separation
+- `meta/frontier-salience-2026-03-20-101.md`
+- `meta/crate-upgrade-pack-product-plan-2026-03-20.md`
+- `proposals/crate-upgrade-pack-kit.md`
+- `fixtures/crate-upgrade-pack-kit/README.md`
+- `fixtures/crate-upgrade-pack-kit/review-provenance.report.schema.json`
+- `fixtures/crate-upgrade-pack-kit/independent_checker_closes_frozen_public_review_surface/README.md`
+- `fixtures/crate-upgrade-pack-kit/independent_checker_closes_frozen_public_review_surface/review-provenance.report.example.json`
+- `fixtures/crate-upgrade-pack-kit/same_author_self_review_blocks_freeze_without_explicit_deviation/README.md`
+- `fixtures/crate-upgrade-pack-kit/same_author_self_review_blocks_freeze_without_explicit_deviation/review-provenance.report.example.json`
+- `fixtures/crate-upgrade-pack-kit/same_author_self_review_blocks_freeze_without_explicit_deviation/pack-readiness.report.example.json`
+- `fixtures/crate-upgrade-pack-kit/same_author_self_review_blocks_freeze_without_explicit_deviation/cross-register-consistency.report.example.json`
+
+
+- **Entry 282** — `entries/2026-03-20-282.md` — crate upgrade support sharpened around session honesty and mixed-capture disclosure
+- `meta/frontier-salience-2026-03-20-102.md`
+- `meta/crate-upgrade-pack-product-plan-2026-03-20.md`
+- `proposals/crate-upgrade-pack-kit.md`
+- `fixtures/crate-upgrade-pack-kit/README.md`
+- `fixtures/crate-upgrade-pack-kit/session-honesty.report.schema.json`
+- `fixtures/crate-upgrade-pack-kit/same_lane_imports_share_single_session_family/README.md`
+- `fixtures/crate-upgrade-pack-kit/same_lane_imports_share_single_session_family/session-honesty.report.example.json`
+- `fixtures/crate-upgrade-pack-kit/mixed_session_synthesis_requires_warning_and_summary_disclosure/README.md`
+- `fixtures/crate-upgrade-pack-kit/mixed_session_synthesis_requires_warning_and_summary_disclosure/session-honesty.report.example.json`
+- `fixtures/crate-upgrade-pack-kit/mixed_session_synthesis_requires_warning_and_summary_disclosure/warning-register.report.example.json`
+- `fixtures/crate-upgrade-pack-kit/mixed_session_synthesis_requires_warning_and_summary_disclosure/summary-claim.register.example.json`
+- `fixtures/crate-upgrade-pack-kit/mixed_session_synthesis_requires_warning_and_summary_disclosure/cross-register-consistency.report.example.json`
+
+## 2026-03-20 — Entry 304
+
+- **Entry 304** — `entries/2026-03-20-304.md` — schema compatibility work sharpened around comparison basis, compatibility profile, finding strength, and policy decisions
+- `meta/frontier-salience-2026-03-20-124.md`
+- `meta/schema-compatibility-workbench-product-plan-2026-03-20.md`
+- `meta/schema-compatibility-workbench-lane-boundaries-2026-03-20.md`
+- `fixtures/schema-compatibility-workbench-kit/README.md`
+- `fixtures/schema-compatibility-workbench-kit/comparison-basis.receipt.schema.json`
+- `fixtures/schema-compatibility-workbench-kit/compatibility-profile.receipt.schema.json`
+- `fixtures/schema-compatibility-workbench-kit/finding-strength.report.schema.json`
+- `fixtures/schema-compatibility-workbench-kit/policy-decision.report.schema.json`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/latest_only_registry_check_must_not_masquerade_as_transitive_history_guarantee/README.md`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/latest_only_registry_check_must_not_masquerade_as_transitive_history_guarantee/comparison-basis.receipt.example.json`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/latest_only_registry_check_must_not_masquerade_as_transitive_history_guarantee/compatibility-profile.receipt.example.json`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/oasdiff_warn_level_change_must_not_masquerade_as_definite_breaking_proof/README.md`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/oasdiff_warn_level_change_must_not_masquerade_as_definite_breaking_proof/finding-strength.report.example.json`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/oasdiff_warn_level_change_must_not_masquerade_as_definite_breaking_proof/policy-decision.report.example.json`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/validation_success_must_not_masquerade_as_compatibility_verdict/README.md`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/validation_success_must_not_masquerade_as_compatibility_verdict/comparison-basis.receipt.example.json`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/validation_success_must_not_masquerade_as_compatibility_verdict/finding-strength.report.example.json`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/buf_wire_profile_must_not_masquerade_as_generated_source_compatibility/README.md`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/buf_wire_profile_must_not_masquerade_as_generated_source_compatibility/compatibility-profile.receipt.example.json`
+- `fixtures/schema-compatibility-workbench-kit/scenarios/buf_wire_profile_must_not_masquerade_as_generated_source_compatibility/policy-decision.report.example.json`
+
+
+
+## 2026-03-20 — Entry 305
+
+- **Entry 305** — `entries/2026-03-20-305.md` — Cargo config-layer work sharpened around invocation basis and replayability truth
+- `meta/frontier-salience-2026-03-20-125.md`
+- `meta/cargo-config-layer-product-plan-2026-03-20.md`
+- `meta/cargo-config-layer-lane-boundaries-2026-03-20.md`
+- `fixtures/cargo-config-layer-receipt-kit/README.md`
+- `fixtures/cargo-config-layer-receipt-kit/configbundle.schema.json`
+- `fixtures/cargo-config-layer-receipt-kit/invocation-basis.receipt.schema.json`
+- `fixtures/cargo-config-layer-receipt-kit/replayability.report.schema.json`
+- `fixtures/cargo-config-layer-receipt-kit/scenarios/cli_override_wins_but_bundle_must_stay_invocation_scoped/README.md`
+- `fixtures/cargo-config-layer-receipt-kit/scenarios/cli_override_wins_but_bundle_must_stay_invocation_scoped/invocation-basis.receipt.example.json`
+- `fixtures/cargo-config-layer-receipt-kit/scenarios/cli_override_wins_but_bundle_must_stay_invocation_scoped/replayability.report.example.json`
+- `fixtures/cargo-config-layer-receipt-kit/scenarios/credential_alias_redaction_keeps_support_meaning_but_breaks_public_replay/README.md`
+- `fixtures/cargo-config-layer-receipt-kit/scenarios/credential_alias_redaction_keeps_support_meaning_but_breaks_public_replay/replayability.report.example.json`
+- `fixtures/cargo-config-layer-receipt-kit/scenarios/cwd_relative_key_value_path_must_not_masquerade_as_config_root_replay/README.md`
+- `fixtures/cargo-config-layer-receipt-kit/scenarios/cwd_relative_key_value_path_must_not_masquerade_as_config_root_replay/invocation-basis.receipt.example.json`
+- `fixtures/cargo-config-layer-receipt-kit/scenarios/cwd_relative_key_value_path_must_not_masquerade_as_config_root_replay/replayability.report.example.json`
+
+
+## 2026-03-20 — Entry 307
+
+- **Entry 307** — `entries/2026-03-20-307.md` — crate-observability-surface-pack-kit sharpened around delivery posture, completeness class, and exit-sensitive route truth
+- `meta/frontier-salience-2026-03-20-127.md`
+- `meta/crate-observability-surface-product-plan-2026-03-20.md`
+- `meta/crate-observability-surface-delivery-boundaries-2026-03-20.md`
+- `fixtures/crate-observability-surface-pack-kit/README.md`
+- `fixtures/crate-observability-surface-pack-kit/delivery-posture.receipt.schema.json`
+- `fixtures/crate-observability-surface-pack-kit/completeness-class.report.schema.json`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/non_blocking_lossy_route_must_not_masquerade_as_complete_log_delivery/README.md`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/non_blocking_lossy_route_must_not_masquerade_as_complete_log_delivery/delivery-posture.receipt.example.json`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/non_blocking_lossy_route_must_not_masquerade_as_complete_log_delivery/completeness-class.report.example.json`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/batch_export_route_requires_flush_posture_before_claiming_exit_delivery/README.md`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/batch_export_route_requires_flush_posture_before_claiming_exit_delivery/delivery-posture.receipt.example.json`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/batch_export_route_requires_flush_posture_before_claiming_exit_delivery/completeness-class.report.example.json`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/periodic_metric_reader_must_not_masquerade_as_per_event_metric_delivery/README.md`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/periodic_metric_reader_must_not_masquerade_as_per_event_metric_delivery/delivery-posture.receipt.example.json`
+- `fixtures/crate-observability-surface-pack-kit/scenarios/periodic_metric_reader_must_not_masquerade_as_per_event_metric_delivery/completeness-class.report.example.json`
+
+
+## 2026-03-20 — Entry 306
+
+- **Entry 306** — `entries/2026-03-20-306.md` — secrets-kit sharpened around revelation path, persistence posture, memory posture, and export posture
+- `meta/frontier-salience-2026-03-20-126.md`
+- `meta/secrets-kit-product-plan-2026-03-20.md`
+- `meta/secrets-kit-lane-boundaries-2026-03-20.md`
+- `fixtures/secrets-kit/README.md`
+- `fixtures/secrets-kit/revelation-path.receipt.schema.json`
+- `fixtures/secrets-kit/persistence-posture.receipt.schema.json`
+- `fixtures/secrets-kit/memory-posture.receipt.schema.json`
+- `fixtures/secrets-kit/export-posture.report.schema.json`
+- `fixtures/secrets-kit/scenarios/env_string_then_wrapped_secret_must_not_masquerade_as_protected_source_path/README.md`
+- `fixtures/secrets-kit/scenarios/env_string_then_wrapped_secret_must_not_masquerade_as_protected_source_path/revelation-path.receipt.example.json`
+- `fixtures/secrets-kit/scenarios/env_string_then_wrapped_secret_must_not_masquerade_as_protected_source_path/memory-posture.receipt.example.json`
+- `fixtures/secrets-kit/scenarios/keyring_mock_backend_must_not_masquerade_as_persistent_store_support/README.md`
+- `fixtures/secrets-kit/scenarios/keyring_mock_backend_must_not_masquerade_as_persistent_store_support/persistence-posture.receipt.example.json`
+- `fixtures/secrets-kit/scenarios/keyring_mock_backend_must_not_masquerade_as_persistent_store_support/revelation-path.receipt.example.json`
+- `fixtures/secrets-kit/scenarios/serializable_secret_opt_in_must_not_masquerade_as_default_export_safety/README.md`
+- `fixtures/secrets-kit/scenarios/serializable_secret_opt_in_must_not_masquerade_as_default_export_safety/export-posture.report.example.json`
+- `fixtures/secrets-kit/scenarios/protected_memory_backend_must_not_masquerade_as_zeroize_only/README.md`
+- `fixtures/secrets-kit/scenarios/protected_memory_backend_must_not_masquerade_as_zeroize_only/memory-posture.receipt.example.json`
+
+
+## 2026-03-21 — Entry 314
+
+- **Entry 314** — `entries/2026-03-21-314.md` — debuggability-support-contract-kit deepened for backend coverage, capability ceilings, and manual-review honesty
+- `meta/frontier-salience-2026-03-21-134.md`
+- `meta/debuggability-support-backend-coverage-2026-03-21.md`
+- `fixtures/debuggability-support-contract-kit/debugger-backend-coverage.report.schema.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/windows_natvis_pdb_must_not_imply_uniform_backend_coverage/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/windows_natvis_pdb_must_not_imply_uniform_backend_coverage/debugger-backend-coverage.report.example.json`
+- `fixtures/debuggability-support-contract-kit/scenarios/artifact_rich_build_still_needs_manual_review_for_async_and_expr/README.md`
+- `fixtures/debuggability-support-contract-kit/scenarios/artifact_rich_build_still_needs_manual_review_for_async_and_expr/debugger-backend-coverage.report.example.json`
+
+## 2026-03-21 — Entry 319
+
+- **Entry 319** — `entries/2026-03-21-319.md` — cargo-build-dir-consumer-transition deepened for adapter-viability windows, Cargo-version floors, and dual-support honesty
+- `meta/frontier-salience-2026-03-21-139.md`
+- `meta/cargo-build-dir-consumer-transition-product-plan-2026-03-21.md`
+- `meta/cargo-build-dir-consumer-transition-adapter-window-boundaries-2026-03-21.md`
+- `fixtures/cargo-build-dir-consumer-transition-kit/adapter-viability.report.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/bin_path_from_test_inference/adapter-viability.report.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/target_dir_from_out_dir_inference/adapter-viability.report.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/new_layout_rehearsal/adapter-plan.example.json`
+
+
+## 2026-03-21 — Entry 324
+
+- **Entry 324** — `entries/2026-03-21-324.md` — test-run artifacts deepened for run identity, selection basis, attempt topology, and share-safe bundles
+- `proposals/test-run-artifact-standard-kit.md`
+- `meta/frontier-salience-2026-03-21-144.md`
+- `meta/test-run-artifact-standard-product-plan-2026-03-21.md`
+- `meta/test-run-artifact-standard-lane-boundaries-2026-03-21.md`
+- `fixtures/test-run-artifact-standard-kit/README.md`
+- `fixtures/test-run-artifact-standard-kit/run-identity.receipt.schema.json`
+- `fixtures/test-run-artifact-standard-kit/selection-basis.receipt.schema.json`
+- `fixtures/test-run-artifact-standard-kit/attempt-topology.report.schema.json`
+- `fixtures/test-run-artifact-standard-kit/bundle-sensitivity.receipt.schema.json`
+- `fixtures/test-run-artifact-standard-kit/testrun-bundle.manifest.schema.json`
+- `fixtures/test-run-artifact-standard-kit/scenarios/nextest_portable_recording_requires_sensitivity_receipt/README.md`
+- `fixtures/test-run-artifact-standard-kit/scenarios/nextest_portable_recording_requires_sensitivity_receipt/bundle-sensitivity.receipt.example.json`
+- `fixtures/test-run-artifact-standard-kit/scenarios/unstable_libtest_json_must_not_masquerade_as_stable_portable_contract/README.md`
+- `fixtures/test-run-artifact-standard-kit/scenarios/unstable_libtest_json_must_not_masquerade_as_stable_portable_contract/selection-basis.receipt.example.json`
+- `fixtures/test-run-artifact-standard-kit/scenarios/custom_harness_mimics_libtest_but_still_needs_harness_class_identity/README.md`
+- `fixtures/test-run-artifact-standard-kit/scenarios/custom_harness_mimics_libtest_but_still_needs_harness_class_identity/run-identity.receipt.example.json`
+- `fixtures/test-run-artifact-standard-kit/scenarios/retries_stress_and_fail_fast_change_attempt_topology/README.md`
+- `fixtures/test-run-artifact-standard-kit/scenarios/retries_stress_and_fail_fast_change_attempt_topology/attempt-topology.report.example.json`
+
+
+## 2026-03-21 — Entry 325
+
+- **Entry 325** — `entries/2026-03-21-325.md` — Wasm plugin kit deepened for WIT world truth, capability grants, execution budgets, and instance lifecycle
+- `meta/frontier-salience-2026-03-21-145.md`
+- `meta/wasm-plugin-kit-product-plan-2026-03-21.md`
+- `meta/wasm-plugin-kit-lane-boundaries-2026-03-21.md`
+- `proposals/wasm-plugin-kit.md`
+- `fixtures/wasm-plugin-kit/README.md`
+- `fixtures/wasm-plugin-kit/plugin-interface.receipt.schema.json`
+- `fixtures/wasm-plugin-kit/capability-grant.receipt.schema.json`
+- `fixtures/wasm-plugin-kit/execution-budget.receipt.schema.json`
+- `fixtures/wasm-plugin-kit/instance-lifecycle.receipt.schema.json`
+- `fixtures/wasm-plugin-kit/plugin-bundle.manifest.schema.json`
+- `fixtures/wasm-plugin-kit/scenarios/cargo_component_experimental_tooling_is_not_stable_interface_contract/README.md`
+- `fixtures/wasm-plugin-kit/scenarios/cargo_component_experimental_tooling_is_not_stable_interface_contract/plugin-interface.receipt.example.json`
+- `fixtures/wasm-plugin-kit/scenarios/extism_manifest_allowlists_are_explicit_capability_receipts/README.md`
+- `fixtures/wasm-plugin-kit/scenarios/extism_manifest_allowlists_are_explicit_capability_receipts/capability-grant.receipt.example.json`
+- `fixtures/wasm-plugin-kit/scenarios/fuel_and_epoch_are_different_budget_truths/README.md`
+- `fixtures/wasm-plugin-kit/scenarios/fuel_and_epoch_are_different_budget_truths/execution-budget.receipt.example.json`
+- `fixtures/wasm-plugin-kit/scenarios/pooled_instances_need_lifecycle_receipt_to_avoid_freshness_bluff/README.md`
+- `fixtures/wasm-plugin-kit/scenarios/pooled_instances_need_lifecycle_receipt_to_avoid_freshness_bluff/instance-lifecycle.receipt.example.json`
+
+
+
+## 2026-03-21 — Entry 328
+
+- **Entry 328** — `entries/2026-03-21-328.md` — async replay debugger work sharpened around schedule basis, time basis, coverage truth, effect boundaries, and replay fidelity
+- `proposals/async-replay-debugger-kit.md`
+- `meta/frontier-salience-2026-03-21-148.md`
+- `meta/async-replay-debugger-product-plan-2026-03-21.md`
+- `meta/async-replay-debugger-lane-boundaries-2026-03-21.md`
+- `fixtures/async-replay-debugger-kit/README.md`
+- `fixtures/async-replay-debugger-kit/schedule-basis.receipt.schema.json`
+- `fixtures/async-replay-debugger-kit/time-basis.receipt.schema.json`
+- `fixtures/async-replay-debugger-kit/instrumentation-coverage.report.schema.json`
+- `fixtures/async-replay-debugger-kit/effect-boundary.receipt.schema.json`
+- `fixtures/async-replay-debugger-kit/replay-fidelity.report.schema.json`
+- `fixtures/async-replay-debugger-kit/async-incident-bundle.manifest.schema.json`
+- `fixtures/async-replay-debugger-kit/scenarios/tokio_console_live_telemetry_is_not_offline_replay_bundle/README.md`
+- `fixtures/async-replay-debugger-kit/scenarios/tokio_console_live_telemetry_is_not_offline_replay_bundle/instrumentation-coverage.report.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/tokio_console_live_telemetry_is_not_offline_replay_bundle/replay-fidelity.report.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/spawned_future_without_in_current_span_creates_lineage_gap/README.md`
+- `fixtures/async-replay-debugger-kit/scenarios/spawned_future_without_in_current_span_creates_lineage_gap/instrumentation-coverage.report.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/paused_tokio_time_is_not_wall_clock_or_multithread_schedule_control/README.md`
+- `fixtures/async-replay-debugger-kit/scenarios/paused_tokio_time_is_not_wall_clock_or_multithread_schedule_control/time-basis.receipt.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/paused_tokio_time_is_not_wall_clock_or_multithread_schedule_control/schedule-basis.receipt.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/shuttle_schedule_replay_without_effect_capture_stays_local/README.md`
+- `fixtures/async-replay-debugger-kit/scenarios/shuttle_schedule_replay_without_effect_capture_stays_local/schedule-basis.receipt.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/shuttle_schedule_replay_without_effect_capture_stays_local/effect-boundary.receipt.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/shuttle_schedule_replay_without_effect_capture_stays_local/replay-fidelity.report.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/sturgeon_stream_timing_replay_is_slice_not_whole_program/README.md`
+- `fixtures/async-replay-debugger-kit/scenarios/sturgeon_stream_timing_replay_is_slice_not_whole_program/effect-boundary.receipt.example.json`
+- `fixtures/async-replay-debugger-kit/scenarios/sturgeon_stream_timing_replay_is_slice_not_whole_program/replay-fidelity.report.example.json`
+
+## Added 2026-03-21 (rev0345)
+- **P-0534** — `proposals/service-readiness-drain-contract-kit.md` — Service Readiness & Drain Contract Kit — activation gates, readiness surfaces, health channels, shutdown triggers, drain policy, and in-flight-fate reports
+- **Entry 335** — `entries/2026-03-21-335.md` — service-readiness-drain-contract-kit added for activation gates, readiness surfaces, health channels, shutdown triggers, drain policy, and in-flight fate
+
+## Added 2026-03-21 (rev0346)
+- **Entry 336** — `entries/2026-03-21-336.md` — async-dyn-transition-kit deepened for recipe identity, tooling interop, and native-readiness truth
+- `meta/frontier-salience-2026-03-21-156.md`
+- `meta/async-dyn-transition-product-plan-2026-03-21.md`
+- `meta/async-dyn-transition-lane-boundaries-2026-03-21.md`
+- `fixtures/async-dyn-transition-kit/tooling-interop.report.schema.json`
+- `fixtures/async-dyn-transition-kit/native-readiness.receipt.schema.json`
+- `fixtures/async-dyn-transition-kit/scenarios/async_trait_boxed_service/tooling-interop.report.example.json`
+- `fixtures/async-dyn-transition-kit/scenarios/trait_variant_send_split/native-readiness.receipt.example.json`
+- `fixtures/async-dyn-transition-kit/scenarios/dynosaur_kernel_no_alloc/native-readiness.receipt.example.json`
+- `fixtures/async-dyn-transition-kit/scenarios/dynify_generated_variant_needs_recipe_identity/README.md`
+- `fixtures/async-dyn-transition-kit/scenarios/dynify_generated_variant_needs_recipe_identity/dispatch-recipe.example.json`
+- `fixtures/async-dyn-transition-kit/scenarios/dynify_generated_variant_needs_recipe_identity/native-readiness.receipt.example.json`
+
+
+- `entries/2026-03-21-337.md` — assurance-case-workbench-kit deepened for import policy, assumption ledgers, review gates, and export projection truth
+- `meta/frontier-salience-2026-03-21-158.md` — fresh ranked frontier snapshot for assurance-case review/import contracts above Rust-native evidence bundles
+- `meta/assurance-case-workbench-product-plan-2026-03-21.md` — concrete command/artifact/adoption plan for P-0503
+- `meta/assurance-case-workbench-lane-boundaries-2026-03-21.md` — keeps P-0503 separate from verification campaigns, evidence bundles, standards editors, and certification workflow ownership
+- `fixtures/assurance-case-workbench-kit/assumption-ledger.report.schema.json`
+- `fixtures/assurance-case-workbench-kit/import-policy.receipt.schema.json`
+- `fixtures/assurance-case-workbench-kit/export-projection.receipt.schema.json`
+- `fixtures/assurance-case-workbench-kit/review-gate.report.schema.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/assumption_blocks_release_claim/README.md`
+- `fixtures/assurance-case-workbench-kit/scenarios/assumption_blocks_release_claim/assumption-ledger.report.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/assumption_blocks_release_claim/claim-status.report.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/assumption_blocks_release_claim/review-gate.report.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/import_policy_rejects_stale_low_trust_campaign/README.md`
+- `fixtures/assurance-case-workbench-kit/scenarios/import_policy_rejects_stale_low_trust_campaign/import-policy.receipt.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/import_policy_rejects_stale_low_trust_campaign/evidence-index.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/import_policy_rejects_stale_low_trust_campaign/review-gate.report.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/gsn_export_projection_preserves_status_but_not_local_review_fields/README.md`
+- `fixtures/assurance-case-workbench-kit/scenarios/gsn_export_projection_preserves_status_but_not_local_review_fields/export-projection.receipt.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/gsn_export_projection_preserves_status_but_not_local_review_fields/review-gate.report.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/sacm_projection_redacts_local_file_paths_but_keeps_claim_lineage/README.md`
+- `fixtures/assurance-case-workbench-kit/scenarios/sacm_projection_redacts_local_file_paths_but_keeps_claim_lineage/export-projection.receipt.example.json`
+- `fixtures/assurance-case-workbench-kit/scenarios/sacm_projection_redacts_local_file_paths_but_keeps_claim_lineage/assumption-ledger.report.example.json`
+
+
+## 2026-03-22 — Entry 339
+
+- **Entry 339** — `entries/2026-03-22-339.md` — cross-language interop frontier mapping, archive memory anchoring, and FFI boundary deepening for P-0121
+- `meta/frontier-salience-2026-03-22-160.md`
+- `meta/cross-language-interop-frontier-2026-03-22.md`
+- `meta/archive-memory-anchor-2026-03-22.md`
+- `meta/ffi-boundary-conformance-product-plan-2026-03-22.md`
+- `meta/ffi-boundary-conformance-lane-boundaries-2026-03-22.md`
+- `fixtures/ffi-boundary-conformance-kit/layout-authority.receipt.schema.json`
+- `fixtures/ffi-boundary-conformance-kit/error-channel.receipt.schema.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/cxx_shared_type_and_opaque_type_need_separate_layout_authority_receipts/README.md`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/cxx_shared_type_and_opaque_type_need_separate_layout_authority_receipts/layout-authority.shared.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/cxx_shared_type_and_opaque_type_need_separate_layout_authority_receipts/layout-authority.opaque.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/uniffi_flat_error_cxx_exception_and_wit_result_need_separate_error_channel_receipts/README.md`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/uniffi_flat_error_cxx_exception_and_wit_result_need_separate_error_channel_receipts/error-channel.uniffi.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/uniffi_flat_error_cxx_exception_and_wit_result_need_separate_error_channel_receipts/error-channel.cxx.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/uniffi_flat_error_cxx_exception_and_wit_result_need_separate_error_channel_receipts/error-channel.wit.example.json`
+
+
+## 2026-03-22 — Entry 346
+
+- **Entry 346** — `entries/2026-03-22-346.md` — unsafe-field invariant planning deepened around field authority, mutation lanes, constructor trust, and witness coverage for P-0460
+- `meta/frontier-salience-2026-03-22-167.md`
+- `meta/unsafe-field-invariant-frontier-2026-03-22.md`
+- `meta/unsafe-field-invariant-ledger-product-plan-2026-03-22.md`
+- `meta/unsafe-field-invariant-ledger-lane-boundaries-2026-03-22.md`
+- `fixtures/unsafe-field-invariant-ledger-kit/README.md`
+- `fixtures/unsafe-field-invariant-ledger-kit/field-authority.receipt.schema.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/mutation-lane.report.schema.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/trusted-constructor.receipt.schema.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/invariant-witness.report.schema.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/field-contract-drift.diff.schema.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/unsafe-field-bundle.manifest.schema.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/safe_helper_widens_mutation_scope/README.md`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/safe_helper_widens_mutation_scope/field-authority.receipt.example.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/safe_helper_widens_mutation_scope/mutation-lane.report.example.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/docs_exist_but_authority_source_is_unresolved/README.md`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/docs_exist_but_authority_source_is_unresolved/field-authority.receipt.example.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/docs_exist_but_authority_source_is_unresolved/trusted-constructor.receipt.example.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/miri_passes_but_witness_scope_stays_narrow/README.md`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/miri_passes_but_witness_scope_stays_narrow/invariant-witness.report.example.json`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/release_adds_new_safe_constructor_and_requires_review/README.md`
+- `fixtures/unsafe-field-invariant-ledger-kit/scenarios/release_adds_new_safe_constructor_and_requires_review/field-contract-drift.diff.example.json`
+
+## 2026-03-22 — Entry 345
+
+- **Entry 345** — `entries/2026-03-22-345.md` — documentation-example support deepened around doctest manifests, execution modes, and example-support reports for P-0455
+- `meta/frontier-salience-2026-03-22-166.md`
+- `meta/documentation-example-frontier-2026-03-22.md`
+- `meta/doctest-extraction-pipeline-product-plan-2026-03-22.md`
+- `meta/doctest-extraction-pipeline-lane-boundaries-2026-03-22.md`
+- `fixtures/doctest-extraction-pipeline-kit/README.md`
+- `fixtures/doctest-extraction-pipeline-kit/doctest.manifest.schema.json`
+- `fixtures/doctest-extraction-pipeline-kit/rewrite-lineage.receipt.schema.json`
+- `fixtures/doctest-extraction-pipeline-kit/execution-mode.receipt.schema.json`
+- `fixtures/doctest-extraction-pipeline-kit/docs-example-support.report.schema.json`
+- `fixtures/doctest-extraction-pipeline-kit/docs-example-drift.diff.schema.json`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/hidden_setup_and_kernel_adapter_rewrites_need_lineage/README.md`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/hidden_setup_and_kernel_adapter_rewrites_need_lineage/doctest.manifest.example.json`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/hidden_setup_and_kernel_adapter_rewrites_need_lineage/rewrite-lineage.receipt.example.json`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/merged_vs_standalone_execution_changes_witness_meaning/README.md`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/merged_vs_standalone_execution_changes_witness_meaning/execution-mode.standalone.example.json`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/merged_vs_standalone_execution_changes_witness_meaning/execution-mode.merged.example.json`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/host_run_cross_compile_ignore_and_docsrs_render_are_distinct_support_classes/README.md`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/host_run_cross_compile_ignore_and_docsrs_render_are_distinct_support_classes/docs-example-support.report.example.json`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/runner_policy_or_ignore_annotations_shift_support_posture/README.md`
+- `fixtures/doctest-extraction-pipeline-kit/scenarios/runner_policy_or_ignore_annotations_shift_support_posture/docs-example-drift.diff.example.json`
+
+## 2026-03-22 — Entry 344
+
+- **Entry 344** — `entries/2026-03-22-344.md` — unsafe contract auditing deepened around contract authority, interpreter boundaries, and witness fidelity for P-0120
+- `meta/frontier-salience-2026-03-22-165.md`
+- `meta/unsafe-contract-auditor-product-plan-2026-03-22.md`
+- `meta/unsafe-contract-auditor-lane-boundaries-2026-03-22.md`
+- `fixtures/unsafe-contract-auditor-kit/README.md`
+- `fixtures/unsafe-contract-auditor-kit/contract-authority.receipt.schema.json`
+- `fixtures/unsafe-contract-auditor-kit/obligation-map.report.schema.json`
+- `fixtures/unsafe-contract-auditor-kit/interpreter-boundary.receipt.schema.json`
+- `fixtures/unsafe-contract-auditor-kit/witness-fidelity.report.schema.json`
+- `fixtures/unsafe-contract-auditor-kit/unsafe-audit-bundle.manifest.schema.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/miri_passes_but_ffi_boundary_stays_out_of_scope/README.md`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/miri_passes_but_ffi_boundary_stays_out_of_scope/interpreter-boundary.receipt.example.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/miri_passes_but_ffi_boundary_stays_out_of_scope/witness-fidelity.report.example.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/docs_contain_safety_sections_but_no_machine_contract_authority/README.md`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/docs_contain_safety_sections_but_no_machine_contract_authority/contract-authority.receipt.example.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/unsafe_attribute_obligation_is_symbol_contract_not_memory_model/README.md`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/unsafe_attribute_obligation_is_symbol_contract_not_memory_model/obligation-map.report.example.json`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/loom_schedule_witness_does_not_cover_aliasing_or_init/README.md`
+- `fixtures/unsafe-contract-auditor-kit/scenarios/loom_schedule_witness_does_not_cover_aliasing_or_init/witness-fidelity.report.example.json`
+
+
+## Proposal autoindex (validator support)
+
+- `proposals/a2a-protocol-conformance-transcript-capability-kit.md`
+- `proposals/abi-coherence-profile-kit.md`
+- `proposals/accessibility-interop-conformance-kit.md`
+- `proposals/activitypub-federation-interop-evidence-kit.md`
+- `proposals/activitypub-federation-test-harness-kit.md`
+- `proposals/acvp-client-evidence-kit.md`
+- `proposals/airgap-sdk.md`
+- `proposals/amqp10-interop-conformance-evidence-kit.md`
+- `proposals/amwa-nmos-interop-evidence-kit.md`
+- `proposals/apple-xcframework-swiftpm-shipkit.md`
+- `proposals/array-api.md`
+- `proposals/arrow-flight-interop-evidence-kit.md`
+- `proposals/as2-mdn-interop-evidence-shipkit.md`
+- `proposals/as4-peppol-edelivery-interop-evidence-kit.md`
+- `proposals/asam-mdf-a2l-dbc-interop-workbench-kit.md`
+- `proposals/asset-administration-shell-aas-conformance-evidence-kit.md`
+- `proposals/assurance-case-workbench-kit.md`
+- `proposals/async-dyn-transition-kit.md`
+- `proposals/async-replay-debugger-kit.md`
+- `proposals/async-runtime-assurance-profile-kit.md`
+- `proposals/asyncapi30-cloudevents-interop-evidence-kit.md`
+- `proposals/atproto-repo-sync-firehose-lexicon-evidence-kit.md`
+- `proposals/attestation-evidence-kit.md`
+- `proposals/audio-graph-kit.md`
+- `proposals/audio-plugin-interop-sandbox-golden-dsp-lab-kit.md`
+- `proposals/audit-lens.md`
+- `proposals/automotive-diagnostics-isotp-kit.md`
+- `proposals/autotls-acme-rustls-kit.md`
+- `proposals/bacnet-interop-evidence-kit.md`
+- `proposals/bgp-bmp-interop-evidence-kit.md`
+- `proposals/bids-nifti-conformance-dataset-evidence-kit.md`
+- `proposals/bioformats-conformance-pipelines-kit.md`
+- `proposals/ble-conformance-kit.md`
+- `proposals/ble-interop-gatt-conformance-kit.md`
+- `proposals/bluetooth-le-gatt-interop-evidence-kit.md`
+- `proposals/borrowsanitizer-workflow-evidence-kit.md`
+- `proposals/bpmn-dmn-conformance-workbench-kit.md`
+- `proposals/build-interop-kit.md`
+- `proposals/build-std-workbench-kit.md`
+- `proposals/buildscript-testkit.md`
+- `proposals/buildscript-ux-kit.md`
+- `proposals/buildtime-sandbox-runtime-api-kit.md`
+- `proposals/caldav-carddav-interop-evidence-kit.md`
+- `proposals/can-uds-interop-evidence-kit.md`
+- `proposals/cap12-ipaws-interop-evidence-kit.md`
+- `proposals/capability-sandbox-kit.md`
+- `proposals/capability-sandbox-policy-kit.md`
+- `proposals/cargo-artifact-dependency-adoption-kit.md`
+- `proposals/cargo-artifact-handoff-kit.md`
+- `proposals/cargo-artifact-sidecar-contract-kit.md`
+- `proposals/cargo-attest.md`
+- `proposals/cargo-binary-trust.md`
+- `proposals/cargo-build-dir-consumer-transition-kit.md`
+- `proposals/cargo-build-insights.md`
+- `proposals/cargo-build-jail.md`
+- `proposals/cargo-build-script-delegation-kit.md`
+- `proposals/cargo-capabilities.md`
+- `proposals/cargo-compile-time-deps-workflow-kit.md`
+- `proposals/cargo-config-layer-receipt-kit.md`
+- `proposals/cargo-doc-portal.md`
+- `proposals/cargo-event-stream.md`
+- `proposals/cargo-feature-surface-contract-kit.md`
+- `proposals/cargo-fix-campaign-kit.md`
+- `proposals/cargo-future-incompat-triage-kit.md`
+- `proposals/cargo-global-cache-policy-gc-kit.md`
+- `proposals/cargo-host-target-scope-contract-kit.md`
+- `proposals/cargo-impact-planner-kit.md`
+- `proposals/cargo-input-manifest.md`
+- `proposals/cargo-install-policy.md`
+- `proposals/cargo-lints-adoption-receipt-kit.md`
+- `proposals/cargo-lock-contention-witness-kit.md`
+- `proposals/cargo-minimal-version-witness-kit.md`
+- `proposals/cargo-package-review-kit.md`
+- `proposals/cargo-plumbing-interop-kit.md`
+- `proposals/cargo-policy.md`
+- `proposals/cargo-prebuilt-artifacts.md`
+- `proposals/cargo-provenance-suite.md`
+- `proposals/cargo-publish-receipt-join-kit.md`
+- `proposals/cargo-rebuild-explanation-kit.md`
+- `proposals/cargo-registry-auth-doctor-kit.md`
+- `proposals/cargo-repro-pack.md`
+- `proposals/cargo-resolver-explanation-kit.md`
+- `proposals/cargo-sandbox-capability-policy-kit.md`
+- `proposals/cargo-sbom-kit.md`
+- `proposals/cargo-sbom-precursor-workbench-kit.md`
+- `proposals/cargo-script-workbench-kit.md`
+- `proposals/cargo-snapshot.md`
+- `proposals/cargo-toolchain-manifest.md`
+- `proposals/cargo-transparency-bundle.md`
+- `proposals/cargo-tuf-mirror.md`
+- `proposals/cargo-update-policy.md`
+- `proposals/cargo-vendor-source-parity-kit.md`
+- `proposals/cargo-workspace-boundary-doctor-kit.md`
+- `proposals/cargo-workspace-policy-doctor-kit.md`
+- `proposals/cbor-cose-oscore-edhoc-interop-evidence-kit.md`
+- `proposals/ccsds-cfdp-interop-evidence-kit.md`
+- `proposals/cdc-interop-conformance-kit.md`
+- `proposals/cel-conformance-portability-kit.md`
+- `proposals/certificate-transparency-v2-ops-kit.md`
+- `proposals/cfg-availability-ledger-kit.md`
+- `proposals/channel-surface-contract-kit.md`
+- `proposals/chaos-lab.md`
+- `proposals/chaos-scenario-library-faultpoint-orchestrator-kit.md`
+- `proposals/chunked-ohttp-privacy-gateway-ops-kit.md`
+- `proposals/citygml30-cityjson20-conformance-conversion-workbench-kit.md`
+- `proposals/cli-surface-contract-kit.md`
+- `proposals/clippy-safety-profile-waiver-kit.md`
+- `proposals/cloudevents-cesql-cdevents-interop-workbench-kit.md`
+- `proposals/cmsis-svd-ipxact-register-interop-workbench-kit.md`
+- `proposals/cnab-oci-relocation-evidence-kit.md`
+- `proposals/codegen-backend-matrix-workbench-kit.md`
+- `proposals/codemod-api-migration-kit.md`
+- `proposals/columnar-data-interop-kit.md`
+- `proposals/compatibility-gate-kit.md`
+- `proposals/comptime-reflection-bridge-kit.md`
+- `proposals/confidential-attestation-kit.md`
+- `proposals/connector-kit.md`
+- `proposals/const-capability-ledger-kit.md`
+- `proposals/content-authenticity-c2pa-shipkit.md`
+- `proposals/cose-cwt-sd-cwt-interop-kit.md`
+- `proposals/cpu-baseline-runtime-dispatch-contract-kit.md`
+- `proposals/crash-symbolication-workbench-kit.md`
+- `proposals/crate-authority-surface-pack-kit.md`
+- `proposals/crate-capability-contract-kit.md`
+- `proposals/crate-configuration-scenario-pack-kit.md`
+- `proposals/crate-diagnosis-surface-pack-kit.md`
+- `proposals/crate-ecosystem-pathfinder-kit.md`
+- `proposals/crate-example-surface-pack-kit.md`
+- `proposals/crate-guidance-pack-kit.md`
+- `proposals/crate-health.md`
+- `proposals/crate-interop-profile-pack-kit.md`
+- `proposals/crate-lifecycle-surface-pack-kit.md`
+- `proposals/crate-observability-surface-pack-kit.md`
+- `proposals/crate-offramp-pack-kit.md`
+- `proposals/crate-performance-envelope-pack-kit.md`
+- `proposals/crate-persistence-surface-pack-kit.md`
+- `proposals/crate-resource-surface-pack-kit.md`
+- `proposals/crate-runtime-handoff-pack-kit.md`
+- `proposals/crate-slicing-soundness-adoption-kit.md`
+- `proposals/crate-test-surface-pack-kit.md`
+- `proposals/crate-upgrade-pack-kit.md`
+- `proposals/crossref-jats-deposit-validation-workbench-kit.md`
+- `proposals/csaf-openvex-osv-advisory-workbench-kit.md`
+- `proposals/ct-ops-migration-kit.md`
+- `proposals/cwl-workflowrun-rocrate-conformance-evidence-kit.md`
+- `proposals/cxx-boundary-evidence-kit.md`
+- `proposals/data-contract-kit.md`
+- `proposals/datacite47-codemeta-cff-crosswalk-workbench-kit.md`
+- `proposals/dataflow-ergonomics-workbench-kit.md`
+- `proposals/db-drift-migration-conformance-kit.md`
+- `proposals/dcsa-ebl-pint-interop-evidence-kit.md`
+- `proposals/ddex-ern-mead-interop-evidence-kit.md`
+- `proposals/dds-rtps-interop-idl-xtypes-toolchain-kit.md`
+- `proposals/debuggability-support-contract-kit.md`
+- `proposals/debugger-ux-kit.md`
+- `proposals/debugger-visualizer-compatibility-kit.md`
+- `proposals/dependency-lifecycle-transition-kit.md`
+- `proposals/desktop-shipkit.md`
+- `proposals/determinism-lab-kit.md`
+- `proposals/determinism-sim-kit.md`
+- `proposals/deterministic-async-lab.md`
+- `proposals/deterministic-rollback-replay-kit.md`
+- `proposals/deterministic-sim-storage-io-kit.md`
+- `proposals/deterministic-simulation-kit.md`
+- `proposals/dettrace-spec-kit.md`
+- `proposals/diagnostic-kit.md`
+- `proposals/dicomweb-dimse-interop-evidence-kit.md`
+- `proposals/did-resolution-interop-evidence-kit.md`
+- `proposals/didcomm-v2-oob-mediator-interop-evidence-kit.md`
+- `proposals/differential-privacy-application-kit.md`
+- `proposals/dlms-cosem-smart-meter-interop-evidence-kit.md`
+- `proposals/dnp3-secure-auth-interop-evidence-kit.md`
+- `proposals/dns-transport-policy-matrix-kit.md`
+- `proposals/dnssec-encrypted-dns-interop-evidence-kit.md`
+- `proposals/docsrs-build-parity-evidence-kit.md`
+- `proposals/doctest-extraction-pipeline-kit.md`
+- `proposals/doctest-runtool-profile-kit.md`
+- `proposals/durable-execution-interop-conformance-kit.md`
+- `proposals/durable-workflow-kit.md`
+- `proposals/e57-las-copc-loss-aware-interop-workbench-kit.md`
+- `proposals/ebics-banking-interop-evidence-kit.md`
+- `proposals/ebpf-core-verifier-portability-lab-kit.md`
+- `proposals/ebpf-shipkit.md`
+- `proposals/edition-drift-witness-kit.md`
+- `proposals/email-auth-lab-kit.md`
+- `proposals/embedded-hal-tck.md`
+- `proposals/embedded-hil-evidence-kit.md`
+- `proposals/energy-carbon-observability-kit.md`
+- `proposals/epub33-epubcheck-opds-interop-evidence-kit.md`
+- `proposals/ergonomic-refcount-migration-kit.md`
+- `proposals/error-surface-contract-kit.md`
+- `proposals/evidence-bundle-core-kit.md`
+- `proposals/exif30-xmp-iptc-photo-metadata-interop-workbench-kit.md`
+- `proposals/external-toolchain-handshake-kit.md`
+- `proposals/externally-implementable-item-adoption-kit.md`
+- `proposals/fapi2-interop-evidence-kit.md`
+- `proposals/fdc3-desktop-agent-bridging-interop-kit.md`
+- `proposals/fediverse-ops-kit.md`
+- `proposals/ffi-boundary-conformance-kit.md`
+- `proposals/fhe-application-workbench-kit.md`
+- `proposals/fhir-smart-conformance-evidence-kit.md`
+- `proposals/fhir-smart-conformance-interop-evidence-kit.md`
+- `proposals/fido-device-onboard-interop-certification-evidence-kit.md`
+- `proposals/fits-wcs-votable-interop-evidence-kit.md`
+- `proposals/fix-orchestra-interop-workbench-kit.md`
+- `proposals/fix-sbe-schema-evolution-interop-kit.md`
+- `proposals/fmi-fmu-interop-evidence-lab-kit.md`
+- `proposals/foreign-sdk-consumer-doctor-kit.md`
+- `proposals/formal-spec-rust-test-connector-kit.md`
+- `proposals/formal-trace-connector.md`
+- `proposals/formality-counterexample-bridge-kit.md`
+- `proposals/frictionless-datapackage-tableschema-workbench-kit.md`
+- `proposals/fuzz-corpus-coverage-interop-kit.md`
+- `proposals/fuzz-workbench.md`
+- `proposals/ga4gh-drs-tes-wes-portability-evidence-kit.md`
+- `proposals/ga4gh-htsget-refget-crypt4gh-interop-evidence-kit.md`
+- `proposals/geopackage-interop-canonicalization-kit.md`
+- `proposals/geoparquet-geoarrow-flatgeobuf-interop-canonicalization-kit.md`
+- `proposals/geospatial-tile-pipeline-kit.md`
+- `proposals/git-wire-pack-conformance-evidence-kit.md`
+- `proposals/gitops-secrets-interop-kit.md`
+- `proposals/gltf-ktx2-asset-conformance-evidence-kit.md`
+- `proposals/gnmi-interop-evidence-kit.md`
+- `proposals/gpu-compute-interop-kit.md`
+- `proposals/graphql-federation-subgraph-shipkit.md`
+- `proposals/graphql-over-http-interop-evidence-kit.md`
+- `proposals/gs1-digital-link-epc-uri-translation-workbench-kit.md`
+- `proposals/gs1-epcis-cbv-conformance-evidence-kit.md`
+- `proposals/gtfs-realtime-conformance-replay-kit.md`
+- `proposals/gui-testing-harness-kit.md`
+- `proposals/hardship-harness-kit.md`
+- `proposals/hermetic-build-capsule-kit.md`
+- `proposals/hermetic-sandbox-testkit.md`
+- `proposals/hex-native-nif-shipkit.md`
+- `proposals/hl7v2-mllp-interop-evidence-kit.md`
+- `proposals/hl7v2-mllp-messageprofile-conformance-replay-kit.md`
+- `proposals/hls-llhls-cmaf-interop-evidence-kit.md`
+- `proposals/hpke-envelope-interop-kit.md`
+- `proposals/http-cassette-kit.md`
+- `proposals/http-message-signatures-interop-kit.md`
+- `proposals/i18n-icu-kit.md`
+- `proposals/iceberg-rest-delta-kernel-uniform-interop-evidence-kit.md`
+- `proposals/iec60870-5-104-interop-evidence-kit.md`
+- `proposals/iec61850-goose-sampledvalues-interop-evidence-kit.md`
+- `proposals/ifc-bim-conformance-evidence-kit.md`
+- `proposals/iiif-image-presentation-interop-evidence-kit.md`
+- `proposals/in-place-initialization-adoption-kit.md`
+- `proposals/industrial-opcua-deployment-kit.md`
+- `proposals/inference-kit.md`
+- `proposals/install-script-jail.md`
+- `proposals/ion-partiql-canonicalization-evidence-kit.md`
+- `proposals/ipc-kit.md`
+- `proposals/ipfs-cid-car-interop-kit.md`
+- `proposals/ipp-everywhere-interop-conformance-kit.md`
+- `proposals/iso15118-plug-charge-v2g-pki-interop-evidence-kit.md`
+- `proposals/iso20022-cbpr-hvps-sepa-conformance-evidence-kit.md`
+- `proposals/isolate-kit.md`
+- `proposals/jar-jni-native-shipkit.md`
+- `proposals/jmap-email-client-server-kit.md`
+- `proposals/jose-jwt-security-profile-interop-evidence-kit.md`
+- `proposals/jpegxl-conformance-evidence-kit.md`
+- `proposals/jupyter-notebook-messaging-kernel-replay-workbench-kit.md`
+- `proposals/kafka-protocol-interop-evidence-kit.md`
+- `proposals/kube-integration-testkit.md`
+- `proposals/kubernetes-cri-interop-evidence-kit.md`
+- `proposals/las-laz-copc-interop-evidence-kit.md`
+- `proposals/ldapv3-interop-conformance-kit.md`
+- `proposals/libtest-json-interop-kit.md`
+- `proposals/license-bundle-kit.md`
+- `proposals/linker-lane-contract-diagnosis-kit.md`
+- `proposals/littlefs-native-adoption-kit.md`
+- `proposals/localfirst-sync-kit.md`
+- `proposals/localization-pipeline-kit.md`
+- `proposals/lorawan104-11-regional-parameters-certification-replay-kit.md`
+- `proposals/lsp-dap-lsif-interop-replay-kit.md`
+- `proposals/lti13-lti-advantage-conformance-evidence-kit.md`
+- `proposals/lwm2m12-omna-object-registry-conformance-evidence-kit.md`
+- `proposals/mail-transport-security-kit.md`
+- `proposals/marc21-bibframe-conversion-workbench-kit.md`
+- `proposals/markdown-safe-kit.md`
+- `proposals/masque-proxy-shipkit.md`
+- `proposals/matrix-sliding-sync-interop-kit.md`
+- `proposals/matrix-sliding-sync-test-diagnostics-kit.md`
+- `proposals/matter-certification-interop-kit.md`
+- `proposals/matter-controller-commissioning-lab-kit.md`
+- `proposals/mavlink-microservices-interop-evidence-kit.md`
+- `proposals/mcap-rosbag2-replay-evidence-kit.md`
+- `proposals/mcdc-coverage-workbench-kit.md`
+- `proposals/mcp-guard-kit.md`
+- `proposals/mcp-protocol-conformance-transcript-capability-kit.md`
+- `proposals/mctp20-pldm-fw-filetransfer-interop-evidence-kit.md`
+- `proposals/memory-observability-kit.md`
+- `proposals/messageformat2-localization-kit.md`
+- `proposals/midi20-midi-ci-profiles-property-exchange-interop-kit.md`
+- `proposals/miniseed3-stationxml-seedlink-interop-evidence-kit.md`
+- `proposals/mlir-pipeline-kit.md`
+- `proposals/mls-deployment-kit.md`
+- `proposals/mls-interop-conformance-evidence-kit.md`
+- `proposals/modbus-rtu-tcp-interop-evidence-kit.md`
+- `proposals/mpegdash-dashif-conformance-evidence-kit.md`
+- `proposals/mpi-typed.md`
+- `proposals/mqtt-conformance-interop-kit.md`
+- `proposals/mqtt-v5-interop-conformance-kit.md`
+- `proposals/msrv-workspace-lab.md`
+- `proposals/musicxml40-mei-interop-evidence-kit.md`
+- `proposals/native-deps-kit.md`
+- `proposals/nats-jetstream-interop-evidence-kit.md`
+- `proposals/nats-jetstream-interop-kit.md`
+- `proposals/netcdf-cf-opendap-interop-evidence-kit.md`
+- `proposals/netconf-yang-restconf-conformance-evidence-kit.md`
+- `proposals/network-cassette-impairment-kit.md`
+- `proposals/ngsild-smart-data-models-context-interop-workbench-kit.md`
+- `proposals/node-api-package-prebuild-contract-kit.md`
+- `proposals/nostr-interop-compliance-kit.md`
+- `proposals/nuget-native-interop-shipkit.md`
+- `proposals/oauth-oidc-interop-hardening-kit.md`
+- `proposals/observability-workbench-kit.md`
+- `proposals/ocfl-bagit-preservation-evidence-kit.md`
+- `proposals/oci-artifact-evidence-distribution-kit.md`
+- `proposals/oci-image-layout-registry-interop-kit.md`
+- `proposals/ocpi23-booking-afir-conformance-evidence-kit.md`
+- `proposals/ocpp-interop-certification-evidence-kit.md`
+- `proposals/odata402-csdl-conformance-replay-kit.md`
+- `proposals/ogcapi-features-cql2-conformance-evidence-kit.md`
+- `proposals/ohttp-deploy-interop-kit.md`
+- `proposals/oid4vc-interop-workbench-kit.md`
+- `proposals/omezarr-ngff-conformance-dataset-evidence-kit.md`
+- `proposals/onnx-onnxruntime-backendtest-conformance-replay-kit.md`
+- `proposals/onvif-rtsp-interop-evidence-kit.md`
+- `proposals/ooxml-opc-conformance-evidence-workbench-kit.md`
+- `proposals/opcua-conformance-interop-lab-kit.md`
+- `proposals/opcua-pubsub-uafx-interop-evidence-kit.md`
+- `proposals/open-namespace-migration-planner-kit.md`
+- `proposals/open-table-format-kit.md`
+- `proposals/openadr-demand-response-interop-evidence-kit.md`
+- `proposals/openapi-overlay-arazzo-workbench-kit.md`
+- `proposals/openapi-sdk-kit.md`
+- `proposals/openapi31-jsonschema-toolchain-kit.md`
+- `proposals/opencost-focus-finops-portability-evidence-kit.md`
+- `proposals/opendal-objectstore-capability-portability-kit.md`
+- `proposals/opendocument-odf-openformula-conformance-workbench-kit.md`
+- `proposals/opendrive-openscenario-replay-conformance-kit.md`
+- `proposals/openfeature-ofrep-conformance-incident-replay-kit.md`
+- `proposals/openfga-authorization-model-tuple-replay-kit.md`
+- `proposals/openid-federation-interop-evidence-kit.md`
+- `proposals/openlineage-marquez-facet-evidence-kit.md`
+- `proposals/openmetrics-exposition-conformance-kit.md`
+- `proposals/openpgp-wkd-autocrypt-policy-evidence-kit.md`
+- `proposals/openqasm3-qir-interop-evidence-kit.md`
+- `proposals/openrtb-adcom-interop-evidence-kit.md`
+- `proposals/openusd-core10-usdz-conformance-evidence-kit.md`
+- `proposals/openxr-cts-triage-evidence-kit.md`
+- `proposals/orc-interop-canonicalization-kit.md`
+- `proposals/oscal11-component-ssp-assessment-workbench-kit.md`
+- `proposals/otel-batteries-kit.md`
+- `proposals/otel-semconv-lint-gen-kit.md`
+- `proposals/otlp-interop-evidence-kit.md`
+- `proposals/parallel-front-end-parity-lab-kit.md`
+- `proposals/passkey-platform-kit.md`
+- `proposals/passkey-stack-kit.md`
+- `proposals/pdf-safe-kit.md`
+- `proposals/pdfa-pades-validation-evidence-workbench-kit.md`
+- `proposals/perfetto-trace-workbench-kit.md`
+- `proposals/pgwire-evidence-kit.md`
+- `proposals/pkcs11-hsm-interop-evidence-kit.md`
+- `proposals/pkcs11-keystore-attestation-kit.md`
+- `proposals/policy-as-code-workbench-kit.md`
+- `proposals/policy-kit.md`
+- `proposals/polonius-borrowck-transition-witness-kit.md`
+- `proposals/postgres-extension-shipkit.md`
+- `proposals/pprof-otel-profiling-parca-interop-workbench-kit.md`
+- `proposals/pq-hybrid-transport-kit.md`
+- `proposals/privacy-metrics-kit.md`
+- `proposals/proc-macro-sandbox-kit.md`
+- `proposals/profiling-evidence-bundle-kit.md`
+- `proposals/projection-reborrow-semantics-kit.md`
+- `proposals/protobuf-editions-protojson-transcoding-conformance-workbench-kit.md`
+- `proposals/public-api-readiness-bundle-kit.md`
+- `proposals/public-dependency-boundary-kit.md`
+- `proposals/python-wheel-abi-free-threading-shipkit.md`
+- `proposals/qlog-insights-viz-kit.md`
+- `proposals/quic-http3-interop-capture-kit.md`
+- `proposals/quic-http3-interop-qlog-lab-kit.md`
+- `proposals/r-package-native-shipkit.md`
+- `proposals/radius-eap-interop-evidence-kit.md`
+- `proposals/ratatui-test-snapshot-kit.md`
+- `proposals/rclrs-extras-kit.md`
+- `proposals/rdap-epp-registry-interop-evidence-kit.md`
+- `proposals/rdf12-sparql12-shacl12-conformance-evidence-kit.md`
+- `proposals/rdp-interop-evidence-kit.md`
+- `proposals/realtime-audiograph-kit.md`
+- `proposals/reapi-cas-remote-asset-interop-evidence-kit.md`
+- `proposals/rebuilder-network-kit.md`
+- `proposals/redfish-schema-service-interop-evidence-kit.md`
+- `proposals/relink-witness-kit.md`
+- `proposals/reproducible-build-evidence-kit.md`
+- `proposals/request-execution-policy-contract-kit.md`
+- `proposals/rinex-ntrip-replay-evidence-kit.md`
+- `proposals/riscv-architectural-tests-conformance-evidence-kit.md`
+- `proposals/riscv-emulation-conformance-kit.md`
+- `proposals/ro-crate-conformance-packaging-kit.md`
+- `proposals/ros2-workcell-kit.md`
+- `proposals/routing-security-workbench-kit.md`
+- `proposals/rpki-rov-interop-validation-kit.md`
+- `proposals/rubygems-native-extension-shipkit.md`
+- `proposals/run-record-kit.md`
+- `proposals/rust-android-mobile-kit.md`
+- `proposals/rust-conformance-harness-toolkit.md`
+- `proposals/rust-for-linux-stable-readiness-kit.md`
+- `proposals/rust-spec-witness-kit.md`
+- `proposals/rustc-public-analysis-workbench-kit.md`
+- `proposals/rustdoc-coverage-review-bundle-kit.md`
+- `proposals/rustdoc-json-kit.md`
+- `proposals/rustdoc-mergeable-info-handoff-kit.md`
+- `proposals/s3-interop-evidence-kit.md`
+- `proposals/safetensors-gguf-model-artifact-interop-workbench-kit.md`
+- `proposals/safety-contract-consumer-kit.md`
+- `proposals/saml-stack-kit.md`
+- `proposals/saml2-federation-xmlsec-evidence-kit.md`
+- `proposals/sanitizer-profile-evidence-kit.md`
+- `proposals/sarif-subset-baseline-evidence-kit.md`
+- `proposals/sbom-spdx3-cyclonedx-interop-canonicalization-kit.md`
+- `proposals/sbom-vex-workbench-kit.md`
+- `proposals/schedule-kit.md`
+- `proposals/schema-compatibility-workbench-kit.md`
+- `proposals/schema-evolution-workbench-kit.md`
+- `proposals/scim-provisioning-workbench-kit.md`
+- `proposals/scitt-transparency-kit.md`
+- `proposals/scoped-tasks.md`
+- `proposals/sd-jwt-vc-interop-workbench-kit.md`
+- `proposals/sdk-release-promise-drift-kit.md`
+- `proposals/sdmx3-conformance-canonicalization-kit.md`
+- `proposals/secrets-envelope-policy-kit.md`
+- `proposals/secrets-kit.md`
+- `proposals/secs-gem-interop-evidence-kit.md`
+- `proposals/secure-email-interop-shipkit.md`
+- `proposals/semver-api-diff-evidence-kit.md`
+- `proposals/sensitive-data-redaction-policy-kit.md`
+- `proposals/sensorthings-api-mqtt-conformance-replay-kit.md`
+- `proposals/service-readiness-drain-contract-kit.md`
+- `proposals/sigma-ocsf-detection-interop-workbench-kit.md`
+- `proposals/sigmf-vita49-soapysdr-replay-evidence-kit.md`
+- `proposals/sigstore-slsa-attestation-provenance-kit.md`
+- `proposals/simd-kernel-suite-kit.md`
+- `proposals/sip-sdp-rtp-interop-evidence-kit.md`
+- `proposals/sized-hierarchy-extern-type-readiness-kit.md`
+- `proposals/smb2-smb3-interop-evidence-kit.md`
+- `proposals/smpte-imf-opl-validation-evidence-kit.md`
+- `proposals/snmpv3-interop-evidence-kit.md`
+- `proposals/source-path-hygiene-debug-source-kit.md`
+- `proposals/sparse-registry-reference-server-kit.md`
+- `proposals/spdm-secured-messages-interop-evidence-kit.md`
+- `proposals/spiffe-identity-kit.md`
+- `proposals/sql-dialect-conformance-kit.md`
+- `proposals/sqlite-fileformat-integrity-evidence-kit.md`
+- `proposals/ssh-interop-evidence-kit.md`
+- `proposals/stable-plugin-host.md`
+- `proposals/stac-stacapi-validation-replay-kit.md`
+- `proposals/state-machine-replication-conformance-kit.md`
+- `proposals/stdx-curated.md`
+- `proposals/stix-taxii-interop-evidence-kit.md`
+- `proposals/structured-concurrency-standard-kit.md`
+- `proposals/substrait-flightsql-adbc-interop-workbench-kit.md`
+- `proposals/supply-chain-delivery-kit.md`
+- `proposals/target-dir-lease-shared-cache-kit.md`
+- `proposals/task-supervision-restart-kit.md`
+- `proposals/telemetry-kit.md`
+- `proposals/telemetry-schema-lint-kit.md`
+- `proposals/terraform-provider-rust-sdk-kit.md`
+- `proposals/test-run-artifact-standard-kit.md`
+- `proposals/text-input-kit.md`
+- `proposals/text-layout-conformance-kit.md`
+- `proposals/threedtiles11-implicittiling-metadata-conformance-evidence-kit.md`
+- `proposals/threemf-conformance-packaging-evidence-kit.md`
+- `proposals/threshold-signing-service-kit.md`
+- `proposals/time-sync-clock-discipline-kit.md`
+- `proposals/tls-x509-interop-evidence-kit.md`
+- `proposals/toolchain-target-support-contract-kit.md`
+- `proposals/tpm-keystore-attestation-kit.md`
+- `proposals/trait-hierarchy-evolution-migration-kit.md`
+- `proposals/trait-solver-drift-witness-kit.md`
+- `proposals/trust-lens.md`
+- `proposals/trusted-publishing-tooling-kit.md`
+- `proposals/tuf-conformance-evidence-kit.md`
+- `proposals/ubl-en16931-peppol-pint-conformance-evidence-kit.md`
+- `proposals/uefi-secure-boot-shipkit.md`
+- `proposals/ui-accessibility-kit.md`
+- `proposals/unedifact-syntax-directory-interop-evidence-kit.md`
+- `proposals/unsafe-contract-auditor-kit.md`
+- `proposals/unsafe-field-invariant-ledger-kit.md`
+- `proposals/uptane21-tuf-suit-deployment-evidence-kit.md`
+- `proposals/urdf-sdformat-xacro-loss-aware-interop-workbench-kit.md`
+- `proposals/usb-fuzzing-device-harness-kit.md`
+- `proposals/usb-hid-report-descriptor-usage-conformance-kit.md`
+- `proposals/usb-uvc-uac-interop-lab-kit.md`
+- `proposals/vcf45-bcf22-csi-tabix-interop-evidence-kit.md`
+- `proposals/vda5050-master-control-agv-interop-evidence-kit.md`
+- `proposals/verifiable-credentials-v2-interop-workbench-kit.md`
+- `proposals/verifiable-credentials-vc2-sd-jwt-interop-evidence-kit.md`
+- `proposals/verification-campaign-workbench-kit.md`
+- `proposals/vet-workbench.md`
+- `proposals/vss-vissv2-capability-replay-kit.md`
+- `proposals/warc-cdxj-wacz-webarchive-evidence-kit.md`
+- `proposals/wasm-component-artifact-conformance-kit.md`
+- `proposals/wasm-component-warmstart-kit.md`
+- `proposals/wasm-plugin-kit.md`
+- `proposals/wasm-portability-deployment-evidence-kit.md`
+- `proposals/web-push-vapid-ece-interop-evidence-kit.md`
+- `proposals/webauthn-passkeys-interop-device-lab-kit.md`
+- `proposals/webdriver-bidi-cdp-replay-diagnostics-kit.md`
+- `proposals/webextensions-mv3-capability-portability-kit.md`
+- `proposals/webgpu-cts-interop-triage-kit.md`
+- `proposals/webgpu-cts-triage-evidence-kit.md`
+- `proposals/webrtc-interop-conformance-evidence-kit.md`
+- `proposals/webrtc-sfu-media-router-kit.md`
+- `proposals/webtransport-interop-evidence-kit.md`
+- `proposals/webtransport-interop-shipkit.md`
+- `proposals/wifi-easy-connect-dpp-interop-evidence-kit.md`
+- `proposals/winit-web-ime-kit.md`
+- `proposals/wmo-grib2-bufr-interop-evidence-kit.md`
+- `proposals/wot-thing-description-binding-profile-interop-kit.md`
+- `proposals/xapi20-cmi5-conformance-replay-kit.md`
+- `proposals/xbrl-ixbrl-conformance-evidence-kit.md`
+- `proposals/xdg-desktop-portal-capability-portability-kit.md`
+- `proposals/xds-controlplane-interop-evidence-kit.md`
+- `proposals/xes-ocel2-pnml-process-mining-interop-workbench-kit.md`
+- `proposals/xr-app-framework-kit.md`
+- `proposals/zarr-v3-interop-canonicalization-kit.md`
+- `proposals/zero-copy-archive-safety-kit.md`
+- `proposals/zkvm-workbench-kit.md`
+
+## Entry autoindex (validator support)
+
+- `entries/2026-02-28.md`
+- `entries/2026-03-01-02.md`
+- `entries/2026-03-01-03.md`
+- `entries/2026-03-01-04.md`
+- `entries/2026-03-01-05.md`
+- `entries/2026-03-01-06.md`
+- `entries/2026-03-01-07.md`
+- `entries/2026-03-01-08.md`
+- `entries/2026-03-01-09.md`
+- `entries/2026-03-01-10.md`
+- `entries/2026-03-01-11.md`
+- `entries/2026-03-01-12.md`
+- `entries/2026-03-01-13.md`
+- `entries/2026-03-01-14.md`
+- `entries/2026-03-01-15.md`
+- `entries/2026-03-01-16.md`
+- `entries/2026-03-01-17.md`
+- `entries/2026-03-01-18.md`
+- `entries/2026-03-01.md`
+- `entries/2026-03-04-23-2.md`
+- `entries/2026-03-04-23-3.md`
+- `entries/2026-03-04-23.md`
+- `entries/2026-03-04.md`
+- `entries/2026-03-05-00-1.md`
+- `entries/2026-03-05-00.md`
+- `entries/2026-03-05-01.md`
+- `entries/2026-03-05-02.md`
+- `entries/2026-03-05-03.md`
+- `entries/2026-03-05-04.md`
+- `entries/2026-03-05-05.md`
+- `entries/2026-03-05-06.md`
+- `entries/2026-03-05-07.md`
+- `entries/2026-03-05-08.md`
+- `entries/2026-03-05-09.md`
+- `entries/2026-03-05-10.md`
+- `entries/2026-03-05-11.md`
+- `entries/2026-03-05-12.md`
+- `entries/2026-03-05-13.md`
+- `entries/2026-03-05-14.md`
+- `entries/2026-03-05-15.md`
+- `entries/2026-03-05-16.md`
+- `entries/2026-03-05-17.md`
+- `entries/2026-03-05-18.md`
+- `entries/2026-03-05-19.md`
+- `entries/2026-03-05-20.md`
+- `entries/2026-03-05-21.md`
+- `entries/2026-03-05-22.md`
+- `entries/2026-03-05-23.md`
+- `entries/2026-03-05-24.md`
+- `entries/2026-03-05-25.md`
+- `entries/2026-03-05-26.md`
+- `entries/2026-03-05-27.md`
+- `entries/2026-03-05-28.md`
+- `entries/2026-03-05-29.md`
+- `entries/2026-03-05-30.md`
+- `entries/2026-03-05-31.md`
+- `entries/2026-03-05-32.md`
+- `entries/2026-03-05-33.md`
+- `entries/2026-03-05-34.md`
+- `entries/2026-03-05-35.md`
+- `entries/2026-03-05-36.md`
+- `entries/2026-03-05-37.md`
+- `entries/2026-03-05-38.md`
+- `entries/2026-03-05-39.md`
+- `entries/2026-03-05-40.md`
+- `entries/2026-03-05-41.md`
+- `entries/2026-03-05-42.md`
+- `entries/2026-03-05-43.md`
+- `entries/2026-03-05-44.md`
+- `entries/2026-03-05-45.md`
+- `entries/2026-03-05-46.md`
+- `entries/2026-03-05-47.md`
+- `entries/2026-03-05-48.md`
+- `entries/2026-03-05-49.md`
+- `entries/2026-03-05-50.md`
+- `entries/2026-03-05-51.md`
+- `entries/2026-03-05-52.md`
+- `entries/2026-03-05-53.md`
+- `entries/2026-03-05-54.md`
+- `entries/2026-03-05-55.md`
+- `entries/2026-03-05-56.md`
+- `entries/2026-03-05-57.md`
+- `entries/2026-03-05-58.md`
+- `entries/2026-03-05-59.md`
+- `entries/2026-03-05-60.md`
+- `entries/2026-03-05-61.md`
+- `entries/2026-03-05-62.md`
+- `entries/2026-03-05-63.md`
+- `entries/2026-03-05-64.md`
+- `entries/2026-03-05-65.md`
+- `entries/2026-03-05-66.md`
+- `entries/2026-03-05-67.md`
+- `entries/2026-03-06-68.md`
+- `entries/2026-03-06-69.md`
+- `entries/2026-03-06-70.md`
+- `entries/2026-03-06-71.md`
+- `entries/2026-03-06-72.md`
+- `entries/2026-03-06-73.md`
+- `entries/2026-03-06-74.md`
+- `entries/2026-03-06-75.md`
+- `entries/2026-03-06-76.md`
+- `entries/2026-03-06-77.md`
+- `entries/2026-03-06-78.md`
+- `entries/2026-03-06-79.md`
+- `entries/2026-03-06-80.md`
+- `entries/2026-03-06-81.md`
+- `entries/2026-03-06-82.md`
+- `entries/2026-03-06-83.md`
+- `entries/2026-03-06-84.md`
+- `entries/2026-03-06-85.md`
+- `entries/2026-03-06-86.md`
+- `entries/2026-03-06-87.md`
+- `entries/2026-03-06-88.md`
+- `entries/2026-03-06-89.md`
+- `entries/2026-03-06-90.md`
+- `entries/2026-03-06-91.md`
+- `entries/2026-03-06-92.md`
+- `entries/2026-03-06-93.md`
+- `entries/2026-03-06-94.md`
+- `entries/2026-03-07-100.md`
+- `entries/2026-03-07-101.md`
+- `entries/2026-03-07-102.md`
+- `entries/2026-03-07-103.md`
+- `entries/2026-03-07-104.md`
+- `entries/2026-03-07-105.md`
+- `entries/2026-03-07-106.md`
+- `entries/2026-03-07-107.md`
+- `entries/2026-03-07-108.md`
+- `entries/2026-03-07-109.md`
+- `entries/2026-03-07-110.md`
+- `entries/2026-03-07-111.md`
+- `entries/2026-03-07-112.md`
+- `entries/2026-03-07-113.md`
+- `entries/2026-03-07-114.md`
+- `entries/2026-03-07-115.md`
+- `entries/2026-03-07-116.md`
+- `entries/2026-03-07-117.md`
+- `entries/2026-03-07-118.md`
+- `entries/2026-03-07-119.md`
+- `entries/2026-03-07-120.md`
+- `entries/2026-03-07-121.md`
+- `entries/2026-03-07-95.md`
+- `entries/2026-03-07-96.md`
+- `entries/2026-03-07-97.md`
+- `entries/2026-03-07-98.md`
+- `entries/2026-03-07-99.md`
+- `entries/2026-03-08-122.md`
+- `entries/2026-03-08-123.md`
+- `entries/2026-03-08-124.md`
+- `entries/2026-03-08-125.md`
+- `entries/2026-03-08-126.md`
+- `entries/2026-03-08-127.md`
+- `entries/2026-03-08-128.md`
+- `entries/2026-03-08-129.md`
+- `entries/2026-03-08-130.md`
+- `entries/2026-03-08-131.md`
+- `entries/2026-03-08-132.md`
+- `entries/2026-03-08-133.md`
+- `entries/2026-03-08-134.md`
+- `entries/2026-03-08-135.md`
+- `entries/2026-03-08-136.md`
+- `entries/2026-03-08-137.md`
+- `entries/2026-03-08-138.md`
+- `entries/2026-03-08-139.md`
+- `entries/2026-03-08-140.md`
+- `entries/2026-03-08-141.md`
+- `entries/2026-03-08-142.md`
+- `entries/2026-03-08-143.md`
+- `entries/2026-03-08-144.md`
+- `entries/2026-03-08-145.md`
+- `entries/2026-03-08-146.md`
+- `entries/2026-03-08-147.md`
+- `entries/2026-03-08-148.md`
+- `entries/2026-03-08-149.md`
+- `entries/2026-03-08-150.md`
+- `entries/2026-03-08-151.md`
+- `entries/2026-03-08-152.md`
+- `entries/2026-03-08-153.md`
+- `entries/2026-03-08-154.md`
+- `entries/2026-03-08-155.md`
+- `entries/2026-03-08-156.md`
+- `entries/2026-03-09-157.md`
+- `entries/2026-03-09-158.md`
+- `entries/2026-03-09-159.md`
+- `entries/2026-03-09-160.md`
+- `entries/2026-03-09-161.md`
+- `entries/2026-03-09-162.md`
+- `entries/2026-03-09-163.md`
+- `entries/2026-03-09-164.md`
+- `entries/2026-03-09-165.md`
+- `entries/2026-03-09-166.md`
+- `entries/2026-03-09-167.md`
+- `entries/2026-03-09-168.md`
+- `entries/2026-03-09-169.md`
+- `entries/2026-03-09-170.md`
+- `entries/2026-03-09-171.md`
+- `entries/2026-03-16-172.md`
+- `entries/2026-03-16-173.md`
+- `entries/2026-03-16-174.md`
+- `entries/2026-03-16-175.md`
+- `entries/2026-03-16-176.md`
+- `entries/2026-03-16-177.md`
+- `entries/2026-03-16-178.md`
+- `entries/2026-03-16-179.md`
+- `entries/2026-03-16-180.md`
+- `entries/2026-03-16-181.md`
+- `entries/2026-03-16-182.md`
+- `entries/2026-03-16-184.md`
+- `entries/2026-03-16-185.md`
+- `entries/2026-03-16-186.md`
+- `entries/2026-03-16-187.md`
+- `entries/2026-03-16-188.md`
+- `entries/2026-03-16-189.md`
+- `entries/2026-03-16-190.md`
+- `entries/2026-03-16-191.md`
+- `entries/2026-03-16-192.md`
+- `entries/2026-03-16-193.md`
+- `entries/2026-03-16-194.md`
+- `entries/2026-03-16-195.md`
+- `entries/2026-03-16-196.md`
+- `entries/2026-03-16-197.md`
+- `entries/2026-03-16-198.md`
+- `entries/2026-03-16-199.md`
+- `entries/2026-03-16-200.md`
+- `entries/2026-03-16-201.md`
+- `entries/2026-03-16-202.md`
+- `entries/2026-03-17-203.md`
+- `entries/2026-03-17-204.md`
+- `entries/2026-03-17-205.md`
+- `entries/2026-03-17-206.md`
+- `entries/2026-03-17-207.md`
+- `entries/2026-03-17-208.md`
+- `entries/2026-03-17-209.md`
+- `entries/2026-03-17-210.md`
+- `entries/2026-03-17-211.md`
+- `entries/2026-03-17-212.md`
+- `entries/2026-03-17-213.md`
+- `entries/2026-03-17-214.md`
+- `entries/2026-03-17-215.md`
+- `entries/2026-03-17-216.md`
+- `entries/2026-03-17-217.md`
+- `entries/2026-03-17-218.md`
+- `entries/2026-03-17-219.md`
+- `entries/2026-03-17-220.md`
+- `entries/2026-03-17-221.md`
+- `entries/2026-03-17-222.md`
+- `entries/2026-03-17-223.md`
+- `entries/2026-03-17-224.md`
+- `entries/2026-03-17-225.md`
+- `entries/2026-03-17-226.md`
+- `entries/2026-03-17-227.md`
+- `entries/2026-03-17-228.md`
+- `entries/2026-03-17-229.md`
+- `entries/2026-03-17-230.md`
+- `entries/2026-03-17-231.md`
+- `entries/2026-03-17-232.md`
+- `entries/2026-03-17-233.md`
+- `entries/2026-03-17-234.md`
+- `entries/2026-03-17-235.md`
+- `entries/2026-03-17-236.md`
+- `entries/2026-03-17-237.md`
+- `entries/2026-03-18-238.md`
+- `entries/2026-03-18-239.md`
+- `entries/2026-03-18-240.md`
+- `entries/2026-03-18-241.md`
+- `entries/2026-03-18-242.md`
+- `entries/2026-03-18-243.md`
+- `entries/2026-03-18-244.md`
+- `entries/2026-03-18-245.md`
+- `entries/2026-03-18-246.md`
+- `entries/2026-03-18-247.md`
+- `entries/2026-03-18-248.md`
+- `entries/2026-03-19-249.md`
+- `entries/2026-03-19-250.md`
+- `entries/2026-03-19-251.md`
+- `entries/2026-03-19-252.md`
+- `entries/2026-03-19-253.md`
+- `entries/2026-03-19-254.md`
+- `entries/2026-03-19-255.md`
+- `entries/2026-03-19-256.md`
+- `entries/2026-03-19-257.md`
+- `entries/2026-03-19-258.md`
+- `entries/2026-03-19-259.md`
+- `entries/2026-03-19-260.md`
+- `entries/2026-03-19-261.md`
+- `entries/2026-03-19-262.md`
+- `entries/2026-03-19-263.md`
+- `entries/2026-03-19-264.md`
+- `entries/2026-03-19-265.md`
+- `entries/2026-03-19-266.md`
+- `entries/2026-03-19-267.md`
+- `entries/2026-03-20-268.md`
+- `entries/2026-03-20-269.md`
+- `entries/2026-03-20-270.md`
+- `entries/2026-03-20-271.md`
+- `entries/2026-03-20-272.md`
+- `entries/2026-03-20-273.md`
+- `entries/2026-03-20-274.md`
+- `entries/2026-03-20-275.md`
+- `entries/2026-03-20-276.md`
+- `entries/2026-03-20-277.md`
+- `entries/2026-03-20-278.md`
+- `entries/2026-03-20-279.md`
+- `entries/2026-03-20-280.md`
+- `entries/2026-03-20-281.md`
+- `entries/2026-03-20-282.md`
+- `entries/2026-03-20-283.md`
+- `entries/2026-03-20-284.md`
+- `entries/2026-03-20-285.md`
+- `entries/2026-03-20-286.md`
+- `entries/2026-03-20-287.md`
+- `entries/2026-03-20-288.md`
+- `entries/2026-03-20-289.md`
+- `entries/2026-03-20-290.md`
+- `entries/2026-03-20-291.md`
+- `entries/2026-03-20-292.md`
+- `entries/2026-03-20-293.md`
+- `entries/2026-03-20-294.md`
+- `entries/2026-03-20-295.md`
+- `entries/2026-03-20-296.md`
+- `entries/2026-03-20-297.md`
+- `entries/2026-03-20-298.md`
+- `entries/2026-03-20-299.md`
+- `entries/2026-03-20-300.md`
+- `entries/2026-03-20-301.md`
+- `entries/2026-03-20-302.md`
+- `entries/2026-03-20-303.md`
+- `entries/2026-03-20-304.md`
+- `entries/2026-03-20-305.md`
+- `entries/2026-03-20-306.md`
+- `entries/2026-03-20-307.md`
+- `entries/2026-03-20-308.md`
+- `entries/2026-03-20-309.md`
+- `entries/2026-03-20-310.md`
+- `entries/2026-03-21-311.md`
+- `entries/2026-03-21-312.md`
+- `entries/2026-03-21-313.md`
+- `entries/2026-03-21-314.md`
+- `entries/2026-03-21-315.md`
+- `entries/2026-03-21-316.md`
+- `entries/2026-03-21-317.md`
+- `entries/2026-03-21-318.md`
+- `entries/2026-03-21-319.md`
+- `entries/2026-03-21-320.md`
+- `entries/2026-03-21-321.md`
+- `entries/2026-03-21-322.md`
+- `entries/2026-03-21-323.md`
+- `entries/2026-03-21-324.md`
+- `entries/2026-03-21-325.md`
+- `entries/2026-03-21-326.md`
+- `entries/2026-03-21-327.md`
+- `entries/2026-03-21-328.md`
+- `entries/2026-03-21-329.md`
+- `entries/2026-03-21-330.md`
+- `entries/2026-03-21-331.md`
+- `entries/2026-03-21-332.md`
+- `entries/2026-03-21-333.md`
+- `entries/2026-03-21-334.md`
+- `entries/2026-03-21-335.md`
+- `entries/2026-03-21-336.md`
+- `entries/2026-03-21-337.md`
+- `entries/2026-03-22-338.md`
+- `entries/2026-03-22-339.md`
+- `entries/2026-03-22-340.md`
+- `entries/2026-03-22-341.md`
+- `entries/2026-03-22-342.md`
+- `entries/2026-03-22-343.md`
+- `entries/2026-03-22-344.md`
+- `entries/2026-03-22-345.md`
+- `entries/2026-03-22-346.md`
+- `entries/2026-03-22-347.md`
+- `entries/2026-03-22-348.md`
+- `entries/2026-03-22-349.md`
+- `entries/2026-03-22-350.md`
+- `entries/2026-03-22-351.md`
+- `entries/2026-03-22-368.md`
+- `entries/2026-03-22-378.md`
+
+- `entries/2026-03-22-382.md`
+- `entries/2026-03-22-383.md`
+- `entries/2026-03-22-384.md`
+- `entries/2026-03-22-385.md`
+- `entries/2026-03-22-386.md`
+- `entries/2026-03-22-387.md`
+- `entries/2026-03-22-388.md`
+- `entries/2026-03-22-389.md`
+- `entries/2026-03-22-390.md`
+- `entries/2026-03-22-391.md`
+- `entries/2026-03-23-398.md`
+- `entries/2026-03-23-399.md`
+
+- **Entry 400** — `entries/2026-03-23-400.md` — workspace-boundary diagnosis deepened into ancestor-discovery, config-layering, and invocation-mode support artifacts
+
+
+- **Entry 404** — `entries/2026-03-23-404.md` — build-dir consumer transition deepened for consumer-need truth, adapter-authority receipts, windowed viability, and rehearsal bundles
+- `meta/cargo-build-dir-consumer-frontier-2026-03-23.md`
+- `meta/cargo-build-dir-consumer-adapter-authority-plan-2026-03-23.md`
+- `meta/cargo-build-dir-consumer-need-boundaries-2026-03-23.md`
+- `fixtures/cargo-build-dir-consumer-transition-kit/consumer-need.report.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/adapter-authority.receipt.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/windowed-viability.matrix.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/rehearsal-support-bundle.manifest.schema.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/bin_path_from_test_inference/consumer-need.report.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/bin_path_from_test_inference/adapter-authority.receipt.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/bin_path_from_test_inference/windowed-viability.matrix.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/target_dir_from_out_dir_inference/consumer-need.report.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/target_dir_from_out_dir_inference/adapter-authority.receipt.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/rustc_user_requested_artifact_lookup/consumer-need.report.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/rustc_user_requested_artifact_lookup/adapter-authority.receipt.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/rustc_user_requested_artifact_lookup/windowed-viability.matrix.example.json`
+- `fixtures/cargo-build-dir-consumer-transition-kit/scenarios/new_layout_rehearsal/rehearsal-support-bundle.manifest.example.json`
+
+
+- **Entry 405** — `entries/2026-03-23-405.md` — compile-time containment deepened for ambient-input receipts, sanitization modes, launcher-route honesty, and portable containment bundles
+- `meta/cargo-sandbox-ambient-input-frontier-2026-03-23.md`
+- `meta/cargo-sandbox-ambient-input-plan-2026-03-23.md`
+- `meta/cargo-sandbox-sanitization-boundaries-2026-03-23.md`
+- `fixtures/cargo-sandbox-capability-policy-kit/ambient-input.receipt.schema.json`
+- `fixtures/cargo-sandbox-capability-policy-kit/sanitization-mode.receipt.schema.json`
+- `fixtures/cargo-sandbox-capability-policy-kit/launcher-route.receipt.schema.json`
+- `fixtures/cargo-sandbox-capability-policy-kit/scenarios/parent_env_requires_explicit_whitelist_and_path_story/ambient-input.receipt.example.json`
+- `fixtures/cargo-sandbox-capability-policy-kit/scenarios/parent_env_requires_explicit_whitelist_and_path_story/sanitization-mode.receipt.example.json`
+- `fixtures/cargo-sandbox-capability-policy-kit/scenarios/host_flags_bleed_without_target_split_changes_actor_ingress/ambient-input.receipt.example.json`
+- `fixtures/cargo-sandbox-capability-policy-kit/scenarios/build_script_can_influence_later_proc_macro_wrapper_route/launcher-route.receipt.example.json`
+- `fixtures/cargo-sandbox-capability-policy-kit/scenarios/global_runner_config_rejects_project_local_opt_out/sanitization-mode.receipt.example.json`
+- `fixtures/cargo-sandbox-capability-policy-kit/scenarios/portable_bundle_joins_policy_capabilities_ingress_and_route/sandbox-support-bundle.manifest.example.json`
+
+
+- **Entry 406** — `entries/2026-03-23-406.md` — FFI boundary support deepened for callback-authority receipts, callback-completion truth, and portable callback support bundles
+
+- **Entry 407** — `entries/2026-03-23-407.md` — Cargo SBOM precursor work deepened for capture-route truth, artifact-coverage reports, claim ceilings, and portable workbench bundles
+- `meta/cargo-sbom-precursor-frontier-2026-03-23.md`
+- `meta/cargo-sbom-precursor-product-plan-2026-03-23.md`
+- `meta/cargo-sbom-precursor-coverage-boundaries-2026-03-23.md`
+- `fixtures/cargo-sbom-precursor-workbench-kit/capture-route.receipt.schema.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/artifact-coverage.report.schema.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/coverage-ceiling.report.schema.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/sbom-workbench-bundle.manifest.schema.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/scenarios/direct_build_capture_uses_env_and_stream_routes_without_directory_guessing/capture-route.receipt.example.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/scenarios/rlib_only_member_is_not_missing_precursor_if_output_is_not_eligible/artifact-coverage.report.example.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/scenarios/rlib_only_member_is_not_missing_precursor_if_output_is_not_eligible/coverage-ceiling.report.example.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/scenarios/imported_artifact_dir_copy_cannot_prove_same_invocation_generation/capture-route.receipt.example.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/scenarios/imported_artifact_dir_copy_cannot_prove_same_invocation_generation/coverage-ceiling.report.example.json`
+- `fixtures/cargo-sbom-precursor-workbench-kit/scenarios/portable_bundle_keeps_route_coverage_and_ceiling_separate/sbom-workbench-bundle.manifest.example.json`
+- `meta/ffi-boundary-callback-frontier-2026-03-23.md`
+- `meta/ffi-boundary-callback-product-plan-2026-03-23.md`
+- `meta/ffi-boundary-callback-lane-boundaries-2026-03-23.md`
+- `fixtures/ffi-boundary-conformance-kit/callback-authority.receipt.schema.json`
+- `fixtures/ffi-boundary-conformance-kit/callback-completion.report.schema.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/uniffi_foreign_future_requires_exactly_once_completion_story/callback-authority.receipt.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/uniffi_foreign_future_requires_exactly_once_completion_story/callback-completion.report.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/diplomat_callback_param_is_not_bidirectional_trait_surface/callback-authority.receipt.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/cxx_async_oneshot_adapter_is_not_native_async_surface/callback-authority.receipt.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/cxx_async_oneshot_adapter_is_not_native_async_surface/callback-completion.report.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/uniffi_foreign_trait_unexpected_error_mapping_must_not_stay_implicit/callback-completion.report.example.json`
+- `fixtures/ffi-boundary-conformance-kit/scenarios/portable_bundle_keeps_callback_authority_completion_and_lifecycle_separate/ffi-support-bundle.manifest.example.json`
+
+- **Entry 417** — `entries/2026-03-23-417.md` — compile-iteration deepened for edit-scope receipts, fast-path barrier reports, and invalidation honesty
+- `meta/frontier-salience-2026-03-23-209.md`
+- `meta/compile-iteration-feedback-invalidation-plan-2026-03-23.md`
+- `meta/compile-iteration-feedback-edit-scope-boundaries-2026-03-23.md`
+- `fixtures/compile-iteration-feedback-kit/edit-scope.receipt.schema.json`
+- `fixtures/compile-iteration-feedback-kit/fast-path-barrier.report.schema.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/dioxus_dependency_edit_falls_outside_tip_crate_hotpatch/edit-scope.receipt.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/dioxus_dependency_edit_falls_outside_tip_crate_hotpatch/fast-path-barrier.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_struct_layout_change_requires_reinstancing_or_restart/edit-scope.receipt.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/subsecond_struct_layout_change_requires_reinstancing_or_restart/fast-path-barrier.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/interface_preserving_private_edit_still_cascades_rebuilds_today/edit-scope.receipt.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/interface_preserving_private_edit_still_cascades_rebuilds_today/fast-path-barrier.report.example.json`
+- `fixtures/compile-iteration-feedback-kit/scenarios/portable_bundle_keeps_edit_scope_barrier_and_readiness_separate/iteration-support-bundle.manifest.example.json`
+- **Entry 431** — `entries/2026-03-23-431.md` — concurrency-contract deepened around late-joiner admission, join-start baseline, and observer-horizon honesty
+- `meta/frontier-salience-2026-03-23-222.md`
+- `meta/concurrency-contract-join-horizon-plan-2026-03-23.md`
+- `meta/concurrency-contract-join-horizon-boundaries-2026-03-23.md`
+- `fixtures/concurrency-contract-kit/late-joiner-admission.report.schema.json`
+- `fixtures/concurrency-contract-kit/join-start.report.schema.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_subscribe_starts_with_future_sends_only/late-joiner-admission.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_broadcast_resubscribe_starts_from_current_tail_not_old_queue/join-start.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_watch_subscribe_starts_with_current_value_marked_seen/join-start.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_notify_one_can_seed_one_future_waiter/join-start.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_notify_waiters_has_no_future_joiner_memory/late-joiner-admission.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_mpsc_fixed_receiver_cohort_has_no_late_joiner_route/late-joiner-admission.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/tokio_oneshot_fixed_pair_has_no_late_joiner_route/join-start.report.example.json`
+- `fixtures/concurrency-contract-kit/scenarios/portable_bundle_keeps_join_admission_and_join_start_separate/concurrency-support-bundle.manifest.example.json`

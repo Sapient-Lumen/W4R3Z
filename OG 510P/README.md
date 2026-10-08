@@ -26,4 +26,36 @@ Selected older work of sandpeople, organized by project. Original ZIPs and separ
 
 - [AI-EDU](AI-EDU/): 4 selected snapshots covering learner continuity, repair and bounded teacher/tutor workflow design.
 
+- [Parables](Parables/): 7 supplied snapshots with original files, reading guidance and preservation notes.
+
+- [EvidenceVault](EvidenceVault/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [Lacuna](Lacuna/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [MissingKnowledgeHalf](MissingKnowledgeHalf/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [PoliceMisconduct](PoliceMisconduct/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [DeathVocab](DeathVocab/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [Goldenrule](Goldenrule/): 2 supplied snapshots with original files, reading guidance and preservation notes.
+
+- [Righteousness](Righteousness/): 2 supplied snapshots with original files, reading guidance and preservation notes.
+
+- [The-Good](The-Good/): 2 supplied snapshots with original files, reading guidance and preservation notes.
+
+- [Metaphysics](Metaphysics/): 2 supplied snapshots with original files, reading guidance and preservation notes.
+
+- [LLMPoetry](LLMPoetry/): 2 supplied snapshots with original files, reading guidance and preservation notes.
+
+- [Rust-Crate-Dreams](Rust-Crate-Dreams/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [Rust-Needs-and-Dreams](Rust-Needs-and-Dreams/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [Nicotine+DEV](Nicotine%2BDEV/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [Nicotine-i2pDHT](Nicotine-i2pDHT/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
+- [Nicotineplusplusplus](Nicotineplusplusplus/): 1 supplied snapshot with original files, reading guidance and preservation notes.
+
 Each project has its own reading guide and provenance. Existing license notices remain applicable; no new blanket license is granted here.

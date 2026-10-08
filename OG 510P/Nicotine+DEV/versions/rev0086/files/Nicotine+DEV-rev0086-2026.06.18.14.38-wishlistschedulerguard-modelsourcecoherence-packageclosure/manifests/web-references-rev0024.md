@@ -1,0 +1,4 @@
+- Soulseek Protocol Documentation: https://nicotine-plus.org/doc/SLSKPROTOCOL.html — message definitions for FolderContentsRequest/Response, TransferRequest, QueueUpload, PlaceInQueueRequest/Response
+- PR #3741 PeerMessage: parse_virtual_path(): https://github.com/nicotine-plus/nicotine-plus/pull/3741 — public-adjacent virtual path/component validation overlap
+- Discussion #1997: https://github.com/nicotine-plus/nicotine-plus/discussions/1997 — public-adjacent repeated QueueUpload/PlaceInQueueRequest logs
+- Issue #2978: https://github.com/nicotine-plus/nicotine-plus/issues/2978 — public-adjacent connection/transfer debug context

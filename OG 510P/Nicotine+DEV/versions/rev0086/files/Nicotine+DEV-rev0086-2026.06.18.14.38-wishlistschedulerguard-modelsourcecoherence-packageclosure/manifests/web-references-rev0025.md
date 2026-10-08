@@ -1,0 +1,6 @@
+- Soulseek Protocol Documentation: https://nicotine-plus.org/doc/SLSKPROTOCOL.html — packing definitions for strings/bytes and server/peer/distributed message framing context.
+- Nicotine+ Release Notes: https://nicotine-plus.org/NEWS.html — 3.3.11 RC public/upstream-adjacent parser hardening, including maximum uncompressed network-message sizes.
+- GitHub issue search: https://github.com/nicotine-plus/nicotine-plus/issues?q=%22truncated%22+%22unpack_string%22 — captured no direct issue results for exact truncated unpack_string search.
+- GitHub issue search: https://github.com/nicotine-plus/nicotine-plus/issues?q=%22message+length%22+%22message+code%22 — captured no direct issue results for exact frame length/code search.
+- GitHub issue search: https://github.com/nicotine-plus/nicotine-plus/issues?q=%22MAX_INCOMING_MESSAGE_SIZE%22 — captured no direct issue results for exact source constant search.
+- Discussion #3473: https://github.com/nicotine-plus/nicotine-plus/discussions/3473 — broad public context for Soulseek peer-init/custom network-layer complexity; not a direct U-137/U-175 match.

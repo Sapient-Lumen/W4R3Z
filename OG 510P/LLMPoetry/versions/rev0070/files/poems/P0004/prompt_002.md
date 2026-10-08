@@ -1,0 +1,5 @@
+# P0004-D002 Prompt — No Appeal on File
+
+Revise only after a delayed cold review of P0004-D001. Do not polish the single explicit-whiteout demonstration. Replace it with an actual two-layer OCI image layout whose lower layer contains several distinct appeal records. In the upper layer, add a status file saying `NO APPEAL ON FILE` and one opaque whiteout for the appeal directory. Place the opaque marker after the status file in tar order so correctness depends on the OCI rule that whiteouts affect only lower layers and are applied before same-layer additions regardless of encounter order.
+
+The merged filesystem must retain the status while hiding all lower appeal records and the marker itself. Both content-addressed layers must remain manifest-required. The layout must be deterministic, closed-world, and locally checkable without host extraction. Preserve D001 bytes, P0003-D004 frozen candidate bytes, and P0002-D010's empty response log. D002 is same-turn unjudged; make no admission, evidence, reader-response, or quality claim.

@@ -1,0 +1,70 @@
+# EvidenceVault rev0843 session review: source-index subprocess and publish-output hardening
+
+Created: 2026-06-12T19:28:30-04:00 America/New_York
+
+Scope: targeted overlay work over rev0842. This revision intentionally favors two concrete failure-reduction changes over expanding registries or doctrine surfaces.
+
+## Substantive changes
+
+### rev0843-w01-source-index-subprocess-json-handoff
+
+Risk: build_source_index.py was still imported/run in the long-lived rebuild_indexes.py coordinator, preserving the shared-interpreter failure surface that rev0839/rev0842 were trying to remove.
+
+Change: rebuild_indexes.py now runs build_source_index.py through run_material_builder_subprocess() and then validates SOURCE_INDEX.json/SOURCE_INDEX.md as a concrete handoff before downstream refreshes.
+
+Status: `validated_with_static_and_fixture_probes`
+
+Evidence:
+
+- `scripts/rebuild_indexes.py`
+- `scripts/validate_rebuild_indexes_source_index_subprocess_rev0843.py`
+- `AUDIT/REBUILD_INDEXES_SOURCE_INDEX_SUBPROCESS_REV0843.json`
+
+### rev0843-w02-publish-queue-atomic-output-rollback
+
+Risk: Once rights are eventually approved, publish_queue_item.py could write some public release outputs and then fail during queue transition, leaving a half-published surface for an operator to clean up manually.
+
+Change: publish_queue_item.py now writes snapshot/record/note outputs via same-directory temporary files and os.replace(), checks snapshot pre-existence, and removes newly created outputs on ordinary transition failure.
+
+Status: `validated_with_rights-ready_temp_fixtures`
+
+Evidence:
+
+- `scripts/publish_queue_item.py`
+- `scripts/validate_publish_queue_item_atomic_outputs_rev0843.py`
+- `AUDIT/PUBLISH_QUEUE_ITEM_ATOMIC_OUTPUTS_REV0843.json`
+
+### rev0843-w03-audit-refresh
+
+Risk: Existing safety audits could become misleading after the source-index and queue-publisher code changed.
+
+Change: Refreshed the rev0839 rebuild-index subprocess audit and the rev0840 preflight/dry-run audit where the partial overlay can do so safely; added new rev0843 audits for the two concrete changes.
+
+Status: `targeted_audits_refreshed_or_superseded`
+
+Evidence:
+
+- `AUDIT/REBUILD_INDEXES_SUBPROCESS_REFRESH_REV0839.json`
+- `AUDIT/PUBLICATION_PREFLIGHT_DRY_RUN_SAFETY_REV0840.json`
+- `AUDIT/REBUILD_INDEXES_SOURCE_INDEX_SUBPROCESS_REV0843.json`
+- `AUDIT/PUBLISH_QUEUE_ITEM_ATOMIC_OUTPUTS_REV0843.json`
+
+## Targeted validation
+
+- `python3 -m py_compile scripts/*.py`
+- `python3 scripts/validate_rebuild_indexes_source_index_subprocess_rev0843.py`
+- `python3 scripts/validate_publish_queue_item_atomic_outputs_rev0843.py`
+- `python3 scripts/validate_publication_preflight_dry_run_safety_rev0840.py`
+- `python3 scripts/validate_publication_rights_gate_fresh_scan_rev0842.py`
+- `python3 scripts/publication_rights_gate.py --context rev0843-overlay-probe (expected refusal)`
+
+## Remaining risk
+
+- Publication remains blocked pending owner/upstream rights decisions and root/component LICENSE/NOTICE material.
+- The overlay validator fixtures do not replace a full canonical make rebuild-indexes / make gate run after patch application.
+- publish_queue_item.py rollback is best-effort for ordinary subprocess/Python failures; it is not a durable multi-file transaction against process kill or storage failure.
+- Historical rev0838 publication-entrypoint audit surfaces are carried forward as historical evidence; rev0843 adds a narrower current audit for publish_queue_item atomic output behavior.
+
+## Next practical move
+
+After applying this overlay to the full canonical tree, run make rebuild-indexes/gate and then focus on the human rights-resolution package: root LICENSE/NOTICE, component license conclusions, and SPDX/RO-Crate refresh from that source of truth.

@@ -1,0 +1,10 @@
+# Audited backlog addendum — rev0051
+
+Rev0051 follows the rev0050 queue by adding source anchors for filing review and keeping newer-upstream refresh as the next prerequisite before external action.
+
+|rank|row|status|note|
+|---|---|---|---|
+|1|newer-upstream-source-refresh|recommended-before-external-filing|rev0051 adds line-level anchors against archived rev0003 source; external filing should still refresh against current upstream source checkout.|
+|2|maintainer-filing-source-anchor-review|recommended|Use handoff/rev0051 source anchor capsules with rev0050 claim capsules.|
+|3|PUBLIC-PATH-JOIN-PR-3781|public-watch-only|Continue monitoring public path traversal PR; do not promote into private packet set.|
+|4|new cube discovery|defer|No new private row opened in rev0051.|

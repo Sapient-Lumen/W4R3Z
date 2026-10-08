@@ -1,0 +1,3 @@
+# 394-service-lease-and-session-ledger.md
+
+rev0039 continuityjournal probeloop successionrepair servicelease sessionledger serviceepochledger servicehandoffledger serviceepochfold serviceoperabilityfold continuityjournalfold.

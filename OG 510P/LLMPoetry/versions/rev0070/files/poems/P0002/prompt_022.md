@@ -1,0 +1,3 @@
+# Prompt — P0002-D022 — Stamping or Designation
+
+After cold-reviewing D021 as useful but softened by rain/weather metaphor, remove rain as the central conceit. Preserve NOAA benchmark facts for station 8518750 in packet/disclosure space: primary benchmark stamping NO 7 1975, designation 851 8750 TIDAL 7, concrete loading dock, blue brick guard house, staff behind the Inspection Office, MLLW/MHW benchmark elevation context, Station Datum / first tide staff, and the local date=latest runtime gap. In the poem body, test the source phrase `Stamping or Designation`: one name is on the object, one name is in the table. Do not promote same-turn.

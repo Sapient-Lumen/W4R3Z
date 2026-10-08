@@ -1,0 +1,384 @@
+#!/usr/bin/env python3
+"""Rebuild INDEX/files.{json,csv} and MANIFEST.sha256 for EvidenceVault.
+
+Design goal: produce a stable MANIFEST that covers all files (except itself) without
+self-referential hash loops.
+
+- INDEX lists *all files except* MANIFEST.sha256 and INDEX/files.{json,csv}.
+  (Those two index files are convenience outputs; including them inside INDEX would
+  require a self-referential fixed point.)
+- MANIFEST.sha256 lists sha256 and relative path for every file *except* MANIFEST.sha256.
+
+Usage:
+  python3 scripts/rebuild_indexes.py
+"""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import inspect
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+from build_source_index import build_source_index
+
+ROOT = Path(__file__).resolve().parents[1]
+INDEX_DIR = ROOT / "INDEX"
+INDEX_DIR.mkdir(exist_ok=True)
+EXTRACTION_MAP = ROOT / "papers" / "EXTRACTION_MAP.json"
+CORE_JSONS = [
+    EXTRACTION_MAP,
+    ROOT / "OPENING_CONTRACT.json",
+    ROOT / "CURRENT_FRONTIER.json",
+    ROOT / "SOURCE_INDEX.json",
+    ROOT / "OPENING_SURFACE_CONFORMANCE.json",
+    ROOT / "REVISION_RECEIPT.json",
+    ROOT / "VALIDATION_INDEX.json",
+    ROOT / "CLAIM_OBLIGATION_MAP.json",
+    ROOT / "RFC_INDEX.json",
+    ROOT / "CONTROL_SURFACES.json",
+    ROOT / "LIFECYCLE_GATES.json",
+    ROOT / "RELEASE_MANIFEST.json",
+    ROOT / "ARCHIVE_INDEX.json",
+    ROOT / "TOOLCHAIN_LOCK.json",
+    ROOT / "COMMAND_RUNNER_SEQUENCE.json",
+    ROOT / "publishing" / "CANONICAL_POLICY.json",
+]
+
+EXCLUDE_FROM_INDEX = {
+    "MANIFEST.sha256",
+    "INDEX/files.json",
+    "INDEX/files.csv",
+}
+EXCLUDE_FROM_MANIFEST = {"MANIFEST.sha256"}
+
+
+def sha256_file(p: Path) -> str:
+    h = hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def file_count(root: Path) -> int:
+    return sum(1 for p in root.rglob("*") if p.is_file())
+
+
+def refresh_release_manifest_identity() -> None:
+    """Refresh release identity digests before rebuilding INDEX/MANIFEST.
+
+    This keeps `make gate` and `make rebuild-indexes` from leaving a stale
+    RELEASE_MANIFEST.json digest row after revision metadata or generated
+    source-index surfaces change.
+    """
+    path = ROOT / "RELEASE_MANIFEST.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["repo_root"] = ROOT.name
+    data["file_count"] = file_count(ROOT)
+    data["identity_digests"] = {
+        "revision_receipt_sha256": sha256_file(ROOT / data["revision_receipt"]),
+        "opening_contract_sha256": sha256_file(ROOT / data["opening_contract"]),
+        "revision_anchors_sha256": sha256_file(ROOT / data["revision_anchors"]),
+        "context_pack_sha256": sha256_file(ROOT / "CONTEXT_PACK.json"),
+        "agents_sha256": sha256_file(ROOT / data["agent_contract"]),
+        "makefile_sha256": sha256_file(ROOT / data["command_surface"]),
+        "source_index_json_sha256": sha256_file(ROOT / data["source_index_json"]),
+        "current_frontier_json_sha256": sha256_file(ROOT / data["current_frontier_json"]),
+        "validation_index_json_sha256": sha256_file(ROOT / data["validation_index_json"]),
+        "assimilation_ledger_json_sha256": sha256_file(ROOT / "ASSIMILATION_LEDGER.json"),
+        "adr_index_json_sha256": sha256_file(ROOT / data["adr_index_json"]),
+        "rfc_index_json_sha256": sha256_file(ROOT / data["rfc_index_json"]),
+        "archive_index_json_sha256": sha256_file(ROOT / data["archive_index_json"]),
+        "control_surfaces_sha256": sha256_file(ROOT / "CONTROL_SURFACES.json"),
+        "lifecycle_gates_sha256": sha256_file(ROOT / "LIFECYCLE_GATES.json"),
+        "artifact_index_json_sha256": sha256_file(ROOT / "artifacts" / "ARTIFACTS_INDEX.json"),
+        "cert_index_json_sha256": sha256_file(ROOT / "certs" / "CERTS_INDEX.json"),
+        "toolchain_lock_json_sha256": sha256_file(ROOT / "TOOLCHAIN_LOCK.json"),
+        "claim_obligation_map_json_sha256": sha256_file(ROOT / "CLAIM_OBLIGATION_MAP.json"),
+        "public_status_json_sha256": sha256_file(ROOT / "PUBLIC_STATUS.json"),
+        "command_runner_sequence_json_sha256": sha256_file(ROOT / "COMMAND_RUNNER_SEQUENCE.json"),
+        "release_artifact_verifier_sha256": sha256_file(ROOT / data["release_artifact_verifier"]),
+        "release_artifact_verifier_validator_sha256": sha256_file(ROOT / data["release_artifact_verifier_validator"]),
+        "release_manifest_schema_sha256": sha256_file(ROOT / data["release_manifest_schema"]),
+        "archive_identity_validator_sha256": sha256_file(ROOT / data["archive_identity_validator"]),
+        "ro_crate_metadata_schema_sha256": sha256_file(ROOT / data["ro_crate_metadata_schema"]),
+        "ro_crate_metadata_validator_sha256": sha256_file(ROOT / data["ro_crate_metadata_validator"]),
+    }
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+
+RO_CRATE_REQUIRED_HAS_PARTS = [
+    'RELEASE_MANIFEST.json',
+    'REVISION_RECEIPT.json',
+    'REVISION_ANCHORS.json',
+    'VALIDATION_INDEX.json',
+    'CLAIM_OBLIGATION_MAP.json',
+    'PUBLIC_STATUS.json',
+    'TOOLCHAIN_LOCK.json',
+    'COMMAND_RUNNER_SEQUENCE.json',
+    'SOURCE_INDEX.json',
+    'ARCHIVE_INDEX.json',
+    'CONTROL_SURFACES.json',
+    'LIFECYCLE_GATES.json',
+    'papers/EXTRACTION_MAP.json',
+    'published/PUBLIC_SURFACE.json',
+    'MANIFEST.sha256',
+    'INDEX/files.json',
+    'ev_acceptability_kernel.pdf',
+    'ev_interpretation_profiles.pdf',
+    'ev_streamfold.pdf',
+    'ev_zkrtp.pdf',
+    'ev_pact_ocf.pdf',
+    'sources/',
+    'artifacts/',
+    'certs/',
+    'published/',
+]
+RO_CRATE_DIGESTED_FILE_ENTITIES = [
+    'RELEASE_MANIFEST.json',
+    'REVISION_RECEIPT.json',
+    'REVISION_ANCHORS.json',
+    'VALIDATION_INDEX.json',
+    'CLAIM_OBLIGATION_MAP.json',
+    'PUBLIC_STATUS.json',
+    'TOOLCHAIN_LOCK.json',
+    'COMMAND_RUNNER_SEQUENCE.json',
+    'SOURCE_INDEX.json',
+    'ARCHIVE_INDEX.json',
+    'CONTROL_SURFACES.json',
+    'LIFECYCLE_GATES.json',
+    'papers/EXTRACTION_MAP.json',
+    'published/PUBLIC_SURFACE.json',
+    'ev_acceptability_kernel.pdf',
+    'ev_interpretation_profiles.pdf',
+    'ev_streamfold.pdf',
+    'ev_zkrtp.pdf',
+    'ev_pact_ocf.pdf',
+]
+
+
+def refresh_ro_crate_metadata() -> None:
+    """Refresh the RO-Crate bridge after release-manifest identity moves.
+
+    The RO-Crate bridge carries digests for selected governance files, including
+    RELEASE_MANIFEST.json.  Refresh it here so rebuild-indexes cannot leave the
+    external research-object bridge stale after identity digests are rewritten.
+    """
+    path = ROOT / 'ro-crate-metadata.json'
+    if not path.exists():
+        return
+    crate = json.loads(path.read_text(encoding='utf-8'))
+    graph = crate.get('@graph', [])
+    entities = {entity.get('@id'): entity for entity in graph if isinstance(entity, dict)}
+    receipt = json.loads((ROOT / 'REVISION_RECEIPT.json').read_text(encoding='utf-8'))
+    manifest = json.loads((ROOT / 'RELEASE_MANIFEST.json').read_text(encoding='utf-8'))
+    root = entities.get('./')
+    if isinstance(root, dict):
+        root['name'] = f"EvidenceVault {receipt['revision']}"
+        root['version'] = receipt['revision']
+        root['identifier'] = manifest['archive_name']
+        root['datePublished'] = receipt['date']
+        root['hasPart'] = [{'@id': rel} for rel in RO_CRATE_REQUIRED_HAS_PARTS]
+    for rel in RO_CRATE_REQUIRED_HAS_PARTS:
+        if rel not in entities:
+            ent = {'@id': rel, '@type': 'Dataset' if rel.endswith('/') else 'File', 'name': rel.rstrip('/')}
+            graph.append(ent)
+            entities[rel] = ent
+    for rel in RO_CRATE_DIGESTED_FILE_ENTITIES:
+        ent = entities[rel]
+        target = ROOT / rel
+        ent['@type'] = 'File'
+        ent['contentSize'] = str(target.stat().st_size)
+        ent['sha256'] = sha256_file(target)
+        ent.setdefault('encodingFormat', 'application/json' if rel.endswith('.json') else 'application/pdf' if rel.endswith('.pdf') else 'text/plain')
+    for rel in ('MANIFEST.sha256', 'INDEX/files.json'):
+        ent = entities.get(rel)
+        if isinstance(ent, dict):
+            ent.pop('sha256', None)
+            ent.pop('contentSize', None)
+    path.write_text(json.dumps(crate, indent=2) + '\n', encoding='utf-8')
+    try:
+        from validate_ro_crate_metadata import render_markdown
+        (ROOT / 'RO_CRATE_PROFILE.md').write_text(render_markdown(crate), encoding='utf-8')
+    except Exception as exc:
+        raise RuntimeError(f'failed to refresh RO_CRATE_PROFILE.md: {exc}') from exc
+
+
+
+def refresh_cycle_safe_material_surfaces() -> None:
+    """Refresh generated audit/rights/SBOM surfaces before final INDEX/MANIFEST.
+
+    These surfaces are content-derived and should not rot during the normal
+    release refresh path. They intentionally exclude MANIFEST.sha256 and
+    INDEX/files.* where needed, so running them before final index/manifest
+    emission does not create a digest fixed-point problem.
+    """
+    builders = [
+        # Asset indexes are release-identity inputs, so refresh them before
+        # RELEASE_MANIFEST.json identity digests are recomputed.
+        ("build_asset_indexes", "main"),
+        ("build_release_refresh_asset_index_audit_rev0834", "main"),
+        ("build_upstream_retention_coverage", "main"),
+        ("build_absolute_path_reference_audit", "main"),
+        ("build_path_reference_shape_audit", "main"),
+        ("build_external_license_evidence_candidates_rev0834", "main"),
+        ("build_rights_evidence_scan", "main"),
+        ("build_license_reference_integrity_audit", "main"),
+        ("build_rights_readiness", "main"),
+        ("build_publication_rights_gate_audit_rev0837", "main"),
+        ("build_publication_entrypoint_rights_gate_audit_rev0838", "main"),
+        ("build_publication_state_transition_rights_gate_audit_rev0839", "main"),
+        ("build_publication_preflight_dry_run_safety_audit_rev0840", "main"),
+        ("build_rebuild_indexes_subprocess_refresh_audit_rev0839", "main"),
+    ]
+    env = os.environ.copy()
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+    env['PYTHONUNBUFFERED'] = '1'
+    for module_name, entrypoint in builders:
+        if entrypoint != 'main':
+            raise RuntimeError(f"unsupported material-surface entrypoint for subprocess refresh: {module_name}.{entrypoint}")
+        script = ROOT / 'scripts' / f'{module_name}.py'
+        print(f"rebuild-indexes: refreshing {module_name}.py", flush=True)
+        result = subprocess.run([sys.executable, '-u', str(script)], cwd=ROOT, env=env, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"{module_name}.py returned non-zero status {result.returncode}")
+
+def classify(rel_path: str) -> tuple[str, str, str]:
+    parts = rel_path.split("/")
+    if len(parts) == 1:
+        category = parts[0]
+        project = ""
+    else:
+        category = parts[0]
+        project = parts[1] if len(parts) > 1 else ""
+    ext = Path(rel_path).suffix.lower()
+    return category, project, ext
+
+
+def _walk_strings(x):
+    if isinstance(x, dict):
+        for v in x.values():
+            yield from _walk_strings(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from _walk_strings(v)
+    elif isinstance(x, str):
+        yield x
+
+
+def validate_metadata() -> None:
+    """Fail fast if core machine-readable metadata is malformed or semantically corrupted."""
+    for path in CORE_JSONS:
+        data = json.loads(path.read_text())
+        for s in _walk_strings(data):
+            bad = [c for c in s if ord(c) < 32 and c not in "\n"]
+            if bad:
+                codes = ", ".join(str(ord(c)) for c in sorted(set(bad)))
+                raise ValueError(f"{path} contains control characters in parsed strings: {codes}")
+
+
+def main() -> None:
+    # Refresh governed source inventory before validating core metadata or rebuilding file indexes.
+    data = build_source_index()
+    (ROOT / "SOURCE_INDEX.json").write_text(json.dumps(data, indent=2) + "\n")
+    # build_source_index.main() also writes markdown, but keep rebuild_indexes self-contained.
+    from build_source_index import render_markdown
+    (ROOT / "SOURCE_INDEX.md").write_text(render_markdown(data).rstrip() + "\n")
+
+    # Refresh all content-derived surfaces before identity digests.  Asset
+    # indexes are among those surfaces, and RELEASE_MANIFEST.json carries their
+    # digests as archive-identity inputs.
+    refresh_cycle_safe_material_surfaces()
+    validate_metadata()
+    refresh_release_manifest_identity()
+    refresh_ro_crate_metadata()
+
+    # DEDUPE_REPORT.md is another content-derived freshness surface.  Refresh
+    # it after release/RO-Crate identity files settle, and before SPDX, so the
+    # SPDX inventory digests the current dedupe report.  The dedupe builder
+    # excludes itself, SPDX, MANIFEST.sha256, and INDEX/files.* to avoid
+    # generated-surface digest/count loops.
+    import build_dedupe_report
+    print("rebuild-indexes: refreshing build_dedupe_report.py", flush=True)
+    rc = build_dedupe_report.main()
+    if rc not in (None, 0):
+        raise RuntimeError(f"build_dedupe_report.main returned non-zero status {rc}")
+
+    # SPDX digests RELEASE_MANIFEST.json, RO_CRATE_PROFILE.md, and the current
+    # DEDUPE_REPORT.md, but it must still be emitted before final INDEX/files.*
+    # and MANIFEST.sha256.  Keep it out of refresh_cycle_safe_material_surfaces()
+    # so it does not run before identity/RO-Crate/dedupe surfaces have settled.
+    import build_spdx_inventory
+    print("rebuild-indexes: refreshing build_spdx_inventory.py", flush=True)
+    rc = build_spdx_inventory.main()
+    if rc not in (None, 0):
+        raise RuntimeError(f"build_spdx_inventory.main returned non-zero status {rc}")
+
+    validate_metadata()
+
+    # Build INDEX rows.
+    all_files = sorted(q for q in ROOT.rglob("*") if q.is_file())
+    print(f"rebuild-indexes: indexing {len(all_files)} files", flush=True)
+    rows = []
+    for idx, p in enumerate(all_files, start=1):
+        rel = p.relative_to(ROOT).as_posix()
+        if rel in EXCLUDE_FROM_INDEX:
+            continue
+        digest = sha256_file(p)
+        category, project, ext = classify(rel)
+        rows.append(
+            {
+                "path": rel,
+                "size": p.stat().st_size,
+                "sha256": digest,
+                "category": category,
+                "project": project,
+                "ext": ext,
+            }
+        )
+        if idx % 500 == 0:
+            print(f"rebuild-indexes: indexed {idx}", flush=True)
+
+    # Write INDEX.
+    (INDEX_DIR / "files.json").write_text(json.dumps(rows, indent=2, sort_keys=False) + "\n")
+    with (INDEX_DIR / "files.csv").open("w", newline="") as f:
+        w = csv.DictWriter(
+            f,
+            fieldnames=["path", "size", "sha256", "category", "project", "ext"],
+            lineterminator="\n",
+        )
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+
+    # Write MANIFEST (covers everything except itself).
+    # Reuse the already captured file set rather than walking the tree a second
+    # time after INDEX/files.* has been rewritten.  The Path objects point to the
+    # refreshed files, so their digests are current, while the rebuild stays
+    # closed over one stable package file set.
+    print("rebuild-indexes: writing manifest", flush=True)
+    manifest_lines = []
+    for idx, p in enumerate(all_files, start=1):
+        rel = p.relative_to(ROOT).as_posix()
+        if rel in EXCLUDE_FROM_MANIFEST:
+            continue
+        digest = sha256_file(p)
+        manifest_lines.append(f"{digest}  {rel}")
+        if idx % 500 == 0:
+            print(f"rebuild-indexes: manifested {idx}", flush=True)
+
+    (ROOT / "MANIFEST.sha256").write_text("\n".join(manifest_lines) + "\n")
+
+    print(f"Wrote INDEX for {len(rows)} files; MANIFEST for {len(manifest_lines)} files")
+
+
+if __name__ == "__main__":
+    main()

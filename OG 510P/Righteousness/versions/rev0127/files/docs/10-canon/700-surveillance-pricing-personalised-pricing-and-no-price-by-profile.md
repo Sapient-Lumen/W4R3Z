@@ -1,0 +1,58 @@
+# Surveillance pricing, personalised pricing, and no-price-by-profile
+
+## Core claim
+
+> **Righteousness is burdened, and often defeated, when public or private actors set, vary, or target prices, fees, discounts, or offers on the basis of personal surveillance, inferred willingness or ability to pay, situational urgency, loyalty dependence, or other profile signals so that profile-driven extraction does the real work of determining what this person must pay rather than leaving price on terms that are public enough, contestable enough, and general enough to respect equal standing.**[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]
+
+## 1. The missing moral question is not only whether the price was disclosed, but whether the price was made to read the person
+
+The archive already rejected exploitation without valid consent, no-agency-by-stealth, no-attention-by-hook, and no-obligation-by-friction. But it still lacked a direct rule for a different temptation: **using personal data, behavioural traces, inferred urgency, or modelled willingness to pay so that what one person is charged is not chiefly governed by openly shareable terms, but by a hidden reading of who this person is, how desperate they seem, what alternatives they likely have, and how much extraction the system thinks they will bear.**[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]
+
+That gap matters because many systems no longer need to post one general price and then defend it. They can alter discounts, promotions, quoted fees, ranking-linked offers, or timed price displays across users in ways that are partly driven by location, browsing history, shopping history, device or channel, loyalty data, or other profile signals. The Federal Trade Commission's current surveillance-pricing materials are morally revealing because they say its study is examining technologies that use personal data to set individualized prices for the same goods or services, and because the FTC's January 2025 findings say details such as precise location, browser history, mouse movements, shopping patterns, and demographics can be used to target different prices or promotions to different consumers.[S464][S465]
+
+So the archive needs a canon surface that asks a narrower question than ordinary consumer disclosure: when is the practical engine of price no longer the product, the posted terms, or a publicly intelligible schedule, but the hidden conversion of personal profile into a toll? Where that is what is really happening, righteousness is heavily burdened even if the user technically saw a price before clicking purchase.[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]
+
+## 2. This is distinct from both ordinary price differentiation and the archive's dark-pattern rule
+
+The archive needs this as its own canon surface because the wrong is not exhausted by no-obligation-by-friction. Dark patterns ask whether burden asymmetry keeps a person enrolled, paying, or disclosed. **No-price-by-profile asks a different question: when is the amount charged itself being quietly adapted to a personal profile in ways the person cannot realistically anticipate, test, or contest?**[S34][S35][S41][S45][S47][S49][S93][S461][S464][S465][S466][S467]
+
+That distinction matters morally because not every difference in price is unrighteous. Student discounts, low-income subsidies, disability accommodations, peak/off-peak transport fares, emergency caps, transparent membership rules, or openly announced bulk rates may be bounded and even required by righteousness when they serve access, solidarity, or resource stewardship on clear terms.[S34][S35][S41][S45][S47][S49][S93]
+
+The narrower defect appears when an actor later points to outcomes that look impersonal — the site showed a number, the consumer accepted it, the market was dynamic, the discount was promotional, the model was optimizing conversion, or the retailer was personalizing relevance. A righteousness inquiry has to ask what authored that number in practice. If the decisive work was done by hidden inference about wealth, urgency, captivity, loyalty, search exhaustion, dependency, or low switching capacity, then the price was not simply dynamic. It was standing-sensitive in a way that can quietly convert vulnerability into payable burden.[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]
+
+## 3. Current official materials already treat personalised and surveillance pricing as a live governance problem
+
+This is no longer just an economist's curiosity about price discrimination. The FTC's current surveillance-pricing work states that in July 2024 it issued study orders about technologies that use personal data to set individualized prices for the same goods or services, and its January 2025 press materials say staff found a wide range of personal and behavioural data can be used to tailor pricing or promotions.[S464][S465] That matters because it shows that profile-shaped price variation is not merely hypothetical; public authorities are now investigating it as a real commercial practice.[S464][S465]
+
+EU consumer materials are also morally revealing in a different way. The current European e-Justice summary of the Consumer Rights Directive says the amending Directive (EU) 2019/2161 requires traders to inform consumers when the offered price is personalised on the basis of automated decision-making.[S466] The archive should learn from the form of that requirement. It shows that official law now recognises a difference between an ordinary posted price and a price generated through automated personalisation.[S466]
+
+OECD materials sharpen the insufficiency of a thin disclosure-only answer. Its current consumer-policy page says recent OECD studies found that consumers hardly ever noticed personalised price disclosures, and that while better visibility and standardisation may help, complementary measures are often necessary to protect consumers.[S467] That matters because righteousness should not let a faint or formal disclosure do all the justificatory work for a system whose practical force lies in opacity, asymmetry, or one-sided learning about the person.[S34][S35][S41][S45][S47][S49][S93][S466][S467]
+
+## 4. Price is not morally neutral; it allocates access, time, humiliation, and exposure
+
+Righteousness should not treat price as a neutral residue of commerce once a product exists. For many people, the demanded amount determines whether they can travel, eat, remain connected, stay insured, keep housing, reach care, or preserve time that would otherwise be spent searching, waiting, or re-entering markets. So when the amount is adjusted by reading the person rather than by openly stated terms, the actor may be governing access by profile while preserving the public fiction of a neutral market.[S34][S35][S41][S45][S47][S49][S93]
+
+That is especially dangerous where essential or quasi-essential goods are in view, where switching costs are high, where the person is already dependence-burdened, or where the stronger actor has much richer data than the buyer can ever inspect. In such conditions, profile-shaped pricing can become a way of charging some people more precisely because they are more captive, less informed, less mobile, less comparison-capable, or more predictably pressed by time, family, health, or precarity.[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]
+
+So the archive should not ask only whether the practice is efficient or whether everyone sees some number before payment. It should ask whether the institution is effectively saying: *we studied this person closely enough to know how much more can be taken from them than from someone else for materially the same thing, and we treated that knowledge as a legitimate basis for the price.* Where that is the practical structure, righteousness is often not setting terms. It is governing through no-price-by-profile.[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]
+
+## 5. Righteousness should distinguish bounded tailoring from profile-driven extraction
+
+The deeper point is not that every variable price is unrighteous. Some variation is part of fair administration, risk management, subsidy design, congestion management, negotiated enterprise service, or anti-fraud response. The narrower question is what kind of difference the actor is entitled to monetize. Where the basis of price is openly declared, intelligible, relevant to the product or service, contestable, bounded by non-discrimination rules, and not chiefly a hidden reading of personal weakness or captivity, variation may remain morally disciplined.[S34][S35][S41][S45][S47][S49][S93][S466][S467]
+
+But where the system gains its edge by amassing behavioural data, inferring willingness to pay, detecting low search power, exploiting urgency, or quietly individualising offers beyond what the person can realistically compare or challenge, the arrangement becomes standing-defective. The price no longer functions as a public term of trade. It becomes a personalised instrument of extraction.[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]
+
+## 6. Working rule
+
+When an actor claims righteousness while relying on personalised or surveillance-shaped pricing, ask seven questions:
+1. **What was actually being varied?** Base price, fee, surcharge, promotion, discount, quote, bundle, waiting time, access tier, or another economically meaningful term?[S34][S35][S41][S45][S47][S49][S93]
+2. **What inputs did the variation rely on?** Location, device, channel, browsing history, shopping history, loyalty, inferred urgency, demographics, or another proxy for willingness, weakness, or captivity?[S464][S465]
+3. **Was the basis of variation public enough to be intelligible?** Could an ordinary person know in advance what kind of rule governed the price, or did the system mainly rely on one-sided inference?[S466][S467]
+4. **What good justified the difference?** Capacity management, subsidy, fraud prevention, accessibility, or some other bounded purpose — and why was a narrower or more transparent route unavailable?[S34][S35][S41][S45][S47][S49][S93]
+5. **Who bore the heavier burden in practice?** Poorer buyers, loyal customers, rural users, people in crisis, persons with limited comparison capacity, children, older adults, or other dependence-burdened groups?[S34][S35][S41][S45][S47][S49][S93][S467]
+6. **What contest, audit, or remedy path existed?** Could the person compare, challenge, obtain explanation, or reach a stable alternative price, or were they effectively forced to accept a one-way read of themselves?[S34][S35][S41][S45][S47][S49][S93][S466][S467]
+7. **What really did the work?** Transparent posted terms and bounded public criteria, or hidden profile inference about how much more this person would tolerate or fail to resist paying?[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]
+
+## 7. Bottom line
+
+Righteousness is not preserved merely because a system is efficient, dynamic, personalized, or legally disclosed at the edge. If the practical structure is that the stronger actor watches the person closely enough to learn what extra burden can be extracted from them and then turns that knowledge into the demanded price, the arrangement is standing-defective unless unusually strong justification, transparency, boundedness, and contestability are present. The archive should therefore treat surveillance pricing and adjacent personalised pricing as a distinct canon surface: **no-price-by-profile**.[S34][S35][S41][S45][S47][S49][S93][S464][S465][S466][S467]

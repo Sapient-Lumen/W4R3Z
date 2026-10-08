@@ -1,0 +1,7 @@
+# Rematch worlds should stream canonical shortest half-step generator words via interval-state prefixes
+
+If a downstream consumer only needs **one deterministic shortest script** for a normalized half-step interval state, the archive should not spend bits on the larger exact-shortest-word transport meant to preserve noncanonical branch choice. The canonical shortest generator word is already a deterministic function of the exact feasible interval state, so standalone canonical-script transport can reuse the existing interval-state prefix codec unchanged.
+
+On the current `17`-rank path this collapses the standalone canonical shortest-script catalog to the same `153` items as the exact feasible interval-state catalog. The inherited near-seven-bit state prefix therefore transports the full canonical script catalog in `1121` bits total (`1121 / 153 = 7.326797385620915` bits on average), while the broader standalone exact-shortest-word prefix would still spend `1377` bits on that canonical subset because every canonical word sits in its `9`-bit branch. That saves `256` bits over the canonical subset (`256 / 153 = 1.673202614379085` bits per canonical script on average) without adding any new script-only decode block.
+
+Implementation guidance: if **canonicalization is allowed**, read or write the canonical shortest script by transporting the interval-state prefix and rebuilding the canonical word after decode. Only keep the larger `513`-word exact-shortest-word prefix when the exact noncanonical shortest branch itself must survive transport.

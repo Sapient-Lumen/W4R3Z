@@ -1,0 +1,142 @@
+diff --git a/pynicotine/slskproto.py b/pynicotine/slskproto.py
+index 4b03271..e36b1b3 100644
+--- a/pynicotine/slskproto.py
++++ b/pynicotine/slskproto.py
+@@ -1133,24 +1133,76 @@ class NetworkThread(Thread):
+                     self.MAX_MAIN_THREAD_LIFECYCLE_EVENT_RETRY_BYTES // 2)):
+             self._main_thread_lifecycle_event_retry_limit_logged = False
+ 
++    def _can_queue_main_thread_lifecycle_event_retry(self, event_size):
++        return (len(self._main_thread_lifecycle_event_retries) < self.MAX_MAIN_THREAD_LIFECYCLE_EVENT_RETRIES
++                and self._main_thread_lifecycle_event_retry_bytes + event_size
++                <= self.MAX_MAIN_THREAD_LIFECYCLE_EVENT_RETRY_BYTES)
++
++    def _drop_main_thread_lifecycle_event_retry_at(self, index):
++        event_name, args, kwargs = self._main_thread_lifecycle_event_retries[index]
++        del self._main_thread_lifecycle_event_retries[index]
++        self._release_main_thread_lifecycle_event_retry_size(event_name, args, kwargs)
++        return event_name
++
++    def _make_room_for_priority_main_thread_lifecycle_event_retry(self, event_size):
++        """Evict ordinary preserved payloads before dropping cleanup/rollback events.
++
++        The lifecycle retry shelf intentionally preserves some accepted request
++        intent and bounded parsed payloads, but tiny rollback/close notifications
++        are the events that release active transfer, peer-init and grant state.
++        If the shelf is full of ordinary preserved payloads, a priority cleanup
++        event must be able to displace them instead of being dropped. Preserve
++        priority-event ordering by evicting only nonpriority entries, starting
++        with the newest/lowest-value ordinary retry.
++        """
++
++        if event_size > self.MAX_MAIN_THREAD_LIFECYCLE_EVENT_RETRY_BYTES:
++            return False
++
++        dropped_event_names = []
++
++        while not self._can_queue_main_thread_lifecycle_event_retry(event_size):
++            evict_index = None
++
++            for index in range(len(self._main_thread_lifecycle_event_retries) - 1, -1, -1):
++                queued_event_name = self._main_thread_lifecycle_event_retries[index][0]
++
++                if queued_event_name not in self.PRIORITY_MAIN_THREAD_LIFECYCLE_EVENTS:
++                    evict_index = index
++                    break
++
++            if evict_index is None:
++                return False
++
++            dropped_event_names.append(self._drop_main_thread_lifecycle_event_retry_at(evict_index))
++
++        if dropped_event_names:
++            log.add_conn(
++                "Dropped %s nonpriority main-thread lifecycle event retries to preserve priority event %s",
++                (len(dropped_event_names), dropped_event_names[0])
++            )
++
++        return True
++
+     def _queue_main_thread_lifecycle_event_retry(self, event_name, args, kwargs):
+         event_size = self._estimate_main_thread_lifecycle_event_retry_size(event_name, args, kwargs)
++        is_priority_event = event_name in self.PRIORITY_MAIN_THREAD_LIFECYCLE_EVENTS
+ 
+-        if (len(self._main_thread_lifecycle_event_retries) >= self.MAX_MAIN_THREAD_LIFECYCLE_EVENT_RETRIES
+-                or self._main_thread_lifecycle_event_retry_bytes + event_size
+-                > self.MAX_MAIN_THREAD_LIFECYCLE_EVENT_RETRY_BYTES):
+-            if not self._main_thread_lifecycle_event_retry_limit_logged:
+-                log.add_conn(
+-                    "Dropping main-thread lifecycle event retry %s because the retry shelf is full",
+-                    event_name
+-                )
+-                self._main_thread_lifecycle_event_retry_limit_logged = True
++        if not self._can_queue_main_thread_lifecycle_event_retry(event_size):
++            if (not is_priority_event
++                    or not self._make_room_for_priority_main_thread_lifecycle_event_retry(event_size)):
++                if not self._main_thread_lifecycle_event_retry_limit_logged:
++                    log.add_conn(
++                        "Dropping main-thread lifecycle event retry %s because the retry shelf is full",
++                        event_name
++                    )
++                    self._main_thread_lifecycle_event_retry_limit_logged = True
+ 
+-            return False
++                return False
+ 
+         queued_event = (event_name, args, kwargs)
+ 
+-        if event_name in self.PRIORITY_MAIN_THREAD_LIFECYCLE_EVENTS:
++        if is_priority_event:
+             # Retry-preserved parsed messages such as private messages or
+             # search/browse requests can be much larger and more numerous than
+             # tiny rollback/close notifications. Do not let a blocked preserved
+diff --git a/pynicotine/tests/unit/protocol/test_slskproto.py b/pynicotine/tests/unit/protocol/test_slskproto.py
+index 443b209..1ce5c29 100644
+--- a/pynicotine/tests/unit/protocol/test_slskproto.py
++++ b/pynicotine/tests/unit/protocol/test_slskproto.py
+@@ -2375,6 +2375,45 @@ class NetworkThreadUnitTest(TestCase):
+             "message-user"
+         ], [event_name for event_name, _args, _kwargs in network_thread._main_thread_lifecycle_event_retries])
+ 
++    def test_priority_lifecycle_retry_evicts_nonpriority_when_shelf_is_full(self):
++        """Cleanup events should displace preserved payloads rather than being dropped."""
++
++        network_thread = self._create_network_thread()
++        message = MessageUser()
++        message.message = "hello"
++
++        with patch.object(slskproto_module.NetworkThread, "MAX_MAIN_THREAD_LIFECYCLE_EVENT_RETRIES", 1):
++            self.assertTrue(network_thread._queue_main_thread_lifecycle_event_retry(
++                "message-user", (message,), {}))
++            self.assertTrue(network_thread._queue_main_thread_lifecycle_event_retry(
++                "file-connection-closed", (), {
++                    "username": "peer", "token": 1, "sock": None, "timed_out": False
++                }))
++
++        self.assertEqual(1, len(network_thread._main_thread_lifecycle_event_retries))
++        event_name, _args, kwargs = network_thread._main_thread_lifecycle_event_retries[0]
++        self.assertEqual("file-connection-closed", event_name)
++        self.assertEqual("peer", kwargs["username"])
++        self.assertGreater(network_thread._main_thread_lifecycle_event_retry_bytes, 0)
++
++    def test_priority_lifecycle_retry_does_not_evict_existing_priority_events(self):
++        """Priority cleanup ordering should be preserved when the shelf contains only priority events."""
++
++        network_thread = self._create_network_thread()
++
++        with patch.object(slskproto_module.NetworkThread, "MAX_MAIN_THREAD_LIFECYCLE_EVENT_RETRIES", 1):
++            self.assertTrue(network_thread._queue_main_thread_lifecycle_event_retry(
++                "peer-message-unsent", (QueueUpload("a.mp3"),), {}))
++            self.assertFalse(network_thread._queue_main_thread_lifecycle_event_retry(
++                "file-connection-closed", (), {
++                    "username": "peer", "token": 1, "sock": None, "timed_out": False
++                }))
++
++        self.assertEqual(1, len(network_thread._main_thread_lifecycle_event_retries))
++        event_name, args, _kwargs = network_thread._main_thread_lifecycle_event_retries[0]
++        self.assertEqual("peer-message-unsent", event_name)
++        self.assertEqual("a.mp3", args[0].file)
++
+     def test_retryable_parsed_message_uses_lifecycle_retry_when_main_thread_full(self):
+         """Small accepted wire-state messages must not be shed behind noisy main-thread backlog."""
+ 
