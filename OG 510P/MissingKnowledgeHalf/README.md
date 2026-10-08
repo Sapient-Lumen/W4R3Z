@@ -26,13 +26,13 @@ Read beside [Parables](../Parables/README.md), whose rejected candidates reveal 
 
 ## Snapshots and preservation
 
-## Selected snapshots
+### Selected snapshots
 
-### [rev0028](versions/rev0028/README.md)
+#### [rev0028](versions/rev0028/README.md)
 
 Adds marine-casualty and watertight-state cases and a near-miss control, with cautions against reducing causal explanations to seamanship blame. START_HERE identifies rev0028, while the README retains an older rev0027 header before its rev0028 addition. The shipped file manifest also has a nonmatching self-entry; all are preserved unchanged.
 
-## How to read this preservation
+### How to read this preservation
 
 These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Research source claims and reported validation runs were not independently reproduced for this archival delivery. Read the retained limitations, open gates and rights notices before reuse. No new blanket license is granted.
 

@@ -24,9 +24,9 @@ This project concerns rule execution. [MUCloudtainer](../MUCloudtainer/README.md
 
 ## Supplied history and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0195](versions/rev0195/README.md): 349 preserved members; `MTGSim-rev0195-2026.07.08.16.56-returncostreceiptgate.zip`.
 

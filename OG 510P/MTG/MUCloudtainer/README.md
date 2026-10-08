@@ -26,9 +26,9 @@ No match, simulator or strategy search was run for this edition. Read beside [MT
 
 ## Supplied history and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0102](versions/rev0102/README.md): 2,563 preserved members; `MUCloudtainer-rev0102-2026.06.18.20.48-longgame-capladder.zip`.
 

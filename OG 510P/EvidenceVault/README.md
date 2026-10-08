@@ -26,13 +26,13 @@ Read beside [DelayBasin](../DelayBasin/README.md) for continuity without oversta
 
 ## Snapshots and preservation
 
-## Selected snapshots
+### Selected snapshots
 
-### [rev0874](versions/rev0874/README.md)
+#### [rev0874](versions/rev0874/README.md)
 
 Adds a verified execution-snapshot boundary to the overlay’s validation design. The supplied README reports limited canonical recovery coverage, absent selected StreamFold payloads and an unresolved canonical README mismatch. The overlay inventory can be checked without pretending the missing canonical archive has been recovered.
 
-## How to read this preservation
+### How to read this preservation
 
 These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Research source claims and reported validation runs were not independently reproduced for this archival delivery. Read the retained limitations, open gates and rights notices before reuse. No new blanket license is granted.
 

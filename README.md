@@ -18,7 +18,7 @@ Read for the ideas: love and care, institutions and power, language and reality,
 
 **[Enter OG 510P](OG%20510P/README.md)** · **[Browse the whole catalog](CATALOG.md)** · **[Follow a reading path](READING-PATHS.md)**
 
-The library is still being edited. Each work has an entrance and its supplied histories; introductions and paths will deepen through close reading. A selected snapshot is neither a complete history nor necessarily the best first page.
+Each work now has a reading entrance and its supplied history. These introductions are selective close readings, not exhaustive scholarship or runtime reviews. A selected snapshot is neither a complete history nor necessarily the best first page.
 
 ## About this edition
 

@@ -26,29 +26,29 @@ Read beside [Immoral-Wealth](../Immoral-Wealth/README.md) for the distribution a
 
 ## Editions, snapshots and preservation
 
-## A route through the collection
+### A route through the collection
 
-### [rev0021](versions/rev0021/README.md)
+#### [rev0021](versions/rev0021/README.md)
 
 Introduces automaticity and take-up as requirements of morally adequate relief: protected minima can fail when refunds or transfers are trapped behind application friction. The archive frames tax design around harms, rents, final incidence, public floors and the people or firms controlling AI systems.
 
-### [rev0128](versions/rev0128/README.md)
+#### [rev0128](versions/rev0128/README.md)
 
 Compresses the threshold-cliff smoothing and graduation memo into a ladder-first format while retaining the tax boundary table. Read this as a calibration and exposition checkpoint, not evidence that the archive adopted a different tax schedule.
 
-### [rev0226](versions/rev0226/README.md)
+#### [rev0226](versions/rev0226/README.md)
 
 Adds composite netting and residual ordering: when several outward-flow defenses apply, the same dollar should be netted only once, with harder duties ahead of softer justifications. The manifest root label still says mt_rev0225 although the supplied archive and changelog identify rev0226; file hashes match the shipped manifest.
 
-### [rev0300](versions/rev0300/README.md)
+#### [rev0300](versions/rev0300/README.md)
 
 Reworks cross-border accountability around concrete actors, control points, evidence and remedies. The covered routes include coordination, border charges, remittances, immigration/status fees, withholding relief and global-minimum-tax reporting. These are the archive’s analytical classifications, not a verification of current tax law.
 
-### [rev0342](versions/rev0342/README.md)
+#### [rev0342](versions/rev0342/README.md)
 
 Adds an exportable decision-review bundle containing public trust-policy material, payload hashes, attestations, replay records and held-output status. Its own README says the bundle is sandbox-only and does not establish current law, jurisdiction clearance, production trust or final advice.
 
-## Preservation and reading boundaries
+### Preservation and reading boundaries
 
 - These are selected snapshots, not a complete release history. Revision numbering and dates are retained from the supplied materials.
 - Original ZIP filenames, bytes, member paths, contents and executable-bit distinctions are preserved. Wrapper directories remain exactly where the ZIP placed them.

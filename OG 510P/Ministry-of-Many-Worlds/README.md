@@ -24,9 +24,9 @@ Read beside [Radical Governance](../Radical-Governance/README.md) for institutio
 
 ## Version shelf and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [v3.9](versions/v3.9/README.md): 3 preserved members; `mmw_spec_2026-01-04_v3.9.zip`.
 

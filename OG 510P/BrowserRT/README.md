@@ -26,7 +26,7 @@ Read beside [Lacuna](../Lacuna/README.md) on accepted state in an unfinished wor
 
 ## Version shelf and preservation
 
-## The five snapshots
+### The five snapshots
 
 | Archive label | Filename date | Reading guide | Focus |
 | --- | --- | --- | --- |
@@ -36,14 +36,14 @@ Read beside [Lacuna](../Lacuna/README.md) on accepted state in an unfinished wor
 | rev0125 | 2026-06-18 | [Guarded staged recovery](versions/rev0125/README.md) | Serialize staged cleanup with writes using the same exclusive Web Lock |
 | rev0202 | 2026-07-08 | [Recovery-guidance table refactor](versions/rev0202/README.md) | Linked rev0202, still packaged runtime rev0125 / 0.0.125 |
 
-## What is worth reading
+### What is worth reading
 
 - **Start with the testing discipline.** [rev0005](versions/rev0005/contents/README.md) explicitly describes an early scaffold. Its manifest-addressable checks, impact map, and timing records precede the planned browser, storage, and GPU features. Capability names in the source are not proof that all those capabilities were implemented.
 - **Read the negative case alongside the happy path.** [rev0054's contrast slice](versions/rev0054/contents/docs/40-validation/kernel-kit-readiness-contrast-slice.md) deliberately removes reload/readback, handoff-import, and exact-command evidence. The purpose is to expose missing evidence rather than infer readiness from a reassuring report.
 - **Follow the storage boundary carefully.** [rev0100's rollback slice](versions/rev0100/contents/docs/40-validation/opfs-block-store-rollback-valid-block-preserve-slice.md) treats a valid block left after a failed call as a possible idempotent side effect, not an acknowledged application commit. [rev0125](versions/rev0125/contents/README.md) then distinguishes raw, uncoordinated staged cleanup from recovery through a shared guard.
 - **Keep the latest archive's two identities visible.** The [rev0202 README](versions/rev0202/contents/README.md) and [linked revision receipt](versions/rev0202/contents/REV0202-LINKED-REVISION-RECEIPT.json) retain packaged runtime rev0125 / 0.0.125. Linked rev0202 refactors recovery guidance and tightens a runtime-core source-size budget; it does not promote the runtime or document a published npm release.
 
-## Preservation and evidence
+### Preservation and evidence
 
 The [manifest](MANIFEST.json) records the five original archives and 4,448 extracted files, including archive/member SHA-256 hashes, sizes, and recorded modes. `versions/revXXXX/contents/` retains the member paths of that original ZIP. The surrounding README files are new editorial guides; the historical files remain separate.
 
@@ -51,7 +51,7 @@ Archive/member byte comparisons and static document/source inspection are curati
 
 Browser-light release checks and focused managed-Chromium records should not be conflated with cross-browser coverage. The snapshots expressly withhold broad claims about production readiness, OPFS durability, fsync or power-loss recovery, quota/eviction survival, Web Locks fairness, and artifact authenticity. Read each snapshot's own non-claims for the precise boundary.
 
-## Reading and reuse
+### Reading and reuse
 
 Start with each editorial guide, then its original README, revision receipt, and referenced source/probe files. Commands, work orders, and agent instructions inside the archives are historical project material, not present-day instructions to run them.
 

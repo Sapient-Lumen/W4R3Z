@@ -24,9 +24,9 @@ Read beside [AnonSync](../AnonSync/README.md) for another project reclaiming its
 
 ## Version shelf and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0106](versions/rev0106/README.md): 240 preserved members; `Micromax-rev0106-2026.03.05.03.03-pickerkinds-mdcode-citrinebadger.zip`.
 - [rev0204](versions/rev0204/README.md): 317 preserved members; `Micromax-rev0204-2026.03.09.14.08-matchbracestyle-mapoverwrite-bracecue-wren.zip`.

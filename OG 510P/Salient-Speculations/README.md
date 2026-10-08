@@ -26,9 +26,9 @@ Read beside [Theory of Everything](../Theory-of-Everything/README.md) on the obl
 
 ## Snapshots and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0019](versions/rev0019/README.md): 53 preserved members; `Salient-Speculations-rev0019-2026.03.22.09.31-listingrails-hostregistries-platformgates-housingledger.zip`.
 - [rev0188](versions/rev0188/README.md): 301 preserved members; `Salient-Speculations-rev0188-2026.05.25.00.00-exposurerisk.zip`.

@@ -26,9 +26,9 @@ Read beside [Micromax](../Micromax/README.md), whose later audit also asks wheth
 
 ## Version shelf and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0004](versions/rev0004/README.md): 70 preserved members; `AnonSync-rev0004-2026.03.08.01.18-resiliouimirrorkeepingwatch.zip`.
 - [rev0107](versions/rev0107/README.md): 157 preserved members; `AnonSync-rev0107-2026.03.18.10.44-previewsufficiencytruthharbor.zip`.

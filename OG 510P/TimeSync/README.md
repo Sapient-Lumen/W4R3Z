@@ -24,9 +24,9 @@ Read beside [The Election Stack](../Election-Stack/README.md) for independent su
 
 ## Snapshots and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0001](versions/rev0001/README.md): 17 preserved members; `TimeSync-rev0001-2026.03.28.01.34-problemframe-minfoundation-openfrontier-holdfast.zip`.
 - [rev0132](versions/rev0132/README.md): 859 preserved members; `TimeSync-rev0132-2026.06.17.23.59-freshnessmax-commonmode-riskcut.zip`.

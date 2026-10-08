@@ -26,13 +26,13 @@ Read beside [Nicotine+DEV](../Nicotine%2BDEV/README.md) on the danger of testing
 
 ## Supplied history and preservation
 
-## Selected snapshots
+### Selected snapshots
 
-### [rev0100](versions/rev0100/README.md)
+#### [rev0100](versions/rev0100/README.md)
 
 Records a priority-admission correction for lifecycle cleanup when an experimental bounded retry shelf is full. The notes explicitly say unchanged upstream uses a different queue shape. The nested source tarball is preserved as a nested artifact, not silently unpacked into a separately claimed source release.
 
-## How to read this preservation
+### How to read this preservation
 
 These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Research source claims and reported validation runs were not independently reproduced for this archival delivery. Read the retained limitations, open gates and rights notices before reuse. No new blanket license is granted.
 

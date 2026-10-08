@@ -26,9 +26,9 @@ Read beside [Radical Governance](../Radical-Governance/README.md) on institution
 
 ## Editions, snapshots and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0015](versions/rev0015/README.md): 37 preserved members; `Global-Warming-rev0015-2026.03.22.05.46-humanthroughput-skillspipe-apprenticeramp-servicecrew.zip`.
 - [rev0222](versions/rev0222/README.md): 399 preserved members; `Global-Warming-rev0222-2026.03.24.01.12-goodstanding-defaultcontinuation.zip`.

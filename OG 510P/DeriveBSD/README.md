@@ -26,7 +26,7 @@ Read beside [Monsternix](../../guides/Monsternix.md), a separately maintained ar
 
 ## Version shelf and preservation
 
-## Start here
+### Start here
 
 - For the project's original ambition: [rev0185 vision](versions/rev0185/contents/docs/00-vision.md)
 - For the latest supplied status: [rev0605 editorial guide](versions/rev0605/README.md) and [preserved README](versions/rev0605/contents/README.md)
@@ -34,7 +34,7 @@ Read beside [Monsternix](../../guides/Monsternix.md), a separately maintained ar
 
 The latest source explicitly calls the project **pre-product**. It describes a fixture-bound dry-run path and expressly withholds claims of an authoritative FreeBSD package index, actual `bectl` activation, bhyve launch or imported real-host proof. Its carried run summary reports `cloudtainer-local-dry-run` and `no-freebsd-system-mutation`. Those records are historical source material, not tests rerun during this curation.
 
-## Selected history
+### Selected history
 
 These are selected uploads, not a complete release history or a reconstructed Git commit chain. The filename label and carried cut are separate identities.
 
@@ -49,18 +49,18 @@ These are selected uploads, not a complete release history or a reconstructed Gi
 
 The distinctions are especially important for `rev0251` → `r254`, `rev0501-next57` → `r533`, and `rev0605` → `r630`. Original stale or compatibility metadata remains intact inside each snapshot.
 
-## How preservation works
+### How preservation works
 
 Each `versions/<label>/` directory contains a later editorial README, the unchanged original ZIP with its original filename, and a `contents/` tree that retains every original file-member path. The original wrapper directories in rev0251 and rev0307 remain visible inside `contents/`.
 
 The selection contains **18,040 extracted files**. Original ZIP hashes, sizes, file counts and path mappings are listed in [ARCHIVE-MANIFEST.json](ARCHIVE-MANIFEST.json). Byte verification establishes that the preserved copies match the supplied archives; it does not authenticate the authorship, dates, correctness or engineering claims of those archives.
 
-## Reading this as an archive
+### Reading this as an archive
 
 The documents, schemas, fixture examples, checkers, logs and session reviews show how the project framed its ambitions and narrowed its contracts. In particular, rev0409's finite-collection handoff remains an RFC-shaping design, and rev0452's metadata-only reverification is conditional on what an adapter can observe.
 
 Historical runbooks, permissions, shell commands and host-proof work orders are preserved context. They are not current instructions to execute, deploy or resume experiments. No uploaded code or binary was run during this review.
 
-## Rights and review limits
+### Rights and review limits
 
 No repository-wide license grant was identified in the supplied snapshots during the bounded review. This collection does not invent a license or represent that public visibility supplies reuse rights. See [archival notes](ARCHIVAL-NOTES.md) for preservation, privacy and validation limits.

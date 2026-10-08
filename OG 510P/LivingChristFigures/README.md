@@ -28,18 +28,18 @@ Read beside [Parables](../Parables/README.md) for the literary compression of an
 
 ## Editions, snapshots and preservation
 
-## New authored reading edition
+### New authored reading edition
 
 [Revision 0105: Threshold Offices: Costly Mercy Without Ownership](versions/rev0105/README.md), by Lumen, 7 October 2026, adds six connected office essays, a comparative argument, a reading guide and an exact source trail. [Read the essay](versions/rev0105/files/LivingChristFigures-rev0105-2026.10.07.19.12-lumen-threshold-offices-reading-edition/READING-EDITION.md) or [download its ZIP](originals/LivingChristFigures-rev0105-2026.10.07.19.12-lumen-threshold-offices-reading-edition.zip). This is a new successor alongside the five historical checkpoints below; none of their source files has been changed.
 
-## Historical reading route
+### Historical reading route
 
 1. Start with rev0104's [mission charter](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/MISSION-CHARTER-current.md) and [revision summary](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/REVISION-SUMMARY-rev0104.md). They explain the practice-first unit of analysis and the deliberately non-release posture.
 2. Read [Office Essay 001](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/LONGFORM/Office-Essay-001-Name-After-Death-Is-Not-Ownership.txt) for a substantive synthesis and [critical boundary disposition](versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/META/Critical-Boundary-Disposition-current.md) for its limits. Reclassifying an evidence debt as a permanent boundary did not establish the missing facts or obtain consent.
 3. Compare rev0002's [framing](versions/rev0002/files/LivingChristFigures-rev0002-2026.05.14-datacube/AI-LivingChristFigures.txt), [office taxonomy](versions/rev0002/files/LivingChristFigures-rev0002-2026.05.14-datacube/OFFICES.txt) and [counterweights](versions/rev0002/files/LivingChristFigures-rev0002-2026.05.14-datacube/COUNTERWEIGHTS.txt). Attention to practices and resistance to hagiography were already present; the evolution is not a simple conversion from unqualified admiration.
 4. Follow the version guides below for the lineage correction, outward-verification limits, family-led search boundary and thin-core refactor.
 
-## Supplied checkpoints
+### Supplied checkpoints
 
 - [rev0002 guide](versions/rev0002/README.md): 25 extracted files; [original ZIP](originals/LivingChristFigures-rev0002-2026.05.14-datacube.zip).
 - [rev0015 guide](versions/rev0015/README.md): 72 extracted files; [original ZIP](originals/LivingChristFigures-rev0015-2026_05_15-datacube.zip).
@@ -49,7 +49,7 @@ Read beside [Parables](../Parables/README.md) for the literary compression of an
 
 These are selected snapshots, not a complete release sequence. [Carried predecessor metadata](machine/version-relations.json) is recorded separately. Two nested historical ZIPs in rev0015 remain original member bytes; they have not been promoted to separately extracted releases. Rev0002 also carries earlier text under archive/rev0001. A predecessor name or digest in a manifest does not prove that predecessor was supplied.
 
-## Preservation and use
+### Preservation and use
 
 Every original filename and ZIP byte is retained. Each version's files directory retains the complete original ZIP member path, including its enclosing export directory. Generated guides and machine inventories sit outside those historical paths. No source was silently corrected, renamed or redacted. See [technical review](STATIC_REVIEW.md), [carried rights](CARRIED-RIGHTS.md), and [machine provenance](machine/provenance-and-versions.json).
 

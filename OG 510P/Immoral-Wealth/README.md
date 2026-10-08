@@ -25,9 +25,9 @@ Read beside [Moral Taxation](../Moral-Taxation/README.md), which asks how to cho
 
 ## Editions, snapshots and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0019](versions/rev0019/README.md): 44 preserved members; `Immoral-Wealth-rev0019-2026.03.22.08.44-subsidyhygiene-taxcleanup-entrysupport-cleanstate.zip`.
 - [rev0104](versions/rev0104/README.md): 72 preserved members; `Immoral-Wealth-rev0104-2026.03.22.23.59-carryspine-nethold-clearstay.zip`.

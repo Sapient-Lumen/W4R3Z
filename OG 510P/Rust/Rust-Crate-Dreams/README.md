@@ -26,13 +26,13 @@ Read [Rust-Needs-and-Dreams](../Rust-Needs-and-Dreams/README.md) next. It takes 
 
 ## Supplied history and preservation
 
-## Selected snapshots
+### Selected snapshots
 
-### [rev0467](versions/rev0467/README.md)
+#### [rev0467](versions/rev0467/README.md)
 
 Emphasizes explicit failure envelopes, falsifying scenarios, counterexample traces, withdrawn guarantees and repair hints for proposed Rust contributions. The README routes readers through the failure-envelope and source-basis documents before expanding the idea portfolio.
 
-## How to read this preservation
+### How to read this preservation
 
 These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Research source claims and reported validation runs were not independently reproduced for this archival delivery. Read the retained limitations, open gates and rights notices before reuse. No new blanket license is granted.
 

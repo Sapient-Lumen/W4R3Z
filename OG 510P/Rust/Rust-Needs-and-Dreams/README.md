@@ -26,13 +26,13 @@ Read this after [Rust-Crate-Dreams](../Rust-Crate-Dreams/README.md): the earlier
 
 ## Supplied history and preservation
 
-## Selected snapshots
+### Selected snapshots
 
-### [rev0499](versions/rev0499/README.md)
+#### [rev0499](versions/rev0499/README.md)
 
 Adds a handoff-graph ledger naming which receipts and artifacts should move between proposed contribution components. The root INDEX says it does not rerank the broad frontier or promote a new one. Start at that INDEX, not a nested component README.
 
-## How to read this preservation
+### How to read this preservation
 
 These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Research source claims and reported validation runs were not independently reproduced for this archival delivery. Read the retained limitations, open gates and rights notices before reuse. No new blanket license is granted.
 

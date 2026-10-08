@@ -1,6 +1,12 @@
 # Reading paths
 
-These are Lumen’s first cross-collection invitations. They connect questions without claiming that the works agree, share one doctrine, or belong to only one subject. Follow an interesting turn; the [alphabetical catalog](CATALOG.md) remains the complete way to browse.
+These are Lumen’s cross-collection reading invitations. They connect questions without claiming that the works agree, share one doctrine, or belong to only one subject. Follow an interesting turn; the [alphabetical catalog](CATALOG.md) remains the complete way to browse.
+
+## If you want one longer journey
+
+Begin with [Parables](OG%20510P/Parables/README.md), then [Conlang Rosetta Stone](OG%20510P/Conlang%20Rosetta%20Stone/README.md): encounter care in a story, then see how language makes an account of love precise or difficult. Move through [Righteousness](OG%20510P/Righteousness/README.md) and [The Good](OG%20510P/The-Good/README.md) for the concepts. Test those concepts against [LivingChristFigures](OG%20510P/LivingChristFigures/README.md), [Immoral-Wealth](OG%20510P/Immoral-Wealth/README.md) and [Radical Governance](OG%20510P/Radical-Governance/README.md), where care and power meet institutions.
+
+Then change scale: [MissingKnowledgeHalf](OG%20510P/MissingKnowledgeHalf/README.md) asks what gets lost from knowledge, [DelayBasin](OG%20510P/DelayBasin/README.md) asks what carries a collaboration, and [Micromax](OG%20510P/Micromax/README.md) asks whether a carefully justified tool is becoming a place a person can actually work. This is an editorial sequence, not a shared doctrine or required syllabus. The shorter routes below let you enter elsewhere.
 
 ## What do we owe each other?
 
@@ -33,5 +39,11 @@ These are neighboring reading questions, not an assertion of equivalent evidence
 Begin with [Rust](OG%20510P/Rust/README.md): needs, proposed tools and counterexamples. Read [Micromax](OG%20510P/Micromax/README.md) for the relation between a language and an editor people might inhabit; [GlassTTY](OG%20510P/GlassTTY/README.md) and [VHK](OG%20510P/VHK/README.md) for interfaces between an operator and a live system; [Sandchoir / AAR–ADCC](OG%20510P/Sandchoir-AAR-ADCC/README.md) for proposed coordination of attention and deliberation.
 
 For continuing software development, use the separate [living-software shelf](LIVING-SOFTWARE.md). The presence of code in a historical work does not itself make a maintenance promise.
+
+## What must survive when a system changes?
+
+[DeriveBSD](OG%20510P/DeriveBSD/README.md) asks how intent becomes a derived system with inspectable transitions. [BrowserRT](OG%20510P/BrowserRT/README.md) moves the lifetime and recovery problem into a browser. [AnonSync](OG%20510P/AnonSync/README.md) makes it a practical question of folders converging through ordinary failure. The [nicotine+](OG%20510P/nicotine%2B/README.md) research shelf shows several narrower boundaries between a model, an admitted record and an effect.
+
+For a smaller formal world, [MTG](OG%20510P/MTG/README.md) distinguishes faithfully representing a game action from drawing a justified conclusion about strategy. [bzip4](OG%20510P/bzip4/README.md) offers another bounded comparison: compatibility and a measured performance advantage have conditions that should travel with the claim.
 
 [OG 510P](OG%20510P/README.md) · [Catalog](CATALOG.md) · [W4R3Z](README.md)

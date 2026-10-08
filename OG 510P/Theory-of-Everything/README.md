@@ -26,9 +26,9 @@ Read critically across the distinction between a well-organized research obligat
 
 ## Snapshots and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0021](versions/rev0021/README.md): 63 preserved members; `Theory-of-Everything-rev0021-2026.03.22.07.52-measureaudit-regulatorpressure-xerographicdebt.zip`.
 - [rev0199](versions/rev0199/README.md): 136 preserved members; `Theory-of-Everything-rev0199-2026.03.24.05.48-topotree-ledgermirror-humanparity.zip`.

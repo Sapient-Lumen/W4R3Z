@@ -26,9 +26,9 @@ Read beside [VHK](../VHK/README.md) for a desktop-level version of the problem, 
 
 ## Version shelf and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0003](versions/rev0003/README.md): 78 preserved members; `GlassTTY-rev0003-2026.03.06.21.15-sidepanel-broker-multiprofile-archive-luxury-switchyard.zip`.
 - [rev0149](versions/rev0149/README.md): 2,280 preserved members; `GlassTTY-rev0149-2026.03.21.22.36-platformreceipt-surfacegate-webbound-kittiwake.zip`.

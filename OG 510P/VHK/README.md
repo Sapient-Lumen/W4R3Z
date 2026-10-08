@@ -25,9 +25,9 @@ Read beside [GlassTTY](../GlassTTY/README.md) for a browser-oriented control sur
 
 ## Version shelf and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [rev0016](versions/rev0016/README.md): 132 preserved members; `vhk_repo_rev0016.tar.gz`.
 - [rev0108](versions/rev0108/README.md): 250 preserved members; `VHK-rev0108-2026.03.05.05.01-oscd-oscudp-controllerglue-pegasus.zip`.

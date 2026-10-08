@@ -26,7 +26,7 @@ Read beside [Lacuna](../Lacuna/README.md), which keeps possible worlds and accep
 
 ## Snapshots and preservation
 
-## A short reading path
+### A short reading path
 
 1. Begin with [rev0016’s charter](versions/rev0016/contents/docs/00-meta/charter.md). It states the project’s aims and the mistakes it was trying to avoid. Its current revision records a nearby rejected alternative alongside an accepted change.
 2. Visit [rev0052](versions/rev0052/contents/CHANGELOG.md) for the question of whether a smaller re-entry packet is sufficient. Its changelog frames replay of that smaller packet as something to test rather than assume from a successful larger packet.
@@ -36,13 +36,13 @@ Read beside [Lacuna](../Lacuna/README.md), which keeps possible worlds and accep
 6. Visit [rev0388](versions/rev0388/contents/cloudtainer/oq0266-self-contained-evidence-capsule-audit-2026-06-18.md) for the late working archive and its evidence-capsule audit. It includes the canonical rev0374 surfaces plus a later working overlay. The audit records an effort to make replay independent of ambient project files.
 7. Finish with [rev0389’s two-file addendum](versions/rev0389/contents/DelayBasin-rev0389-overlay/cloudtainer/oq0266-multi-model-semantic-replay/REVISION-rev0389-multi-model-semantic-replay.md). It reports an operator-attested multi-model replay and explicitly distinguishes that evidence class from a custody-clean external replay. Raw model responses are not included in that addendum.
 
-## Reading the version labels
+### Reading the version labels
 
 rev0388 explicitly says its internal canonical head remains rev0374. rev0389 likewise identifies itself as a working overlay rather than a canonical promotion. These labels describe the archived project’s own status distinctions. The two-file rev0389 addendum cannot replace the larger rev0388 working archive.
 
 Dates in archive filenames and documents are preserved historical labels, not independently authenticated publication times. Historical instructions, proposed experiments, open questions, and permissions remain part of the exhibit; they do not start new work.
 
-## Preserved packages
+### Preserved packages
 
 Each version directory contains the unchanged original ZIP and its own extracted contents. Internal paths and file bytes are preserved. [The manifest](MANIFEST.json) records archive and member SHA-256 checksums. These identify supplied bytes; they do not establish authorship or validate research conclusions.
 

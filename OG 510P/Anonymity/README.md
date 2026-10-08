@@ -26,7 +26,7 @@ Read beside [TimeSync](../TimeSync/README.md) on common-mode dependence and [Sal
 
 ## Version shelf and preservation
 
-## What the collection contains
+### What the collection contains
 
 The research concerns anonymity and metadata leakage in overlay and distributed-hash-table systems: scheduling and padding, state and congestion assumptions, observation models, privacy accounting, deterministic receipts, and the evidence needed to connect a calculation to an implementation. The files include papers, worked examples, machine-readable artifacts, governance records, and local validation/build tooling.
 
@@ -40,7 +40,7 @@ The three snapshots have different shapes:
 
 The smaller rev0900 ZIP is not evidence of less research: it drops shipped PDFs/render clutter and retains seven compressed JSON payloads.
 
-## Short reading route
+### Short reading route
 
 All paths below are relative to the selected snapshot.
 
@@ -52,25 +52,25 @@ All paths below are relative to the selected snapshot.
 
 For historical context, follow rev0162's [SERIES_INDEX.tex](versions/rev0162/files/SERIES_INDEX.tex) and the opening of [PATCH_NOTES.md](versions/rev0162/files/PATCH_NOTES.md); then read rev0502's [REVISION_RECEIPT.json](versions/rev0502/files/REVISION_RECEIPT.json) and [release_queue/LATEST_DECISION.json](versions/rev0502/files/release_queue/LATEST_DECISION.json).
 
-## Three distinctions to retain
+### Three distinctions to retain
 
-### A scalar rate is not a full observation model
+#### A scalar rate is not a full observation model
 
 Rev0900 identifies an invalid inference from an average or per-secret reveal probability to an independent-erasure channel. Equal reveal rates do not establish the conditional output distribution. Contact dependence, branch selection, and joint tier observations also matter.
 
 The examples and quantitative values in this archive are research claims and model controls. This intake did not independently reproduce the mathematical proofs or run their validators.
 
-### Checking arithmetic does not establish model validity
+#### Checking arithmetic does not establish model validity
 
 The latest proof-carrying formulation limits its verdict to `VALID-UNDER-MODEL(d_M)`. Source identities and deterministic replay are useful, but a deployment claim still needs evidence that the implementation and observer projection realize the stated model.
 
-### Frozen, historically published, and currently supported are different
+#### Frozen, historically published, and currently supported are different
 
 Rev0900 records five legacy public citation heads and seven post-policy heads, as well as one frozen-only entry. That is the archive's historical classification; it was not checked against an external publication service.
 
 In particular, [published/CITATION_HEADS.md](versions/rev0900/files/published/CITATION_HEADS.md) preserves rev0897 and rev0898 partial-claim withdrawals affecting the calibration head. Read those correction notices alongside the immutable snapshot.
 
-## Integrity, rights, and provenance
+### Integrity, rights, and provenance
 
 The three supplied ZIP hashes match the expected intake values, and every ZIP member passed CRC and path checks. Internal checksums have inherited exceptions in rev0162 and rev0502; rev0900's 977 listed file hashes match. See [STATIC_REVIEW.md](STATIC_REVIEW.md) for exact results.
 
@@ -78,12 +78,12 @@ Rev0900 contains an unsigned in-toto statement and a public verification key. Ma
 
 No permissive license is inferred. Rev0900's restrictive [LICENSE](versions/rev0900/files/LICENSE) and [NOTICE](versions/rev0900/files/NOTICE) are preserved; no standalone license file was found in the two earlier snapshots. Archive publication and permission for downstream reuse are separate matters.
 
-## What this intake did
+### What this intake did
 
 It restored and isolated the originals; independently checked archive structure, CRCs, file hashes, manifests, JSON parsing, and selected static risk indicators; and prepared these guides. It did not run uploaded Python or shell scripts, compile TeX, contact live systems, sign a package, change historical queue states, or validate an anonymity deployment.
 
 
-## Preserved originals and extracted snapshots
+### Preserved originals and extracted snapshots
 
 - [rev0162 original ZIP](originals/Anonymity-rev0162-2026.03.05.01.08-contactsurfaceid-schemaexcerpt-pinrule-topaz.zip) · [rev0162 reading guide](versions/rev0162/README.md) · [extracted files](versions/rev0162/files/)
 - [rev0502 original ZIP](originals/Anonymity-rev0502-2026.03.22.02.13-verifierbundlecutover-checkerversion-capdrift.zip) · [rev0502 reading guide](versions/rev0502/README.md) · [extracted files](versions/rev0502/files/)

@@ -27,9 +27,9 @@ Read beside [DelayBasin](../DelayBasin/README.md) for continuity under partial o
 
 ## Version shelf and preservation
 
-## Reading order
+### Supplied snapshots
 
-Start with the newest selected snapshot for its entry points and stated limits; compare earlier snapshots for changes. These are selected deliveries, not an assertion of a complete revision history.
+The reading route above is selective. This shelf retains every supplied snapshot and its original identity.
 
 - [v0.19](versions/v0.19/README.md): 80 preserved members; `sandchoir-aar_adcc_specs_v0_19.zip`.
 
