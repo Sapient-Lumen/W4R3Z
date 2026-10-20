@@ -15,6 +15,10 @@ Choose by the work and the boundary it needs. These are distinct projects, not c
 
 For comparison through original passages, read [what continued work has to preserve](READING-PATHS.md#what-deserves-to-survive-an-interruption). For entry files and operating requirements, use [Maintained Tools](Maintained%20Tools/README.md).
 
+## ▓▒░ FOUNDRY ░▒▓
+
+[Current Datacube drops](Foundry/README.md): the current cube and its matching bootstrap, with an optional one-line account of the salient change. A living development shelf, distinct from the older editions and extended reading in OG 510P.
+
 ## OG 510P
 
 - **[AI-EDU](OG%20510P/AI-EDU/README.md)** — What learners and teachers are owed when guidance, tools and learning routes change.

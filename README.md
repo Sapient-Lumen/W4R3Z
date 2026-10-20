@@ -6,11 +6,13 @@ W4R3Z brings together software for working with agents, systems and devices with
 
 Some of these works are meant to be used. Others are meant to be read, questioned, inhabited or carried into a different project. You do not need to turn a work into a product to find something valuable in it.
 
-## Three ways in
+## Four ways in
 
 - **Read a work.** [OG 510P][og] holds stories, essays, translations, philosophical inquiries and research. Start with a particular voice, scene or argument, and follow it at its own pace.
 - **Follow an inquiry.** The [reading paths][paths] connect works through questions about care, language, institutions, knowledge, possibility and continuity. They offer sequences and contrasts rather than a single theory of the collection.
 - **Work with the tools.** [Maintained Tools][tools] brings together Sandcodex, Sandpi, qomrade, Monsternix, IoTox and AnonSSH: different approaches to agent-assisted work, Linux systems and connections between devices.
+
+- **Continue a growing work.** [▓▒░ FOUNDRY ░▒▓][foundry] holds current Datacube drops with their bootstrap entrances: small, transferable foundations for further research, writing and construction.
 
 [Browse every work in the catalog][catalog].
 
@@ -60,3 +62,5 @@ The broader invitation is to become more capable of making and understanding thi
 [paths]: https://github.com/Sapient-Lumen/W4R3Z/blob/main/READING-PATHS.md
 [preservation]: https://github.com/Sapient-Lumen/W4R3Z/blob/main/PRESERVATION.md
 [tools]: https://github.com/Sapient-Lumen/W4R3Z/blob/main/Maintained%20Tools/README.md
+
+[foundry]: Foundry/README.md
