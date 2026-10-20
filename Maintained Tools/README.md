@@ -10,6 +10,16 @@ Choose where the work should happen: a Linux project environment, a persistent v
 
 These are different tools, not five parts you must install together. The single-file launchers and userscript are linked below; IoTox is a source tree. Nothing on this page is an installation instruction.
 
+## Three different ways to sustain agent work
+
+**qomrade keeps the conversation moving.** It supplies repeated opportunities for ChatGPT to continue an established project. The instruction can remain stable while the sources, argument, code and next useful action change. Its browser controller governs sending and recovery; it does not supply the project's execution environment. The [full explanation](../guides/qomrade.md) also opens its own source-carrying development workshop.
+
+**Sandcodex supplies a capable project environment.** Codex can build, use a browser and operate native applications inside a selected Linux project boundary. Sequential loops continue one session lineage; campaigns stage separate Git work for explicit collection and review. The [Sandcodex guide](../guides/Sandcodex.md) explains why project authority, frontend credentials, human desktop input and worker adoption must remain distinct.
+
+**Sandpi supplies a persistent machine for Pi.** A named NixOS VM retains packages and agent state, while Pi owns its conversation tree and the host project remains a live writable share. These are three different kinds of persistence: restoring the guest disk does not roll back the shared project. The [Sandpi guide](../guides/Sandpi.md) follows that distinction through project identity, package reuse, terminal/RPC entry and native settlement loops.
+
+Choose by the work and the boundary it needs, not by treating “autonomy” as one interchangeable feature. More turns, a useful development room and a persistent machine can each matter, but they solve different problems. A portable launcher is also different from a backup of its live state.
+
 ## IoTox
 
 Send authorized commands and synchronize folders between your devices over Tox, including tracking work across interruptions. For people exploring self-managed device access. The supplied security policy warns against using it to protect production devices or secrets.
@@ -43,7 +53,7 @@ Run the Pi coding agent in a NixOS virtual machine whose disk persists between s
 
 ## qomrade
 
-Sustain research, writing or construction across successive ChatGPT turns. The continuation instruction stays fixed while the project's sources, arguments, tests and next useful steps change. qomrade governs when that instruction is sent, which visible model policy applies, and how the browser controller handles completion and recognized failures. The same userscript also carries its own development workbench, living project notes and tests, so another developer can continue the tool itself. Requires a userscript manager; each tab remains independently controlled.
+Requires a userscript manager. Each tab remains independently controlled; background work, recovery and generated-file collection follow the operator settings and the supplied runtime contract.
 
 - [Read the qomrade introduction](../guides/qomrade.md)
 - [Current supplied qomrade.user.js](qomrade.user.js)
@@ -51,11 +61,10 @@ Sustain research, writing or construction across successive ChatGPT turns. The c
 
 ## What “current” means here
 
-It means the current supplied copy in W4R3Z, not a claim that this repository follows every upstream release automatically. Sandcodex and Sandpi retain the byte-for-byte files supplied on 20 October 2026; both received Bash syntax checks and bounded source review, without launch or installation. Monsternix retains its 3 October supplied copy and bounded source review. IoTox’s own introduction records its separate provenance and checks.
-
-Continued maintenance is distinct from compatibility, runtime testing and security qualification. Read each project’s setup requirements, risks and license before use. The source-update receipt and Git history retain earlier identities.
+It means the current supplied copy in W4R3Z, not automatic tracking of every upstream release. Exact supplied-file identities and update notes are retained in the [3 October](../updates/2026-10-03.json) and [20 October](../updates/2026-10-20.json) receipts and Git history. IoTox retains its own provenance record. The individual introductions lead to source, operating requirements, notices and subordinate review records.
 
 Projects maintained by **h0p3**; editorial introductions by **Lumen**. Original attribution and notices remain with each source.
 
 [Whole catalog](../CATALOG.md) · [The prose library](../OG%20510P/README.md) · [W4R3Z](../README.md)
+
 
