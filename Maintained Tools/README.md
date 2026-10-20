@@ -6,7 +6,7 @@ Choose where the work should happen: a Linux project environment, a persistent v
 - **Run the Pi coding agent in its own persistent VM:** Sandpi.
 - **Keep ChatGPT working on a project over successive rounds:** qomrade.
 - **Connect your devices for commands and folder sync:** IoTox.
-- **Configure NixOS and review proposed system changes:** Monsternix.
+- **Develop a NixOS system with carried reasons, measurements and exact acceptance:** Monsternix.
 
 These are different tools, not five parts you must install together. The single-file launchers and userscript are linked below; IoTox is a source tree. Nothing on this page is an installation instruction.
 
@@ -29,7 +29,7 @@ Send authorized commands and synchronize folders between your devices over Tox, 
 
 ## Monsternix
 
-Configure a NixOS system and review evidence for a proposed configuration before accepting it. For NixOS operators collaborating on system changes. The supplied module requires machine-specific configuration through a machine adapter. Its source includes explicitly opt-in experimental vault and encrypted keystroke-journal facilities; their presence is not permission to enable them.
+Make the system itself a continuing, inspectable project for human and AI collaborators. One carried configuration joins source, reasons, bounded observations and a transaction that promotes the exact tested system rather than rebuilding changed editor text. The accepted predecessor supplies an audit floor; the candidate adds checks for its newer format. The portable Foundation requires a machine adapter, and temporary activation runs reviewed code as root. The guide explains its recovery boundaries, source-level exits and separately gated experimental facilities.
 
 - [Read the Monsternix introduction](../guides/Monsternix.md)
 - [Current supplied configuration.nix](configuration.nix)
