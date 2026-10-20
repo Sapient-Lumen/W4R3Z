@@ -1,57 +1,57 @@
 # Sandcodex
 
-## Work on a code project with Codex on Linux
+## Give an agent a place to do the work
 
-Sandcodex is a single-file launcher for a Codex development environment. It gives the agent access to a selected project directory, build tools, and a browser and desktop, with facilities for returning to work across sessions.
+Sandcodex turns a selected Linux project into a sustained human–agent working environment. Codex can edit the repository, run builds, use a real browser, operate a native desktop and return to the project's sessions. The purpose is not to make the agent merely suggest changes from outside. It is to give it enough practical capability to carry an engineering task through, while making the difference between that project's authority and the rest of the host explicit.
 
-**Who it is for:** Linux users who want Codex to do hands-on engineering in a chosen project rather than only suggest code in a chat.
+The supplied **0.88.0** artifact is one file containing the launcher, pinned dependency graph, operator handbook, embedded controllers and diagnostic fixtures. [Read its opening Field Handbook](../Maintained%20Tools/sandcodex#L18-L54) for the design in its own terms. The [source receipt](../updates/2026-10-20.json) identifies this supplied copy more precisely than its version number alone.
 
-**Example use:** bring a repository into the environment, have Codex edit and test it, then inspect the application in the included browser. This describes the intended workflow, not a test performed by W4R3Z.
+## A project boundary that permits consequential work
 
-**Sandcodex or Sandpi?** Choose this introduction for Codex in a project environment that shares the host kernel. [Sandpi](Sandpi.md) instead runs the Pi coding agent inside a persistent virtual machine. Neither boundary makes everything an agent does safe: shared project files can be changed or deleted.
+Consider a web application that needs a fix. The agent needs to inspect its source, change files, install or build dependencies, start the application and check the result in a browser. A room that prevents those ordinary actions is not much of a development environment. Conversely, granting the project does not require silently donating the user's whole home directory or letting project configuration become credential-bearing frontend policy.
 
-**Before starting:** this is for a suitably configured Linux host, not a drop-in macOS app. Read the authority and host requirements below before launching it.
+Sandcodex's default arrangement separates these concerns. The selected project is writable; system paths and the Nix store are projected read-only; the command room uses private process, mount and network namespaces while sharing the host kernel. The [outer boundary implementation](../Maintained%20Tools/sandcodex#L120864-L120970) constructs those mounts and launch arguments explicitly. Ordinary project work can still delete files or damage uncommitted changes. That is real working authority, not a promise that every operation will be individually approved.
 
-The supplied artifact declares **version 0.88.0**. [Open the current supplied file](../Maintained%20Tools/sandcodex); its embedded identity and the [source-update receipt](../updates/2026-10-20.json) distinguish these exact bytes from a similarly named copy.
+A further distinction matters inside the room. Codex's frontend needs authentication and session state; ordinary model-issued commands do not need to inherit all of that state. The launcher keeps trusted control material outside the mutable project and generates frontend configuration there. By default, a repository's executable `.codex` configuration, hooks and MCP declarations are not automatically loaded with frontend authority. Reading ordinary project instructions is a different activity from trusting executable project policy. The [authentication and configuration section](../Maintained%20Tools/sandcodex#L466-L486) explains that separation and its explicit override.
 
-## Read it in this order
+## The room includes ways to see what was built
 
-The file opens with a substantial *Field Handbook*. It is the best entrance, before the embedded implementation.
+The browser and desktop are different facilities, not two names for a screenshot tool. The browser provides persistent Chromium and Playwright MCP for web applications, downloads and browser interaction. The desktop is a separate Linux workstation with native application control. Its Wayland and X11 lanes serve different uses, including headless native work and a shared headful Xephyr workstation.
 
-1. **01 · Purpose:** why a useful room permits consequential work inside a selected project, and why that project must not become the whole machine by implication.
-2. **04 · Authority Postures:** the default room, bare-metal mode, inner jail and operator service have materially different scopes. This is the most important section before choosing a launch posture.
-3. **05 · Process and Data Map**, then **06 · Browser, Desktop, and Human Presence:** understand where mutable work, trusted state and shared control live. A human moving the desktop does not automatically pause agent mutation.
-4. **08 · Continuation and Delegation**, then **10 · Recovery, Cleanup, and Diagnostics:** returning to work is an identity and state problem, not simply reopening a terminal.
-5. **13 · Honest Limits:** read this before interpreting a successful diagnostic as a guarantee.
+This lets the workflow continue beyond compilation: inspect a page, exercise its controls, open a native application, or review an exported result. Human viewers normally begin hidden; revealing a viewer need not create a different work environment or stop the controlled application. The [visual-work section](../Maintained%20Tools/sandcodex#L368-L393) also makes a crucial collaboration fact explicit: human input does not automatically suspend the agent. Fresh observations and mutation fences matter because the two participants can act on a changing scene.
 
-The **Sixty-Second Start** and **Complete Command Tree** are reference surfaces after those distinctions are clear. The **Amnesia Recovery Cards** provide separate orientations for users, agents and maintainers. Their instructions belong to the software’s operator handbook; reading them here does not launch a session.
+Application access is handled separately again. A declared TCP publication maps a host listener to an exact application port inside the room. That can make a development server reachable, but a TCP relay is not application authentication or TLS. A local listener test and an actual remote client's successful request establish different facts. This distinction helps the operator diagnose the real missing step instead of treating “the port is open” as “the application works.” See [ingress and its checks](../Maintained%20Tools/sandcodex#L395-L427).
 
-## The important design choice
+## Keep continuation and parallel work distinct
 
-Sandcodex aims for useful engineering capability inside a deliberately selected room. The default project is writable and ordinary work there can be destructive. The boundary is not a promise to ask before every change or to preserve uncommitted work automatically.
+A long task may need more than one turn, and a large task may benefit from separate workers. Sandcodex gives those needs different mechanisms.
 
-Its default network proxy can reach HTTP/HTTPS/SOCKS destinations, including LAN destinations; the handbook distinguishes that posture from restricted networking. A project boundary is therefore not a data-loss-prevention guarantee. Bare-metal mode deliberately removes outer containment and can involve a host sudo ticket. Those choices should be understood separately from the smaller voluntary inner jail.
+**Loop** continues one project and session lineage sequentially. A detached safe-mode loop can live under the user systemd manager rather than depend on an open terminal. Its controller handles classified transient failures and disk-growth stops. Requesting another turn does not enlarge the launch's outer authority. This is continuity of an ongoing working session, not a claim that every additional turn improves the project.
 
-The handbook also makes a less conspicuous but valuable distinction: a service listening locally, a tunnel existing, and a real outside client reaching the intended application are different observations. That restraint runs through the diagnostics and recovery design.
+**Campaign** creates staged parallel work from an exact clean Git commit. A worker gets an independent clone; collection returns committed work as a Git bundle with a digest receipt. Collection does not merge or adopt it. That boundary makes a useful difference: a proposal can be inspected as a concrete change before it becomes the foreground project's state. The primary agent remains responsible for integration and tests.
 
-## Host and evidence boundaries
+The [continuation and delegation chapter](../Maintained%20Tools/sandcodex#L429-L464) also describes provider-specific lifetimes and native subagents. Those are not all the same form of independence. A worker's usable provider connection and the foreground room's continued existence can have different dependencies. The design therefore uses explicit lifecycle status rather than inferring that silence means a worker started or finished.
 
-The supplied handbook describes a non-root Linux host, x86-64 or ARM64, with Bash, Nix flakes, working unprivileged user namespaces, cgroup v2 and a functioning systemd user manager for ordinary safe-mode resource isolation. Explicit degradation options change that contract; they are not equivalent substitutes for passing it.
+## A smaller boundary for a smaller action
 
-Sandcodex shares the host kernel. It is not a VM, malware laboratory, disk quota for the outer project, application authenticator or proof that an agent’s work is correct. The source itself advises a disposable VM for hostile native binaries or whole-disk containment.
+Not every command deserves the full project's authority. The inner jail lets a delegator specify a narrower workspace, inputs, tools, network access, resource ceilings and expected result evidence for a suspect or tightly bounded operation. The delegated action supplies its arguments; it does not choose its own grant. Nested grants narrow rather than expand.
 
-W4R3Z’s 20 October intake preserves the new file byte-for-byte and records a Bash syntax check. This editorial review read its handbook and selected source declarations; it did not launch Sandcodex, build its pinned environment, test a desktop boundary or reproduce its embedded diagnostic claims.
+This is different from the default outer room, which is meant for ordinary engineering, and different again from an operator service: a reviewed application declaration launched in a credentialless sibling boundary with its own supervised ingress. [The authority postures](../Maintained%20Tools/sandcodex#L285-L325) explain where each belongs. Bare-metal mode is a separate, deliberate removal of outer containment, potentially including host sudo authority; it is not a fallback for an unsuccessful safe launch.
 
-## 20 October 2026 supplied update
+## Carry the environment's design, preserve its working state deliberately
 
-The version declaration remains 0.88.0, so it cannot distinguish this copy from the previous one. The receipt records both Git identity and SHA-256. Compared with the previous supplied bytes, the Codex dependency pin changes from 0.154.0 to 0.162.1 through a separate pinned package input. The update adds session diagnosis and Gemini handoff commands, protected-bank selection for exact OpenRouter launches, and explicit interruption records. Its handbook now describes a fresh worker-owned Gemini adapter after successful start. These are source-observed changes; runtime behavior has not been independently reproduced here.
+The single-file form means the implementation and the explanation of its arrangement travel together. The [implementation atlas](../Maintained%20Tools/sandcodex#L571-L595) maps the embedded components to their distinct trust domains. It is a substantial source artifact, not merely a small command that downloads an undisclosed launcher from elsewhere. Pinned dependencies still have to be realized; portable source is not an offline bundle of every dependency or an export of runtime sessions.
 
-## Continuity and updates
+Runtime continuity has its own layout. Disposable project-local work is separated from trusted authentication, sessions, locks and lifecycle records. Cleanup distinguishes caches from sessions, downloads and persistent visual-work state. State import and export are transactional and schema-checked; copying a live working-state tree is not the documented backup method. [The process/data map](../Maintained%20Tools/sandcodex#L327-L366) and [recovery chapter](../Maintained%20Tools/sandcodex#L488-L512) explain how a later occupant can recover a working situation rather than merely find a directory full of files.
 
-Keep the distinction between the single portable product file and its runtime state. The handbook describes transactional state import/export and warns against treating a live state-tree copy as a backup. Its maintenance and cleanup operations have real consequences; consult the original handbook rather than treating this introduction as a shortened runbook.
+## Choose the host and posture deliberately
 
-h0p3 intends to continue updating this project. Future supplied versions should retain a clear current entry, exact source identity, a human-readable change note and a separate account of checks actually performed. The source’s own license notices and dependency terms remain controlling.
+The ordinary host contract is non-root Linux on x86-64 or ARM64, Bash, Nix with flakes, unprivileged user namespaces, cgroup v2 and a functioning systemd user manager. Explicit degradation flags change that contract. The default proxy permits broad HTTP/HTTPS/SOCKS access, including LAN destinations; restricted networking is a separate choice. Project isolation is therefore not a data-loss-prevention policy, and sharing the host kernel is not a VM boundary.
 
-*Reading and orientation by Lumen, 8 October 2026; supplied-update note revised 20 October 2026.*
+[Sandpi](Sandpi.md) instead places the Pi coding agent inside a persistent NixOS VM with its own kernel. These are different working environments, not a universal ranking of safety or capability. In either case, granting a live writable project grants consequential access to it.
+
+If sharing Codex OAuth credentials with Sandpi, avoid overlapping refresh windows: the current reconciliation path can promote a stale frontend copy over newer canonical state. See the [source-level compatibility finding](review/Sandcodex-2026-10-20.md).
+
+Read the original handbook before selecting a posture or following its commands. Original attribution and license/dependency notices remain in the supplied artifact. [Supplied-source review](review/Sandcodex-2026-10-20.md) · [Source receipt](../updates/2026-10-20.json).
 
 [Maintained Tools](../Maintained%20Tools/README.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)
