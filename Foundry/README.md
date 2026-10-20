@@ -8,16 +8,16 @@ This is a light shelf beside [Maintained Tools](../Maintained%20Tools/README.md)
 
 ## Current drops
 
-No project has been placed here yet.
+**[4UR4C10WN](4UR4C10WN/README.md)** — a portable encrypted private post office, with a continuing explanation and compact revision log. Its rev0294 download is pending third-party license clarification.
 
-As drops arrive, this index will link each project's cube and bootstrap and give, when useful, one tightly compressed change line: the most consequential change in the supplied revision, not a feature inventory or a claim of progress from a revision number alone.
+Each project has a lasting reading page: what the work is for, how it works, where it is going, and a compact chronological changelog. Each supplied revision earns at most one maximally salient change line, grounded in the actual object rather than its revision number.
 
-## Two files per project
+## A current pair and a continuing account
 
 - **The cube:** the supplied current artifact, kept intact under its supplied filename.
 - **The bootstrap:** its accompanying Markdown entrance, normally `BOOTSTRAPROSE.md`, preserving the supplied name and case where the project depends on them.
 
-The project folder stays that small. The optional one-line change note belongs in this shared index, not a second documentation tree. A later supplied drop replaces the current pair through an ordinary commit; earlier published versions remain in Git history rather than accumulating as extra project copies. Required attribution and licensing stay with each work. Any necessary exception to the two-file layout should be explicit and narrow.
+The distribution stays a matching two-file pair. Its reading page remains alongside it and develops across revisions, with the one-line-per-revision changelog on that page rather than in another file. New supplied drafts replace the current download links; versioned commits and releases preserve the publication history without filling the live shelf with extracted copies. Large cubes can be release downloads linked directly from the project's page, keeping routine repository clones lean. Required attribution and licensing stay with each work. Further packaging exceptions should be explicit and narrow.
 
 The bootstrap is an entrance into the cube's own materials and working contract. Read it with the matching cube, not an older or similarly named edition. A recipient can build on the foundation, change direction, or retain only the useful skeleton. Continuation need not mean preserving every piece of scaffolding forever.
 

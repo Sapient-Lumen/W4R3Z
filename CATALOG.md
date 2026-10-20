@@ -19,6 +19,8 @@ For comparison through original passages, read [what continued work has to prese
 
 [Current Datacube drops](Foundry/README.md): the current cube and its matching bootstrap, with an optional one-line account of the salient change. A living development shelf, distinct from the older editions and extended reading in OG 510P.
 
+- [4UR4C10WN](Foundry/4UR4C10WN/README.md) — a carried encrypted private post office, recipient-absent custody and evidence-aware recovery, with its own construction foundation. Reading page and revision log; download pending third-party license clarification.
+
 ## OG 510P
 
 - **[AI-EDU](OG%20510P/AI-EDU/README.md)** — What learners and teachers are owed when guidance, tools and learning routes change.
