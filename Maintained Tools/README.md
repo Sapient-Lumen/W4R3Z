@@ -22,7 +22,7 @@ Choose by the work and the boundary it needs, not by treating “autonomy” as 
 
 ## IoTox
 
-Send authorized commands and synchronize folders between your devices over Tox, including tracking work across interruptions. For people exploring self-managed device access. The supplied security policy warns against using it to protect production devices or secrets.
+Operate self-owned devices over Tox through durable typed commands, working-folder synchronization and host-selected terminals. Stable identity and signed authority sit above peer reachability; local policy controls the effect. Its sync records local edits against the history actually installed in the working directory, not unseen remote branches already downloaded by the daemon. The supplied security policy excludes protection of production devices or secrets; the fuller explanation keeps that boundary alongside the implemented design.
 
 - [Introduction and provenance](IoTox/W4R3Z.md)
 - [Project files and documentation](IoTox/)
