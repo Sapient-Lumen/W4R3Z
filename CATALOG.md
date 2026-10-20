@@ -6,6 +6,7 @@ Use this complete index to find a work, or take a [source-first reading path](RE
 
 Choose by the work and the boundary it needs. These are distinct projects, not components of one required stack.
 
+- [AnonSSH](Maintained%20Tools/AnonSSH/README.md) — recover a machine’s overlay addresses and SSH trust, then use adaptive Tor/I2P bonding through ordinary Unix tools or a native application socket. Portable and Nix-integrated packages make different runtime-dependency choices.
 - [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) — operate self-owned devices over Tox through durable commands, working-copy sync and host-selected terminals. Stable authority sits above reachability; synchronization distinguishes installed working history from merely received branches. Its security policy says it is not yet suitable for protecting production devices or secrets.
 - [Monsternix](guides/Monsternix.md) — develop a NixOS system through a carried account of reasons, observations and exact acceptance. Predecessor and candidate audits constrain acceptance; promotion selects the already-tested system. The portable Foundation needs a machine adapter.
 - [Sandpi](guides/Sandpi.md) — give Pi a persistent NixOS virtual machine while keeping the agent's conversation tree and the live host project distinct. Restoring a guest disk does not roll back the shared project.

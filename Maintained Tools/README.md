@@ -1,14 +1,15 @@
 # Maintained Tools
 
-Choose where the work should happen: a Linux project environment, a persistent virtual machine, a continuing ChatGPT conversation, connected devices, or a NixOS system under revision. Each tool provides a different way to organize that work.
+Choose where the work should happen: a Linux project environment, a persistent virtual machine, a continuing ChatGPT conversation, connected devices, recoverable remote access, or a NixOS system under revision. Each tool provides a different way to organize that work.
 
 - **Code with Codex on Linux:** Sandcodex.
 - **Run the Pi coding agent in its own persistent VM:** Sandpi.
 - **Keep ChatGPT working on a project over successive rounds:** qomrade.
+- **Recover remote access and share adaptive Tor/I2P transport:** AnonSSH.
 - **Connect your devices for commands and folder sync:** IoTox.
 - **Develop a NixOS system with carried reasons, measurements and exact acceptance:** Monsternix.
 
-These are different tools, not five parts you must install together. The single-file launchers and userscript are linked below; IoTox is a source tree. Nothing on this page is an installation instruction.
+These are different tools, not parts you must install together. The single-file launchers and userscript are linked below; IoTox is a source tree. Nothing on this page is an installation instruction.
 
 ## Three different ways to sustain agent work
 
@@ -19,6 +20,14 @@ These are different tools, not five parts you must install together. The single-
 **Sandpi supplies a persistent machine for Pi.** A named NixOS VM retains packages and agent state, while Pi owns its conversation tree and the host project remains a live writable share. These are three different kinds of persistence: restoring the guest disk does not roll back the shared project. The [Sandpi guide](../guides/Sandpi.md) follows that distinction through project identity, package reuse, terminal/RPC entry and native settlement loops.
 
 Choose by the work and the boundary it needs, not by treating “autonomy” as one interchangeable feature. More turns, a useful development room and a persistent machine can each matter, but they solve different problems. A portable launcher is also different from a backup of its live state.
+
+## AnonSSH
+
+Recover a prepared machine’s overlay addresses and SSH trust from an identity password and exact machine ID, then carry independent application streams over an adaptive Tor/I2P bond. A resident broker reuses expensive router infrastructure; ordinary SSH tools and a native local socket interface give different applications access to the transport. The portable Linux executable carries its router and SSH stack, while the separate Monsternix package uses the system’s Nix closure.
+
+- [Read the AnonSSH introduction](AnonSSH/README.md)
+- [Portable executable and source downloads](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/anonssh-v0.2.0-9831b007cd47)
+- [Project source](AnonSSH/source/) · [Release materials](AnonSSH/RELEASE.md)
 
 ## IoTox
 
