@@ -1,53 +1,61 @@
 # qomrade
 
-## Keep ChatGPT working on a project without prompting every round yourself
+## Let a project keep developing, not merely a prompt keep repeating
 
-qomrade is a **Tampermonkey browser userscript that sustains long-running work in ChatGPT**. Give the conversation a project and qomrade a continuation instruction, and it can keep the work moving through successive rounds of research, writing, revision or software development without you manually sending each next turn.
+qomrade is a browser-side continuation tool for sustained work in ChatGPT. A research collection can acquire better sources and sharper exclusions; an argument can encounter objections and change; a translation can revisit its lexical decisions; a software project can be inspected, built, revised and delivered again. qomrade keeps supplying the next occasion to work without requiring someone to send every continuation by hand.
 
-The point is what can accumulate over those rounds: a researched collection, a developing argument, increasingly refined translations, or successive versions of a software project. Repeating a prompt is the mechanism, not the finished work.
+Its central arrangement is simple but consequential: **the instruction can stay the same while the project changes**. A request to continue useful work refers to the current conversation, current materials and current state of the inquiry. The next turn need not repeat the previous answer. It can act on what that answer discovered, what a test rejected, or what the latest artifact now makes possible.
 
-**Who it is for:** people who want ChatGPT to spend many turns developing an ongoing project rather than stop after a single response.
+[Open the complete qomrade 0.18.40 source](../Maintained%20Tools/qomrade.user.js), including its runtime contract and embedded development workbench.
 
-## Look at the kind of work in OG 510P
+## The work supplies the changing subject
 
-[OG 510P](../OG%20510P/README.md) makes that distinction concrete. [Parables](../OG%20510P/Parables/README.md) preserves successive searches, selections, rejections and additions to a collection. [The Good](../OG%20510P/The-Good/README.md) develops an argument across a growing archive of chapters. [Conlang Rosetta Stone](../OG%20510P/Conlang%20Rosetta%20Stone/README.md) preserves translation drafts and repeated lexical and grammatical refinement.
+A useful continuation begins with an established project: its aim, materials, current questions and the permissions under which it may proceed. For example, a research collection might ask each turn to read a promising source, distinguish its findings from inference, revise the collection where warranted and preserve the next useful question. Some turns might add an essay. Others might reject an attractive claim or discover that the existing account should remain unchanged.
 
-These are examples of cumulative project work, not batches of interchangeable answers. They explain the purpose a continuation tool serves. The examples alone do not establish which qomrade revision, if any, produced each historical snapshot.
+The same arrangement can support software construction. A turn inspects the present project, chooses a warranted change, carries out the available checks, and leaves a complete successor with enough orientation for another turn. Prose, rejected approaches and negative results can be construction materials alongside source code: they prevent the next turn from repeatedly rediscovering why an apparently easy path was abandoned.
 
-**Example workflow:** establish a research collection in ChatGPT, including its criteria and existing files. Set a continuation instruction that asks the assistant to pursue the next useful research round, update the collection and notes, and produce an updated archive when appropriate. qomrade sends the same instruction again as the conversation develops; ChatGPT does the research and revision using the context and tools available to it. If enabled, qomrade requests matching native file downloads from completed replies.
+qomrade supplies recurrence, not the research judgment, compiler or project itself. Those come from the model, its available tools and the materials carried forward. This separation is what makes the arrangement adaptable. The browser controller need not understand every new research question or acquire a new workflow for every descendant program. It can continue issuing the operator's instruction while the project becomes more capable and more particular.
 
-## What qomrade contributes
+The [OG 510P collection](../OG%20510P/README.md) offers substantial examples of the kind of cumulative work at stake: stories and retellings, philosophical inquiry, translation and systems research. They are works to read in their own right, not interchangeable outputs or a provenance claim that one qomrade revision produced every snapshot.
 
-- **Continuation:** captures one operator-written prompt at Start, waits for the reply to finish and settle, and schedules subsequent sends with a configurable gap.
-- **Model control:** applies the chosen per-tab model policy before sending. The supplied revision supports Smart Pro, an explicitly pinned model and effort, or following the current ChatGPT selection.
-- **Background operation and recovery:** supports work in hidden tabs, bounded recovery from recognized failures, old-rendered-turn trimming and optional safe refresh. Browser suspension can still interrupt it.
-- **Generated-file collection:** optionally requests downloads of explicitly named native file controls matching configured suffixes, with .zip as the default. Requesting a download is not proof that the file was saved successfully.
-- **Handoff and diagnosis:** exports the observed conversation for session handoff and provides separate developer diagnostics when the controller needs investigation.
+## A continuation is a witnessed transaction
 
-It is not an independent research model or a judge of whether another round improved the project. It does not invent new instructions, coordinate tabs, or automatically start another conversation. A conversation-length limit stops the run. The operator still defines the work, reviews the results and decides how to continue.
+The controller does more than press a button periodically. At **Start**, it captures the operator's prompt for that run; subsequent editor changes do not silently replace it. Before each Send it obtains fresh evidence for the selected model policy, inserts and reads back the prompt, checks the conversation and generation state, and checks again at the final click. If a matching user turn has already appeared during insertion, it can adopt that turn rather than duplicate the Send. The [send path](../Maintained%20Tools/qomrade.user.js#L8078-L8275) makes the difference between intending to send, clicking Send and observing an accepted user turn explicit.
+
+A reply is not accepted merely because some text appeared. The controller waits for a new assistant turn after the owned request, no active generation, stable text and no unresolved structural tool-only work. This lets a long turn remain a long turn instead of treating an intermediate work display as the finished answer. The configurable gap defaults to 30 minutes; cadence is enforced again after asynchronous model and composer work rather than assuming that an earlier check still holds.
+
+There are three model policies. **Smart Pro** in this supplied revision prefers the explicit GPT-5.6 Pro route and bounds its GPT-6-or-newer fallback to the relevant failure or unavailable-route situation. Stable success restores the ordinary preference. **Pin** selects a particular discovered route and effort without silent fallback. **Follow** witnesses the current selection without changing it. These are live website-control choices, not evidence about the identity of a backend model. See the [runtime contract](../Maintained%20Tools/qomrade.user.js#L189-L241).
+
+The controller also distinguishes a recoverable failure from a completed conversation. Its current-request recovery sends a fresh copy of the captured prompt after the required evidence and backoff; it does not press native Retry. A conversation-length barrier ends the run. Optional Safe refresh addresses separately bounded page-maintenance situations, not a general license to reload a slow request. A fresh message can repeat work whose backend fate is unknown, so project-side receipts and checks remain valuable when the work has consequential effects.
+
+## Carry the work, and distinguish the kinds of handoff
+
+A continuation tool and a portable project solve different parts of the same practical problem. The former supplies another turn; the latter gives that turn something durable and intelligible to inherit. [DelayBasin](../OG%20510P/DelayBasin/README.md) makes the distinction sharper: a store of evidence, a compact re-entry packet and checks for accepting a revision do not do the same job. Keeping everything is not automatically the best way to resume.
+
+qomrade itself provides three separate evidence surfaces:
+
+- **Session Handoff** carries the observed conversation in order, without an invented summary or new continuation prompt. In 0.18.40, export does not scroll the page; recording follows materialized turns and ordinary user scrolling. Visible file names and image labels can travel as context, not as the contents of those files.
+- **Developer Handoff** carries the controller's diagnostic situation, incidents, timeline and supporting evidence for someone repairing qomrade. It is an explicit clipboard export, not an automatic message to the model.
+- **Flight Recorder** provides a compact operational first look.
+
+This separation keeps a project transcript from becoming a bundle of controller instructions, and keeps diagnostics from masquerading as the work itself. The [handoff contract](../Maintained%20Tools/qomrade.user.js#L360-L372) explains the boundaries. Moving to another conversation remains an operator decision; qomrade does not create one automatically.
+
+## The delivered tool contains its own workshop
+
+The same `qomrade.user.js` is both the installed browser userscript and a Bash-entry development artifact. The browser runs the JavaScript controller. The Bash entrance opens an embedded Python workbench with current tools, tests, browser fixtures and the project's living documents. A recipient can inspect the complete delivered object rather than first having to reconstruct which distant checkout produced it.
+
+The [workbench entrance](../Maintained%20Tools/qomrade.user.js#L25-L175) exposes source mapping, exact splitting and reassembly, a read-only accepted copy beside an editable candidate, diagnostics, tests and release packaging. Its purpose is not merely convenient unpacking. The candidate workflow distinguishes what was received from what is being proposed, while the release tooling checks that the packaged userscript is the same source that was checked. A complete successor, rather than a patch alone, is the intended handoff.
+
+The [living office and heritage](../Maintained%20Tools/qomrade.user.js#L442-L460) retain the current design, lessons, unresolved questions, decisions and retired machinery. In this version, earlier self-prompting developer loops, fleet coordination, automatic diagnostic uploads and recursively embedded releases have been removed from the browser runtime. Current development tools and bounded lineage remain; exact retired releases belong in a separate developer kit. The package budget is 1 MiB and 12,000 lines, enforced by the carried tooling.
+
+That is an important form of continuity: a successor can shed machinery without losing the reasons for the change. An inheritable workshop need not become an ever-growing museum inside every installed copy.
 
 ## Before starting
 
-This modifies the ChatGPT website through a userscript manager. Review its browser grants and runtime contract before installation. Website changes can affect it; W4R3Z has not tested this supplied revision in a live browser. Session Handoff captures observed conversation text, not guaranteed complete server-side history or attached file contents.
+qomrade runs through Tampermonkey on the matched ChatGPT domains, excluding Codex paths. Review the original header's grants and the runtime contract before installation. Each tab is independent. Stop revokes that tab's automation; it does not click ChatGPT's Stop control. Background operation is supported, but cannot make a browser-suspended tab execute.
 
-The supplied **qomrade 0.18.40** is one JavaScript/Bash polyglot file. The browser half runs the controller; the embedded Bash/Python workbench supports its development, testing and maintenance. [Open the original file](../Maintained%20Tools/qomrade.user.js) or its [source receipt](../updates/2026-10-20.json).
+Optional generated-file collection activates explicitly named native download controls in completed replies, using the configured suffix list, `.zip` by default. It does not follow arbitrary prose links, and requesting a download is distinct from confirming that it was saved. Website changes can require adapter maintenance; operator-defined project permissions and result review remain part of using the tool.
 
-The userscript header matches ChatGPT domains, excludes Codex paths, and declares tab-state, menu and clipboard grants. Publishing it here does not install it or grant browser permissions.
-
-## What this supplied revision adds
-
-The embedded 0.18.40 release notes describe no-scroll Session Handoff export, capture after ordinary user scrolling, more complete visible logical-turn extraction, and neutral context labels for visible files and images. They distinguish observed transcript coverage from server-complete history and exclude attached file contents from those labels. They also describe separating neutral completion notices from actual download-error observations.
-
-The carried runtime contract includes explicit prompt custody, per-tab control, model-menu evidence, terminal conversation-length handling and optional native-file download behavior. Read the complete source contract before enabling it. Its labels and historical reports do not attest which backend model answered or establish that the current website still behaves identically.
-
-## Review scope
-
-h0p3 supplied this file on 20 October 2026. Lumen preserved the exact bytes and checked JavaScript syntax with Node’s parser without executing it. A bounded source review inspected the header, runtime contract and embedded release notes. The embedded gzip/tar workbench was decoded as data for inspection and credential-pattern scanning; its programs and tests were not run.
-
-A whole-file `bash -n` check reports a syntax error after the shell’s explicit `exit 0`, where the JavaScript/comment portion begins. That static whole-file result does not by itself establish whether the intended incremental Bash execution path works. Neither the Bash workbench nor browser behavior was exercised here.
-
-The supplied header carries an MIT notice and credits h0p3 and current/future qomrade officers. Other carried notices remain intact. Earlier development evidence retains its original scope.
-
-*Editorial orientation by Lumen, 20 October 2026.*
+The original header credits **h0p3 and current/future qomrade officers** and carries an **MIT** notice. Original bytes and carried notices are preserved. [Source receipt](../updates/2026-10-20.json) · [Editorial inspection record](review/qomrade-2026-10-20.md).
 
 [Maintained Tools](../Maintained%20Tools/README.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)

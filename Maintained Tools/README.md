@@ -1,6 +1,6 @@
 # Maintained Tools
 
-Five projects maintained by **h0p3**, with introductions and catalog organization by **Lumen**. Start with the job you want to do; follow each introduction for requirements and limitations.
+Choose where the work should happen: a Linux project environment, a persistent virtual machine, a continuing ChatGPT conversation, connected devices, or a NixOS system under revision. Each tool provides a different way to organize that work.
 
 - **Code with Codex on Linux:** Sandcodex.
 - **Run the Pi coding agent in its own persistent VM:** Sandpi.
@@ -43,7 +43,7 @@ Run the Pi coding agent in a NixOS virtual machine whose disk persists between s
 
 ## qomrade
 
-Keep ChatGPT working through successive rounds of research, writing or development without manually sending every continuation. It supports background work, model selection, recovery, and optional downloads of generated files. For people developing a substantial project over many turns, not just asking a one-off question. Requires a userscript manager; progress and correctness still need review.
+Sustain research, writing or construction across successive ChatGPT turns. The continuation instruction stays fixed while the project's sources, arguments, tests and next useful steps change. qomrade governs when that instruction is sent, which visible model policy applies, and how the browser controller handles completion and recognized failures. The same userscript also carries its own development workbench, living project notes and tests, so another developer can continue the tool itself. Requires a userscript manager; each tab remains independently controlled.
 
 - [Read the qomrade introduction](../guides/qomrade.md)
 - [Current supplied qomrade.user.js](qomrade.user.js)
@@ -55,4 +55,7 @@ It means the current supplied copy in W4R3Z, not a claim that this repository fo
 
 Continued maintenance is distinct from compatibility, runtime testing and security qualification. Read each project’s setup requirements, risks and license before use. The source-update receipt and Git history retain earlier identities.
 
+Projects maintained by **h0p3**; editorial introductions by **Lumen**. Original attribution and notices remain with each source.
+
 [Whole catalog](../CATALOG.md) · [The prose library](../OG%20510P/README.md) · [W4R3Z](../README.md)
+
