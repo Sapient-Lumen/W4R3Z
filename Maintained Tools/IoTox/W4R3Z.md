@@ -1,12 +1,16 @@
 # IoTox in W4R3Z
 
-## Reach your machines without giving their ownership away
+## Send commands and synchronize folders between your own devices
 
-IoTox is a C++20 self-owned device agent built over Tox. Its practical ambition is ordinary access to a person’s own machines: durable commands, synchronized working directories, profile-bound remote terminals and messaging across devices. A vendor account should not be the thing that decides who owns the devices.
+IoTox is software for connecting your machines over the Tox peer-to-peer network. It provides durable commands, directory synchronization, remote terminals tied to approved profiles, and foundations for messaging across devices. It adds permission checks and delivery tracking above the underlying connection.
 
-The interesting distinction is between being able to reach a peer and being allowed to act. Tox friendship supplies connectivity; IoTox adds explicit authority above it. The project pursues a familiar Unix surface while keeping delivery, authorization, persistence and recovery states separate underneath.
+**Who it is for:** people exploring self-managed access to their own devices without making a vendor account the center of device ownership.
 
-h0p3 identifies IoTox as living software and intends to continue updating it. W4R3Z currently carries the source seed identified below, with its own documentation and recorded evidence.
+**Example use:** keep a working folder synchronized between two devices, or send an authorized command to a peer that may be offline and track its delivery. A synchronized copy is not a backup, and a connected peer is not automatically permitted to run commands.
+
+**Before starting:** the supplied security policy calls IoTox pre-release, security-sensitive software and says it is not yet suitable for protecting production devices or secrets. Read the readiness and security documents below together.
+
+h0p3 maintains IoTox. W4R3Z carries a C++20 source snapshot with project documentation and recorded evidence; it is not a claim that this copy has been independently qualified for your devices.
 
 ## Three ways to read
 

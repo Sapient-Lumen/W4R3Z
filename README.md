@@ -1,27 +1,22 @@
 # W4R3Z
 
-A home for living software and the writing of sandpeople, supplied by **h0p3** and tended by **Lumen**.
+**Tools for working with AI, managing Linux systems and connecting your own devices, alongside a library of essays, stories and research.** Supplied by **h0p3**; organized and introduced by **Lumen**.
 
-There are two ways into this collection. One leads to software h0p3 continues to develop. The other leads to prose, research, designs, stories and experiments worth reading on their own terms.
+## What do you want to do?
 
-## Maintained Tools
+- **Work on a code project with Codex on Linux:** [Sandcodex](guides/Sandcodex.md) gives the coding agent a selected project directory, development tools, and browser/desktop access. It shares your host's kernel; it is not a virtual machine.
+- **Run the Pi coding agent in a persistent Linux VM:** [Sandpi](guides/Sandpi.md) launches Pi inside a NixOS virtual machine and keeps that machine's disk between sessions. “Pi” here is the coding agent, not a Raspberry Pi.
+- **Repeat a prompt in a ChatGPT tab and export the visible conversation:** [qomrade](guides/qomrade.md) is a browser userscript for controlled prompt loops and session handoff.
+- **Send commands and synchronize folders between your devices:** [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) connects devices over Tox and adds permission checks and delivery tracking. It is security-sensitive, pre-release software.
+- **Manage and review changes to a NixOS system:** [Monsternix](guides/Monsternix.md), supplied as configuration.nix, provides a base configuration and a process for checking a proposed change before accepting it. It needs machine-specific configuration before use.
 
-- **[IoTox](Maintained%20Tools/IoTox/W4R3Z.md)** — a self-owned device agent built around Tox, durable commands and synchronization.
-- **[Monsternix](guides/Monsternix.md)** — a NixOS foundation for exact-source changes, observations and continuity.
-- **[Sandpi](guides/Sandpi.md)** — a portable Pi workspace in a persistent NixOS virtual machine.
-- **[Sandcodex](guides/Sandcodex.md)** — a Linux Codex workstation with project isolation and a guarded desktop.
+These five projects are maintained by h0p3. **[Browse Maintained Tools](Maintained%20Tools/README.md)** for files, requirements and review status. Inclusion is not a production-readiness or security certification.
 
-- **[qomrade](guides/qomrade.md)** — a single-file ChatGPT userscript with an embedded development workbench.
+## Looking for writing rather than software?
 
-[Enter Maintained Tools](Maintained%20Tools/README.md) for current supplied files, documentation and the scope of their checks. “Living” describes continuing development, not a blanket production-readiness or security certification.
+**[OG 510P](OG%20510P/README.md)** collects essays, stories, translations, research and experimental designs. Subjects include care and ethics, language, institutions, AI, and how knowledge survives interruption. Some works contain code; others are primarily writing, not installable products.
 
-## OG 510P — the writing of sandpeople
-
-Read for the ideas: love and care, institutions and power, language and reality, memory and evidence, and the tools we might wish into existence. Much of this collection is prose. Some works also contain code or experiments; their value is not exhausted by whether the software shipped.
-
-**[Enter OG 510P](OG%20510P/README.md)** · **[Browse the whole catalog](CATALOG.md)** · **[Follow a reading path](READING-PATHS.md)**
-
-Each work now has a reading entrance and its supplied history. These introductions are selective close readings, not exhaustive scholarship or runtime reviews. A selected snapshot is neither a complete history nor necessarily the best first page.
+**[Browse the whole catalog](CATALOG.md)** · **[Choose a reading path](READING-PATHS.md)**
 
 ## About this edition
 

@@ -1,10 +1,18 @@
 # qomrade
 
-## One userscript, with its workbench carried inside
+## Repeat a prompt in ChatGPT and export a visible conversation for handoff
 
-The supplied **qomrade 0.18.40** is a single JavaScript/Bash polyglot file. Its browser half is a Tampermonkey userscript for ChatGPT; its embedded workbench carries documentation, tests and development utilities. [Open the original file](../Maintained%20Tools/qomrade.user.js) or its [source receipt](../updates/2026-10-20.json).
+qomrade is a **Tampermonkey browser userscript for ChatGPT**. Its main job is to repeat a prompt captured by the operator in a single tab, with visible controls and recovery behavior. It also provides transcript capture and Session Handoff export.
 
-Its declared purpose is a single-tab loop repeating an operator-captured prompt, with visible transcript capture and bounded recovery behavior. The userscript header matches ChatGPT domains, excludes Codex paths, and declares tab-state, menu and clipboard grants. Publishing it here does not install it or grant browser permissions.
+**Who it is for:** ChatGPT users who want a controlled continuation loop or a portable record of the conversation visible in their tab.
+
+**Example use:** capture a continuation prompt for a repeated workflow, run the loop in that tab, then export the captured conversation to help resume the work elsewhere. The export is not a guarantee of complete server-side history and does not include attached file contents.
+
+**Before starting:** this modifies the ChatGPT website through a userscript manager. Review its browser grants and runtime contract before installation. Website changes can affect it; W4R3Z has not tested it in a live browser.
+
+The supplied **qomrade 0.18.40** is one JavaScript/Bash polyglot file. Its browser half is the userscript; its embedded Bash/Python workbench carries documentation, tests and development utilities. You do not need to understand that packaging to understand its browser purpose. [Open the original file](../Maintained%20Tools/qomrade.user.js) or its [source receipt](../updates/2026-10-20.json).
+
+The userscript header matches ChatGPT domains, excludes Codex paths, and declares tab-state, menu and clipboard grants. Publishing it here does not install it or grant browser permissions.
 
 ## What this supplied revision adds
 

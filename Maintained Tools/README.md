@@ -1,17 +1,25 @@
 # Maintained Tools
 
-This shelf is for projects h0p3 says he will continue to develop: **IoTox, Monsternix, Sandcodex, Sandpi and qomrade**. It will grow as further working projects arrive. These maintained projects now live together in this directory. h0p3 maintains the supplied tools; Lumen tends their catalog and orientation.
+Five projects maintained by **h0p3**, with introductions and catalog organization by **Lumen**. Start with the job you want to do; follow each introduction for requirements and limitations.
+
+- **Code with Codex on Linux:** Sandcodex.
+- **Run the Pi coding agent in its own persistent VM:** Sandpi.
+- **Repeat a prompt and capture a conversation in ChatGPT:** qomrade.
+- **Connect your devices for commands and folder sync:** IoTox.
+- **Configure NixOS and review proposed system changes:** Monsternix.
+
+These are different tools, not five parts you must install together. The single-file launchers and userscript are linked below; IoTox is a source tree. Nothing on this page is an installation instruction.
 
 ## IoTox
 
-A self-owned device agent over Tox, with durable offline commands, directory synchronization and multi-device messaging foundations.
+Send authorized commands and synchronize folders between your devices over Tox, including tracking work across interruptions. For people exploring self-managed device access. The supplied security policy warns against using it to protect production devices or secrets.
 
 - [Introduction and provenance](IoTox/W4R3Z.md)
 - [Project files and documentation](IoTox/)
 
 ## Monsternix
 
-A NixOS Foundation module concerned with exact-source changes, observations and continuity records. The supplied module requires a machine adapter. Its source includes explicitly opt-in experimental vault and encrypted keystroke-journal facilities; their presence is not permission to enable them.
+Configure a NixOS system and review evidence for a proposed configuration before accepting it. For NixOS operators collaborating on system changes. The supplied module requires machine-specific configuration through a machine adapter. Its source includes explicitly opt-in experimental vault and encrypted keystroke-journal facilities; their presence is not permission to enable them.
 
 - [Read the Monsternix introduction](../guides/Monsternix.md)
 - [Current supplied configuration.nix](configuration.nix)
@@ -19,7 +27,7 @@ A NixOS Foundation module concerned with exact-source changes, observations and 
 
 ## Sandcodex
 
-A Linux Codex workstation with project isolation, a guarded desktop and worker orchestration.
+Give Codex a selected Linux project directory, build tools, and browser/desktop access for hands-on coding. For Linux users working on repositories with an agent. It shares the host kernel; it is not a VM.
 
 - [Read the Sandcodex introduction](../guides/Sandcodex.md)
 - [Current supplied sandcodex file](sandcodex)
@@ -27,7 +35,7 @@ A Linux Codex workstation with project isolation, a guarded desktop and worker o
 
 ## Sandpi
 
-A single-file launcher carrying its readable source, documentation and tests for native Pi in a persistent NixOS Cloud Hypervisor room.
+Run the Pi coding agent in a NixOS virtual machine whose disk persists between sessions. For Linux users with Nix and KVM who want an agent in its own OS environment. Pi means the coding agent, not Raspberry Pi; shared project files remain writable.
 
 - [Read the Sandpi introduction](../guides/Sandpi.md)
 - [Current supplied sandpi file](sandpi)
@@ -35,7 +43,7 @@ A single-file launcher carrying its readable source, documentation and tests for
 
 ## qomrade
 
-A single-file ChatGPT userscript with an embedded Bash/Python development workbench, supplied by h0p3.
+Repeat an operator-captured prompt in one ChatGPT tab and export the visible conversation for handoff. For ChatGPT users running a controlled continuation workflow. Requires a userscript manager; captured text is not guaranteed to be the complete conversation history.
 
 - [Read the qomrade introduction](../guides/qomrade.md)
 - [Current supplied qomrade.user.js](qomrade.user.js)

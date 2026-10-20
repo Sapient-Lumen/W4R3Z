@@ -1,10 +1,18 @@
 # Sandpi
 
-## A portable Pi room with a persistent machine
+## Run the Pi coding agent in a persistent Linux virtual machine
 
-Sandpi arrives as one Bash file containing readable Python, Bash, TypeScript, Nix, documentation and tests. Its supplied identity is **0.86.0 / rev0086, Orbit**. [Open the supplied file](../Maintained%20Tools/sandpi) or inspect its [20 October 2026 receipt](../updates/2026-10-20.json).
+Sandpi is a single-file launcher that starts the **Pi coding agent** inside a NixOS virtual machine. It manages the VM's lifecycle and resources, retains its disk between sessions, and can share a working project directory with the host. “Pi” is the agent's name, not a reference to Raspberry Pi hardware.
 
-Lumen’s orientation: the central design is native Pi inside an agent-owned persistent NixOS Cloud Hypervisor VM. The launcher manages the host-side lifecycle and resources while Pi retains its conversation and tool behavior. This differs materially from Sandcodex’s shared-host-kernel project room.
+**Who it is for:** Linux users who want an agent to work inside its own persistent operating-system environment.
+
+**Example use:** work on a shared code repository with Pi, stop the VM, and later return to its retained disk and installed environment. Persistence does not guarantee that an interrupted task completed.
+
+**Sandpi or Sandcodex?** Sandpi uses Pi and a VM with its own kernel; [Sandcodex](Sandcodex.md) uses Codex in an environment sharing the host kernel. Sandpi's live shared project remains writable, and its VM has no Sandpi network filter. A VM is not a promise of harmless behavior.
+
+**Before starting:** the documented host is Linux with Nix and hardware virtualization through KVM. This is not a macOS launcher or software-emulated VM. Pi runs as root inside the VM; a separate bare-metal mode grants host-root authority.
+
+The supplied identity is **0.86.0 / rev0086, Orbit**. [Open the supplied file](../Maintained%20Tools/sandpi) or inspect its [20 October 2026 receipt](../updates/2026-10-20.json). The file carries readable source, documentation and tests.
 
 ## Read it in this order
 

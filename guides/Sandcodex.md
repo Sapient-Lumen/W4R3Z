@@ -1,8 +1,16 @@
 # Sandcodex
 
-## A command room that can travel as one file
+## Work on a code project with Codex on Linux
 
-Sandcodex gives a person and Codex a sustained Linux project room: source files, build tools, browser and desktop access, continuity between sessions, and explicit choices about authority. Its one-file form is central to the idea. The handbook, pinned dependencies, helper sources and recovery explanations travel with the executable instead of relying on an unpublished support repository.
+Sandcodex is a single-file launcher for a Codex development environment. It gives the agent access to a selected project directory, build tools, and a browser and desktop, with facilities for returning to work across sessions.
+
+**Who it is for:** Linux users who want Codex to do hands-on engineering in a chosen project rather than only suggest code in a chat.
+
+**Example use:** bring a repository into the environment, have Codex edit and test it, then inspect the application in the included browser. This describes the intended workflow, not a test performed by W4R3Z.
+
+**Sandcodex or Sandpi?** Choose this introduction for Codex in a project environment that shares the host kernel. [Sandpi](Sandpi.md) instead runs the Pi coding agent inside a persistent virtual machine. Neither boundary makes everything an agent does safe: shared project files can be changed or deleted.
+
+**Before starting:** this is for a suitably configured Linux host, not a drop-in macOS app. Read the authority and host requirements below before launching it.
 
 The supplied artifact declares **version 0.88.0**. [Open the current supplied file](../Maintained%20Tools/sandcodex); its embedded identity and the [source-update receipt](../updates/2026-10-20.json) distinguish these exact bytes from a similarly named copy.
 

@@ -4,12 +4,11 @@ Every collection has a place here, whether or not it appears in a curated readin
 
 ## Maintained Tools
 
-- [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) — a self-owned device agent, durable commands and synchronization.
-- [Monsternix](Maintained%20Tools/README.md#monsternix) — a NixOS foundation module.
-- [Sandpi](guides/Sandpi.md) — a native Pi workspace in a persistent NixOS VM.
-- [Sandcodex](Maintained%20Tools/README.md#sandcodex) — a Linux Codex workstation.
-
-- [qomrade](guides/qomrade.md) — a ChatGPT userscript and embedded workbench.
+- [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) — send authorized commands and synchronize folders between your devices over Tox; pre-release, security-sensitive software.
+- [Monsternix](guides/Monsternix.md) — configure NixOS and review proposed system changes before accepting them; requires machine-specific setup.
+- [Sandpi](guides/Sandpi.md) — run the Pi coding agent in a persistent NixOS virtual machine on a Linux host.
+- [Sandcodex](guides/Sandcodex.md) — work on a selected Linux code project with Codex, build tools and browser/desktop access; not a VM.
+- [qomrade](guides/qomrade.md) — repeat a prompt in a ChatGPT tab and export captured conversation text using a browser userscript.
 
 ## OG 510P
 

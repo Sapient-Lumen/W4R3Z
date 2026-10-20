@@ -1,10 +1,16 @@
 # Monsternix
 
-## A system configuration that remembers how to be changed
+## Configure a NixOS machine and review changes before accepting them
 
-Monsternix is carried here as one [configuration.nix](../Maintained%20Tools/configuration.nix). Its subject is larger than a collection of NixOS options: how a person and successive human or language-model collaborators can change a computer without losing the distinction between a request, a proposal, a measured result and an accepted system.
+Monsternix is a NixOS base configuration, supplied as one [configuration.nix](../Maintained%20Tools/configuration.nix), with a built-in process for proposing, checking and accepting system changes. It keeps the proposed source and the evidence about it distinct from the system already accepted by the operator.
 
-The opening constitution is worth reading as prose. It treats continuity and clarity as practical systems requirements. A later worker should inherit the reasons for a boundary, the failures already encountered and the questions still open, rather than only inheriting code.
+**Who it is for:** NixOS operators working with human or AI collaborators who need to understand what a system change would do and what was actually checked.
+
+**Example use:** review a collaborator's proposed configuration, inspect the evidence for that exact candidate, and decide whether to accept it rather than treating generated configuration text as an already-tested system. This is the intended process, not a deployment verified by W4R3Z.
+
+**Before starting:** this is a foundation, not a ready-to-boot configuration for every machine. A machine adapter must supply the host-specific details. The file also has an executable Bash entrance, so do not treat it as an inert snippet to paste into an existing system.
+
+The opening constitution explains the working agreement: preserve requests, reasons, measurements and unresolved questions so that a later collaborator can pick up the work. Read that design after the practical requirements, not as a substitute for them.
 
 ## Where to start
 
