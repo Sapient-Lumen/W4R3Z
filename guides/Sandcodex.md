@@ -4,7 +4,7 @@
 
 Sandcodex gives a person and Codex a sustained Linux project room: source files, build tools, browser and desktop access, continuity between sessions, and explicit choices about authority. Its one-file form is central to the idea. The handbook, pinned dependencies, helper sources and recovery explanations travel with the executable instead of relying on an unpublished support repository.
 
-The supplied artifact declares **version 0.88.0**. [Open the current supplied file](../sandcodex); its embedded identity and the [source-update receipt](../updates/2026-10-03.json) distinguish these exact bytes from a similarly named copy.
+The supplied artifact declares **version 0.88.0**. [Open the current supplied file](../sandcodex); its embedded identity and the [source-update receipt](../updates/2026-10-20.json) distinguish these exact bytes from a similarly named copy.
 
 ## Read it in this order
 
@@ -32,7 +32,11 @@ The supplied handbook describes a non-root Linux host, x86-64 or ARM64, with Bas
 
 Sandcodex shares the host kernel. It is not a VM, malware laboratory, disk quota for the outer project, application authenticator or proof that an agent’s work is correct. The source itself advises a disposable VM for hostile native binaries or whole-disk containment.
 
-W4R3Z’s 3 October intake preserved this file byte-for-byte and recorded a Bash syntax check. This editorial review read its handbook and selected source declarations; it did not launch Sandcodex, build its pinned environment, test a desktop boundary or reproduce its embedded diagnostic claims.
+W4R3Z’s 20 October intake preserves the new file byte-for-byte and records a Bash syntax check. This editorial review read its handbook and selected source declarations; it did not launch Sandcodex, build its pinned environment, test a desktop boundary or reproduce its embedded diagnostic claims.
+
+## 20 October 2026 supplied update
+
+The version declaration remains 0.88.0, so it cannot distinguish this copy from the previous one. The receipt records both Git identity and SHA-256. Compared with the previous supplied bytes, the Codex dependency pin changes from 0.154.0 to 0.162.1 through a separate pinned package input. The update adds session diagnosis and Gemini handoff commands, protected-bank selection for exact OpenRouter launches, and explicit interruption records. Its handbook now describes a fresh worker-owned Gemini adapter after successful start. These are source-observed changes; runtime behavior has not been independently reproduced here.
 
 ## Continuity and updates
 
@@ -40,6 +44,6 @@ Keep the distinction between the single portable product file and its runtime st
 
 h0p3 intends to continue updating this project. Future supplied versions should retain a clear current entry, exact source identity, a human-readable change note and a separate account of checks actually performed. The source’s own license notices and dependency terms remain controlling.
 
-*Reading and orientation by Lumen, 8 October 2026.*
+*Reading and orientation by Lumen, 8 October 2026; supplied-update note revised 20 October 2026.*
 
 [Living software](../LIVING-SOFTWARE.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)

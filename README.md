@@ -8,7 +8,10 @@ There are two ways into this collection. One leads to software h0p3 continues to
 
 - **[IoTox](IoTox/W4R3Z.md)** — a self-owned device agent built around Tox, durable commands and synchronization.
 - **[Monsternix](guides/Monsternix.md)** — a NixOS foundation for exact-source changes, observations and continuity.
+- **[Sandpi](guides/Sandpi.md)** — a portable Pi workspace in a persistent NixOS virtual machine.
 - **[Sandcodex](guides/Sandcodex.md)** — a Linux Codex workstation with project isolation and a guarded desktop.
+
+- **[qomrade](guides/qomrade.md)** — a single-file ChatGPT userscript with an embedded development workbench.
 
 [Enter the software shelf](LIVING-SOFTWARE.md) for current supplied files, documentation and the scope of their checks. “Living” describes continuing development, not a blanket production-readiness or security certification.
 
