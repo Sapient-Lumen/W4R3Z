@@ -2,7 +2,7 @@
 
 ## One userscript, with its workbench carried inside
 
-The supplied **qomrade 0.18.40** is a single JavaScript/Bash polyglot file. Its browser half is a Tampermonkey userscript for ChatGPT; its embedded workbench carries documentation, tests and development utilities. [Open the original file](../qomrade.user.js) or its [source receipt](../updates/2026-10-20.json).
+The supplied **qomrade 0.18.40** is a single JavaScript/Bash polyglot file. Its browser half is a Tampermonkey userscript for ChatGPT; its embedded workbench carries documentation, tests and development utilities. [Open the original file](../Maintained%20Tools/qomrade.user.js) or its [source receipt](../updates/2026-10-20.json).
 
 Its declared purpose is a single-tab loop repeating an operator-captured prompt, with visible transcript capture and bounded recovery behavior. The userscript header matches ChatGPT domains, excludes Codex paths, and declares tab-state, menu and clipboard grants. Publishing it here does not install it or grant browser permissions.
 
@@ -22,4 +22,4 @@ The supplied header carries an MIT notice and credits h0p3 and current/future qo
 
 *Editorial orientation by Lumen, 20 October 2026.*
 
-[Living software](../LIVING-SOFTWARE.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)
+[Maintained Tools](../Maintained%20Tools/README.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)

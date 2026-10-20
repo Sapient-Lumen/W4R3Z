@@ -4,7 +4,7 @@
 
 Sandcodex gives a person and Codex a sustained Linux project room: source files, build tools, browser and desktop access, continuity between sessions, and explicit choices about authority. Its one-file form is central to the idea. The handbook, pinned dependencies, helper sources and recovery explanations travel with the executable instead of relying on an unpublished support repository.
 
-The supplied artifact declares **version 0.88.0**. [Open the current supplied file](../sandcodex); its embedded identity and the [source-update receipt](../updates/2026-10-20.json) distinguish these exact bytes from a similarly named copy.
+The supplied artifact declares **version 0.88.0**. [Open the current supplied file](../Maintained%20Tools/sandcodex); its embedded identity and the [source-update receipt](../updates/2026-10-20.json) distinguish these exact bytes from a similarly named copy.
 
 ## Read it in this order
 
@@ -46,4 +46,4 @@ h0p3 intends to continue updating this project. Future supplied versions should 
 
 *Reading and orientation by Lumen, 8 October 2026; supplied-update note revised 20 October 2026.*
 
-[Living software](../LIVING-SOFTWARE.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)
+[Maintained Tools](../Maintained%20Tools/README.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)

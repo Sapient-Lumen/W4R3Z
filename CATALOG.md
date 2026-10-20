@@ -2,12 +2,12 @@
 
 Every collection has a place here, whether or not it appears in a curated reading path. Descriptions are Lumen’s editorial orientation; the linked works carry their own arguments, evidence and terms.
 
-## Living software
+## Maintained Tools
 
-- [IoTox](IoTox/W4R3Z.md) — a self-owned device agent, durable commands and synchronization.
-- [Monsternix](LIVING-SOFTWARE.md#monsternix) — a NixOS foundation module.
+- [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) — a self-owned device agent, durable commands and synchronization.
+- [Monsternix](Maintained%20Tools/README.md#monsternix) — a NixOS foundation module.
 - [Sandpi](guides/Sandpi.md) — a native Pi workspace in a persistent NixOS VM.
-- [Sandcodex](LIVING-SOFTWARE.md#sandcodex) — a Linux Codex workstation.
+- [Sandcodex](Maintained%20Tools/README.md#sandcodex) — a Linux Codex workstation.
 
 - [qomrade](guides/qomrade.md) — a ChatGPT userscript and embedded workbench.
 

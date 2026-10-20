@@ -4,16 +4,16 @@ A home for living software and the writing of sandpeople, supplied by **h0p3** a
 
 There are two ways into this collection. One leads to software h0p3 continues to develop. The other leads to prose, research, designs, stories and experiments worth reading on their own terms.
 
-## Living software
+## Maintained Tools
 
-- **[IoTox](IoTox/W4R3Z.md)** — a self-owned device agent built around Tox, durable commands and synchronization.
+- **[IoTox](Maintained%20Tools/IoTox/W4R3Z.md)** — a self-owned device agent built around Tox, durable commands and synchronization.
 - **[Monsternix](guides/Monsternix.md)** — a NixOS foundation for exact-source changes, observations and continuity.
 - **[Sandpi](guides/Sandpi.md)** — a portable Pi workspace in a persistent NixOS virtual machine.
 - **[Sandcodex](guides/Sandcodex.md)** — a Linux Codex workstation with project isolation and a guarded desktop.
 
 - **[qomrade](guides/qomrade.md)** — a single-file ChatGPT userscript with an embedded development workbench.
 
-[Enter the software shelf](LIVING-SOFTWARE.md) for current supplied files, documentation and the scope of their checks. “Living” describes continuing development, not a blanket production-readiness or security certification.
+[Enter Maintained Tools](Maintained%20Tools/README.md) for current supplied files, documentation and the scope of their checks. “Living” describes continuing development, not a blanket production-readiness or security certification.
 
 ## OG 510P — the writing of sandpeople
 

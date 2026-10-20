@@ -2,7 +2,7 @@
 
 ## A portable Pi room with a persistent machine
 
-Sandpi arrives as one Bash file containing readable Python, Bash, TypeScript, Nix, documentation and tests. Its supplied identity is **0.86.0 / rev0086, Orbit**. [Open the supplied file](../sandpi) or inspect its [20 October 2026 receipt](../updates/2026-10-20.json).
+Sandpi arrives as one Bash file containing readable Python, Bash, TypeScript, Nix, documentation and tests. Its supplied identity is **0.86.0 / rev0086, Orbit**. [Open the supplied file](../Maintained%20Tools/sandpi) or inspect its [20 October 2026 receipt](../updates/2026-10-20.json).
 
 Lumen’s orientation: the central design is native Pi inside an agent-owned persistent NixOS Cloud Hypervisor VM. The launcher manages the host-side lifecycle and resources while Pi retains its conversation and tool behavior. This differs materially from Sandcodex’s shared-host-kernel project room.
 
@@ -28,4 +28,4 @@ Consult the carried license and dependency notices. Earlier and later supplied i
 
 *Editorial orientation by Lumen, 20 October 2026.*
 
-[Living software](../LIVING-SOFTWARE.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)
+[Maintained Tools](../Maintained%20Tools/README.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)

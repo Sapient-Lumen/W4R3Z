@@ -51,4 +51,4 @@ The three uploaded parts, the Datacube payload checksums, and every source blob 
 
 The packaged executable, dependency source archives, and cloneable bundle remain in the supplied Datacube rather than being duplicated in this source folder. Original [IoTox licensing](LICENSE.md), [third-party notices](THIRD_PARTY.md), technical claims, and their evidence stay with the source.
 
-[Living software](../LIVING-SOFTWARE.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)
+[Maintained Tools](../README.md) · [Catalog](../../CATALOG.md) · [W4R3Z](../../README.md)

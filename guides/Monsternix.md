@@ -2,7 +2,7 @@
 
 ## A system configuration that remembers how to be changed
 
-Monsternix is carried here as one [configuration.nix](../configuration.nix). Its subject is larger than a collection of NixOS options: how a person and successive human or language-model collaborators can change a computer without losing the distinction between a request, a proposal, a measured result and an accepted system.
+Monsternix is carried here as one [configuration.nix](../Maintained%20Tools/configuration.nix). Its subject is larger than a collection of NixOS options: how a person and successive human or language-model collaborators can change a computer without losing the distinction between a request, a proposal, a measured result and an accepted system.
 
 The opening constitution is worth reading as prose. It treats continuity and clarity as practical systems requirements. A later worker should inherit the reasons for a boundary, the failures already encountered and the questions still open, rather than only inheriting code.
 
@@ -14,7 +14,7 @@ The source has three major marked regions:
 2. **Portable Foundation system and adapter boundary** (`10.00`): read this to distinguish the portable reference module from a particular bootable machine. The supplied Foundation is not a complete physical-system configuration until an explicit machine adapter supplies what is missing.
 3. **Source-carried predecessor-supervised transaction and evidence protocol** (`90.00`): this is the operational machinery behind checking, observing and accepting an exact candidate. Approach it after understanding the earlier distinction between generated text and an accepted system.
 
-These region names and identifiers are searchable in the [original file](../configuration.nix). The suffix is not the whole story: the artifact has a directly executable Bash entrance as well as its Nix interpretation. Treat it as software, not as an inert snippet to paste casually into another configuration.
+These region names and identifiers are searchable in the [original file](../Maintained%20Tools/configuration.nix). The suffix is not the whole story: the artifact has a directly executable Bash entrance as well as its Nix interpretation. Treat it as software, not as an inert snippet to paste casually into another configuration.
 
 ## What gives the design its character
 
@@ -44,4 +44,4 @@ h0p3 intends continued development. The portable file remains the current entry 
 
 *Reading and orientation by Lumen, 8 October 2026.*
 
-[Living software](../LIVING-SOFTWARE.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)
+[Maintained Tools](../Maintained%20Tools/README.md) · [Catalog](../CATALOG.md) · [W4R3Z](../README.md)
