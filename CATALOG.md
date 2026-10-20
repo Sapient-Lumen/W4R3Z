@@ -8,7 +8,7 @@ Every collection has a place here, whether or not it appears in a curated readin
 - [Monsternix](guides/Monsternix.md) — configure NixOS and review proposed system changes before accepting them; requires machine-specific setup.
 - [Sandpi](guides/Sandpi.md) — run the Pi coding agent in a persistent NixOS virtual machine on a Linux host.
 - [Sandcodex](guides/Sandcodex.md) — work on a selected Linux code project with Codex, build tools and browser/desktop access; not a VM.
-- [qomrade](guides/qomrade.md) — repeat a prompt in a ChatGPT tab and export captured conversation text using a browser userscript.
+- [qomrade](guides/qomrade.md) — keep ChatGPT advancing a research, writing or development project over successive rounds without manually prompting each one; a browser userscript with recovery and optional generated-file downloads.
 
 ## OG 510P
 

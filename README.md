@@ -6,7 +6,7 @@
 
 - **Work on a code project with Codex on Linux:** [Sandcodex](guides/Sandcodex.md) gives the coding agent a selected project directory, development tools, and browser/desktop access. It shares your host's kernel; it is not a virtual machine.
 - **Run the Pi coding agent in a persistent Linux VM:** [Sandpi](guides/Sandpi.md) launches Pi inside a NixOS virtual machine and keeps that machine's disk between sessions. “Pi” here is the coding agent, not a Raspberry Pi.
-- **Repeat a prompt in a ChatGPT tab and export the visible conversation:** [qomrade](guides/qomrade.md) is a browser userscript for controlled prompt loops and session handoff.
+- **Keep ChatGPT working on a project without prompting every round yourself:** [qomrade](guides/qomrade.md) sustains successive rounds of research, writing or development in a browser tab, with recovery and optional downloads of generated files.
 - **Send commands and synchronize folders between your devices:** [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) connects devices over Tox and adds permission checks and delivery tracking. It is security-sensitive, pre-release software.
 - **Manage and review changes to a NixOS system:** [Monsternix](guides/Monsternix.md), supplied as configuration.nix, provides a base configuration and a process for checking a proposed change before accepting it. It needs machine-specific configuration before use.
 

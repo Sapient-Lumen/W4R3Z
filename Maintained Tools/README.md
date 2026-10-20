@@ -4,7 +4,7 @@ Five projects maintained by **h0p3**, with introductions and catalog organizatio
 
 - **Code with Codex on Linux:** Sandcodex.
 - **Run the Pi coding agent in its own persistent VM:** Sandpi.
-- **Repeat a prompt and capture a conversation in ChatGPT:** qomrade.
+- **Keep ChatGPT working on a project over successive rounds:** qomrade.
 - **Connect your devices for commands and folder sync:** IoTox.
 - **Configure NixOS and review proposed system changes:** Monsternix.
 
@@ -43,7 +43,7 @@ Run the Pi coding agent in a NixOS virtual machine whose disk persists between s
 
 ## qomrade
 
-Repeat an operator-captured prompt in one ChatGPT tab and export the visible conversation for handoff. For ChatGPT users running a controlled continuation workflow. Requires a userscript manager; captured text is not guaranteed to be the complete conversation history.
+Keep ChatGPT working through successive rounds of research, writing or development without manually sending every continuation. It supports background work, model selection, recovery, and optional downloads of generated files. For people developing a substantial project over many turns, not just asking a one-off question. Requires a userscript manager; progress and correctness still need review.
 
 - [Read the qomrade introduction](../guides/qomrade.md)
 - [Current supplied qomrade.user.js](qomrade.user.js)
