@@ -1,14 +1,18 @@
 # Catalog
 
-Every collection has a place here, whether or not it appears in a curated reading path. Descriptions are Lumen’s editorial orientation; the linked works carry their own arguments, evidence and terms.
+Use this complete index to find a work, or take a [source-first reading path](READING-PATHS.md) through a question. The descriptions name each work's central movement; the linked entrances develop it and lead into original texts, source, editions and terms. The OG shelf remains alphabetical rather than assigning every work to one exclusive subject.
 
 ## Maintained Tools
 
-- [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) — send authorized commands and synchronize folders between your devices over Tox; pre-release, security-sensitive software.
-- [Monsternix](guides/Monsternix.md) — configure NixOS and review proposed system changes before accepting them; requires machine-specific setup.
-- [Sandpi](guides/Sandpi.md) — run the Pi coding agent in a persistent NixOS virtual machine on a Linux host.
-- [Sandcodex](guides/Sandcodex.md) — work on a selected Linux code project with Codex, build tools and browser/desktop access; not a VM.
-- [qomrade](guides/qomrade.md) — keep ChatGPT advancing a research, writing or development project over successive rounds without manually prompting each one; a browser userscript with recovery and optional generated-file downloads.
+Choose by the work and the boundary it needs. These are distinct projects, not components of one required stack.
+
+- [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) — operate self-owned devices over Tox through durable commands, working-copy sync and host-selected terminals. Stable authority sits above reachability; synchronization distinguishes installed working history from merely received branches. Its security policy says it is not yet suitable for protecting production devices or secrets.
+- [Monsternix](guides/Monsternix.md) — develop a NixOS system through a carried account of reasons, observations and exact acceptance. Predecessor and candidate audits constrain acceptance; promotion selects the already-tested system. The portable Foundation needs a machine adapter.
+- [Sandpi](guides/Sandpi.md) — give Pi a persistent NixOS virtual machine while keeping the agent's conversation tree and the live host project distinct. Restoring a guest disk does not roll back the shared project.
+- [Sandcodex](guides/Sandcodex.md) — give Codex a selected Linux project environment with build tools, browser and native desktop access. Project writes, frontend credentials and worker adoption have separate boundaries; the environment shares the host kernel.
+- [qomrade](guides/qomrade.md) — sustain adaptive research, writing and construction through successive ChatGPT turns. A stable continuation instruction can address a changing project; the browser controller governs sending and recovery, and the source carries its own development workshop.
+
+For comparison through original passages, read [what continued work has to preserve](READING-PATHS.md#what-deserves-to-survive-an-interruption). For entry files and operating requirements, use [Maintained Tools](Maintained%20Tools/README.md).
 
 ## OG 510P
 
@@ -21,7 +25,7 @@ Every collection has a place here, whether or not it appears in a curated readin
 - **[CloudtainerML](OG%20510P/CloudtainerML/README.md)** — Small machine-learning experiments about memory, caches and the limits of their evidence.
 - **[Conlang Rosetta Stone](OG%20510P/Conlang%20Rosetta%20Stone/README.md)** — Ithkuil and Lojban translation drafts that work through what passages about love can mean.
 - **[DeathVocab](OG%20510P/DeathVocab/README.md)** — Language for dying, care, institutions, ritual and aftermath, with public-source research kept distinct from testimony.
-- **[DelayBasin](OG%20510P/DelayBasin/README.md)** — How a human–LLM collaboration might carry its state, disagreements and reasons through interruption.
+- **[DelayBasin](OG%20510P/DelayBasin/README.md)** — An inquiry into faithful continuation: distinguish retained evidence, compact re-entry and admission checks, then test whether the apparatus earns its complexity.
 - **[DeriveBSD](OG%20510P/DeriveBSD/README.md)** — FreeBSD-first system design exploring the distance between a contract, a model and an operating system.
 - **[EvidenceVault](OG%20510P/EvidenceVault/README.md)** — A partial recovery archive about preserving evidence without claiming to possess the missing whole.
 - **[GlassTTY](OG%20510P/GlassTTY/README.md)** — The design of a visible browser-to-terminal bridge and the problem of knowing which interactions really worked.
@@ -38,7 +42,7 @@ Every collection has a place here, whether or not it appears in a curated readin
 - **[Moral Taxation](OG%20510P/Moral-Taxation/README.md)** — Tax-design research connecting moral aims to take-up, burdens, calibration and review.
 - **[MTG](OG%20510P/MTG/README.md)** — MUCloudtainer strategy experiments and MTGSim rules-engine work, read alongside their stated limits.
 - **[nicotine+](OG%20510P/nicotine%2B/README.md)** — Three related Nicotine research collections: correctness, an I2P/DHT substrate, and experimental hardening.
-- **[Parables](OG%20510P/Parables/README.md)** — Collected and retold stories of care, with source notes and a separately labeled AI-original collection.
+- **[Parables](OG%20510P/Parables/README.md)** — Collected and retold scenes in which gifts, work and costly care change a situation; selection and refusal shape the collection alongside separately labeled AI-original stories.
 - **[PoliceMisconduct](OG%20510P/PoliceMisconduct/README.md)** — Definitions, institutional accountability and the boundaries between a signal and an accusation.
 - **[Radical Governance](OG%20510P/Radical-Governance/README.md)** — How institutions might make remedy, scope and continued challenge part of their design.
 - **[Righteousness](OG%20510P/Righteousness/README.md)** — What righteousness asks beyond compliance, and how loyalty, justice and ordinary participation complicate it.
@@ -46,7 +50,7 @@ Every collection has a place here, whether or not it appears in a curated readin
 - **[Salient Speculations](OG%20510P/Salient-Speculations/README.md)** — Mechanism-led speculation with sources, watchpoints and reasons a forecast might fail.
 - **[Sandchoir / AAR–ADCC](OG%20510P/Sandchoir-AAR-ADCC/README.md)** — Draft specifications for attention, deliberation and human control in multiagent work.
 - **[The Election Stack](OG%20510P/Election-Stack/README.md)** — Evidence, transparency and the many steps between a recorded election event and a justified conclusion.
-- **[The Good](OG%20510P/The-Good/README.md)** — A pluralist inquiry into agency, belonging, protected floors and the practical burdens of institutions.
+- **[The Good](OG%20510P/The-Good/README.md)** — Proposed priority-kernel pluralism: protect standing without reducing goods to one score, confront institutional burdens, preserve repair after loss, and make room for flourishing.
 - **[Theory of Everything](OG%20510P/Theory-of-Everything/README.md)** — A bridge-first research program connecting established theories while keeping speculative claims and unpaid obligations visible.
 - **[TimeSync](OG%20510P/TimeSync/README.md)** — What it means to trust a time reading: provenance, uncertainty, freshness and shared failure.
 - **[VHK / VisualHotKey](OG%20510P/VHK/README.md)** — Desktop automation design, with evolving accounts of replay, session identity and reliable evidence.
