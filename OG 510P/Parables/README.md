@@ -94,7 +94,7 @@ Keeps The Croissants Between Enemies, with the notes identifying Greg Boyle/Home
 
 ### How to read this preservation
 
-These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Source-specific attribution and rights notices remain applicable; no new blanket license is granted. The [preservation guide](../../PRESERVATION.md) explains the reference layer.
+These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Source-specific attribution and rights notices remain applicable; see the [current owner declaration](../../LEGAL-NOTICE.txt); third-party terms remain distinct. The [preservation guide](../../PRESERVATION.md) explains the reference layer.
 
 [Original identities and hashes](PROVENANCE.json) · [Back to OG 510P](../README.md)
 

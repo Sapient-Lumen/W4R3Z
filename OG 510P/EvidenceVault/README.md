@@ -9,7 +9,7 @@ The work is interesting precisely at that edge: what can be recovered exactly, w
 ## Begin with the admission of incompleteness
 
 1. Read [the supplied README](versions/rev0874/files/EvidenceVault-rev0874-2026.06.18.15.44-verified-gate-execution-snapshot-race-closure/README.md). Its recovery counts and exclusions distinguish available overlay material from the much larger canonical target.
-2. Read [the rights overview](versions/rev0874/files/EvidenceVault-rev0874-2026.06.18.15.44-verified-gate-execution-snapshot-race-closure/RIGHTS/README.md) and [the unresolved license decision](versions/rev0874/files/EvidenceVault-rev0874-2026.06.18.15.44-verified-gate-execution-snapshot-race-closure/RIGHTS/LICENSE_DECISION_BLOCKER.md). Byte custody does not choose a license.
+2. Read [the rights overview](versions/rev0874/files/EvidenceVault-rev0874-2026.06.18.15.44-verified-gate-execution-snapshot-race-closure/RIGHTS/README.md) and [the archived, unresolved license question](versions/rev0874/files/EvidenceVault-rev0874-2026.06.18.15.44-verified-gate-execution-snapshot-race-closure/RIGHTS/LICENSE_DECISION_BLOCKER.md). Byte custody does not choose a license.
 3. Use the version guide and inventory below to explore what is actually included. Treat references to missing payloads as references, not as proof that the files are somewhere in this public copy.
 
 ## A second boundary: checking and doing
@@ -34,6 +34,6 @@ Adds a verified execution-snapshot boundary to the overlay’s validation design
 
 ### How to read this preservation
 
-These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Research source claims and reported validation runs were not independently reproduced for this archival delivery. Read the retained limitations, open gates and rights notices before reuse. No new blanket license is granted.
+These are selected historical snapshots. Original filenames, ZIP bytes and extracted contents are unchanged; new guides, inventories and integrity notes are separate. “Latest” in a supplied filename is a historical label. Nested archives remain nested. Research source claims and reported validation runs were not independently reproduced for this archival delivery. Read the retained limitations, open gates and rights notices before reuse. See the [current owner declaration](../../LEGAL-NOTICE.txt); third-party terms remain distinct.
 
 [Original identities and hashes](PROVENANCE.json) · [Back to OG 510P](../README.md)

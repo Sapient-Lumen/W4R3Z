@@ -114,3 +114,5 @@ This review does not assign an open-source or permissive license. Public archiva
 
 The public review copies omit transfer-account identifiers and local workspace paths.
 
+
+For the contributor’s later statement, see the [current owner declaration](../../LEGAL-NOTICE.txt). The observations above describe the supplied historical notices, not a replacement of third-party terms.

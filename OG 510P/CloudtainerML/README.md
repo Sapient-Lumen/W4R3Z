@@ -38,6 +38,6 @@ Focuses on the practical route to a digest-bound public-trace evidence packet: d
 
 ### Reading and preservation notes
 
-These are selected historical checkpoints, not a complete release history. New guides, inventories and integrity notes sit beside unchanged extracted files. Original ZIP names and bytes are preserved, including discrepancies and nested ZIPs. Wrapper layouts remain intact. No supplied program was executed and no external source claim was revalidated merely by copying the archive. Existing source-specific rights and licenses remain applicable; no blanket grant is added.
+These are selected historical checkpoints, not a complete release history. New guides, inventories and integrity notes sit beside unchanged extracted files. Original ZIP names and bytes are preserved, including discrepancies and nested ZIPs. Wrapper layouts remain intact. No supplied program was executed and no external source claim was revalidated merely by copying the archive. Existing source-specific rights and licenses remain applicable; see the [current owner declaration](../../LEGAL-NOTICE.txt).
 
 [Original identities and hashes](PROVENANCE.json) · [Collection index](../README.md)

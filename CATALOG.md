@@ -68,3 +68,5 @@ For comparison through original passages, read [what continued work has to prese
 - **Rust:** [Rust-Crate-Dreams](OG%20510P/Rust/Rust-Crate-Dreams/README.md), [Rust-Needs-and-Dreams](OG%20510P/Rust/Rust-Needs-and-Dreams/README.md).
 
 [Reading paths](READING-PATHS.md) · [Preservation and rights](PRESERVATION.md) · [W4R3Z](README.md)
+
+[Owner-supplied legal notice](LEGAL-NOTICE.txt) · [Rights and preservation](PRESERVATION.md)

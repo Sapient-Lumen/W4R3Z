@@ -113,7 +113,7 @@ Adds an exportable decision-review bundle containing public trust-policy materia
 - New guides and inventories sit outside the extracted historical files. No historical inconsistency was silently repaired.
 - All supplied file manifests matched their listed members. ZIP checks and archival identity are distinct from software execution, scientific validation, source verification and deployment approval.
 - Sources and links inside the originals may be historical. Their current validity has not been re-researched for this archival delivery.
-- Existing third-party rights and source-specific notices remain applicable. No new blanket license is granted.
+- Existing third-party rights and source-specific notices remain applicable. See the [current owner declaration](../../LEGAL-NOTICE.txt); third-party terms remain distinct.
 
 [Provenance and original archive hashes](PROVENANCE.json) · [Back to OG 510P](../README.md)
 

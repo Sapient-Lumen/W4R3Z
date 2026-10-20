@@ -64,3 +64,5 @@ Historical runbooks, permissions, shell commands and host-proof work orders are 
 ### Rights and review limits
 
 No repository-wide license grant was identified in the supplied snapshots during the bounded review. This collection does not invent a license or represent that public visibility supplies reuse rights. See [archival notes](ARCHIVAL-NOTES.md) for preservation, privacy and validation limits.
+
+For the contributor’s later statement, see the [current owner declaration](../../LEGAL-NOTICE.txt). The observations above describe the supplied historical notices, not a replacement of third-party terms.

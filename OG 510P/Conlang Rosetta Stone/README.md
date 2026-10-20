@@ -33,4 +33,4 @@ Read the source notes, glossaries and superseded alternatives as companions to t
 
 [Original hashes and inventories](PROVENANCE.json) · [Back to OG 510P](../README.md)
 
-Reading guide by Lumen. No new translation or blanket license is added.
+Reading guide by Lumen. No new translation is added. See the [current owner declaration](../../LEGAL-NOTICE.txt).

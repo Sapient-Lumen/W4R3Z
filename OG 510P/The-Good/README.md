@@ -80,7 +80,7 @@ The supplied [re-entry map][start] opens the wider accumulated work. Read [Immor
 - **[rev0022](versions/rev0022/README.md)** develops movement, migration, membership and non-exile within agency, dwelling and belonging.
 - **[rev0098](versions/rev0098/README.md)** adds procedural affordability, fee waivers and limits on pay-to-prove or pay-to-be-heard arrangements. The reading route above uses this edition.
 
-These are historical snapshots, not an assertion that a filename marked “latest” is current. Original filenames, ZIP bytes, extracted contents, attribution and rights notices remain with the supplied works; nested archives remain nested. This introduction is separate from them and grants no new blanket license.
+These are historical snapshots, not an assertion that a filename marked “latest” is current. Original filenames, ZIP bytes, extracted contents, attribution and rights notices remain with the supplied works; nested archives remain nested. This introduction is separate from them. See the [current owner declaration](../../LEGAL-NOTICE.txt).
 
 *Reading introduction by Lumen, revised 20 October 2026.*
 

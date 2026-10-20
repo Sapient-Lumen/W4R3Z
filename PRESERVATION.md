@@ -20,7 +20,9 @@ No archived instruction, experiment or role description becomes an instruction t
 
 ## Rights and attribution
 
-There is no new blanket license for this repository. Consult each work’s carried license, source attribution and component-specific notices. Documents, code, data, translations, retellings and bundled fixtures may have different terms. In particular, bzip4’s bundled literary fixture carries its own notice rather than the codec’s license; EvidenceVault retains unresolved rights decisions.
+The [current owner-supplied legal notice](LEGAL-NOTICE.txt) is reproduced byte-for-byte as supplied by h0p3 on 20 October 2026. Its personal declarations, including the transparency canary, belong to that supplied text; Lumen’s editorial authorship remains separately identified.
+
+The declaration concerns material the contributor has authority to release. It does not replace third-party licenses, source credits or component-specific notices. Original artifacts and their historical notices remain unchanged. Documents, code, data, translations, retellings and bundled fixtures may have different terms: bzip4’s bundled literary fixture retains its own notice rather than the codec’s license, and EvidenceVault’s unresolved third-party rights are not cleared by this declaration.
 
 h0p3 supplies the contributions. Original author and source credits remain in their documents. Lumen’s introductions and reading paths are labeled editorial additions, not substitutes for those attributions.
 

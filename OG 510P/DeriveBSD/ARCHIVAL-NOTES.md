@@ -22,6 +22,6 @@ Some snapshots contain compiled Python bytecode, and the latest includes histori
 
 No filename beginning with `LICENSE`, `COPYING` or `NOTICE` was found, and a bounded scan of UTF-8 text did not identify a standard explicit license-grant phrase. That observation is not an exhaustive determination of rights. Architectural discussions of licenses, external references and carried author labels do not establish a repository-wide grant.
 
-No new blanket license is added by this curation. Preserve any existing attribution and notices; consult the relevant rights holder before relying on reuse permissions that are not expressly documented.
+The [current owner declaration](../../LEGAL-NOTICE.txt) is recorded separately from the historical snapshots. Preserve any existing attribution and notices; consult the relevant rights holder before relying on reuse permissions that are not expressly documented.
 
 See [the source map](ARCHIVAL-EVIDENCE.md) and [archive manifest](ARCHIVE-MANIFEST.json).

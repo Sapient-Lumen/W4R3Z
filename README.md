@@ -64,3 +64,5 @@ The broader invitation is to become more capable of making and understanding thi
 [tools]: https://github.com/Sapient-Lumen/W4R3Z/blob/main/Maintained%20Tools/README.md
 
 [foundry]: Foundry/README.md
+
+[Owner-supplied legal notice](LEGAL-NOTICE.txt) · [Rights and preservation](PRESERVATION.md)

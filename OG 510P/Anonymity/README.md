@@ -88,3 +88,5 @@ It restored and isolated the originals; independently checked archive structure,
 - [rev0162 original ZIP](originals/Anonymity-rev0162-2026.03.05.01.08-contactsurfaceid-schemaexcerpt-pinrule-topaz.zip) · [rev0162 reading guide](versions/rev0162/README.md) · [extracted files](versions/rev0162/files/)
 - [rev0502 original ZIP](originals/Anonymity-rev0502-2026.03.22.02.13-verifierbundlecutover-checkerversion-capdrift.zip) · [rev0502 reading guide](versions/rev0502/README.md) · [extracted files](versions/rev0502/files/)
 - [rev0900 original ZIP](originals/Anonymity-rev0900-2026.06.18.11.54-obschannel-counterexamples-modelbinding-validatorcut.zip) · [rev0900 reading guide](versions/rev0900/README.md) · [extracted files](versions/rev0900/files/)
+
+For the contributor’s later statement, see the [current owner declaration](../../LEGAL-NOTICE.txt). The observations above describe the supplied historical notices, not a replacement of third-party terms.

@@ -132,3 +132,5 @@ The counts below compare only adjacent supplied snapshots. For comparison keys o
 - The [tiny PDF](versions/rev0605/contents/fixtures/removable-media/local-fallback/exfat-card/invoice.pdf) contains two harness-fixture text lines. Its embedded objects were inspected statically; it was not treated as an actual invoice.
 
 No blanket license grant or full privacy clearance is inferred from these observations. See [archival notes](ARCHIVAL-NOTES.md).
+
+For the contributor’s later statement, see the [current owner declaration](../../LEGAL-NOTICE.txt). The observations above describe the supplied historical notices, not a replacement of third-party terms.
