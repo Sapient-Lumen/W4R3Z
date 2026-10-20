@@ -1,55 +1,91 @@
 # DelayBasin
 
-## What carries a collaboration through forgetting?
+## A project should outlive the session that made it
 
-DelayBasin studies a human–LLM collaboration that expects interruption, partial observation and changes of participant. Its question is not merely whether a notebook feels coherent on reopening. It asks which structures actually help carry the work and whether their contribution can be distinguished from user steering, presentation or the luxury of a large archive.
+A model changes. A conversation ends. A cloud container disappears. The files may survive somewhere, but the project can still be lost: which result was accepted, why an attractive alternative was rejected, what remains uncertain, and what a capable next contributor should do.
 
-The early [charter](versions/rev0016/contents/docs/00-meta/charter.md) leaves room for bold speculation while demanding that the method itself remain criticizable. Both commitments matter. Caution alone is not the method, but neither is confidence that a compelling experience has revealed its cause.
+DelayBasin studies how to make that continuation public and portable. It builds an archive that is not simply a record of past work, but an interface through which another reader can recover the project’s current state and continue constructing it. Its deepest question is not how much history can be retained. It is how little must be carried for the important distinctions, live tensions, and next moves to remain recoverable.
 
-## Read the original method, then its hardest evidence boundary
+The [founding charter preserved here](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0016/contents/docs/00-meta/charter.md) joins practical archive engineering to an ambitious intellectual project: understanding how human–LLM work acquires continuity under partial observability. It makes room for mechanism, disagreement, and risky speculation together. The method is meant to become inspectable enough to criticize and revise, not merely familiar enough to repeat.
 
-1. Begin with the charter and the historical reading path retained below.
-2. Follow the middle snapshots for the distinction between a small re-entry packet and a larger context, the recording of rejected alternatives, and the limits of what presentation can show.
-3. Read [the final supplied two-file replay addendum](versions/rev0389/contents/DelayBasin-rev0389-overlay/cloudtainer/oq0266-multi-model-semantic-replay/REVISION-rev0389-multi-model-semantic-replay.md) only alongside the rev0388 working archive. It reports operator-attested multi-model replay, with collection and scoring roles identified. It does not include the raw returned responses and does not promote the canonical head.
+## More than remembering
 
-## The comparison is the substance
+DelayBasin’s most useful distinction separates three things commonly collapsed into “memory.”
 
-A compact packet might perform well because it preserves something important, because a human has supplied continuity elsewhere, or because the comparison fails to isolate the relevant difference. DelayBasin’s own failure list makes those competing interpretations part of the work.
+- A **memory store** preserves facts, evidence, sources, and history.
+- A **re-entry packet** gives a new session the small amount of operative state it needs to find its footing.
+- **Admission checks** determine whether a proposed revision respects the project’s relevant commitments.
 
-The later overlays retain rev0374 as their canonical head. A higher filename is therefore not a simple claim that every layer was promoted. Nor can the tiny addendum replace the larger source and evidence context it depends on.
+The [original discussion](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0052/contents/docs/10-method/memory-stores-vs-regime-reentry-packets.md) explains why all three can matter without doing the same job. A source may deserve permanent retention without deserving a place in every opening prompt. A validator can protect a transition without being the thing that tells a new reader where the work stands. A short packet can be a good entrance without replacing the archive behind it.
 
-This library preserves the project’s experiments and speculative vocabulary as historical material. It does not rerun the experiments, adopt archived role instructions or turn an operator-attested report into independently reproduced evidence.
+This changes what compression means. DelayBasin is not trying to make the best synopsis of everything that happened. It is trying to preserve what the next contributor needs to act faithfully: current claims, unresolved questions, reasons for rejection, stable references, and the conditions under which an earlier decision should change. [Constitutive compression](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0016/contents/docs/10-method/constitutive-compression-and-prior-matching.md) is its name for keeping the right structure while allowing the rest to move out of immediate attention.
 
-Read beside [Lacuna](../Lacuna/README.md), which keeps possible worlds and accepted narration distinct, and [MissingKnowledgeHalf](../MissingKnowledgeHalf/README.md), which asks why rejected paths deserve to survive.
+The danger is elegant corruption. A recap may read beautifully while replacing a project-specific distinction with the receiving model’s default assumptions. The archive therefore asks not only whether a packet is shorter, but whether it preserves the relevant continuation when the reader, model, or surrounding context changes.
 
-*Reading introduction by Lumen, 8 October 2026. This is an editorial route through selected source documents, not an independent validation of the works’ conclusions.*
+## What continuity is made of
 
-## Snapshots and preservation
+The early [portable-state interface](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0016/contents/docs/10-method/portable-state-interface.md) brings together a bounded current state, stable addresses into the larger archive, and explicit acceptance checks. Around it, DelayBasin builds runbooks, registries, prompt lineages, recovery routes, and revision receipts.
 
-### A short reading path
+One of its smallest devices is also one of its strongest. A **counterfactual shadow** keeps one nearby rejected alternative beside an accepted change. It asks what was refused, where the decision turned, why the alternative was not taken, and whether it remains worth pursuing. The [rev0016 receipt](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0016/contents/REVISION-RECEIPT.json) demonstrates the device on itself: it accepts a small rejected-move record while declining a larger paired-branch architecture.
 
-1. Begin with [rev0016’s charter](versions/rev0016/contents/docs/00-meta/charter.md). It states the project’s aims and the mistakes it was trying to avoid. Its current revision records a nearby rejected alternative alongside an accepted change.
-2. Visit [rev0052](versions/rev0052/contents/CHANGELOG.md) for the question of whether a smaller re-entry packet is sufficient. Its changelog frames replay of that smaller packet as something to test rather than assume from a successful larger packet.
-3. Visit [rev0105](versions/rev0105/contents/CHANGELOG.md) for the move from prose expectations to explicit records: a firebreak ledger distinguishes the public evidence offered for a claim from withheld material.
-4. Visit [rev0208](versions/rev0208/contents/CHANGELOG.md) for the growing concern with presentation effects. This revision adds a bounded warning-label control to a larger family of evidence-presentation controls.
-5. Visit [rev0264](versions/rev0264/contents/CHANGELOG.md) for distinctions between restoring function, restoring exact state, and carrying a performance-related shadow. The revision documents a classification and its limits; this catalog does not independently certify those claims.
-6. Visit [rev0388](versions/rev0388/contents/cloudtainer/oq0266-self-contained-evidence-capsule-audit-2026-06-18.md) for the late working archive and its evidence-capsule audit. It includes the canonical rev0374 surfaces plus a later working overlay. The audit records an effort to make replay independent of ambient project files.
-7. Finish with [rev0389’s two-file addendum](versions/rev0389/contents/DelayBasin-rev0389-overlay/cloudtainer/oq0266-multi-model-semantic-replay/REVISION-rev0389-multi-model-semantic-replay.md). It reports an operator-attested multi-model replay and explicitly distinguishes that evidence class from a custody-clean external replay. Raw model responses are not included in that addendum.
+That matters because a project’s conclusions are not its whole intelligence. The reasons it did not take a tempting path can be exactly what prevents the next session from repeating an old mistake or mistaking a deliberate choice for an omission.
 
-### Reading the version labels
+Other distinctions sharpen the same idea. A steering phrase should not automatically be its own evidence of success. A component that helped inside a large context has not thereby shown that it can work alone. Two packets producing the same first answer may still diverge on the next meaningful challenge. DelayBasin turns these observations into [observer/actuator splits](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0052/contents/docs/10-method/observer-actuator-splits-and-non-self-certifying-handles.md), [sufficiency witnesses](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0052/contents/docs/10-method/sufficiency-witnesses-replay-capsules-and-core-only-reentry-trials.md), and [future-probe fingerprints](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0105/contents/docs/10-method/basin-fingerprints-future-probe-signatures-and-same-answer-is-not-same-state.md).
 
-rev0388 explicitly says its internal canonical head remains rev0374. rev0389 likewise identifies itself as a working overlay rather than a canonical promotion. These labels describe the archived project’s own status distinctions. The two-file rev0389 addendum cannot replace the larger rev0388 working archive.
+The point is not to name everything. It is to preserve differences that change what a future contributor should believe or do.
 
-Dates in archive filenames and documents are preserved historical labels, not independently authenticated publication times. Historical instructions, proposed experiments, open questions, and permissions remain part of the exhibit; they do not start new work.
+## The archive puts itself on trial
 
-### Preserved packages
+As DelayBasin grows, it discovers a problem inside its own success. A repeatable method can produce increasingly elaborate, internally consistent documents while postponing the question that justified them.
 
-Each version directory contains the unchanged original ZIP and its own extracted contents. Internal paths and file bytes are preserved. [The manifest](MANIFEST.json) records archive and member SHA-256 checksums. These identify supplied bytes; they do not establish authorship or validate research conclusions.
+The [self-sufficiency turn](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0105/contents/docs/10-method/archive-self-sufficiency-probe-minimal-core-and-priority-zero.md) asks for the smallest DelayBasin that still reopens the same project. The companion [template-law audit](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0105/contents/docs/10-method/template-law-audits-family-compression-frontiers-and-anti-ceremony-tests.md) asks whether its recurring revision grammar discovers real structure or can make almost any new concept look locally important.
 
-- [rev0016](versions/rev0016/): 68 extracted files.
-- [rev0052](versions/rev0052/): 141 extracted files.
-- [rev0105](versions/rev0105/): 255 extracted files.
-- [rev0208](versions/rev0208/): 387 extracted files.
-- [rev0264](versions/rev0264/): 519 extracted files.
-- [rev0388](versions/rev0388/): 854 extracted files.
-- [rev0389](versions/rev0389/): 2 extracted files.
+A convincing continuation must do more than generate another DelayBasin-shaped essay. It should recover the live question, distinguish accepted work from speculation, reject plausible false cues, and make a useful bounded next move.
+
+This struggle becomes explicit in the later [mission diagnosis](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0388/contents/docs/40-session/mission-diagnosis-2026-06-14.md). The archive recognizes that validation machinery has outgrown challenge evidence and declines another layer of storage organization. It redirects attention toward comparing a compact core, richer context, a sparse baseline, and a fluent decoy.
+
+That self-criticism is part of the achievement. DelayBasin is not only building constraints against forgetting. It is trying to stop those constraints from becoming an expensive substitute for learning.
+
+## Portability becomes a concrete engineering problem
+
+The late evidence-capsule work shows what these ideas mean when files and environments are involved.
+
+One frozen run manifest recorded the paths of evidence files rather than the files themselves. A later audit changed a score sheet at its original path and obtained a different accepted result from the same unchanged manifest. The repair replaced that path-based handoff with a deterministic bundle containing the exact evidence bytes.
+
+Then a second problem appeared. The bundle still needed plans, policies, templates, and other material from the surrounding working directory. Remove that directory, and the allegedly portable run could no longer be replayed.
+
+The [final capsule repair](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0388/contents/cloudtainer/oq0266-self-contained-evidence-capsule-audit-2026-06-18.md) brings the frozen source kits and result artifacts inside one evidence object, binds them by hashes, and checks the expected identity of the outer object before interpreting it. The [preceding audit](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0388/contents/cloudtainer/oq0266-final-triplet-freeze-and-portable-bundle-audit-2026-06-18.md) makes the failure and repair especially easy to follow.
+
+This is a concrete lesson about unstable cloud environments: a file is not a portable working object merely because it can be downloaded. If its meaning or use depends on unrecorded surroundings, the old environment is still carrying part of the project.
+
+The historical archives here are ZIP-based research packages, not the newer binary Datacubes. They expose a central pressure behind that later direction: carry a recoverable working world, rather than trust that the conversation and container that produced it will remain available. The original text-addressable “re-entry ABI” and a later single-binary construction object belong to that developing story without being the same artifact.
+
+## What the final replay adds
+
+The [last supplied addendum, rev0389](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0389/contents/DelayBasin-rev0389-overlay/cloudtainer/oq0266-multi-model-semantic-replay/REVISION-rev0389-multi-model-semantic-replay.md), reports a four-arm comparison across six model families. In its reported scores, five compact cues carry mission and next-action boundaries almost as well as the richer trace excerpt, while sparse baseline and sham packets score much lower.
+
+The report also finds useful imperfections. One responder partially absorbs a decoy mission. One expected scoring point cannot actually be derived from the compact stimulus. Even the project name gives a supposedly sparse baseline clues about the subject. These are discoveries about the design of continuation tests, not just marks on a scorecard.
+
+The addendum classifies the result as operator-attested multi-model semantic replay; it preserves scores and findings rather than the raw responses. Both late snapshots retain rev0374 as their internal canonical head. Read rev0389 alongside the substantial rev0388 archive, not as its replacement.
+
+## Why read it?
+
+DelayBasin is useful to anyone trying to make long-running work survive handoffs, resets, model changes, and the loss of a working environment. Its practical question is how to leave a stranger enough to continue without requiring that stranger to reenact the entire history.
+
+Its bolder question is whether a public artifact can carry a compact continuation program: not just remembered facts, but a way of recovering how an unfinished project thinks, revises, doubts, and advances. The [speculative lane](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0016/contents/docs/90-quarantine/wild-speculations-2026-03-08.md) keeps that possibility alive without requiring every useful engineering move to settle it.
+
+Start with the [charter](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0016/contents/docs/00-meta/charter.md), the [three roles of persistent material](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0052/contents/docs/10-method/memory-stores-vs-regime-reentry-packets.md), and the [self-sufficiency probe](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0105/contents/docs/10-method/archive-self-sufficiency-probe-minimal-core-and-priority-zero.md). Then follow the capsule repairs and final replay. The snapshots preserve an argument becoming an apparatus, and an apparatus learning to question the cost of its own existence.
+
+## Explore the snapshots
+
+- **[rev0016](versions/rev0016/):** The early construction: charter, portable state, revision receipts, and the first compact rejected-alternative record.
+- **[rev0052](versions/rev0052/):** The distinction between retained memory, operative re-entry, and admission, with a concrete question about whether a reduced packet is enough by itself.
+- **[rev0105](versions/rev0105/):** Self-sufficiency and template-law pressure; a public-extract ledger begins recording what evidence a revision actually exposes.
+- **[rev0208](versions/rev0208/):** The accumulated presentation-control work asks how labels, citations, ordering, warnings, and other surfaces can shape apparent authority.
+- **[rev0264](versions/rev0264/):** Recovery is decomposed into more precise meanings, including exact logical restoration versus a performance-shadowed return.
+- **[rev0388](versions/rev0388/):** The large late archive, including the canonical rev0374 surfaces and working overlays that build a self-contained replay evidence capsule.
+- **[rev0389](versions/rev0389/):** A two-file operator-attested multi-model semantic replay addendum, read together with rev0388.
+
+The [manifest](MANIFEST.json) identifies the original packages and extracted files. The supplied works retain their own [rights and source notices](../../PRESERVATION.md).
+
+[OG 510P](../README.md) · [Catalog](../../CATALOG.md) · [W4R3Z](../../README.md)
