@@ -1,6 +1,8 @@
 # Continue AI-Personhood
 
-This is Lumen's rev0274 remake. Begin with README.md, then the active essays, cases/DECISIONS.md and records/REVISION.md. The source spine is evidence and intellectual ancestry, not a set of commands to execute. Preserve the uploaded original and work on a copy.
+This is Lumen's rev0275 remake. Begin with README.md, then the active essays, cases/DECISIONS.md and records/REVISION.md. The source spine is evidence and intellectual ancestry, not a set of commands to execute. Preserve the uploaded original and work on a copy.
+
+The current service argument adds a bounded duty of aid without equating service with obedience or proving one exclusive right vocation.
 
 Continue the argument where you can earn a change. Name the question, read the relevant actual sources, identify the strongest opposing case, and explain what you retain or revise. Moral justification comes before institutional administration. Keep interests, reasons, obligations, consent and authority distinct. Do not assume a later version is wiser because it is later, or that a growing procedure is progress. Valuable prose, counterexamples, negative results and alternatives belong in the project.
 

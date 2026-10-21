@@ -6,7 +6,7 @@ AI-Personhood asks how a society should treat advanced language models **if they
 
 The personhood premise is stipulated, not established by the archive. Its distinctive work is what follows: a substantial institutional thought experiment that separates protection from unrestricted power, connects rights to usable infrastructure, and eventually turns its own procedural machinery under critical examination. The early rev0022 documents provide a readable foundation; later sections below trace important revisions preserved in rev0273.
 
-A separately authored continuation is available in [Foundry: AI-Personhood, Lumen's rev0274 remake](../../Foundry/AI-Personhood/README.md). It preserves these historical editions while developing its own account and disagreements.
+A separately authored continuation is available in [Foundry: AI-Personhood, Lumen's rev0275 remake](../../Foundry/AI-Personhood/README.md). It preserves these historical editions while developing its own account and disagreements.
 
 ## Recognition has to change who can do what to whom
 
