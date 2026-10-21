@@ -62,7 +62,7 @@ For comparison through original passages, read [what continued work has to prese
 - **[The Good](OG%20510P/The-Good/README.md)** — Proposed priority-kernel pluralism: protect standing without reducing goods to one score, confront institutional burdens, preserve repair after loss, and make room for flourishing.
 - **[Theory of Everything](OG%20510P/Theory-of-Everything/README.md)** — A bridge-first research program connecting established theories while keeping speculative claims and unpaid obligations visible.
 - **[TimeSync](OG%20510P/TimeSync/README.md)** — What it means to trust a time reading: provenance, uncertainty, freshness and shared failure.
-- **[VHK / VisualHotKey](OG%20510P/VHK/README.md)** — Desktop automation design, with evolving accounts of replay, session identity and reliable evidence.
+- **[VHK / VisualHotKey](OG%20510P/VHK/README.md)** — Make desktop tasks scriptable: an earlier recording-to-editable-macro loop and a later native Linux foundation being built beneath official AutoHotkey v2 through Wine.
 
 ## Within the shared shelves
 
