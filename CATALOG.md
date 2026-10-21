@@ -37,7 +37,7 @@ For comparison through original passages, read [what continued work has to prese
 - **[DelayBasin](OG%20510P/DelayBasin/README.md)** — An inquiry into faithful continuation: distinguish retained evidence, compact re-entry and admission checks, then test whether the apparatus earns its complexity.
 - **[DeriveBSD](OG%20510P/DeriveBSD/README.md)** — FreeBSD-first system design exploring the distance between a contract, a model and an operating system.
 - **[EvidenceVault](OG%20510P/EvidenceVault/README.md)** — A partial recovery archive about preserving evidence without claiming to possess the missing whole.
-- **[GlassTTY](OG%20510P/GlassTTY/README.md)** — The design of a visible browser-to-terminal bridge and the problem of knowing which interactions really worked.
+- **[GlassTTY](OG%20510P/GlassTTY/README.md)** — A command-line bridge to a live ChatGPT browser session: ask questions, queue prompts and capture responses in files, while checking what actually completed.
 - **[Global-Warming](OG%20510P/Global-Warming/README.md)** — Climate, practical capacity and institutional preparedness, extending into nuclear emergency-preparedness research.
 - **[Goldenrule / Concord](OG%20510P/Goldenrule/README.md)** — Reciprocity as both a normative question and an experimental design problem.
 - **[Immoral-Wealth](OG%20510P/Immoral-Wealth/README.md)** — When wealth becomes domination, and what durable ordinary independence might require.
