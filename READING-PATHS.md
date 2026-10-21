@@ -26,6 +26,19 @@ Continue through [The Good](OG%20510P/The-Good/README.md), [Righteousness](OG%20
 
 The connections above are reading questions, not a claim that these works establish one shared moral theory. In particular, moving from an account of flourishing to an obligation requires an argument, not just a change of vocabulary.
 
+
+### Care, witness and the power to describe
+
+Follow this shorter route from recognition to evidence and back to practical responsibility. It asks what care enables without making the person cared for belong to the helper's account.
+
+1. **Separate recognition from a completed story.** Read **Recognition after a loss** in [Threshold Offices][care-offices], then the earlier [Name After Death Is Not Ownership][care-name]. Identification, burial, accessible records and family authority accomplish different things. Ask which good a practice actually supplies, and which claim remains unresolved. Rev0105 also resists automatic obscurity: public witness may be chosen and necessary. Refusing appropriation does not give an editor unlimited power to silence the people whose authority it means to protect.
+
+2. **Keep an observation from becoming an unsupported interior life.** DeathVocab's [witnessed-moment method][care-moment] begins with a scene rather than a term. Read its proposed fields for witness role, raw observation, interpretation and uncertainty beside the [inside-view evidence verbs][care-verbs]. “Reported,” “witnessed” and “inferred” make different claims; bodily stillness does not by itself establish experienced peace. The [setting note][care-setting] adds another question: who was allowed to witness, speak, touch or decide in that room? Then inspect the [belongings record][care-belongings]: its drawer, shoes and unchanged room are a public-source scaffold, not a contributor's testimony. The record explicitly marks the precise belongings layer as under-sourced and quarantined. Ask which sentences are broad context, editorial interpretation or an unresolved invitation for evidence. Vividness cannot supply the missing witness.
+
+3. **Return from careful description to useful help.** In [Threshold Offices][care-offices], read **Moving the door**, **Staying while the answer is delayed** and **What travels between offices**. Moving a service can reduce an access burden while increasing the institution's knowledge and power. A meal can matter today without making the arrangement that necessitates it just. Ask what material possibility has improved, what additional control is being claimed, and who can contest it. Careful language should help make those decisions intelligible, not substitute for assistance or prove its effects.
+
+The works are neighbors, not one method. LivingChristFigures compares recurring practices and their burdens; DeathVocab organizes descriptions around scenes, evidence roles and settings. Their shared resistance to turning a person into an illustration still leaves different questions to answer.
+
 ## When does an institution actually serve people?
 
 Start with [Immoral-Wealth](OG%20510P/Immoral-Wealth/README.md), which asks when ownership becomes domination rather than independence. [Moral Taxation](OG%20510P/Moral-Taxation/README.md) brings the question to policy design. [Radical Governance](OG%20510P/Radical-Governance/README.md) asks how scope, remedy and continued challenge could be built into institutions.
@@ -109,3 +122,10 @@ For a smaller formal world, [MTG](OG%20510P/MTG/README.md) distinguishes faithfu
 [trust-borrowing]: OG%20510P/Theory-of-Everything/versions/rev0021/files/Theory-of-Everything-rev0021-2026.03.22.07.52-measureaudit-regulatorpressure-xerographicdebt/docs/40-model/witness-borrowing-ladder.md
 [trust-rt]: OG%20510P/Theory-of-Everything/versions/rev0021/files/Theory-of-Everything-rev0021-2026.03.22.07.52-measureaudit-regulatorpressure-xerographicdebt/docs/40-model/rt-claim-audit.md
 [trust-uptake]: OG%20510P/MissingKnowledgeHalf/versions/rev0028/files/MissingKnowledgeHalf-rev0028-2026.05.28.16.48-maritimecasualties-watertightrails-transportstateaudit/docs/60-synthesis/correction-memory-infusion-crosscase-memo-rev0017.md
+
+[care-offices]: OG%20510P/LivingChristFigures/versions/rev0105/files/LivingChristFigures-rev0105-2026.10.07.19.12-lumen-threshold-offices-reading-edition/READING-EDITION.md
+[care-name]: OG%20510P/LivingChristFigures/versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/LONGFORM/Office-Essay-001-Name-After-Death-Is-Not-Ownership.txt
+[care-moment]: OG%20510P/DeathVocab/versions/rev0025/files/DeathVocab-rev0025-2026.05.26.15.45-environmentatlas-exposuredeaths-hazardaudit/docs/10-method/witnessed-moment-as-primary-unit.md
+[care-verbs]: OG%20510P/DeathVocab/versions/rev0025/files/DeathVocab-rev0025-2026.05.26.15.45-environmentatlas-exposuredeaths-hazardaudit/docs/10-method/inside-view-evidence-and-nonproof.md
+[care-setting]: OG%20510P/DeathVocab/versions/rev0025/files/DeathVocab-rev0025-2026.05.26.15.45-environmentatlas-exposuredeaths-hazardaudit/docs/20-setting/setting-is-not-background.md
+[care-belongings]: OG%20510P/DeathVocab/versions/rev0025/files/DeathVocab-rev0025-2026.05.26.15.45-environmentatlas-exposuredeaths-hazardaudit/records/quarantine/DV-REC-000077-belongings-clothes-room-bed-and-the-timing-nobody-can-choose-for-you.json
