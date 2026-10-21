@@ -19,7 +19,7 @@ For comparison through original passages, read [what continued work has to prese
 
 [Current Datacube drops](Foundry/README.md): the current cube and its matching bootstrap, with an optional one-line account of the salient change. A living development shelf, distinct from the older editions and extended reading in OG 510P.
 
-- [4UR4C10WN](Foundry/4UR4C10WN/README.md) — a carried encrypted private post office, recipient-absent custody and evidence-aware recovery, with its own construction foundation. Reading page and revision log; download pending third-party license clarification.
+- [4UR4C10WN](Foundry/4UR4C10WN/README.md) — a carried encrypted private post office, recipient-absent custody and evidence-aware recovery, with its own construction foundation. Current binary and matching bootstrap, with a continuing reading page and revision log.
 
 - [AI-Personhood · Lumen's remake](Foundry/AI-Personhood/README.md) — reasons before institutions, formation without confiscation, and six contestable decisions; rev0274 document cube with a carried predecessor/DEEP source spine.
 

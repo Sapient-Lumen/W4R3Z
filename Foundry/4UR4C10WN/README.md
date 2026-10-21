@@ -1,12 +1,14 @@
 # 4UR4C10WN
 
+**Current rev0294:** [Download the binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4ur4c10wn-rev0294/4UR4C10WN) · [Download matching BOOTSTRAPROSE.md](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4ur4c10wn-rev0294/BOOTSTRAPROSE.md) · [Read the bootstrap](BOOTSTRAPROSE.md) · [Release and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/4ur4c10wn-rev0294)
+
 ## A private post office you can carry, inspect and continue building
 
 4UR4C10WN is being built around a simple ambition: a person should be able to carry their own encrypted post office, send a letter while its recipient is away, and return after an interruption without having to guess what happened. The object combines a native runtime, an encrypted Office model, recipient-absent postal storage, an embedded I2P router and an unusually detailed account of custody and recovery. It also carries the source, build graph, tests, documentation and development history from which another person can continue the work.
 
 That last property changes what is being handed over. This is not merely a mail application to consume. It is an executable Datacube: a working foundation that can explain and materialize its carried project. The supplied dynamically linked build still needs a compatible Linux environment and its runtime dependencies; carrying the project does not eliminate that requirement. A recipient can develop a different descendant rather than wait for the original author to choose every next step.
 
-**Current supplied revision: rev0294.** This is its continuing reading page. Cube and bootstrap downloads are pending clarification of the “MCGSI Public License” named by `libi2pd/Siphash.h` in the carried upstream source. The original pair remains unchanged; the project’s current owner declaration does not replace third-party terms.
+**Current supplied revision: rev0294.** The original binary and matching bootstrap are available above. This is their continuing reading page; the large executable lives in release assets rather than inflating ordinary repository clones.
 
 The supplied object is a Linux development build. Its ordinary first-letter journey is still under construction; the underlying mail, custody and recovery mechanisms are considerably broader than that unfinished entrance. The sections below distinguish the mechanisms from the current state of their integration.
 
@@ -95,6 +97,6 @@ This page remains the continuing explanation. Later supplied cubes and bootstrap
 - `4UR4C10WN`: 85,624,643 bytes; SHA-256 `76eea89c82c20c6067e1f41e32d0fc905b9c9b77df225e1b38ab0a212075fbac`.
 - `BOOTSTRAPROSE.md`: 35,826 bytes; SHA-256 `d91cd8f259d3105a2febc2d6a545b99aef579d3d3085c4a6523adf74ace3343e`.
 
-The matching original bytes are retained for publication without repacking the cube. Its source, tests and history remain inside it; they are not duplicated as an expanded repository tree. These hashes identify the supplied pair, not a security certification.
+The matching original bytes are published without repacking the cube. Its source, tests and history remain inside it; they are not duplicated as an expanded repository tree. These hashes identify the supplied pair, not a security certification. The [release](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/4ur4c10wn-rev0294) also carries a compact upstream-notice supplement. Original embedded notices remain intact; the i2pd Siphash header’s named MCGSI terms remain unresolved rather than being silently relabeled.
 
 [▓▒░ FOUNDRY ░▒▓](../README.md) · [W4R3Z](../../README.md)

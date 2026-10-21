@@ -1,5 +1,9 @@
 # IoTox
 
+**IoTox 0.51.0 / rev0051:** [Download the supplied Linux binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/iotox-v0.51.0-6123947650d1/iotox) · [Binary, matching source inputs and notices](https://github.com/Sapient-Lumen/W4R3Z/releases/download/iotox-v0.51.0-6123947650d1/IoTox-0.51.0-6123947650d1-standalone.zip) · [Release and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/iotox-v0.51.0-6123947650d1)
+
+This exact x86-64 build is source-linked but not fully static: it retains a Nix glibc 2.40 interpreter path and needs a compatible runtime. The release records its build details; original executable bytes are unchanged.
+
 ## Keep useful control of your devices without making an account service their owner
 
 IoTox connects machines over Tox and gives their owner a common way to operate them: exchange text and files, submit durable typed commands, synchronize working directories, and reach an explicitly approved interactive terminal. It is a C++20 device agent designed around ordinary Unix interfaces rather than a vendor-controlled device account. Its deeper project is to make ownership, permission and the record of what happened survive changes of route, disconnected peers and interrupted work.
@@ -64,7 +68,7 @@ The normal-Tox compatibility bridge preserves another useful distinction. Its si
 
 The [repository Datacube formats](docs/conversation-datacubes.md) package an exact committed source state and cloneable Git bundle, with available same-commit distribution and selected evidence. Public seed, full-history and richer conversation profiles serve different recipients. The source and Git history remain the development authority; the package is a bounded handoff, not a second hidden master copy.
 
-That is a concrete relation to the collection's wider continuity work. Device state, authority ledgers and project-development context are different things, but all can be damaged by pretending a recipient possesses context that never actually arrived. IoTox's handoff describes which materials travel and which do not. The public W4R3Z folder contains the preserved source snapshot, not the packaged executable or every founding cube.
+That is a concrete relation to the collection's wider continuity work. Device state, authority ledgers and project-development context are different things, but all can be damaged by pretending a recipient possesses context that never actually arrived. IoTox's handoff describes which materials travel and which do not. The public W4R3Z folder contains the preserved source snapshot. The linked release adds the matching supplied executable and standalone distribution; it does not add every founding cube.
 
 ## Where to continue
 

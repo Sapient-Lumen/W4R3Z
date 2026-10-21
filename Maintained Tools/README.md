@@ -9,7 +9,7 @@ Choose where the work should happen: a Linux project environment, a persistent v
 - **Connect your devices for commands and folder sync:** IoTox.
 - **Develop a NixOS system with carried reasons, measurements and exact acceptance:** Monsternix.
 
-These are different tools, not parts you must install together. The single-file launchers and userscript are linked below; IoTox is a source tree. Nothing on this page is an installation instruction.
+These are different tools, not parts you must install together. The single-file launchers and userscript are linked below; IoTox includes a source tree and a matching binary download. Nothing on this page is an installation instruction.
 
 ## Three different ways to sustain agent work
 
@@ -33,6 +33,7 @@ Recover a prepared machine’s overlay addresses and SSH trust from an identity 
 
 Operate self-owned devices over Tox through durable typed commands, working-folder synchronization and host-selected terminals. Stable identity and signed authority sit above peer reachability; local policy controls the effect. Its sync records local edits against the history actually installed in the working directory, not unseen remote branches already downloaded by the daemon. The supplied security policy excludes protection of production devices or secrets; the fuller explanation keeps that boundary alongside the implemented design.
 
+- [Supplied IoTox Linux binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/iotox-v0.51.0-6123947650d1/iotox) · [Complete standalone package](https://github.com/Sapient-Lumen/W4R3Z/releases/download/iotox-v0.51.0-6123947650d1/IoTox-0.51.0-6123947650d1-standalone.zip)
 - [Introduction and provenance](IoTox/W4R3Z.md)
 - [Project files and documentation](IoTox/)
 
