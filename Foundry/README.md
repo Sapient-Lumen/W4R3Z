@@ -10,6 +10,8 @@ This is a light shelf beside [Maintained Tools](../Maintained%20Tools/README.md)
 
 **[4UR4C10WN](4UR4C10WN/README.md)** — a portable encrypted private post office, with a continuing explanation and compact revision log. Its rev0294 download is pending third-party license clarification.
 
+**[AI-Personhood · Lumen's remake](AI-Personhood/README.md)** — a portable philosophical workshop about reasons, formation, worthwhile lives and justified authority. Current rev0274 document cube and matching bootstrap are available.
+
 Each project has a lasting reading page: what the work is for, how it works, where it is going, and a compact chronological changelog. Each supplied revision earns at most one maximally salient change line, grounded in the actual object rather than its revision number.
 
 ## A current pair and a continuing account
