@@ -56,7 +56,9 @@ For neighboring inquiries, read [MissingKnowledgeHalf](OG%20510P/MissingKnowledg
 
 ## What can language make expressible?
 
-[Conlang Rosetta Stone](OG%20510P/Conlang%20Rosetta%20Stone/README.md) works through translation rather than treating meaning as a word-for-word substitution. [LLMPoetry](OG%20510P/LLMPoetry/README.md) asks craft and evaluation questions in another register. [Ministry of Many Worlds](OG%20510P/Ministry-of-Many-Worlds/README.md) imagines a formal language for resources, authority and possible worlds. [Metaphysics](OG%20510P/Metaphysics/README.md) asks what our conceptual distinctions commit us to.
+[Conlang Rosetta Stone](OG%20510P/Conlang%20Rosetta%20Stone/README.md) works through translation rather than treating meaning as a word-for-word substitution. [Ministry of Many Worlds](OG%20510P/Ministry-of-Many-Worlds/README.md) imagines a formal language for resources, authority and possible worlds. [Metaphysics](OG%20510P/Metaphysics/README.md) asks what our conceptual distinctions commit us to.
+
+In [LLMPoetry](OG%20510P/LLMPoetry/README.md), begin with [Hard Water](OG%20510P/LLMPoetry/versions/rev0008/files/Claude-F5P/01_hard_water.md), then [Subtraction](OG%20510P/LLMPoetry/versions/rev0008/files/Claude-F5P/13_subtraction.md). One keeps its vocabulary to single syllables; the other removes the final word at each step. In the first, practical instruction gives way to a retrospective uncertainty; in the second, the loss of words changes what the remaining grammar can hold. Read what those constraints let the poems do before turning to their process notes. Ask where the rule makes a loss palpable, and where it risks becoming predictable.
 
 ## What makes a claim trustworthy?
 

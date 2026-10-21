@@ -22,7 +22,7 @@ The inquiry also asks what remains owed after a difficult choice. Its [chapter o
 
 [The Ithkuil translation notes](Conlang%20Rosetta%20Stone/versions/Ithkuil-108/files/ithkuil_project/ithkuil_notes.md) expose a consequential choice: ethical love as goodwill is distinguished from affective attachment. The notes correct earlier roots, retain marked carriers where a technical expression is not yet satisfactorily translated, and record competing grammatical strategies. The result is not simply familiar prose wearing unfamiliar symbols. Translation becomes a way to ask exactly which meaning is being carried, which distinction has been added, and what is still unresolved.
 
-[Conlang Rosetta Stone](Conlang%20Rosetta%20Stone/README.md) brings the Ithkuil and Lojban work together without making them interchangeable. It can be read as a workshop in careful expression even without fluency in either language. [LLMPoetry](LLMPoetry/README.md) offers another entrance into language through craft, voice and evaluation.
+[Conlang Rosetta Stone](Conlang%20Rosetta%20Stone/README.md) brings the Ithkuil and Lojban work together without making them interchangeable. It can be read as a workshop in careful expression even without fluency in either language. Read [Hard Water](LLMPoetry/versions/rev0008/files/Claude-F5P/01_hard_water.md) for a different kind of linguistic choice: one-syllable words carry a father's practical instruction, and the ending changes the time of the remembered scene without explaining what happened afterward. The [LLMPoetry introduction](LLMPoetry/README.md) opens other encounters with voice, constraint and technical media. Begin with the poems; their process notes can wait.
 
 ## Ask what lets work continue
 
