@@ -10,6 +10,8 @@ All 29 complete ZIP archives are distributed byte-for-byte as supplied, with rev
 
 The browsing selection under `sources/` reproduces selected original file bytes. Only the outer archive-wrapper directory is omitted when present, so a readable path can identify project, revision and original relative path. [SOURCE-SELECTION.json](SOURCE-SELECTION.json) records each browsing path, original archive member, size, SHA-256 and Git executable mode. The selection is for direct reading, not a standalone build tree. Original documents may refer to other files available only in the complete ZIP, or to upstream work not included even there.
 
+The rev0760 browsing files are recovered from the predecessor ZIP inside rev0800's `SlopOS/vault/source-archives/`. For these entries, the manifest's `member` identifies that nested ZIP, `nested_member` identifies the original file within it, and `nested_archive_sha256` fixes the intermediate archive's identity. They remain historical research and lineage material, not rev0800's active C++ build inputs.
+
 The collection entrance, primary account, companion introductions and this reference layer are new editorial writing. They do not replace the originals or convert proposed contracts into implemented systems. Source-reading claims are distinguished from results recorded by the works; no newly executed SlopOS build, proof or usability study is claimed here.
 
 ## Related, not synchronized
