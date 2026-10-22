@@ -101,6 +101,14 @@ Begin with [Rust](OG%20510P/Rust/README.md): needs, proposed tools and counterex
 
 For continuing software development, use the separate [living-software shelf](LIVING-SOFTWARE.md). The presence of code in a historical work does not itself make a maintenance promise.
 
+### How could a computer make its meaning visible?
+
+Start with [Schell's four terminal cards](OG%20510P/SlopOS/sources/Schell/rev0270/docs/80-terminal/four-card-downgrade-literacy-prototype-and-evidence-dockets.md): a direct command, remembered remote work, hostile semantic marks in program output, and helper-mediated action. Each situation changes what the next honest verb can be. A familiar-looking command is not necessarily a presently justified rerun.
+
+Then read [Helm's release-readiness cards](OG%20510P/SlopOS/sources/Helm/rev0221/fixtures/release-readiness/surface-affordance-cards.json). A saved doorway, fresh provider observation and stale summary can all be useful without saying the same thing. [ViewFS's parse lenses and packet gutters](OG%20510P/SlopOS/sources/ViewFS/rev0176/docs/70-shell/parse-lenses-diagnostic-rails-and-packet-gutters.md) take this further: input changes appearance as it becomes parsed, bound, prepared or remembered. Read their visual vocabulary as an attempt to make exact distinctions pleasant to work with, not as ornament pasted onto a finished runtime.
+
+[Foundry's sidecar and flattening-refusal specimen](OG%20510P/SlopOS/sources/Foundry/rev0103/docs/30-architecture/specimen-flow-77-residue-sidecar-flattening-refusal-and-egress-survival.md) asks what happens when this qualified work leaves its original interface. A dashboard or CSV may need to carry the context that made its numbers meaningful, or openly identify what was lost. Finally, [SlopOS's primary account](OG%20510P/SlopOS/PRIMARY.md) follows the deeper distinction between a description, an authorization and an effect into later C++ experiments. The [companion pages](OG%20510P/SlopOS/README.md#seven-ways-into-the-imagined-machine) keep these related designs from being mistaken for an already integrated machine.
+
 ## What must survive when a system changes?
 
 ### When an operation stops, what has actually happened?

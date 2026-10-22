@@ -36,6 +36,12 @@ That separation makes continuity a research question rather than a synonym for a
 
 A different kind of possible world appears in [BrowserRT's object-reference design](BrowserRT/versions/rev0005/contents/docs/20-architecture/object-refs-and-data-plane.md). Instead of casually copying large objects between workers, its proposed task graph passes references while memory, storage and GPU subsystems govern movement. Data location becomes part of the runtime's reasoning. The [BrowserRT introduction](BrowserRT/README.md) situates that architectural choice in the larger project. These works meet around explicit commitments, but a fictional truth and a resource's lifetime are not the same problem.
 
+## Imagine a computer worth inhabiting
+
+[SlopOS](SlopOS/README.md) asks whether convenience can remain powerful without quietly granting more authority. Its [Schell paper cards](SlopOS/sources/Schell/rev0270/docs/80-terminal/rendered-four-card-glance-prototype-and-replay-capsules.md) imagine a terminal where a remembered command can offer a new route or draft without pretending the past is still live. [ViewFS's parse lenses](SlopOS/sources/ViewFS/rev0176/docs/70-shell/parse-lenses-diagnostic-rails-and-packet-gutters.md) give unfinished input, diagnostics, bound handles and historical receipts different visible textures. These are works of interaction design as well as technical proposals.
+
+The [seven companion introductions](SlopOS/README.md#seven-ways-into-the-imagined-machine) preserve their different purposes. The [primary development](SlopOS/PRIMARY.md) follows the wider operating-system design into later executable authority experiments, while [all supplied editions](SlopOS/DOWNLOADS.md) remain available. A narrower latest experiment does not make the earlier imagined world unworthy of attention.
+
 ## Read across editions
 
 The collection was supplied by h0p3. Snapshots let an earlier formulation remain available beside a later correction, a discarded approach or a change of emphasis. The newest package need not be the clearest entrance. A useful route may begin with a short early document and then follow the pressure that changes it.

@@ -1,0 +1,53 @@
+# SlopOS: from an explicit-authority machine to an executable action laboratory
+
+[Collection entrance](README.md) · [Companion works](README.md#seven-ways-into-the-imagined-machine) · [Complete editions](DOWNLOADS.md)
+
+SlopOS wants the power of a machine to be visible in its structure. A program should act through rights it actually holds, not through whatever names, environment variables, inherited handles or persuasive text happen to reach it. The early design applies that principle across an operating system. Later work concentrates on a smaller but stubborn problem: what connects one authorized decision to one recipient's actual effect, especially across interruption and recovery?
+
+## The expansive design
+
+The early [charter](sources/SlopOS/rev0183/docs/00-meta/charter.md) proposes a from-scratch Rust microkernel/micro-hypervisor, with a common substrate for different deployment profiles. The [abstract machine](sources/SlopOS/rev0183/docs/30-architecture/abstract-machine.md) describes objects, capabilities, protection domains, threads, mappings and explicit transitions. Its proof plan is inspectable: establish invariants initially, preserve them across a chosen action set, and derive a stated security consequence. It is a proposed theorem structure, not an inherited proof of another kernel.
+
+The first construction plateau deliberately narrows the scope to [static partitioning](sources/SlopOS/rev0183/adrs/0002-phase1-static-partition-profile.md). CPU, memory and device policy would be pinned at boot, leaving a small runtime surface. The longer-range [multicore design](sources/SlopOS/rev0183/adrs/0005-hybrid-multicore-and-commutativity-discipline.md) combines ownership and messages between clusters with shared-memory multiprocessing within them. Instead of hoping later locks will recover scalability, interfaces must already say which operations commute and which require ordering.
+
+This matters to ordinary use. A [view](sources/SlopOS/rev0205/docs/30-architecture/view-objects.md) is an explicit mapping from names to capabilities, not a portal into an ambient global namespace. Compatibility software sits behind a [foreign-cell membrane](sources/SlopOS/rev0183/docs/30-architecture/foreign-cell-contract.md). Host files, sockets, time, entropy and devices do not become available merely because a familiar runtime expects them. Rev0205 further narrows its first compatibility target to [rump filesystem-image handling](sources/SlopOS/rev0205/docs/30-architecture/rumpk-selection-posture-v0.md), rather than promising every legacy environment at once.
+
+## What a command would have to mean
+
+Consider an agent proposing to convert a document. A conventional command string leaves much implicit: which executable a name resolves to, the inherited environment, the current directory, open descriptors and where output can go. SlopOS's [typed argument design](sources/SlopOS/rev0205/docs/30-architecture/argv-schema-v0.md) separates literal data from descriptor references. Exactly one descriptor selects the executable; a literal command name cannot trigger ambient PATH lookup. The surrounding execution package binds arguments, environment, working directory, standard streams and extra handles.
+
+The intended consequence is concrete: writing a host pathname into an argument must not itself acquire access to that file. Descriptor references must bind to already-held authority. An effect contract can narrow or reject the operation; it cannot invent a missing right. The [agent-control relation](sources/SlopOS/rev0205/docs/70-llm-control/acp-validator-semantics.md) therefore separates proposal text, exact action bytes and authorization. It aims to constrain what an untrusted proposer can cause, not to prove that the proposer is correct.
+
+Human review has a parallel problem. An approval of one description must not authorize a different action. The [volition-token proposal](sources/SlopOS/rev0205/rfcs/0039-volition-tokens-and-trusted-ui-path.md) binds a canonical visible summary, exact action, nonce and validity through a trusted UI path. The extra trusted component is explicit. The design does not obtain trustworthy consent just by naming a button “Approve.”
+
+## A growing language of boundaries
+
+The middle editions sharpen this architecture against ordinary software conventions. Rev0309's [name-label boundary](sources/SlopOS/rev0309/docs/30-architecture/namecert-label-atom-boundary-v0.md) treats a label such as `ops.admin` as one opaque atom, not an implicit path or wildcard. Rev0407's [worker-pool harness contract](sources/SlopOS/rev0407/docs/40-verification/worker-pool-constructor-harness-v0.md) specifies exactly which control and worker handles may become reachable, and which sponsor or helper handles may not escape. By rev0695, a [network-portal proof target](sources/SlopOS/rev0695/docs/40-verification/portal-net-proof-slice-v0.md) focuses work on one mediated request family, including exact-request retry identity and rejection of changed bytes under a reused request ID.
+
+There is actual software in this period. [Capability-graph comparison](sources/SlopOS/rev0695/tools/capgraph_diff.py) computes differences between supplied graph snapshots. [Temporal-capability validation](sources/SlopOS/rev0695/tools/tcap_validate.py) checks a bounded JSON contract. Other programs check that required boundaries and their discovery links remain present and consistent. These tools help a large design retain its meaning across revisions. They do not observe a live kernel or make the specified confinement true merely by finding the right sentence.
+
+The useful tension is between precision and integration. Hundreds of carefully named boundaries can expose mistakes that a short manifesto misses; they can also accumulate faster than a common executable semantics. That is why the later change in method matters.
+
+## Rev0800: compare state, not its flattering description
+
+By rev0800 the supplied work contains hosted C++20 machinery and Isabelle/HOL source. Its [language decision](sources/SlopOS/rev0800/docs/decisions/DEC-0002-CPP20-LAW.md) adopts bounded carriers and explicit transition discipline; this is a different construction strategy from the early Rust aspiration.
+
+The [proposal-refinement checker](sources/SlopOS/rev0800/src/refinement/authority_propose.cpp) compares typed snapshots from a core and a separately implemented reference, then checks a third expected-state transformation. Occupied proposal and lease entries must form sorted prefixes; unused tails must be default; denied operations preserve the snapshot. A successful proposal changes the specified registration and advances sequence once, preserving unrelated cells. Comparing the actual image prevents a text renderer from concealing state that its output omitted.
+
+The accompanying [HOL theory](sources/SlopOS/rev0800/proof/P0_Authority_Propose_Refinement.thy) formalizes a bounded abstract proposal relation. It does not import C++ memory semantics, persistence or concurrency. The [edition's own account](sources/SlopOS/rev0800/README.md) leaves the pinned Isabelle run and vertical source relation open. Its contribution is a concrete bridge to inspect and improve, not a completed end-to-end refinement theorem.
+
+## Rev0950: a winner is not a second spendable ticket
+
+The latest supplied primary edition identifies a revealing composition error: even if an earlier decision correctly distinguishes a winner from a duplicate, the winner value can be copied. Feed it to two fresh recipients and both can locally believe they may act. Local correctness does not establish a globally unique effect.
+
+[WinnerIntentJoin](sources/SlopOS/rev0950/CURRENT/lab/authority_kernel/src/winner_intent_join.cpp) models a shared live lease consumed in the same step that selects one exact recipient and adopts retained downstream intent. Invalid joins consume and stop rather than leave a reusable permission. Detached responses and queries remain observations. Restart does not manufacture a fresh lease. The [proof account](sources/SlopOS/rev0950/CURRENT/docs/WINNER-INTENT-JOIN-PROOF.md) records bounded exploration; the [interface](sources/SlopOS/rev0950/CURRENT/lab/authority_kernel/include/slopos/e0/winner_intent_join.hpp) keeps actual authority/provider adapters and global one-use proof absent. Its state is an ordinary copyable C++ value used to explore a relation. Protected noncopyable custody is a premise still to realize, not something the model's lease label provides.
+
+The [Linux recipient canary](sources/SlopOS/rev0950/CURRENT/lab/authority_kernel/src/recipient_claim_canary_linux.cpp) implements a narrower, tangible continuation. It opens a prepared directory and publishes a `CLAIM` file there without replacement before interpreting intent. A move-only permit retains the opened directory descriptor and exact operation. The permit is consumed before the next validation or effect step; effect publication stays attached to that descriptor instead of reopening a pathname. A result binds the full operation. Reconciliation can record an already-existing exact effect, not submit another one.
+
+Here the effect is one local `EFFECT` file, not an outside service operation. The [campaign source](sources/SlopOS/rev0950/CURRENT/lab/authority_kernel/tests/recipient_claim_canary_linux_campaign.cpp) includes competing claimants and replacement of the directory pathname after acquisition. It also makes the limit tangible: copy an entire pending store and each copy can complete its own effect. Move-only language objects and careful filesystem publication do not by themselves defeat restoration of the whole surrounding world. The [design account](sources/SlopOS/rev0950/CURRENT/docs/RECIPIENT-CLAIM-CANARY-LINUX.md) and [open obligations](sources/SlopOS/rev0950/CURRENT/proof/OBLIGATIONS.tsv) keep that missing deployment bridge visible.
+
+## Why keep the whole range?
+
+The early architecture asks what a capable, intelligible computing environment could be. The companions explore its everyday forms. The later primary experiments make one small part of its authority story executable and show precisely where local mechanisms stop being enough. Those are different contributions. Neither the breadth of the first nor the narrowness of the last should erase the other.
+
+For a reader continuing the work, the valuable materials include proposed interfaces, rejected shortcuts, concrete state relations, source-level checks and counterexamples. The [original editions](DOWNLOADS.md) retain them together with their histories. A descendant can choose a different emphasis without pretending the inherited questions were already settled.

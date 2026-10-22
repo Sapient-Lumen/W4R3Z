@@ -32,6 +32,8 @@ In [Parables][parables-source], two brothers each carry grain to the other becau
 
 [BrowserRT][browser-source] poses a different design question about serious local browser software. Its runtime architecture makes workers, resource ownership, bounded queues and recovery explicit. [Object references][browser-objects] let the design reason about where data lives and how it moves, rather than hiding those costs inside an apparently simple call.
 
+[SlopOS](OG%20510P/SlopOS/README.md) extends that imagination across a whole computing environment. Its seven companions give restored workspaces, command histories, file views and outside crossings visible forms: a remembered success need not become permission to repeat an action. The primary's later C++ experiments pursue a narrower question, how one decision reaches one actual effect. The [collection entrance](OG%20510P/SlopOS/README.md) lets the larger interface art and the smaller executable mechanisms be read beside one another.
+
 ## Work that survives the next session
 
 [DelayBasin](OG%20510P/DelayBasin/README.md) asks how a long-running project can resume after its working context disappears. It distinguishes the larger memory store, the compact packet that lets a new session find its footing, and the checks that determine whether a revision counts as faithful continuation. Its experiments and self-criticism reach a practical question: what must travel with a work so another person or model can genuinely continue it, rather than merely imitate its surface?

@@ -58,6 +58,7 @@ For comparison through original passages, read [what continued work has to prese
 - **[Rust](OG%20510P/Rust/README.md)** — Rust-Crate-Dreams and Rust-Needs-and-Dreams: proposed tools, counterexamples and the handoffs between ideas.
 - **[Salient Speculations](OG%20510P/Salient-Speculations/README.md)** — Mechanism-led speculation with sources, watchpoints and reasons a forecast might fail.
 - **[Sandchoir / AAR–ADCC](OG%20510P/Sandchoir-AAR-ADCC/README.md)** — Draft specifications for attention, deliberation and human control in multiagent work.
+- **[SlopOS](OG%20510P/SlopOS/README.md)** — An explicit-authority computing world, seven companion works of interface and systems design, and later executable experiments connecting a decision to one effect.
 - **[The Election Stack](OG%20510P/Election-Stack/README.md)** — Evidence, transparency and the many steps between a recorded election event and a justified conclusion.
 - **[The Good](OG%20510P/The-Good/README.md)** — Proposed priority-kernel pluralism: protect standing without reducing goods to one score, confront institutional burdens, preserve repair after loss, and make room for flourishing.
 - **[Theory of Everything](OG%20510P/Theory-of-Everything/README.md)** — A bridge-first research program connecting established theories while keeping speculative claims and unpaid obligations visible.
@@ -70,6 +71,8 @@ For comparison through original passages, read [what continued work has to prese
 - **MTG:** [MUCloudtainer](OG%20510P/MTG/MUCloudtainer/README.md), [MTGSim](OG%20510P/MTG/MTGSim/README.md).
 - **nicotine+:** [Nicotine+DEV](OG%20510P/nicotine%2B/Nicotine%2BDEV/README.md), [Nicotine-i2pDHT](OG%20510P/nicotine%2B/Nicotine-i2pDHT/README.md), [Nicotineplusplusplus](OG%20510P/nicotine%2B/Nicotineplusplusplus/README.md).
 - **Rust:** [Rust-Crate-Dreams](OG%20510P/Rust/Rust-Crate-Dreams/README.md), [Rust-Needs-and-Dreams](OG%20510P/Rust/Rust-Needs-and-Dreams/README.md).
+
+- **SlopOS:** [Helm](OG%20510P/SlopOS/companions/Helm.md), [Schell](OG%20510P/SlopOS/companions/Schell.md), [ViewFS](OG%20510P/SlopOS/companions/ViewFS.md), [Foundry](OG%20510P/SlopOS/companions/Foundry.md), [Harbor](OG%20510P/SlopOS/companions/Harbor.md), [Steward](OG%20510P/SlopOS/companions/Steward.md), [Ward](OG%20510P/SlopOS/companions/Ward.md).
 
 [Reading paths](READING-PATHS.md) · [Preservation and rights](PRESERVATION.md) · [W4R3Z](README.md)
 

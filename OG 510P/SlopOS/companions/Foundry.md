@@ -1,0 +1,25 @@
+# Foundry
+
+[SlopOS](../README.md) · [Complete editions](../DOWNLOADS.md#foundry)
+
+Foundry is concerned with what survives a change of ground. A program moves into a foreign runtime; a suspended instance wakes in a different present; a carefully qualified answer becomes a chart someone will carry elsewhere. In each case, something can remain recognizably the same while losing facts that once made it safe to interpret. This SlopOS companion gives those transitions a vocabulary and, increasingly, executable specimens. Its subject is continuity of meaning, not merely portability of bytes.
+
+## Waking up somewhere else
+
+The early snapshot-resume scene provides a clear entrance. A reviewed snapshot is eligible to restore. Restoration creates a live instance on a particular ground, with a continuity class such as resumed or recreated from a template. A generation witness records that the new runtime generation exists. Then a “resume humility card” identifies what cannot simply be inherited: unique identifiers, credentials, network assumptions, or freshness-bound attestation. Fresh evidence can be reacquired and passed to Ward for appraisal. The scene makes restoration imaginable without pretending that waking up has restored yesterday’s world. [Snapshot and freshness specimen, rev0019](../sources/Foundry/rev0019/docs/30-architecture/specimen-flow-02-snapshot-resume-and-freshness-reacquire.md).
+
+By rev0103, the same concern reaches analytical surfaces. Consider a weekly support table turned into a dashboard, CSV, chart, and cached summary. Its labels and totals may look intact even after the export drops the query, disclosure rules, classification version, or time cut that gave them meaning. Foundry proposes three possible exits: carry that context in the output, attach a linked semantic sidecar, or refuse the requested flattening. The sidecar can admit an irreversible loss, such as chart bins dropping row identity. A refused CSV offers alternatives: preserve the native lens, emit a sidecar, or request row-preserving JSON. This is a design for useful exports, not an objection to simplification itself. [Egress-survival specimen](../sources/Foundry/rev0103/docs/30-architecture/specimen-flow-77-residue-sidecar-flattening-refusal-and-egress-survival.md).
+
+## From a rule to its consequence
+
+The late work follows a subtler transition. Evaluating a rule is not the same event as applying its effect. Foundry separates a rule-effect ledger, a witness of what happened, and a fence against bypassing that relationship. Its final specimen asks whether a warning, refusal, quarantine, or no-op actually belongs to the same carrier and context as the evaluated rule. [Rule-effect specimen](../sources/Foundry/rev0103/docs/30-architecture/specimen-flow-97-rule-effect-ledger-effect-witness-and-bypass-fence.md).
+
+One authored case concerns a sidecarless public CSV. The ledger names the public exporter, anonymous audience, preview purpose, carrier, and rule target; the accompanying witnesses retain both refusal and detected bypass. Even here, a refusal cannot turn into release approval. The fixture is an unusually specific little drama about a system being tempted to congratulate itself too soon. [Rule-effect fixture](../sources/Foundry/rev0103/fixtures/specimen-97-rule-effect-binding/fixture.json).
+
+The Python checker makes parts of this drama mechanically inspectable. It follows references to the prior rule-evaluation specimen, compares context, checks reciprocal ledger/witness membership, and requires fences. Its negative-coverage section checks declarations and coverage language rather than executing every described mutation. [Effect-binding checker](../sources/Foundry/rev0103/tools/check_foundry_rule_effect_binding.py). Likewise, this path’s `sha256:` values can be symbolic labels: the shared helper checks a prefix and nonempty suffix, not a recomputed content hash. These are real structural checks of an authored model, not cryptographic evidence that an exporter enforced a rule. [Digest helper](../sources/Foundry/rev0103/tools/foundry_checklib.py).
+
+## A companion with a particular eye
+
+Foundry’s artistic choice is to make lost context visible and nameable. The humility card, sidecar, and flattening refusal are small interface forms for things conventional software tends to discard. They let a clean surface keep an honest account of its own incompleteness.
+
+Its proposed SlopOS binding map preserves that focus. Foundry can carry query context, source cuts, classification pins, and disclosure residue for support surfaces. Ward retains appraisal, Harbor crossing semantics, Steward lifecycle consequences, ViewFS object identity, Schell retention concerns, and Helm repair responsibility. The map’s first consumers are Foundry’s own specimen and fixture harness, not a deployed integration. [SlopOS and companion binding map](../sources/Foundry/rev0103/docs/30-architecture/slopos-foundry-binding-map-v0.md). Foundry offers a precise design language and selected validators for making meaning travel without quietly acquiring authority along the way.
