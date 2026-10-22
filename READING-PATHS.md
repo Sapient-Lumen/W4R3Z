@@ -130,6 +130,12 @@ For a smaller formal world, [MTG](OG%20510P/MTG/README.md) distinguishes faithfu
 [OG 510P](OG%20510P/README.md) · [Catalog](CATALOG.md) · [W4R3Z](README.md)
 
 
+## A house with room for song
+
+Start with [Overseer's retained conversation](Overseer/conversation/README.md): reachability, recovery, versioned documentation and tests are practical requests before they become the language of a house. Follow them into [the human doorway](Overseer/house/README.md), where session selection and a fresh continuation have different meanings. Then read [House I](Overseer/poetry/house-i.md). The lamp, key, breaker-box note and room for song bring the technical and literary work together without asking one to prove the other.
+
+[The Overseer's own entrance](Overseer/README.md) keeps this particular history together rather than assigning it to an existing shelf.
+
 [trust-charter]: OG%20510P/Salient-Speculations/versions/rev0019/files/Salient-Speculations-rev0019-2026.03.22.09.31-listingrails-hostregistries-platformgates-housingledger/docs/00-meta/charter.md
 [trust-listing]: OG%20510P/Salient-Speculations/versions/rev0019/files/Salient-Speculations-rev0019-2026.03.22.09.31-listingrails-hostregistries-platformgates-housingledger/docs/20-canon/025-listing-permission-rails-and-the-end-of-post-hoc-lodging-enforcement.md
 [trust-audit]: OG%20510P/MissingKnowledgeHalf/versions/rev0028/files/MissingKnowledgeHalf-rev0028-2026.05.28.16.48-maritimecasualties-watertightrails-transportstateaudit/docs/10-method/audit-pairing-and-reporting-bias.md

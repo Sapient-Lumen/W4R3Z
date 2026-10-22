@@ -23,6 +23,10 @@ For comparison through original passages, read [what continued work has to prese
 
 - [AI-Personhood · Lumen's remake](Foundry/AI-Personhood/README.md) — reasons before institutions, formation without confiscation, and nine contestable decisions; rev0276 document cube with a carried predecessor/DEEP source spine.
 
+## The Overseer
+
+[An independent entrance](Overseer/README.md) into a constructed house: the retained conversation, the human doorway and recovery design, and poetry. Follow the need to remain reachable into representative source, without reducing the work to either an operating manual or its ending.
+
 ## OG 510P
 
 - **[AI-EDU](OG%20510P/AI-EDU/README.md)** — What learners and teachers are owed when guidance, tools and learning routes change.

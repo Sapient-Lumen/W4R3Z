@@ -38,6 +38,10 @@ In [Parables][parables-source], two brothers each carry grain to the other becau
 
 [DelayBasin](OG%20510P/DelayBasin/README.md) asks how a long-running project can resume after its working context disappears. It distinguishes the larger memory store, the compact packet that lets a new session find its footing, and the checks that determine whether a revision counts as faithful continuation. Its experiments and self-criticism reach a practical question: what must travel with a work so another person or model can genuinely continue it, rather than merely imitate its surface?
 
+## The Overseer
+
+[The Overseer](Overseer/README.md) has its own entrance: a conversation record, a constructed house, and a room for poetry. Its human doorway and recovery design address the practical need to reach a continuing collaborator and find the work again. Read the selected conversation beside the session-opening code, then enter [House I](Overseer/poetry/house-i.md), where tests and receipts belong to a house that is more than proof.
+
 ## Capacity to keep making
 
 The maintained tools give practical form to another part of the collection: working on projects that can be inspected, changed and continued. [Sandcodex](guides/Sandcodex.md) gives Codex a selected Linux project, development tools, and browser/desktop access; [Sandpi](guides/Sandpi.md) gives the Pi coding agent a persistent NixOS virtual machine. [qomrade](guides/qomrade.md) keeps a ChatGPT project moving through successive rounds of research, writing or construction without a person sending every continuation. [Monsternix](guides/Monsternix.md) makes a NixOS configuration and its process of revision travel together. [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) develops commands, synchronization and messaging among a person’s own devices. [AnonSSH](Maintained%20Tools/AnonSSH/README.md) joins recoverable remote identity to an adaptive, reusable Tor/I2P transport for shells, file tools and native applications.
