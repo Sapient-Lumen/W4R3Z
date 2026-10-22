@@ -1,14 +1,22 @@
 # ▓▒░ FOUNDRY ░▒▓
 
-**Current Datacubes, ready to be carried forward.**
+**Current works, with the materials to carry them forward.**
 
-Foundry shares selected works while they are still being made. Each project offers its current cube and accompanying bootstrap: enough to arrive with the work, recover its own orientation and develop a continuation, including a different descendant. A drop is a working foundation, not a promise that its direction is finished.
+Foundry shares selected works while they are still being made. Each project offers its current artifact and accompanying bootstrap: an entrance into the work, its mechanisms and the materials for continued construction, including a different descendant. A drop is a working foundation, not a promise that its direction is finished.
+
+The forms differ. Some are executable Datacubes with an embedded project; others are HTML carriers or complete-source packages. Their reading pages explain what actually travels with each object instead of assigning one packaging mechanism to everything.
 
 This is a light shelf beside [Maintained Tools](../Maintained%20Tools/README.md) and [OG 510P](../OG%20510P/README.md). Maintained Tools has operating entrances for tools in continuing use. OG 510P keeps the deeper reading, selected editions and development histories of the older collection. Foundry does not replace either, or require every developing work to become a conventional software product.
 
 ## Current drops
 
-**[4UR4C10WN](4UR4C10WN/README.md)** — a portable encrypted private post office, with a continuing explanation and compact revision log. [rev0294 binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4ur4c10wn-rev0294/4UR4C10WN) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4ur4c10wn-rev0294/BOOTSTRAPROSE.md).
+**[4UR4C10WN](4UR4C10WN/README.md)** — a portable encrypted private post office, building toward one-Contact recipient-absent mail. Its current transport binds authenticated discovery and one durable attempt to an exact admission exchange. [rev0303 binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4UR4C10WN-rev0303/4UR4C10WN) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4UR4C10WN-rev0303/BOOTSTRAPROSE.md).
+
+**[NATravOverlay / natravcube](NATravOverlay/README.md)** — authenticated work and custody across changing or interrupted carriers, with exact dispatch observation separate from sending. [rev0613 source package](https://github.com/Sapient-Lumen/W4R3Z/releases/download/NATravOverlay-rev0613/NATravOverlay-rev0613-COMPLETE-SOURCE.1.zip) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/NATravOverlay-rev0613/BOOTSTRAPROSE.md).
+
+**[Vibechat](Vibechat/README.md)** — encrypted conversations, local identity and recovery, browser transport and a native Waystation, carried with the source for further construction. [rev0136 / Fathom HTML](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/Vibechat.html) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/BOOTSTRAPROSE.md).
+
+**[ProgRSS](ProgRSS/README.md)** — local-first feed and page-change reading, with shareable collections that preserve why each source belongs in a particular folder. [rev0106 / Roadcase](https://github.com/Sapient-Lumen/W4R3Z/releases/download/ProgRSS-rev0106/ProgRSS-rev0106-relay-workspace-source-note-integrity-2026.10.22-Roadcase.zip) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/ProgRSS-rev0106/BOOTSTRAPROSE.md).
 
 **[AI-Personhood · Lumen's remake](AI-Personhood/README.md)** — a portable philosophical workshop about reasons, formation, worthwhile lives and justified authority. Current rev0277 document cube and matching bootstrap are available.
 
@@ -16,11 +24,13 @@ Each project has a lasting reading page: what the work is for, how it works, whe
 
 ## A current pair and a continuing account
 
-- **The cube:** the supplied current artifact, kept intact under its supplied filename.
+- **The artifact:** the supplied current cube, carrier or whole-project package, kept intact.
 - **The bootstrap:** its accompanying Markdown entrance, normally `BOOTSTRAPROSE.md`, preserving the supplied name and case where the project depends on them.
 
-The distribution stays a matching two-file pair. Its reading page remains alongside it and develops across revisions, with the one-line-per-revision changelog on that page rather than in another file. New supplied drafts replace the current download links; versioned commits and releases preserve the publication history without filling the live shelf with extracted copies. Large cubes can be release downloads linked directly from the project's page, keeping routine repository clones lean. Required attribution and licensing stay with each work. Further packaging exceptions should be explicit and narrow.
+The ordinary distribution is a matching pair. A narrow supplement can retain essential current evidence or notices without duplicating the large primary files: Vibechat's current supplement contains the supplied reports and test sources. Packaging exceptions are explained on the relevant reading page.
 
-The bootstrap is an entrance into the cube's own materials and working contract. Read it with the matching cube, not an older or similarly named edition. A recipient can build on the foundation, change direction, or retain only the useful skeleton. Continuation need not mean preserving every piece of scaffolding forever.
+New supplied drafts replace the current download links. Foundry is not a commitment to retain every obsolete large artifact edition; its continuing explanation and compact change account matter more than a growing download archive. OG 510P's selected historical editions serve a different purpose: they let readers follow the evolution of the cloudtainer method and the works made within it. Large current drops live in release assets to keep routine repository clones lean. Required attribution and licensing remain with each work.
+
+Read a bootstrap with its matching artifact, not an older or similarly named edition. Some handoffs are complete snapshots; others require a base and additive material. The project page should make that distinction and any assembly order explicit. A recipient can build on the foundation, change direction, or retain only the useful skeleton. Continuation need not mean preserving every piece of scaffolding forever.
 
 [All works](../CATALOG.md) · [W4R3Z](../README.md)

@@ -17,9 +17,15 @@ For comparison through original passages, read [what continued work has to prese
 
 ## ▓▒░ FOUNDRY ░▒▓
 
-[Current Datacube drops](Foundry/README.md): the current cube and its matching bootstrap, with an optional one-line account of the salient change. A living development shelf, distinct from the older editions and extended reading in OG 510P.
+[Current Foundry drops](Foundry/README.md): executable Datacubes, HTML carriers and whole-project source packages, each with its matching bootstrap and continuing explanation. This is a current development shelf, not a promise to archive every obsolete artifact; OG 510P retains its distinct historical role.
 
 - [4UR4C10WN](Foundry/4UR4C10WN/README.md) — a carried encrypted private post office, recipient-absent custody and evidence-aware recovery, with its own construction foundation. Current binary and matching bootstrap, with a continuing reading page and revision log.
+
+- [NATravOverlay / natravcube](Foundry/NATravOverlay/README.md) — authenticated work and custody over changing carriers; read-only dispatch reconciliation and a complete current source package.
+
+- [Vibechat](Foundry/Vibechat/README.md) — encrypted conversations, identity and recovery in a source-carrying HTML workshop, with a native Waystation and explicit transport boundaries.
+
+- [ProgRSS](Foundry/ProgRSS/README.md) — feeds and page-change reading, deliberate collection composition, and shareable route-specific reasons; current whole-product Roadcase.
 
 - [AI-Personhood · Lumen's remake](Foundry/AI-Personhood/README.md) — reasons before institutions, formation without confiscation, support without possession, and eleven contestable decisions; rev0277 document cube with a carried predecessor/DEEP source spine.
 

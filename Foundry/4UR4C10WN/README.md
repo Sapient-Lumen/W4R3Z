@@ -1,6 +1,6 @@
 # 4UR4C10WN
 
-**Current rev0294:** [Download the binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4ur4c10wn-rev0294/4UR4C10WN) · [Download matching BOOTSTRAPROSE.md](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4ur4c10wn-rev0294/BOOTSTRAPROSE.md) · [Read the bootstrap](BOOTSTRAPROSE.md) · [Release and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/4ur4c10wn-rev0294)
+**Current rev0303:** [Download the binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4UR4C10WN-rev0303/4UR4C10WN) · [Download matching BOOTSTRAPROSE.md](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4UR4C10WN-rev0303/BOOTSTRAPROSE.md) · [Read the bootstrap](BOOTSTRAPROSE.md) · [Release and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/4UR4C10WN-rev0303)
 
 ## A private post office you can carry, inspect and continue building
 
@@ -8,9 +8,9 @@
 
 That last property changes what is being handed over. This is not merely a mail application to consume. It is an executable Datacube: a working foundation that can explain and materialize its carried project. The supplied dynamically linked build still needs a compatible Linux environment and its runtime dependencies; carrying the project does not eliminate that requirement. A recipient can develop a different descendant rather than wait for the original author to choose every next step.
 
-**Current supplied revision: rev0294.** The original binary and matching bootstrap are available above. This is their continuing reading page; the large executable lives in release assets rather than inflating ordinary repository clones.
+**Current supplied revision: rev0303.** The original binary and matching bootstrap are available above. This is their continuing reading page; the large executable lives in release assets rather than inflating ordinary repository clones.
 
-The supplied object is a Linux development build. Its ordinary first-letter journey is still under construction; the underlying mail, custody and recovery mechanisms are considerably broader than that unfinished entrance. The sections below distinguish the mechanisms from the current state of their integration.
+The supplied object is a host-qualified Linux development build. Its implemented recipient-absent path uses exact preconfigured Posthouse routes, signing keys and grants. The ordinary journey being built should require only a Contact string: send while a friend is offline, leave after signed custody, and let the returning friend discover and retrieve the Letter without the sender coming back. The underlying mail, custody and recovery mechanisms are already broader than that unfinished entrance.
 
 ## The Office is more than an inbox
 
@@ -64,15 +64,21 @@ The ordinary interface is being built to carry that rigor without demanding that
 
 Even the terminal is part of this responsibility. A small Linux lifetime guard watches the exact launcher and admitted terminal modes so named launcher deaths can restore the original terminal baseline without overwriting a different foreground owner's later state. That is a concrete response to a discovered raw-terminal failure, not an assertion that every crash or physical power loss has been solved.
 
-## What rev0294 changes
+## What rev0303 joins together
 
-The latest supplied revision adds **First Letter** to the F4 Office menu. Its five rows are Office, Route, Posthouse, Contact and Letter. The overview gathers existing observations and leads into existing reviewed operations; it does not create another mailbox or invent a new mail protocol.
+The latest work connects authenticated discovery and a durable decision to try with one actual client-side admission exchange. It is a small but consequential seam: the transport must carry the exact request already authorized, not reinterpret an interruption as permission to choose another holder or send again.
 
-The design makes an important distinction between orientation and accomplishment. An open encrypted Office is not a verified backup. A count of configured Posthouses is not a grant for the next package. The evidence-definition view explains what terms mean; it is not a live tracking screen for a selected letter. Some native setup detours exist while attached portable setup adapters remain incomplete.
+The surrounding topology design gives a Contact a mailbox-placement epoch and recipient-signed history of stable Posthouse identities. Authenticated service snapshots provide the changing signed views from which the candidate holders were selected. Discovery reconstructs the historical candidate set before resolving current routes, so a changed view does not quietly replace the places where older mail might be held. A private scope drives deterministic holder ranking. The proposed first-network defaults are three holder identities, two signed custody receipts and 90 days of initial custody; three cryptographic identities do not by themselves establish three independent operators or machines. The inherited store default is still 31 days; realizing the proposed 90-day custody interval requires explicit longer-retention policy.
 
-A separate, explicitly invoked **First Letter laboratory** exercises actual synthetic encrypted Offices, recipient absence during signed Posthouse custody, a storage restart, later retrieval, recipient-key rotation, historical-key opening and deliberately requested acknowledgement over loopback. That is substantive integration evidence for those mechanisms. It is not the missing ordinary end-to-end onboarding journey, nor a public-I2P campaign.
+Revision 0303 rebuilds that discovery from the exact Contact and retained evidence. It binds the selected service statement, route, storage-signing key and admission epoch to the exact package-admission request and an already-durable **START** record. That record fixes the request identity, deadline and response ceiling. The resulting move-only handle permits one adapter invocation on the bound route, not a choice of alternative holders.
 
-The remaining product task is therefore intelligible: make the full create-or-recover, route, Posthouse, Contact, send and recovery journey ordinary without weakening the boundaries that make its evidence meaningful.
+The adapter exchanges one bounded request and response over an ordered stream. A 52-byte header identifies the phase, length and payload digest; each payload is limited to 4 KiB, with length checked before allocation. The returned admission or refusal must authenticate against the exact request, and the stream must end without trailing data. Framing checks detect malformed or changed bytes; the signed protocol, not the frame hash, supplies the authority.
+
+Known transport failures become explicit observations in the existing attempt journal. An unknown adapter exception or process loss preserves the durable START as uncertainty. A later authenticated answer can reconcile evidence without manufacturing a new send. One useful correction during this revision was to validate a response before consuming the journal's one-use handle, so malformed response bytes can still be classified through the intended outcome path.
+
+**Admission is not custody.** A service's signed willingness to accept an exact package is distinct from the local durable-acceptance mechanism that atomically retains the package, accounts for quota and replay, spends the exact admission and records a signed custody receipt. Neither is proof that a recipient opened the Letter.
+
+The ordinary First Letter overview still leads through Office, Route, Posthouse, Contact and Letter using existing reviewed engines. Current work has not yet joined automatic discovery-evidence acquisition, a production holder-side admission responder, topology-backed deposit and later retrieval into the one-Contact experience. The rev0303 transport fixture's real exchanges are local IPv4 loopback; public-I2P operation is a separate integration question. The next product problem is therefore concrete rather than mysterious: connect these existing boundaries into an ordinary postal journey without losing their meaning.
 
 ## The cube is also the means to make its successor
 
@@ -84,19 +90,21 @@ That is the Foundry role of this drop: a substantial private-post-office project
 
 ## Reading inside the object
 
-Begin with the matching bootstrap, then the carried `docs/CURRENT-PRODUCT.md`, `docs/CURRENT-ARCHITECTURE.md`, `docs/CURRENT-THREAT-MODEL.md` and `docs/HUMAN-QUICKSTART.md`. For this revision, read `docs/REV0294-FIRST-LETTER-READINESS-V1.md` together with its evidence and human-use audit. The durable-writer inventory distinguishes reviewed publication contracts from remaining work. Historical protocol documents must be read with their dates and later revisions, not flattened into one simultaneous capability claim.
+Begin with the matching bootstrap, then the carried `docs/CURRENT-PRODUCT.md`, `docs/CURRENT-ARCHITECTURE.md`, `docs/CURRENT-THREAT-MODEL.md` and `docs/HUMAN-QUICKSTART.md`. For this revision, read `docs/REV0303-ATTEMPT-BOUND-ADMISSION-TRANSPORT-V1.md`, `docs/REV0303-EVIDENCE.md` and `docs/REV0303-LOCAL-INTEGRATION-REVIEW.md`, alongside `docs/SEAMLESS-OFFLINE-TOPOLOGY.md` and `docs/POSTAL-COMMONS-DEFAULTS.md`. The durable-writer inventory distinguishes reviewed publication contracts from remaining work. Historical protocol documents must be read with their dates and later revisions, not flattened into one simultaneous capability claim.
 
 This page remains the continuing explanation. Later supplied cubes and bootstraps replace the current pair; the account is revised where the object changes, and the compact log below preserves the salient movement. Original authorship and embedded dependency notices remain with the work. The [current owner declaration](../../LEGAL-NOTICE.txt) is external to the original cube; `docs/LICENSE-PROVENANCE.md` retains its dated licensing history, including the earlier absence of an outbound project license.
 
 ## Changelog
 
+- **Received 2026-10-22 · rev0303** — Binds authenticated Contact discovery and one durable START to one bounded admission exchange; admission remains distinct from custody.
+
 - **Received 2026-10-20 · rev0294 (source 2026-10-19)** — First Letter readiness/evidence UI + explicit local recipient-absent delivery/ACK assay; ordinary onboarding remains open.
 
 ## Exact current pair
 
-- `4UR4C10WN`: 85,624,643 bytes; SHA-256 `76eea89c82c20c6067e1f41e32d0fc905b9c9b77df225e1b38ab0a212075fbac`.
-- `BOOTSTRAPROSE.md`: 35,826 bytes; SHA-256 `d91cd8f259d3105a2febc2d6a545b99aef579d3d3085c4a6523adf74ace3343e`.
+- `4UR4C10WN`: 142,165,376 bytes; SHA-256 `6ed4fc92c33006d11fb950620366b26c3cb5b46de6b0522bb3151cdd8d74410d`.
+- `BOOTSTRAPROSE.md`: 19,616 bytes; SHA-256 `24d5ac6194ac1329fc3fc80479b94bb7eb8e6e51b93c7c13fa95b03ffe11af78`.
 
-The matching original bytes are published without repacking the cube. Its source, tests and history remain inside it; they are not duplicated as an expanded repository tree. These hashes identify the supplied pair, not a security certification. The [release](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/4ur4c10wn-rev0294) also carries a compact upstream-notice supplement. Original embedded notices remain intact; the i2pd Siphash header’s named MCGSI terms remain unresolved rather than being silently relabeled.
+The matching original bytes are published without repacking the cube. Its source, tests and history remain inside it; they are not duplicated as an expanded repository tree. These hashes identify the supplied pair, not a security certification. The [release](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/4UR4C10WN-rev0303) carries this current pair. Original embedded dependency sources and notices remain intact; the i2pd Siphash header’s named MCGSI terms remain unresolved rather than being silently relabeled.
 
 [▓▒░ FOUNDRY ░▒▓](../README.md) · [W4R3Z](../../README.md)
