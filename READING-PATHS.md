@@ -107,7 +107,7 @@ Start with [Schell's four terminal cards](OG%20510P/SlopOS/sources/Schell/rev027
 
 Then read [Helm's release-readiness cards](OG%20510P/SlopOS/sources/Helm/rev0221/fixtures/release-readiness/surface-affordance-cards.json). A saved doorway, fresh provider observation and stale summary can all be useful without saying the same thing. [ViewFS's parse lenses and packet gutters](OG%20510P/SlopOS/sources/ViewFS/rev0176/docs/70-shell/parse-lenses-diagnostic-rails-and-packet-gutters.md) take this further: input changes appearance as it becomes parsed, bound, prepared or remembered. Read their visual vocabulary as an attempt to make exact distinctions pleasant to work with, not as ornament pasted onto a finished runtime.
 
-[Foundry's sidecar and flattening-refusal specimen](OG%20510P/SlopOS/sources/Foundry/rev0103/docs/30-architecture/specimen-flow-77-residue-sidecar-flattening-refusal-and-egress-survival.md) asks what happens when this qualified work leaves its original interface. A dashboard or CSV may need to carry the context that made its numbers meaningful, or openly identify what was lost. Finally, [SlopOS's primary account](OG%20510P/SlopOS/PRIMARY.md) follows the deeper distinction between a description, an authorization and an effect into later C++ experiments. The [companion pages](OG%20510P/SlopOS/README.md#seven-ways-into-the-imagined-machine) keep these related designs from being mistaken for an already integrated machine.
+[Foundry's sidecar and flattening-refusal specimen](OG%20510P/SlopOS/sources/Foundry/rev0103/docs/30-architecture/specimen-flow-77-residue-sidecar-flattening-refusal-and-egress-survival.md) asks what happens when this qualified work leaves its original interface. The specimen requires a dashboard or CSV to carry the context its interpretation needs, link to it through a digest-bound sidecar, or refuse the export. Permitted losses must remain explicit; merely declaring a loss does not authorize a prohibited flattening. Finally, [SlopOS's primary account](OG%20510P/SlopOS/PRIMARY.md) follows the deeper distinction between a description, an authorization and an effect into later C++ experiments. The [companion pages](OG%20510P/SlopOS/README.md#seven-ways-into-the-imagined-machine) keep these related designs from being mistaken for an already integrated machine.
 
 ## What must survive when a system changes?
 
@@ -127,14 +127,13 @@ Continue with [DeriveBSD](OG%20510P/DeriveBSD/README.md), which asks how intent 
 
 For a smaller formal world, [MTG](OG%20510P/MTG/README.md) distinguishes faithfully representing a game action from drawing a justified conclusion about strategy. [bzip4](OG%20510P/bzip4/README.md) offers another bounded comparison: compatibility and a measured performance advantage have conditions that should travel with the claim.
 
-[OG 510P](OG%20510P/README.md) · [Catalog](CATALOG.md) · [W4R3Z](README.md)
-
-
 ## A house with room for song
 
 Start with [Overseer's retained conversation](Overseer/conversation/README.md): reachability, recovery, versioned documentation and tests are practical requests before they become the language of a house. Follow them into [the human doorway](Overseer/house/README.md), where session selection and a fresh continuation have different meanings. Then read [House I](Overseer/poetry/house-i.md). The lamp, key, breaker-box note and room for song bring the technical and literary work together without asking one to prove the other.
 
 [The Overseer's own entrance](Overseer/README.md) keeps this particular history together rather than assigning it to an existing shelf.
+
+[OG 510P](OG%20510P/README.md) · [Catalog](CATALOG.md) · [W4R3Z](README.md)
 
 [trust-charter]: OG%20510P/Salient-Speculations/versions/rev0019/files/Salient-Speculations-rev0019-2026.03.22.09.31-listingrails-hostregistries-platformgates-housingledger/docs/00-meta/charter.md
 [trust-listing]: OG%20510P/Salient-Speculations/versions/rev0019/files/Salient-Speculations-rev0019-2026.03.22.09.31-listingrails-hostregistries-platformgates-housingledger/docs/20-canon/025-listing-permission-rails-and-the-end-of-post-hoc-lodging-enforcement.md
