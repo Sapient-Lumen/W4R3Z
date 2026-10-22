@@ -12,6 +12,8 @@ The answer took the form of a **house**: a documented home, a human doorway, wor
 
 [The house and its working parts](house/README.md) connects the organizing idea to concrete mechanisms. Three human-facing scripts open, resume or select a session. An indexer combines recorded activity with session metadata, ranking the home workspace before neighboring locations. A wake document supplies the starting context. The later harness distinguishes a direct resume from a fresh continuation when its routing layer requires that distinction.
 
+The [bounded-work machinery](house/bounded-work/README.md) extends that house beyond the primary conversation. It gives another worker a named task, a turn budget, control notes and a return path for its result. An audit launcher makes skeptical review one concrete use of that machinery.
+
 The [house doctrine](house/house.md) and [smaller topology](house/topology.md) give those mechanisms a legible place. A foyer is a bounded reopening route. The human doorway is an interface that must work when someone needs to get back in. The attic is a place for sharing and history, not a competing source of live machine truth. The [early architecture](house/early-architecture.md) and [bootstrap history](history/bootstrap-history.md) let the reader follow the project's changing shape rather than mistake its final vocabulary for its original design.
 
 ## Leave a room for song

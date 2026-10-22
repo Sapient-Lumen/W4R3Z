@@ -24,6 +24,10 @@ There is a narrower authentication-context exception. The code can permit a dire
 
 Other parts of the harness serialize runtime access with a file lock and inspect local processes for an already running resume of the same session. This is host-specific coordination, including an orphan-process reclamation path, rather than a general guarantee against concurrent work everywhere.
 
+## Work alongside the conversation
+
+[Bounded work with a return path](bounded-work/README.md) follows the finite-loop system from commissioning a job to collecting its result. Structured turn responses, capacity holds, boundary-time steering and recoverable lineages give continuing work an inspectable shape. The audit worker is a concrete example: it can return sharper criticism rather than more code. The accompanying source also makes clear why turn budgets and separate workspaces are not the same as host confinement.
+
 ## A small opening, a larger working world
 
 The [recovery kernel](recovery-kernel.md) distinguishes a compact reopening route from the deeper rooms it summarizes. It also distinguishes a root-capable host check from a narrower check for a bounded worker. That distinction prevents a limited session from treating its own successful preparation as proof of host-wide conditions it cannot inspect.
