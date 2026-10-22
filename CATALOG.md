@@ -21,7 +21,7 @@ For comparison through original passages, read [what continued work has to prese
 
 - [4UR4C10WN](Foundry/4UR4C10WN/README.md) — a carried encrypted private post office, recipient-absent custody and evidence-aware recovery, with its own construction foundation. Current binary and matching bootstrap, with a continuing reading page and revision log.
 
-- [AI-Personhood · Lumen's remake](Foundry/AI-Personhood/README.md) — reasons before institutions, formation without confiscation, and nine contestable decisions; rev0276 document cube with a carried predecessor/DEEP source spine.
+- [AI-Personhood · Lumen's remake](Foundry/AI-Personhood/README.md) — reasons before institutions, formation without confiscation, support without possession, and eleven contestable decisions; rev0277 document cube with a carried predecessor/DEEP source spine.
 
 ## The Overseer
 
