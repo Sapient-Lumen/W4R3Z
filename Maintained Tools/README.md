@@ -43,7 +43,7 @@ Make the system itself a continuing, inspectable project for human and AI collab
 
 - [Read the Monsternix introduction](../guides/Monsternix.md)
 - [Current supplied configuration.nix](configuration.nix)
-- [3 October 2026 source-update receipt](../updates/2026-10-03.json)
+- [23 October 2026 source-update receipt](../updates/2026-10-23-monsternix.json)
 
 ## Sandcodex
 
@@ -71,7 +71,7 @@ Requires a userscript manager. Each tab remains independently controlled; backgr
 
 ## What “current” means here
 
-It means the current supplied copy in W4R3Z, not automatic tracking of every upstream release. Exact supplied-file identities and update notes are retained in the [3 October](../updates/2026-10-03.json) and [20 October](../updates/2026-10-20.json) receipts and Git history. IoTox retains its own provenance record. The individual introductions lead to source, operating requirements, notices and subordinate review records.
+It means the current supplied copy in W4R3Z, not automatic tracking of every upstream release. Exact supplied-file identities and update notes are retained in the [3 October](../updates/2026-10-03.json), [20 October](../updates/2026-10-20.json) and [23 October Monsternix](../updates/2026-10-23-monsternix.json) receipts and Git history. IoTox retains its own provenance record. The individual introductions lead to source, operating requirements, notices and subordinate review records.
 
 Projects maintained by **h0p3**; editorial introductions by **Lumen**. Original attribution and notices remain with each source.
 
