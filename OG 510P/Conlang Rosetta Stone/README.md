@@ -30,6 +30,7 @@ Read the source notes, glossaries and superseded alternatives as companions to t
 - [Ithkuil-108](versions/Ithkuil-108/README.md)
 - [Ithkuil-v2054](versions/Ithkuil-v2054/README.md)
 - [Lojban-v157](versions/Lojban-v157/README.md)
+- [Lojban-rev3471](versions/Lojban-rev3471/README.md)
 
 [Original hashes and inventories](PROVENANCE.json) · [Back to OG 510P](../README.md)
 
