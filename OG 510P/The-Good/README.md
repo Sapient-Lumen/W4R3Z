@@ -14,7 +14,9 @@ The synthesis proposes eight connected kernels: bodily integrity; care and anti-
 
 This is why usable time, somewhere to dwell, intelligible communication, accessible records and routes of challenge recur throughout the work. They are not merely administrative details after philosophy has finished. They help determine whether protection exists for the person it names. A right available only to someone with spare money, abundant time and an advocate is not the same practical protection as a right its holder can exercise.
 
-Nor is it enough to raise the total stock of good things. The [distribution chapter][distribution] asks who receives improvements, who remains below a decent threshold, who repeatedly bears the burdens, and when advantage becomes power over others. Protection cannot be vindicated by its name while its costs keep falling on those least able to refuse them.
+Nor is it enough to raise the total stock of good things. The [distribution chapter][distribution] distinguishes three questions that cannot replace one another: who still falls below a decent floor, where an equivalent improvement would answer deeper deprivation, and whether differences in wealth or authority give some people arbitrary power over others. Getting everyone above a threshold would not by itself settle the second and third questions. Nor is income the only relevant dimension: more money can coexist with less usable time, heavier care burdens or greater exposure to coercion.
+
+The [scarce-allocation chapter][allocation] gives this distinction a practical test. A clinic can formally open appointments to everyone while distributing them through a midnight portal race. The rule then rewards fast devices, flexible schedules and continual monitoring, not necessarily the strongest need. Waiting has distributive costs too: wages, travel, childcare and bodily endurance are spent merely to remain in contention. The work favors need-sensitive triage when delay threatens people differently, and fair lottery or rotation where claims are roughly equal. It does not condemn every queue or offer one universal allocator. It asks institutions to make their selection rule transparent and reviewable, and to address avoidable shortages rather than merely ration them more neatly.
 
 ## Keep goods, supports and measurements distinct
 
@@ -69,7 +71,7 @@ These are questions about moral reasons, not only about which arrangements produ
 1. [Priority kernels][synthesis]: the proposed architecture and its risks.
 2. [Kernel admission][admission]: how a candidate earns its place, and why a measurement must remain subordinate to what it measures.
 3. [Collisions and repair][collisions]: decisions that cannot preserve everything, and duties that remain afterward.
-4. [Distribution][distribution]: sufficiency, priority and the danger of advantage becoming domination.
+4. [Distribution][distribution] and [allocation][allocation]: sufficiency, priority, power and who gets a scarce opportunity.
 5. [Procedural affordability][fees]: the practical price of proving, correcting and being heard.
 6. [Affirmative flourishing][flourishing]: what protection should make possible beyond managed survival.
 
@@ -82,7 +84,7 @@ The supplied [re-entry map][start] opens the wider accumulated work. Read [Immor
 
 These are historical snapshots, not an assertion that a filename marked “latest” is current. Original filenames, ZIP bytes, extracted contents, attribution and rights notices remain with the supplied works; nested archives remain nested. This introduction is separate from them. See the [current owner declaration](../../LEGAL-NOTICE.txt).
 
-*Reading introduction by Lumen, revised 20 October 2026.*
+*Reading introduction by Lumen, revised 23 October 2026.*
 
 [Original identities and hashes](PROVENANCE.json) · [Back to OG 510P](../README.md)
 
@@ -95,3 +97,5 @@ These are historical snapshots, not an assertion that a filename marked “lates
 [start]: versions/rev0098/files/The-Good-rev0098-2026.03.25.23.52-proceduralaffordability-feewaiver-nopaytoprove/START_HERE.md
 
 [enoughness]: versions/rev0098/files/The-Good-rev0098-2026.03.25.23.52-proceduralaffordability-feewaiver-nopaytoprove/archive/086-enoughness-anti-maximization-and-room-for-unoptimized-life.md
+
+[allocation]: versions/rev0098/files/The-Good-rev0098-2026.03.25.23.52-proceduralaffordability-feewaiver-nopaytoprove/archive/092-fair-allocation-under-scarcity-bounded-first-come-and-anti-speed-privilege.md
