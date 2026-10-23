@@ -42,7 +42,9 @@ Operate self-owned devices over Tox through durable typed commands, working-fold
 Make the system itself a continuing, inspectable project for human and AI collaborators. One carried configuration joins source, reasons, bounded observations and a transaction that promotes the exact tested system rather than rebuilding changed editor text. The accepted predecessor supplies an audit floor; the candidate adds checks for its newer format. The portable Foundation requires a machine adapter, and temporary activation runs reviewed code as root. The guide explains its recovery boundaries, source-level exits and separately gated experimental facilities.
 
 - [Read the Monsternix introduction](../guides/Monsternix.md)
-- [Current supplied configuration.nix](configuration.nix)
+- [Portable Foundation configuration.nix](configuration.nix)
+- [Machine-specific m16-configuration.nix](m16-configuration.nix) · [Read the m16 account](../guides/Monsternix-m16.md)
+- [23 October m16 publication receipt](../updates/2026-10-23-m16.json)
 - [23 October 2026 source-update receipt](../updates/2026-10-23-monsternix.json)
 
 ## Sandcodex

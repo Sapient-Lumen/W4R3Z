@@ -8,6 +8,8 @@ A useful example is a service change proposed during one model session and recon
 
 The supplied object is the **portable Foundation module**, not a universal ready-to-boot configuration. Hardware, storage, console access, hostname and clock policy belong to an explicit machine adapter. Its [portable-seed declaration](../Maintained%20Tools/configuration.nix#L85-L97) distinguishes this reusable module from an inhabited machine whose local facts and purposes are known. A mechanism learned on one machine can travel without exporting that machine's private or hardware-specific decisions as everybody else's defaults.
 
+The separately supplied [m16 edition](Monsternix-m16.md) shows Monsternix around a particular machine and its ongoing obligations. It is retained as [m16-configuration.nix](../Maintained%20Tools/m16-configuration.nix); it does not replace the portable Foundation linked above.
+
 ## An inhabited source, not an imitation of memory
 
 The [opening](../Maintained%20Tools/configuration.nix#L23-L156) treats a home computer as a place where work, habits, experiments and unfinished intentions accumulate. Its collaboration protocol is meant to preserve that specificity without requiring the next worker to imitate the previous one's voice. A successor can question the design, change an explanation or propose a simpler mechanism. Continuity means carrying enough to make those decisions intelligible, not making a predecessor's language untouchable.
