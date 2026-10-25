@@ -6,7 +6,9 @@ Foundry shares selected works while they are still being made. Each project offe
 
 The forms differ. Some are executable Datacubes with an embedded project; others are HTML carriers or complete-source packages. Their reading pages explain what actually travels with each object instead of assigning one packaging mechanism to everything.
 
-This is a light shelf beside [Maintained Tools](../Maintained%20Tools/README.md) and [OG 510P](../OG%20510P/README.md). Maintained Tools has operating entrances for tools in continuing use. OG 510P keeps the deeper reading, selected editions and development histories of the older collection. Foundry does not replace either, or require every developing work to become a conventional software product.
+This is a light shelf beside [Maintained Tools](../Maintained%20Tools/README.md) and [OG 510P](../OG%20510P/README.md). Maintained Tools identifies usable software with a continuing commitment to address breakage, not simply the most polished-looking artifacts. OG 510P keeps the deeper reading, selected editions and development histories of the older collection. Foundry does not replace either, or require every developing work to become a conventional software product.
+
+A developing work can already be coherent and useful. AI-Personhood's document cube offers an argument to dispute and a source spine to revise; ProgRSS offers a particular way to organize reading and the materials to continue its construction. Their place here describes how the work is offered and continued, not a verdict that it has failed to become maintained software. Choose the project by its purpose and read its actual operating or reading contract. Neither shelf membership nor a successful carrier check establishes every claimed capability.
 
 ## Current drops
 

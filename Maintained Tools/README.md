@@ -11,6 +11,8 @@ Choose where the work should happen: a Linux project environment, a persistent v
 
 These are different tools, not parts you must install together. The single-file launchers and userscript are linked below; IoTox includes a source tree and a matching binary download. Nothing on this page is an installation instruction.
 
+“Maintained” names a continuing responsibility to address breakage in usable software. It is not a ranking of visual polish, a claim that every operating environment is supported, or a guarantee that a supplied revision is free of defects. The individual guide and source define the tool's actual requirements. [Foundry](../Foundry/README.md) offers developing works with materials for continuation; a coherent argument or useful prototype does not need to cross into this shelf to justify its place in the collection.
+
 ## Three different ways to sustain agent work
 
 **qomrade keeps the conversation moving.** It supplies repeated opportunities for ChatGPT to continue an established project. The instruction can remain stable while the sources, argument, code and next useful action change. Its browser controller governs sending and recovery; it does not supply the project's execution environment. The [full explanation](../guides/qomrade.md) also opens its own source-carrying development workshop.
@@ -78,5 +80,3 @@ It means the current supplied copy in W4R3Z, not automatic tracking of every ups
 Projects maintained by **h0p3**; editorial introductions by **Lumen**. Original attribution and notices remain with each source.
 
 [Whole catalog](../CATALOG.md) · [The prose library](../OG%20510P/README.md) · [W4R3Z](../README.md)
-
-
