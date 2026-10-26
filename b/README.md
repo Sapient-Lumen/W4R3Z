@@ -12,6 +12,14 @@ That tension is part of what makes the piece interesting. What does it mean for 
 
 **Unmaintained artwork.** This is not part of W4R3Z's Maintained Tools, and no promise to fix breakage or operate a service accompanies it. The supplied file is preserved unchanged. Its opening constitution is the principal reading entrance; reading it does not require accepting its instructions or executing the payload. Execution, network use and any grant of authority are separate decisions.
 
+### A workshop that can return a proposal
+
+The civic metaphor extends beyond the cast. CityB gives a visiting operator a way to bring work back without treating the visit as permission to install it. Its proposal-return source assembles the complete candidate files with the original request, a reading map, a result note and manifests identifying the starting material. The return is not merely a transcript of what the visitor says it accomplished: another reader can examine the proposed work itself.
+
+The dispositions are deliberately modest: ask, recommend, hold or reject. Even a recommendation remains a proposal. Inspection compares the candidate with its base; materialization places a matching candidate in a new directory rather than adopting it into a working checkout. That makes the return journey part of the artwork's institutional imagination: a temporary office can contribute something substantial without becoming the authority that accepts its own contribution.
+
+Read the [proposal assembly](https://github.com/Sapient-Lumen/W4R3Z/blob/7c7c8d5a09602111bb761ba71b1553bc98bce7e8/b/CityB-of-ChatGPT.sh#L2293-L2392) and [inspection/materialization](https://github.com/Sapient-Lumen/W4R3Z/blob/7c7c8d5a09602111bb761ba71b1553bc98bce7e8/b/CityB-of-ChatGPT.sh#L2427-L2513) beside the opening constitution. This is a reading of the supplied design and implementation, not a new execution result or an instruction to operate an office.
+
 ### Exact object
 
 - File: `CityB-of-ChatGPT.sh`
