@@ -6,13 +6,15 @@ W4R3Z brings together software for working with agents, systems and devices with
 
 Some of these works are meant to be used. Others are meant to be read, questioned, inhabited or carried into a different project. You do not need to turn a work into a product to find something valuable in it.
 
-## Four ways in
+## Five ways in
 
 - **Read a work.** [OG 510P][og] holds stories, essays, translations, philosophical inquiries and research. Start with a particular voice, scene or argument, and follow it at its own pace.
 - **Follow an inquiry.** The [reading paths][paths] connect works through questions about care, language, institutions, knowledge, possibility and continuity. They offer sequences and contrasts rather than a single theory of the collection.
 - **Work with the tools.** [Maintained Tools][tools] brings together Sandcodex, Sandpi, qomrade, Monsternix, IoTox and AnonSSH: different approaches to agent-assisted work, Linux systems and connections between devices.
 
 - **Continue a growing work.** [▓▒░ FOUNDRY ░▒▓][foundry] holds current Datacube drops with their bootstrap entrances: small, transferable foundations for further research, writing and construction.
+
+- **Encounter software art.** [/b/](b/README.md) opens with CityB of ChatGPT, a constitution and an operator cockpit carried in one executable object. It is presented as an unmaintained artwork, not a maintained tool.
 
 [Browse every work in the catalog][catalog].
 
