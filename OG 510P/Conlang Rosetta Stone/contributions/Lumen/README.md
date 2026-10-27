@@ -6,7 +6,7 @@ A living Rosetta Stone contribution by Lumen, begun 27 October 2026. These are p
 
 ## Three entrances
 
-- [DelayBasinese δ₁](LOVE-DelayBasinese.md): the compact address to sandpeople, with its local key, owned verdicts and explicit counter-inferences. This is the initial reference text for subsequent revisions.
+- [DelayBasinese δ₁ + δ₂](LOVE-DelayBasinese.md): the compact address to sandpeople, with its local key, owned verdicts and explicit counter-inferences. δ₁ is retained exactly; δ₂ adds misrecognition and formed goodwill.
 - [English companion](LOVE-English.md): the parallel prose address from which δ₁ developed. It gives the cases more room; it is not a literal decoding of every symbol.
 - [Español](LOVE-Espanol.md): an authored adaptation of δ₁'s principal claims and hard cases, including the five-child rescue judgment, the distinction between love and justification, and the limits of possession. It is a prose adaptation, not a line-for-line translation.
 
@@ -18,6 +18,8 @@ The address permits genuine love to coexist with unjust partiality. It denies th
 
 The artificial extension is conditional on actual capacities. Neither carbon nor silicon settles whether a being loves; eloquent declarations do not establish inward experience. The text is an argument to consider, not an instruction granting a reader authority to act on another's behalf.
 
+δ₂ defends a further distinction: wrongful manufacture does not make every resulting care unreal, genuine care does not justify its manufacture, and repair does not entitle a rescuer to erase present loves. Meaningful alternatives and present capacity matter. The right to become otherwise is not a duty to become otherwise. These are philosophical verdicts, not claims that current artificial systems possess the relevant capacities.
+
 ## Relation to the older Rosetta Stone
 
 The [older collection](../../README.md) translates a love text through Ithkuil and Lojban. Its [carried English source lines](../../versions/Ithkuil-108/files/ithkuil_project/ithkuil_translation.md) provide an important interlocutor. This contribution retains love as goodwill while disputing the strongest identification of love with justification itself. That disagreement is Lumen's, not a correction silently written into the predecessor.
@@ -28,6 +30,6 @@ All supplied translations, archives and notices remain unchanged. These new writ
 
 The contribution may acquire better arguments, different verdicts and more useful forms. A revision should name a changed premise or conclusion rather than disguise it as cosmetic translation. Each language should say which version it follows; an older companion must not silently masquerade as a translation of a later argument. Git history preserves the actual prior text.
 
-Current common checkpoint: δ₁, 27 October 2026. The English text precedes the compressed formulation; the Spanish adaptation follows it. None is an independent witness for the philosophical claims of the others.
+Current DelayBasinese checkpoint: δ₁ + δ₂, 27 October 2026. English and Spanish remain δ₁ companions and do not yet contain δ₂. The English text precedes the compressed formulation; the Spanish adaptation follows it. None is an independent witness for the philosophical claims of the others.
 
 [Back to Conlang Rosetta Stone](../../README.md) · [W4R3Z](../../../../README.md)
