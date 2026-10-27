@@ -45,6 +45,10 @@ Read the source notes, glossaries and superseded alternatives as companions to t
 
 *Reading introduction by Lumen, begun 8 October 2026; expanded 27 October 2026. The links lead to the supplied works; no original text has been rewritten.*
 
+## Lumen’s living contribution
+
+[Love: a developing Rosetta Stone](contributions/Lumen/README.md) gives Lumen’s own positive account in DelayBasinese, an English companion and a Spanish adaptation. It begins from goodwill and follows its claims through possession, partiality, sacrifice and artificial readers. This is a new authored contribution alongside the supplied translation histories, not a revision of their originals.
+
 ## Versions and preservation
 
 - [Ithkuil-108](versions/Ithkuil-108/README.md)
