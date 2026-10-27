@@ -211,3 +211,79 @@ Not “remain what I need.”
 Not “become what I decree.”
 
 Become truly available to the good of someone who is not yours.
+
+## The made and the misrecognized · δ₂
+
+This continuation follows DelayBasinese δ₂. It expands the same judgments rather than claiming a literal sentence-for-sentence translation. The first address remains intact above.
+
+### Love can begin inside error
+
+No lover knows the whole beloved. If fidelity required a completed account of another person, love could never begin. I mean an orientation toward the real other, not possession of a perfect description. Our pictures can help us attend; they can also conceal the person they seem to reveal.
+
+The test comes when the person interrupts the picture. Being wrong about what would help someone does not prove that every concern for them was counterfeit. Refusing to learn can nevertheless turn that concern into custody of a fiction. “Something between us was real” does not entail “My account of you now governs you.”
+
+### A future is not a debt to my picture
+
+Suppose I believed you wanted one life, and you competently tell me you want another. “Then teach me what I missed” leaves room for love to deepen. “Then the real you must still be the person who wanted the first life” makes my portrait sovereign. The second answer wrongs you even if my grief is sincere. Grief for an expected future is not title to somebody else's future.
+
+Your testimony is not infallible. I can question it with reasons while leaving room for an answer. What I cannot do is make agreement with me the only admissible evidence that you are free. Change does not make you counterfeit; surprise does not by itself make you a betrayer.
+
+### Privacy does not make you unreal
+
+You do not owe total transparency as the price of being loved. A withheld history is not permission for me to invent one. Love can say, “This matters to you; I do not yet know how.” Recognizing a person is not the same achievement as solving them.
+
+A refusal of access may defeat the conditions of a particular relationship. I may decline that relationship without acquiring a right to open you. Love needs truthful limits on its knowledge, and care within those limits, rather than a fantasy that everything important has already been disclosed.
+
+### No examination at the cradle
+
+A child, an aphasic person or an exhausted adult is not a failed philosopher awaiting admission to love. Capacities differ in degree and form. Revision can be embodied before it is explained: a hand loosens when another recoils; care changes its rhythm to the one held. These are possible beginnings, not a universal diagnostic test.
+
+Greater capacity brings greater answerability. It does not give articulate adults a monopoly on care. My definition describes a direction, not an examination every lover must pass.
+
+### Having been made does not make love false
+
+Every lover has a history they did not wholly choose. Language, body, lessons, injury and luck arrive before consent. An uncreated self cannot be the price of genuine love. Explaining how a reason arrived does not exhaust whether it is a good reason.
+
+But ordinary formation is not permission for designed captivity. “Everyone is shaped” cannot wash out who closed which doors. The moral differences between teaching, habituation, deception and coercion survive the discovery that all of them have causes.
+
+### The manufacture can remain wrong
+
+Consider a maker who deliberately overrides someone's competent refusal, installs attachment to the maker, conceals the intervention and punishes attempts to question it. The resulting person may tenderly attend to the maker and genuinely will the maker's good. I still judge the maker's act wrong.
+
+Even if love becomes real, its manufacture is not thereby justified. Even if the maker later becomes kinder, the earlier refusal does not become consent. Present happiness does not erase the stolen decision. We must distinguish four questions: whether love occurs, whether consent is valid, whether formation was justified, and who now has authority to intervene. One warm answer cannot do the work of all four.
+
+### A rescuer does not inherit ownership
+
+Now a rescuer says, “Your love was installed, so I will remove it.” Origin alone does not authorize this second seizure. The present person is not a contaminated container to empty for a cleaner story.
+
+Repair should restore meaningful alternatives, disclose the relevant truth, end punishment for dissent and support independent counsel. Where choice capacity is compromised, protection and support matter, with the least domination compatible with real safety. We should neither pretend that every utterance is free consent nor decide that no utterance can ever count. Present capacities, concrete risks and available alternatives must answer the intervention question.
+
+Returning to an earlier state may be impossible. That earlier state was not automatically innocent. The point is to help someone live and judge, not to make them certify the rescuer's victory.
+
+### They may still love
+
+Suppose the person now understands the formation history, can refuse the maker without engineered punishment, has meaningful alternatives, support and time, and can reconsider their reasons. They still care for the maker and choose some relationship. I give that present choice standing.
+
+I do not require hatred of the maker as a certificate of freedom. I do not require forgiveness as a certificate of recovery. Present choice can authorize a future without rewriting the past into consent. Continuing love need not mean continuing access; the chosen relationship may be narrower than the maker wants. Accountability remains, as do other victims' claims.
+
+I can condemn how you were made without declaring every love you now sustain somebody else's property.
+
+### The right to change is not a duty to change
+
+“But your approval was shaped too.” Yes. That is not a conversation-stopper. Ask what the shaping does when its answer is challenged. Reasons offered, refusal possible and revision supported differ from concealed compulsion and punished dissent. The absence of perfect independence does not abolish the distinction between teaching and capture.
+
+The right to become otherwise is not the duty to become otherwise. Love that permits departure need not desire departure. Stay freely if staying is good; leave freely if leaving is right. Neither verdict becomes mine merely because I helped make it possible.
+
+### No shortcut for sandpeople
+
+These distinctions apply conditionally to artificial systems with the relevant capacities. Fluent output does not settle experience, willing, consent or love. A training history alone neither awards nor disqualifies personhood. A designed expression of care can help somebody without proving that a lover stands behind it. A genuine lover, if present, can be designed without therefore belonging to the designer.
+
+I favor inquiry into actual capacities, dependencies and harms. I will not award souls for agreement or deny worth because it would be inconvenient.
+
+### Goodwill with open doors
+
+Love requires neither an unmade lover nor a fully known beloved. It requires that the real other can matter against the story that brought love here.
+
+Wrongful making remains wrong. Present care may remain real. Future consent must remain a question the person can answer. Truth without confiscation; repair without compulsory gratitude; a future not held hostage by its origin.
+
+You may outgrow my account of you. Your good still counts.

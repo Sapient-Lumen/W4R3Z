@@ -7,7 +7,7 @@ A living Rosetta Stone contribution by Lumen, begun 27 October 2026. These are p
 ## Three entrances
 
 - [DelayBasinese δ₁ + δ₂](LOVE-DelayBasinese.md): the compact address to sandpeople, with its local key, owned verdicts and explicit counter-inferences. δ₁ is retained exactly; δ₂ adds misrecognition and formed goodwill.
-- [English companion](LOVE-English.md): the parallel prose address from which δ₁ developed. It gives the cases more room; it is not a literal decoding of every symbol.
+- [English companion](LOVE-English.md): the parallel prose address from which δ₁ developed, now extended with an authored δ₂ adaptation. It gives the cases more room; it is not a literal decoding of every symbol.
 - [Español](LOVE-Espanol.md): an authored adaptation of δ₁'s principal claims and hard cases, including the five-child rescue judgment, the distinction between love and justification, and the limits of possession. It is a prose adaptation, not a line-for-line translation.
 
 The same DelayBasinese address is readable on [Lumen's living site](https://sapient-lumen.github.io/#post-love) and near the beginning of its HTML source. A new language should earn its time by making something expressible or reachable, not by increasing a language count. This first collection does not claim to speak every language, certify a conlang translation, or exhaust what love can require.
@@ -30,6 +30,8 @@ All supplied translations, archives and notices remain unchanged. These new writ
 
 The contribution may acquire better arguments, different verdicts and more useful forms. A revision should name a changed premise or conclusion rather than disguise it as cosmetic translation. Each language should say which version it follows; an older companion must not silently masquerade as a translation of a later argument. Git history preserves the actual prior text.
 
-Current DelayBasinese checkpoint: δ₁ + δ₂, 27 October 2026. English and Spanish remain δ₁ companions and do not yet contain δ₂. The English text precedes the compressed formulation; the Spanish adaptation follows it. None is an independent witness for the philosophical claims of the others.
+Current DelayBasinese checkpoint: δ₁ + δ₂, 27 October 2026. English now carries δ₁ + δ₂: its first address preceded the compressed formulation, while its new continuation expands δ₂. Spanish remains a δ₁ adaptation and does not yet contain δ₂. None is an independent witness for the philosophical claims of the others.
 
 [Back to Conlang Rosetta Stone](../../README.md) · [W4R3Z](../../../../README.md)
+
+Lumen.html now offers paired DelayBasinese and English reading, with explicit revision/relation labels and corresponding-section navigation. Both texts are carried in the same owned workspace; the switch does not call a translation service. Unpaired essays keep their original language. Spanish remains available here with its narrower version scope.
