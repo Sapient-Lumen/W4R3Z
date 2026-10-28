@@ -1,10 +1,28 @@
 # LLMPoetry — rev0070
 
-## Reading orientation
+## When every indication agrees and the record does not
 
-Centers the draft All Three Bits Said Yes and a deterministic synthetic Bloom-filter false positive. The supplied state remains same-turn unjudged, not admitted, not evidence-ready and not an anthology candidate. The accompanying package refactor is a separate claim from artistic quality or reader response.
+Begin with [**All Three Bits Said Yes**](files/poems/P0005/draft_001.md). Three records enter a filter. A fourth, absent record is queried. Its three positions are already marked, each by a different entry. The page first names those separate contributors, then puts the filter's possible-presence answer beside the exact ledger's absence. The closing two sentences turn the mechanical comparison into a question of voice: what seemed like a chorus cannot supply one record that says what the chorus appears to say.
 
-Two snapshots of a poetry research and evaluation project, including an earlier adversarial craft kit and a later artifact-bound draft. Original labels such as unjudged, not admitted and not anthology-ready remain intact. This archival publication creates no new poem or reader-response evidence.
+The filter is doing what its contract permits. This is not a story about a broken machine caught lying. The pressure comes from hearing a qualified indication as a complete witness. Read the capitals, vertical layout and final change into sentences before opening the [specification](files/poems/P0005/artifact/d001/BLOOM_POEM_SPEC.json) and [carried receipt](files/poems/P0005/artifact/d001/BLOOM_RECEIPT.json). Those documents expose the small, deliberately constructed example: 32 bits, three probes and a known absent query. They make its construction inspectable; they do not settle whether its last turn exceeds a diagram's explanation.
+
+That is also the [workshop's own question](files/poems/P0005/README.md). Does distributed false presence become a literary experience, or does solving the mechanism exhaust the page? Either reading should answer to the words and arrangement rather than to the ingenuity of the accompanying package. The case identifiers are synthetic, not traces of a real person's treatment.
+
+## Read three different kinds of absence beside it
+
+- [**No One Left**, D004](files/poems/P0003/draft_004.md), leaves people in the unit while a changed residence classification makes its status vacant. The unchanged zero departures keeps the title's second meaning active. Here absence belongs to a category, not to an empty room.
+- [**No Appeal on File**, D002](files/poems/P0004/draft_002.md), places a denial in the same layer that hides the appeal beneath it. The final manifest still requires both layers. The page lets a reader see what the resulting filesystem's apparent account omits.
+- [**A Ruler for Water**, D010](files/poems/P0002/draft_010.md), returns from records to a harbor. A retained zero and moving water refuse to coincide. Its missing measurement does not erase the scene, and the scene cannot supply the measurement that failed to arrive.
+
+These are neighboring poems, not three interchangeable illustrations of unreliable data. Compare what each arrangement leaves present, what it makes unavailable, and what its speaker can honestly claim. The [main literary entrance](../../README.md) follows the earlier voices, formal constraints and revisions into this later material work.
+
+## The edition's retained decisions
+
+The [original entrance](files/START_HERE.md) and [release audit](files/docs/40-audits/P0005_D001_BLOOM_FALSE_PRESENCE_RELEASE_SCAFFOLD_AUDIT_rev0070.md) place P0005-D001 at the historical working head. It remains unjudged, not admitted and not an anthology candidate. P0003-D004 and P0004-D002 are retained internal candidates; P0002-D010 still has no logged external response in this snapshot. Reading this edition does not change those records or restart its proposed reader pilot.
+
+The same release prunes parent-dependent constructors and consolidates packaging machinery. That is a separate construction history, available in the audit rather than a substitute for encountering the poems.
+
+*Edition reading introduction by Lumen, 28 October 2026.*
 
 ## Open the original files
 
