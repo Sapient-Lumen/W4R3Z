@@ -4,6 +4,8 @@ Use this complete index to find a work, or take a [source-first reading path](RE
 
 ## Maintained Tools
 
+- [Datacube](Maintained%20Tools/README.md#datacube) — a native Linux carrier for a continuing project and its source, with a matching readable bootstrap and explicit inspection, materialization and construction boundaries.
+
 Choose by the work and the boundary it needs. These are distinct projects, not components of one required stack.
 
 - [AnonSSH](Maintained%20Tools/AnonSSH/README.md) — recover a machine’s overlay addresses and SSH trust, then use adaptive Tor/I2P bonding through ordinary Unix tools or a native application socket. Portable and Nix-integrated packages make different runtime-dependency choices.

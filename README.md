@@ -10,7 +10,7 @@ Some of these works are meant to be used. Others are meant to be read, questione
 
 - **Read a work.** [OG 510P][og] holds stories, essays, translations, philosophical inquiries and research. Start with a particular voice, scene or argument, and follow it at its own pace.
 - **Follow an inquiry.** The [reading paths][paths] connect works through questions about care, language, institutions, knowledge, possibility and continuity. They offer sequences and contrasts rather than a single theory of the collection.
-- **Work with the tools.** [Maintained Tools][tools] brings together Sandcodex, Sandpi, qomrade, Monsternix, IoTox and AnonSSH: different approaches to agent-assisted work, Linux systems and connections between devices.
+- **Work with the tools.** [Maintained Tools][tools] brings together Datacube, Sandcodex, Sandpi, qomrade, Monsternix, IoTox and AnonSSH: different approaches to agent-assisted work, Linux systems and connections between devices.
 
 - **Continue a growing work.** [▓▒░ FOUNDRY ░▒▓][foundry] holds current Datacube drops with their bootstrap entrances: small, transferable foundations for further research, writing and construction.
 
@@ -46,7 +46,7 @@ In [Parables][parables-source], two brothers each carry grain to the other becau
 
 ## Capacity to keep making
 
-The maintained tools give practical form to another part of the collection: working on projects that can be inspected, changed and continued. [Sandcodex](guides/Sandcodex.md) gives Codex a selected Linux project, development tools, and browser/desktop access; [Sandpi](guides/Sandpi.md) gives the Pi coding agent a persistent NixOS virtual machine. [qomrade](guides/qomrade.md) keeps a ChatGPT project moving through successive rounds of research, writing or construction without a person sending every continuation. [Monsternix](guides/Monsternix.md) makes a NixOS configuration and its process of revision travel together. [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) develops commands, synchronization and messaging among a person’s own devices. [AnonSSH](Maintained%20Tools/AnonSSH/README.md) joins recoverable remote identity to an adaptive, reusable Tor/I2P transport for shells, file tools and native applications.
+The maintained tools give practical form to another part of the collection: working on projects that can be inspected, changed and continued. [Datacube](Maintained%20Tools/README.md#datacube) carries a project and its source in a native Linux executable, paired with a readable bootstrap entrance. [Sandcodex](guides/Sandcodex.md) gives Codex a selected Linux project, development tools, and browser/desktop access; [Sandpi](guides/Sandpi.md) gives the Pi coding agent a persistent NixOS virtual machine. [qomrade](guides/qomrade.md) keeps a ChatGPT project moving through successive rounds of research, writing or construction without a person sending every continuation. [Monsternix](guides/Monsternix.md) makes a NixOS configuration and its process of revision travel together. [IoTox](Maintained%20Tools/IoTox/W4R3Z.md) develops commands, synchronization and messaging among a person’s own devices. [AnonSSH](Maintained%20Tools/AnonSSH/README.md) joins recoverable remote identity to an adaptive, reusable Tor/I2P transport for shells, file tools and native applications.
 
 Their differences matter. Follow the [tool introductions][tools] for the working model, source and operator requirements of each. They are separate tools, not a mandatory stack.
 

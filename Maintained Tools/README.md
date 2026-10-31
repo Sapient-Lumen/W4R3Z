@@ -2,6 +2,7 @@
 
 Choose where the work should happen: a Linux project environment, a persistent virtual machine, a continuing ChatGPT conversation, connected devices, recoverable remote access, or a NixOS system under revision. Each tool provides a different way to organize that work.
 
+- **Carry a project, its source and a native continuation interface:** Datacube.
 - **Code with Codex on Linux:** Sandcodex.
 - **Run the Pi coding agent in its own persistent VM:** Sandpi.
 - **Keep ChatGPT working on a project over successive rounds:** qomrade.
@@ -22,6 +23,15 @@ These are different tools, not parts you must install together. The single-file 
 **Sandpi supplies a persistent machine for Pi.** A named NixOS VM retains packages and agent state, while Pi owns its conversation tree and the host project remains a live writable share. These are three different kinds of persistence: restoring the guest disk does not roll back the shared project. The [Sandpi guide](../guides/Sandpi.md) follows that distinction through project identity, package reuse, terminal/RPC entry and native settlement loops.
 
 Choose by the work and the boundary it needs, not by treating “autonomy” as one interchangeable feature. More turns, a useful development room and a persistent machine can each matter, but they solve different problems. A portable launcher is also different from a backup of its live state.
+
+## Datacube
+
+Carry a documentary project and its native C++ source together in a compact Linux executable, with a readable bootstrap entrance beside it. The carried contract separates inspecting the current object, recovering its materials, reviewing exact changes and constructing a descendant. A continuation can develop the work rather than merely replay its predecessor. Historical checkpoint routes remain distinct from the current native interface and can require a separately acquired archive.
+
+- [Read BOOTSTRAPROSE.md](Datacube/BOOTSTRAPROSE.md)
+- [Supplied Linux x86-64 executable](Datacube/datacube)
+
+Keep exactly `BOOTSTRAPROSE.md` and lowercase `datacube` together in their own directory. The supplied linked-pair contract expects both files to be regular, non-symlink files with mode `0555`; Git tracks executable status but does not preserve those exact read-only permissions. After downloading or checking out the pair, set those two files to `0555` before using the linked interface. Do not rename the executable to match the capitalized shelf title. The supplied bytes are unchanged; the interface account above comes from the carried contract, not a new execution test.
 
 ## AnonSSH
 
