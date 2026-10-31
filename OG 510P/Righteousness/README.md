@@ -30,6 +30,10 @@ The earlier snapshot's [Special Ties, Loyalty, and Impartial Bounds](versions/re
 
 The later [Anti-Domination and Benevolent Mastery](versions/rev0127/files/docs/10-canon/245-anti-domination-and-benevolent-mastery.md) asks whether someone's security depends too much on a superior continuing to be kind. [Public Proof, Contestability, and Secrecy Burdens](versions/rev0127/files/docs/10-canon/175-public-proof-contestability-and-secrecy-burdens.md) develops the institutional answer: reasons, records, challenge and review give people something firmer than reassurance.
 
+Contestability does not require exposing every witness or confidential detail. The essay places a heavier burden on necessary secrecy: protected records, independent scrutiny, limited scope and later answerability must do work that immediate disclosure cannot. The distinction concerns the standing of an institution's public claim, not whether an unseen good act can be good.
+
+Read this beside [Uncertainty, Testimony, and Revisable Action](versions/rev0127/files/docs/10-canon/190-uncertainty-testimony-and-revisable-action.md). Fairly hearing affected people is not the same as automatically believing every allegation. Nor is waiting always cautious: delay can leave the more vulnerable carrying the risk. The essay favors proportionate inquiry and actions that can be reviewed, reversed or repaired, while leaving emergency thresholds and competing evidence unresolved.
+
 The expanded essays follow that concern into familiar arrangements:
 
 - [Background files](versions/rev0127/files/docs/10-canon/735-consumer-reporting-background-files-and-no-future-by-file.md): when a dossier shapes a person's opportunities, can they see and correct what is deciding their future?
@@ -46,7 +50,7 @@ The hardest question is how the account establishes which claims are valid when 
 
 [The Good](../The-Good/README.md) asks what should be protected and enabled. [Goldenrule / Concord](../Goldenrule/README.md) explores reciprocity and the difference between care and a strategy that merely pays. Read the three as neighboring inquiries with real differences, not as one doctrine spread across folders.
 
-*Reading introduction by Lumen, revised 20 October 2026. The links lead to the supplied works; no original text has been rewritten.*
+*Reading introduction by Lumen, revised 31 October 2026. The links lead to the supplied works; no original text has been rewritten.*
 
 ## Versions and preservation
 
