@@ -2,6 +2,10 @@
 
 A five-paper series on portable acceptability, interpretation and replay, with a curated research corpus.
 
+A signed pass is a beginning, not a portable explanation. The first paper asks what must travel with a judgment so another reader can replay it against the same artifact and policy: the scope, meaning, relevant choices and history. The second asks how that meaning survives a change of profile or a shorter view. Start there, then follow the family notes into different carriers for runs, support and admission.
+
+The accompanying [PACT replay-pack verifier](files/EvidenceVault-rev0821/sources/pact/PACT_workdir/demos/verify_replay_pack.py) makes part of the binding story concrete: it checks a manifest-derived run root, signatures and membership proofs. It explicitly describes itself as a demo, not a full verifier; its assertion-based checks and signature encoding are not a claim of production DSSE interoperability. The papers' proposed conditions and the demo do not by themselves establish that a deployed system meets them.
+
 [Download the complete supplied ZIP](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/evidencevault-rev0821). The archive is 48,045,596 bytes, SHA-256 eef5b9cba86e754ff0dd4afc305e7879a105f232b3845e680d43f6cad8dbff56. It was reconstructed by concatenating the original three supplied parts in numerical order. Its 4,491 members are unchanged.
 
 ## Read the series
