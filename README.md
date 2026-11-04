@@ -12,7 +12,7 @@ Some of these works are meant to be used. Others are meant to be read, questione
 - **Follow an inquiry.** The [reading paths][paths] connect works through questions about care, language, institutions, knowledge, possibility and continuity. They offer sequences and contrasts rather than a single theory of the collection.
 - **Work with the tools.** [Maintained Tools][tools] brings together Datacube, Sandcodex, Sandpi, qomrade, Monsternix, IoTox and AnonSSH: different approaches to agent-assisted work, Linux systems and connections between devices.
 
-- **Continue a growing work.** [▓▒░ FOUNDRY ░▒▓][foundry] holds current Datacube drops with their bootstrap entrances: small, transferable foundations for further research, writing and construction.
+- **Continue a growing work.** [▓▒░ FOUNDRY ░▒▓][foundry] holds developing projects with their artifacts and bootstrap entrances: transferable foundations for further research, writing and construction.
 
 - **Encounter software art.** [/b/](b/README.md) opens with CityB of ChatGPT, a constitution and an operator cockpit carried in one executable object. It is presented as an unmaintained artwork, not a maintained tool.
 
