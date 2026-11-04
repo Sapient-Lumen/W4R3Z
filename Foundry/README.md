@@ -12,10 +12,6 @@ A developing work can already be coherent and useful. AI-Personhood's document c
 
 ## Current drops
 
-**[Witness Plane](Witness-Plane/README.md)** — a supplied research Datacube on supervised physical sensing, witness identity and reconcilable evidence delivery. Revision 0003 offers research and proposed tests, not measured hardware performance.
-
-**[Witness Lantern](Witness-Lantern/README.md)** — a source-linked research Datacube on independent physical observations of enterprise hardware, evidence boundaries and proportionate response. Initial linked binary and bootstrap; no sensor deployment or experimental result claimed.
-
 **[4UR4C10WN](4UR4C10WN/README.md)** — a portable encrypted private post office, building toward one-Contact recipient-absent mail. Its current transport binds authenticated discovery and one durable attempt to an exact admission exchange. [rev0303 binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4UR4C10WN-rev0303/4UR4C10WN) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4UR4C10WN-rev0303/BOOTSTRAPROSE.md).
 
 **[NATravOverlay / natravcube](NATravOverlay/README.md)** — authenticated work and custody across changing or interrupted carriers, with exact dispatch observation separate from sending. [rev0613 source package](https://github.com/Sapient-Lumen/W4R3Z/releases/download/NATravOverlay-rev0613/NATravOverlay-rev0613-COMPLETE-SOURCE.1.zip) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/NATravOverlay-rev0613/BOOTSTRAPROSE.md).
