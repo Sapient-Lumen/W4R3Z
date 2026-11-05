@@ -4,7 +4,7 @@
 
 Vibechat brings a local identity, friends, conversations, attachments and recovery into a portable HTML work. It also carries its client, cryptographic worker, native Waystation, build material and development record. The recipient gets both an application to inspect and a workshop from which to continue it, rather than a hosted interface whose implementation disappears behind the service.
 
-**Current rev0136 / Fathom:** [Vibechat.html](Vibechat.html) · [Matching BOOTSTRAPROSE.md](BOOTSTRAPROSE.md) · [Current evidence supplement](Vibechat-rev0136-evidence.zip)
+**Current rev0136 / Fathom:** [Vibechat.html](Vibechat.html) · [Read current handoff](BOOTSTRAPROSE-rev0136-reading.md#source-handoff) · [Complete BOOTSTRAPROSE.md](BOOTSTRAPROSE.md) · [Current evidence supplement](Vibechat-rev0136-evidence.zip)
 
 ## A conversation has more than a connection
 
@@ -34,7 +34,7 @@ This small change is significant because it joins two otherwise reasonable compo
 
 ## Read and continue the carried work
 
-Begin with bootstrap sections 360–361 for the current revision. The HTML contains 150 named source members and a manifest-bound frame. `client.js` contains the reading, sharing, storage and connection workflows; `worker.ts` makes the identity and policy boundaries explicit; `native.py` contains the Waystation and deployment generator; `vendor.json` and the original source headers retain component provenance and notices.
+Begin with the readable current handoff: [section 360 and its qualification boundary](BOOTSTRAPROSE-rev0136-reading.md#source-framing), then [section 361 and the open work](BOOTSTRAPROSE-rev0136-reading.md#source-evidence). The companion preserves the complete current-revision opening; keep the full bootstrap and its earlier history with the matching HTML for continuation. The HTML contains 150 named source members and a manifest-bound frame. `client.js` contains the reading, sharing, storage and connection workflows; `worker.ts` makes the identity and policy boundaries explicit; `native.py` contains the Waystation and deployment generator; `vendor.json` and the original source headers retain component provenance and notices.
 
 The evidence supplement preserves the 46 reports and test-source files from the supplied outer ZIP without duplicating the large HTML and bootstrap. Extract it beside those two files to recover the supplied regular-file layout. `reports/REV0136-RECEIPT.md`, `reports/RESEARCH.md` and the verification records explain the measured framing problem, the proposed deployment behavior and the remaining qualification boundary. The supplied probe used controlled loopback proxy modes, not an installed Caddy/systemd/cgroup deployment. Read that evidence for what it establishes rather than turning it into a general production claim.
 

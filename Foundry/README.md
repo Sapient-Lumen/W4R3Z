@@ -15,7 +15,7 @@ A developing work can already be coherent and useful. AI-Personhood's document c
 
 **[NATravOverlay / natravcube](NATravOverlay/README.md)** — authenticated work and custody across changing or interrupted carriers, with exact dispatch observation separate from sending. [rev0613 source package](NATravOverlay/NATravOverlay-rev0613-COMPLETE-SOURCE.1.zip) · [matching bootstrap](NATravOverlay/BOOTSTRAPROSE.md).
 
-**[Vibechat](Vibechat/README.md)** — encrypted conversations, local identity and recovery, browser transport and a native Waystation, carried with the source for further construction. [rev0136 / Fathom HTML](Vibechat/Vibechat.html) · [matching bootstrap](Vibechat/BOOTSTRAPROSE.md).
+**[Vibechat](Vibechat/README.md)** — encrypted conversations, local identity and recovery, browser transport and a native Waystation, carried with the source for further construction. [rev0136 / Fathom HTML](Vibechat/Vibechat.html) · [read current handoff](Vibechat/BOOTSTRAPROSE-rev0136-reading.md#source-handoff) · [complete bootstrap](Vibechat/BOOTSTRAPROSE.md).
 
 **[ProgRSS](ProgRSS/README.md)** — local-first feed and page-change reading, with shareable collections that preserve why each source belongs in a particular folder. [rev0106 / Roadcase](ProgRSS/ProgRSS-rev0106-relay-workspace-source-note-integrity-2026.10.22-Roadcase.zip) · [matching bootstrap](ProgRSS/BOOTSTRAPROSE.md).
 
