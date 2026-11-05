@@ -19,3 +19,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original GlassTTY-rev0003-2026.03.06.21.15-sidepanel-broker-multiprofile-archive-luxury-switchyard.zip](../../originals/GlassTTY-rev0003-2026.03.06.21.15-sidepanel-broker-multiprofile-archive-luxury-switchyard.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to GlassTTY project guide](../../README.md)

@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original GlassTTY-rev0359-2026.07.15.02.21-transactional-turns-sandclaude-browser.zip](../../originals/GlassTTY-rev0359-2026.07.15.02.21-transactional-turns-sandclaude-browser.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to GlassTTY project guide](../../README.md)

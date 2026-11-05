@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Micromax-rev0204-2026.03.09.14.08-matchbracestyle-mapoverwrite-bracecue-wren.zip](../../originals/Micromax-rev0204-2026.03.09.14.08-matchbracestyle-mapoverwrite-bracecue-wren.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Micromax project guide](../../README.md)

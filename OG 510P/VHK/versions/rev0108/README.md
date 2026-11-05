@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original VHK-rev0108-2026.03.05.05.01-oscd-oscudp-controllerglue-pegasus.zip](../../originals/VHK-rev0108-2026.03.05.05.01-oscd-oscudp-controllerglue-pegasus.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to VHK / VisualHotKey project guide](../../README.md)

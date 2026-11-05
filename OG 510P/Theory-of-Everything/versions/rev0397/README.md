@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Theory-of-Everything-rev0397-2026.08.21-predecessorbound-exact-generic-conversion-specialization-warrant.zip](../../originals/Theory-of-Everything-rev0397-2026.08.21-predecessorbound-exact-generic-conversion-specialization-warrant.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Theory of Everything project guide](../../README.md)

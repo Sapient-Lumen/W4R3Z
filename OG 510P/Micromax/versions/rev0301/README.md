@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Micromax-rev0301-2026.03.18.07.16-impactprimary-nextcut-firstcmd-fernotter.zip](../../originals/Micromax-rev0301-2026.03.18.07.16-impactprimary-nextcut-firstcmd-fernotter.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Micromax project guide](../../README.md)

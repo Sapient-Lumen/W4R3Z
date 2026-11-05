@@ -38,3 +38,4 @@ This intake preserves the discrepancy. It does not rewrite the manifest or claim
 
 No standalone license or notice file was found. No reuse license is inferred. No uploaded tools or TeX were executed. Static PDF inspection found no selected active-action indicators, but that is not a full PDF security guarantee. Original bytes, including historical reports and build byproducts, are retained.
 
+[Back to Anonymity project guide](../../README.md)

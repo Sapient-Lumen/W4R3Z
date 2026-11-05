@@ -23,3 +23,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Global-Warming-rev0015-2026.03.22.05.46-humanthroughput-skillspipe-apprenticeramp-servicecrew.zip](../../originals/Global-Warming-rev0015-2026.03.22.05.46-humanthroughput-skillspipe-apprenticeramp-servicecrew.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Global-Warming project guide](../../README.md)

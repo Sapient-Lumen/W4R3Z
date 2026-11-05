@@ -19,3 +19,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Salient-Speculations-rev0188-2026.05.25.00.00-exposurerisk.zip](../../originals/Salient-Speculations-rev0188-2026.05.25.00.00-exposurerisk.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Salient Speculations project guide](../../README.md)

@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Micromax-rev0893-2026.06.18.18.30-stalemacro-timerbudget-macroslotrefactor-mapleoriole.zip](../../originals/Micromax-rev0893-2026.06.18.18.30-stalemacro-timerbudget-macroslotrefactor-mapleoriole.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Micromax project guide](../../README.md)

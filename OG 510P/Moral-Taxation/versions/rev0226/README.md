@@ -24,3 +24,5 @@ Adds composite netting and residual ordering: when several outward-flow defenses
 - [Per-file byte inventory](INVENTORY.json)
 
 ZIP integrity, extracted-byte identity and the shipped file manifest were checked independently for this publication. This does not reproduce the archive’s executable tests or validate its empirical, legal, policy or deployment claims. Historical instructions remain historical. Existing rights and notices remain applicable; this guide grants no new license.
+
+[Back to Moral Taxation project guide](../../README.md)

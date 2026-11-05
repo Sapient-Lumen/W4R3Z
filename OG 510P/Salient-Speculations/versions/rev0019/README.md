@@ -22,3 +22,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Salient-Speculations-rev0019-2026.03.22.09.31-listingrails-hostregistries-platformgates-housingledger.zip](../../originals/Salient-Speculations-rev0019-2026.03.22.09.31-listingrails-hostregistries-platformgates-housingledger.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Salient Speculations project guide](../../README.md)

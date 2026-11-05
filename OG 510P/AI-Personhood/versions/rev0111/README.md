@@ -28,3 +28,5 @@ ZIP members passed CRC checks and were copied with exact content hashes. The shi
 - [Integrity review](INTEGRITY.json)
 
 Member paths and wrapper directories are retained. The supplied code was not executed. Historical instructions, proposed contacts and open work do not authorize new action. Existing rights and license notices remain applicable; no new blanket license is granted.
+
+[Back to AI-Personhood project guide](../../README.md)

@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Micromax-rev0799-2026.06.05.05.58-clipboard-undo-persistauth-seal.zip](../../originals/Micromax-rev0799-2026.06.05.05.58-clipboard-undo-persistauth-seal.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Micromax project guide](../../README.md)

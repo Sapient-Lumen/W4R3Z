@@ -20,3 +20,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0904-2026.07.26.05.38-locksafevfs-mountfamily-readinesscutpoint-jasperbridge.zip](../../originals/AnonSync-rev0904-2026.07.26.05.38-locksafevfs-mountfamily-readinesscutpoint-jasperbridge.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

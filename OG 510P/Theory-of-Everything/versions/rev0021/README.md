@@ -21,3 +21,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Theory-of-Everything-rev0021-2026.03.22.07.52-measureaudit-regulatorpressure-xerographicdebt.zip](../../originals/Theory-of-Everything-rev0021-2026.03.22.07.52-measureaudit-regulatorpressure-xerographicdebt.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Theory of Everything project guide](../../README.md)

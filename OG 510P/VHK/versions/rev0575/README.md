@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original VHK-rev0575-2026.08.22.19.06-renamenoreplace-waitstreamretirement-raceclosed.zip](../../originals/VHK-rev0575-2026.08.22.19.06-renamenoreplace-waitstreamretirement-raceclosed.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to VHK / VisualHotKey project guide](../../README.md)

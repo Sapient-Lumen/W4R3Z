@@ -90,3 +90,5 @@ It restored and isolated the originals; independently checked archive structure,
 - [rev0900 original ZIP](originals/Anonymity-rev0900-2026.06.18.11.54-obschannel-counterexamples-modelbinding-validatorcut.zip) · [rev0900 reading guide](versions/rev0900/README.md) · [extracted files](versions/rev0900/files/)
 
 For the contributor’s later statement, see the [current owner declaration](../../LEGAL-NOTICE.txt). The observations above describe the supplied historical notices, not a replacement of third-party terms.
+
+[Back to the OG 510P shelf](../README.md)

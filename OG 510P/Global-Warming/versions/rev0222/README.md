@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Global-Warming-rev0222-2026.03.24.01.12-goodstanding-defaultcontinuation.zip](../../originals/Global-Warming-rev0222-2026.03.24.01.12-goodstanding-defaultcontinuation.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Global-Warming project guide](../../README.md)

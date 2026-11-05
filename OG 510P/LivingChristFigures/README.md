@@ -106,3 +106,5 @@ Archived public contact, service or event details can be stale. This presentatio
 [early]: versions/rev0002/files/LivingChristFigures-rev0002-2026.05.14-datacube/AI-LivingChristFigures.txt
 [counterweights]: versions/rev0002/files/LivingChristFigures-rev0002-2026.05.14-datacube/COUNTERWEIGHTS.txt
 [diagnostic]: versions/rev0104/files/LivingChristFigures-rev0104-2026.06.18.03.22-substance-thin-core-critical-boundary-refactor-pass/CLOUDTAINER-DEEP-READ-rev0103.md
+
+[Back to the OG 510P shelf](../README.md)

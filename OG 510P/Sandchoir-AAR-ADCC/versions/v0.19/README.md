@@ -20,3 +20,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original sandchoir-aar_adcc_specs_v0_19.zip](../../originals/sandchoir-aar_adcc_specs_v0_19.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Sandchoir / AAR–ADCC project guide](../../README.md)

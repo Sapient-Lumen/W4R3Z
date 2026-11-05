@@ -19,3 +19,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Global-Warming-rev0379-2026.06.12.23.50-dispatchworkorders-intakecli-routetargets-multipart.zip](../../originals/Global-Warming-rev0379-2026.06.12.23.50-dispatchworkorders-intakecli-routetargets-multipart.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Global-Warming project guide](../../README.md)

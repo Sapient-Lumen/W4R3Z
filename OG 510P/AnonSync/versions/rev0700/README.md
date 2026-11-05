@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0700-2026.07.06.16.31-scheduler-executor-boundary.zip](../../originals/AnonSync-rev0700-2026.07.06.16.31-scheduler-executor-boundary.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

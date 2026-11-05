@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0107-2026.03.18.10.44-previewsufficiencytruthharbor.zip](../../originals/AnonSync-rev0107-2026.03.18.10.44-previewsufficiencytruthharbor.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

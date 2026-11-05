@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Micromax-rev0401-2026.03.19.20.27-helpjumpfragmiss-trust-clear-larkspurjay.zip](../../originals/Micromax-rev0401-2026.03.19.20.27-helpjumpfragmiss-trust-clear-larkspurjay.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Micromax project guide](../../README.md)

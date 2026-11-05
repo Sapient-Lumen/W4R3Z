@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Micromax-rev0504-2026.03.21.23.11-showrecentdirsample-recentdirdetail-trust-glenfox.zip](../../originals/Micromax-rev0504-2026.03.21.23.11-showrecentdirsample-recentdirdetail-trust-glenfox.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Micromax project guide](../../README.md)

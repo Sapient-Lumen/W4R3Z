@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0648-2026.06.18.18.28-relay-authority-preflight-claim-gate-cairn.zip](../../originals/AnonSync-rev0648-2026.06.18.18.28-relay-authority-preflight-claim-gate-cairn.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

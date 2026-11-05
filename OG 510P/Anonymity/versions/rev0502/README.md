@@ -46,3 +46,4 @@ Stored “pass” reports are historical artifacts. Their existence is not evide
 
 No standalone license or notice file was found. No permissive license is inferred. No uploaded Python, shell helper, or TeX source was executed. The archive's no-publication decision is preserved as historical context; public archival availability does not promote these papers or validate their claims.
 
+[Back to Anonymity project guide](../../README.md)

@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Micromax-rev0712-2026.03.28.13.51-macro-recordability-kind-helper-maplelapwing.zip](../../originals/Micromax-rev0712-2026.03.28.13.51-macro-recordability-kind-helper-maplelapwing.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Micromax project guide](../../README.md)

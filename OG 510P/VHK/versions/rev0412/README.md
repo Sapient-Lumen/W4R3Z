@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original VHK-rev0412-2026.03.22.03.18-proofwriter-signoffhelper-ledgerflow-currentacceptance.zip](../../originals/VHK-rev0412-2026.03.22.03.18-proofwriter-signoffhelper-ledgerflow-currentacceptance.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to VHK / VisualHotKey project guide](../../README.md)

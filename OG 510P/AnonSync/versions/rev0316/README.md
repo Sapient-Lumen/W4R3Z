@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0316-2026.03.22.13.58-referencebundlefidelity.zip](../../originals/AnonSync-rev0316-2026.03.22.13.58-referencebundlefidelity.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

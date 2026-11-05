@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0212-2026.03.21.05.20-ciphertextcustodyrecoverypages.zip](../../originals/AnonSync-rev0212-2026.03.21.05.20-ciphertextcustodyrecoverypages.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

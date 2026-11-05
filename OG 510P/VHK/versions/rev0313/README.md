@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original VHK-rev0313-2026.03.17.23.59-incidentdrift-historysignals-recoverytruth-pineharbor.zip](../../originals/VHK-rev0313-2026.03.17.23.59-incidentdrift-historysignals-recoverytruth-pineharbor.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to VHK / VisualHotKey project guide](../../README.md)

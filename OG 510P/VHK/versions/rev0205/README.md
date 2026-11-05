@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original VHK-rev0205-2026.03.08.15.58-systemdunitstates-serviceorchestration-unitbeacon.zip](../../originals/VHK-rev0205-2026.03.08.15.58-systemdunitstates-serviceorchestration-unitbeacon.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to VHK / VisualHotKey project guide](../../README.md)

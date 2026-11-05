@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original VHK-rev0511-2026.03.28.13.29-repairinstanceproof-witnessalignment-x11lane.zip](../../originals/VHK-rev0511-2026.03.28.13.29-repairinstanceproof-witnessalignment-x11lane.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to VHK / VisualHotKey project guide](../../README.md)

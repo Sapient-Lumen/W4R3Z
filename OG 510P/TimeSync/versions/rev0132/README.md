@@ -21,3 +21,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original TimeSync-rev0132-2026.06.17.23.59-freshnessmax-commonmode-riskcut.zip](../../originals/TimeSync-rev0132-2026.06.17.23.59-freshnessmax-commonmode-riskcut.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to TimeSync project guide](../../README.md)

@@ -19,3 +19,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev1020-2026.08.07.08.13-contentindex-streamingcatalog-boundedrename-variscite-multipart.zip](../../originals/AnonSync-rev1020-2026.08.07.08.13-contentindex-streamingcatalog-boundedrename-variscite-multipart.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

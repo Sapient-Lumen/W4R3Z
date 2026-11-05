@@ -21,3 +21,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0004-2026.03.08.01.18-resiliouimirrorkeepingwatch.zip](../../originals/AnonSync-rev0004-2026.03.08.01.18-resiliouimirrorkeepingwatch.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

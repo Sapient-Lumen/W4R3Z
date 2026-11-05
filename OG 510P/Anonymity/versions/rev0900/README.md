@@ -53,3 +53,4 @@ A pinned public key is not a signature. The README and startup guide say the pac
 
 No uploaded validator, build script, or TeX document ran during intake. The archive's stored validator results, compile witnesses, fixed-point claims, and research conclusions remain attributed to the supplied snapshot.
 
+[Back to Anonymity project guide](../../README.md)

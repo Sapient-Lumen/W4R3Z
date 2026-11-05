@@ -20,3 +20,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original GlassTTY-rev0149-2026.03.21.22.36-platformreceipt-surfacegate-webbound-kittiwake.zip](../../originals/GlassTTY-rev0149-2026.03.21.22.36-platformreceipt-surfacegate-webbound-kittiwake.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to GlassTTY project guide](../../README.md)

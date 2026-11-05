@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0413-2026.03.24.18.58-burstborrowpaybackloom.zip](../../originals/AnonSync-rev0413-2026.03.24.18.58-burstborrowpaybackloom.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

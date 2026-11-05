@@ -17,3 +17,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0504-2026.03.28.08.48-survivorselfroutingreclosurepath.zip](../../originals/AnonSync-rev0504-2026.03.28.08.48-survivorselfroutingreclosurepath.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

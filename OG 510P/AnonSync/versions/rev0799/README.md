@@ -18,3 +18,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original AnonSync-rev0799-2026.07.15.13.58-finitework-statefusion-readfence-stagingtruth.zip](../../originals/AnonSync-rev0799-2026.07.15.13.58-finitework-statefusion-readfence-stagingtruth.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to AnonSync project guide](../../README.md)

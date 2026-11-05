@@ -21,3 +21,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Theory-of-Everything-rev0298-2026.05.27.15.30-hilbert-representation-spectrum-registry-schema-audit.zip](../../originals/Theory-of-Everything-rev0298-2026.05.27.15.30-hilbert-representation-spectrum-registry-schema-audit.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Theory of Everything project guide](../../README.md)

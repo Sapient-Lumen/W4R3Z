@@ -19,3 +19,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original mmw_spec_2026-01-04_v3.9.zip](../../originals/mmw_spec_2026-01-04_v3.9.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Ministry of Many Worlds project guide](../../README.md)

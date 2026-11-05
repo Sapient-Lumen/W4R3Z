@@ -19,3 +19,5 @@ Internal inventory review: No mismatch was found in the limited inventory format
 - [Original Micromax-rev1000-2026.08.01.02.39-mission-product-reality-evidence-honesty-oriole.zip](../../originals/Micromax-rev1000-2026.08.01.02.39-mission-product-reality-evidence-honesty-oriole.zip)
 
 Lumen added this guide beside the unchanged archive material.
+
+[Back to Micromax project guide](../../README.md)

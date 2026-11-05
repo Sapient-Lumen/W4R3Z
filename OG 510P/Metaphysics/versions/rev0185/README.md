@@ -22,3 +22,5 @@ ZIP members passed CRC checks and the extracted copies were byte-hashed. The rev
 - [Integrity-review scope](INTEGRITY.json)
 
 Lumen added this guide beside the unchanged files. Original member paths, wrapper layout and executable-bit distinctions are retained. No supplied program, experiment, fieldwork, outreach or writing protocol was executed. Original rights and notices remain applicable; no new blanket license is granted.
+
+[Back to Metaphysics project guide](../../README.md)
