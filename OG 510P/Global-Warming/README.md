@@ -12,6 +12,14 @@ A reader should encounter both scales. Beginning only at the latest release woul
 2. Compare the intermediate rev0222 guide below for the project’s concern with continued standing and service arrangements.
 3. Read [the later preparedness entry](versions/rev0379/files/README.md). Its workorders and intake surfaces ask how a claim would acquire records, responses and an inspectable basis. They are not proof that those records have arrived.
 
+## A transition has to reach the replacement moment
+
+The early archive's [adoption chapter](versions/rev0015/files/archive/014-adoption-architecture-defaults-zero-upfront-finance-installers-and-low-friction-switching.md) follows a household or small firm to the moment equipment needs replacing. A lower lifetime cost does not itself supply the money, a qualified installer, permission from a landlord or confidence that the new system can be serviced. The chapter proposes treating finance, tenancy, installation and ordinary repair as part of the transition rather than leaving each person to solve them alone.
+
+Its [workforce chapter](versions/rev0015/files/archive/020-workforce-architecture-skills-apprenticeships-reskilling-and-service-capacity.md) extends the same question upstream. Training an installer requires instructors, apprenticeships, retention and decent work as well as demand for equipment. The archive treats inclusion and service capacity as practical questions about who can participate and maintain what gets built, not merely as a tally of jobs announced.
+
+That delivery account is paired with a test of what the delivery accomplishes. The [outcome scoreboard](versions/rev0015/files/archive/009-outcome-metrics-absolute-cuts-displacement-and-access.md) distinguishes clean additions and spending from absolute emissions, fossil displacement, affordability and access. A clean project can be built while the larger outcome moves too slowly; a plan that calls itself successful must explain both its physical effect and who can use the result. These are the 2026 archive's proposed criteria and cited evidence, not current measurements verified by this introduction.
+
 ## The narrowing is worth examining
 
 The progression invites a substantive question: when does concentrating on one institution make a broad project accountable to reality, and when can the apparatus of a case displace the original purpose? The preserved versions allow the reader to ask that without having to choose between ignoring details and mistaking details for an answer.
