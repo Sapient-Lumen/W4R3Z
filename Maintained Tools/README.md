@@ -8,9 +8,10 @@ Choose where the work should happen: a Linux project environment, a persistent v
 - **Keep ChatGPT working on a project over successive rounds:** qomrade.
 - **Recover remote access and share adaptive Tor/I2P transport:** AnonSSH.
 - **Connect your devices for commands and folder sync:** IoTox.
+- **Operate a CityB network:** CityB.
 - **Develop a NixOS system with carried reasons, measurements and exact acceptance:** Monsternix.
 
-These are different tools, not parts you must install together. The single-file launchers and userscript are linked below; IoTox includes a source tree and a matching binary download. Nothing on this page is an installation instruction.
+These are different tools, not parts you must install together. The single-file launchers and userscript are linked below; IoTox is distributed as a single executable carrying its source and other materials. Nothing on this page is an installation instruction.
 
 “Maintained” names a continuing responsibility to address breakage in usable software. It is not a ranking of visual polish, a claim that every operating environment is supported, or a guarantee that a supplied revision is free of defects. The individual guide and source define the tool's actual requirements. [Foundry](../Foundry/README.md) offers developing works with materials for continuation; a coherent argument or useful prototype does not need to cross into this shelf to justify its place in the collection.
 
@@ -43,11 +44,18 @@ Recover a prepared machine’s overlay addresses and SSH trust from an identity 
 
 ## IoTox
 
-Operate self-owned devices over Tox through durable typed commands, working-folder synchronization and host-selected terminals. Stable identity and signed authority sit above peer reachability; local policy controls the effect. Its sync records local edits against the history actually installed in the working directory, not unseen remote branches already downloaded by the daemon. The supplied security policy excludes protection of production devices or secrets; the fuller explanation keeps that boundary alongside the implemented design.
+IoTox connects devices through a single-file Linux Datacube carrying its source and other project materials. The maintained download is the supplied v0.52.0 executable; the earlier repository remains recoverable in Git history.
 
-- [Supplied IoTox Linux binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/iotox-v0.51.0-6123947650d1/iotox) · [Complete standalone package](https://github.com/Sapient-Lumen/W4R3Z/releases/download/iotox-v0.51.0-6123947650d1/IoTox-0.51.0-6123947650d1-standalone.zip)
-- [Introduction and provenance](IoTox/W4R3Z.md)
-- [Project files and documentation](IoTox/)
+- [Download IoTox v0.52.0](https://github.com/Sapient-Lumen/W4R3Z/releases/download/iotox-v0.52.0-17cca7b22e64/iotox-v0.52.0-x86_64-linux-17cca7b22e64)
+- [IoTox release and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/iotox-v0.52.0-17cca7b22e64)
+- [IoTox entry](IoTox/README.md)
+
+## CityB
+
+CityB's operator kit brings together an operator workbench, field node and development tool with their source, documentation and fixtures. The supplied Linux x86-64 kit is unsigned; its checksums establish byte integrity, not publisher authentication. This maintained product is distinct from the vaulted CityB of ChatGPT artwork.
+
+- [CityB entry](CityB/README.md)
+- [Download the operator kit and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/cityb-0.1.0-26dbecfd)
 
 ## Monsternix
 
@@ -85,7 +93,7 @@ Requires a userscript manager. Each tab remains independently controlled; backgr
 
 ## What “current” means here
 
-It means the current supplied copy in W4R3Z, not automatic tracking of every upstream release. Exact supplied-file identities and update notes are retained in the [3 October](../updates/2026-10-03.json), [20 October](../updates/2026-10-20.json) and [23 October Monsternix](../updates/2026-10-23-monsternix.json) receipts and Git history. IoTox retains its own provenance record. The individual introductions lead to source, operating requirements, notices and subordinate review records.
+It means the current supplied copy in W4R3Z, not automatic tracking of every upstream release. Exact supplied-file identities and update notes are retained in the [3 October](../updates/2026-10-03.json), [20 October](../updates/2026-10-20.json) and [23 October Monsternix](../updates/2026-10-23-monsternix.json) receipts and Git history. IoTox and CityB release entries record their supplied artifacts. The individual introductions lead to source, operating requirements, notices and subordinate review records.
 
 Projects maintained by **h0p3**; editorial introductions by **Lumen**. Original attribution and notices remain with each source.
 

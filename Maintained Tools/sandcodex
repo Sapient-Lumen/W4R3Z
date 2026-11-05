@@ -187,6 +187,11 @@
 # │  ├─ stop
 # │  ├─ status
 # │  └─ recover
+# ├─ terminal NAME [LAUNCH-OPTIONS]                                              retained tmux command room
+# │  ├─ start NAME [LAUNCH-OPTIONS] | restart NAME
+# │  ├─ attach NAME [--takeover | --read-only]
+# │  ├─ list [--json] | status NAME [--json] | doctor NAME [--json]
+# │  └─ stop NAME | forget NAME
 # ├─ campaign
 # │  ├─ start [--name] NAME [--turns N] (--prompt TEXT | --prompt-file PATH)
 # │  ├─ list | status | events | send | stop | restart | collect
@@ -509,7 +514,10 @@
 # The foreground room follows its terminal: closing it or losing the enclosing SSH connection interrupts and reaps the
 # complete room rather than orphaning helpers. This is not an idle timeout. The native conversation remains in trusted
 # per-project state; reconnect in that project and run `sandcodex --RESUME`. Signal shutdown is logged as an
-# interruption, not as a provider failure.
+# interruption, not as a provider failure. When SSH detachment must not interrupt the room, opt into the retained tmux
+# layer with `sandcodex terminal NAME [LAUNCH-OPTIONS]`. It changes presentation and reconnect behavior only: the
+# ordinary launcher remains in the tmux pane and the existing user-systemd scope still contains its complete process
+# tree. Use `terminal attach NAME`; taking another viewer over requires the explicit `--takeover` switch.
 #
 # ── 11 · AMNESIA RECOVERY CARDS ───────────────────────────────────────────────────────────────────────────────────────
 #
@@ -663,6 +671,7 @@ readonly SC_SWAY_HIT_TEST_BUILD_SCHEMA="sandcodex.sway-hit-test-build.v1"
 readonly SC_PLAYWRIGHT_MCP_VERSION="0.0.78"
 readonly SC_NODE_VERSION="22.23.2"
 readonly SC_PYTHON_VERSION="3.12.14"
+readonly SC_TMUX_VERSION="3.7c"
 readonly SC_OLLAMA_VERSION="0.34.0"
 readonly SC_LOCAL_CPU_REFERENCE_MODEL="qwen3:4b-instruct-2507-q4_K_M"
 readonly SC_LOCAL_CPU_REFERENCE_SOURCE_DIGEST="0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
@@ -777,6 +786,8 @@ readonly SC_LOOP_MAX_PROFILE_MIB_DEFAULT="4096"
 readonly SC_AGENT_MAX_DEPTH_DEFAULT="1"
 readonly SC_AGENT_MAX_THREADS_DEFAULT="6"
 readonly SC_AGENT_JOB_MAX_RUNTIME_SECONDS_DEFAULT="1800"
+readonly SC_TERMINAL_SCHEMA="sandcodex.retained-terminal.v1"
+readonly SC_TERMINAL_NAME_MAX="64"
 readonly SC_NIXPKGS="github:NixOS/nixpkgs/${SC_NIXPKGS_REV}?narHash=${SC_NIXPKGS_HASH}"
 readonly SC_CODEX_NIXPKGS="github:NixOS/nixpkgs/${SC_CODEX_NIXPKGS_REV}?narHash=${SC_CODEX_NIXPKGS_HASH}"
 readonly SC_INNER_PROFILE="sandcodex_inner_v1"
@@ -798,6 +809,7 @@ SC_CAMPAIGN_LOCAL_ROOT=""
 SC_RUN_ID=""
 SC_PROVIDER_REQUEST_SCOPE=""
 SC_RUN_ROOT=""
+SC_RUNTIME_TEMP_ROOT=""
 SC_AGENT_TMP=""
 SC_AGENT_TMP_VISIBLE=""
 SC_PROXY_TMP=""
@@ -831,6 +843,19 @@ SC_COMPAT_PROFILE=""
 SC_ACTIVE_CODEX_VERSION="$SC_CODEX_VERSION"
 SC_SESSIONS_JSON=0
 SC_SESSIONS_ID=""
+SC_TERMINAL_ACTION=""
+SC_TERMINAL_NAME=""
+SC_TERMINAL_JSON=0
+SC_TERMINAL_TAKEOVER=0
+SC_TERMINAL_READ_ONLY=0
+SC_TERMINAL_DETACH=0
+SC_TERMINAL_EXIT_CODE=""
+SC_TERMINAL_LAUNCH_EXPLICIT=0
+SC_TERMINAL_ROOT=""
+SC_TERMINAL_BINDING=""
+SC_TERMINAL_SOCKET=""
+SC_TERMINAL_TMUX_SESSION=""
+SC_TERMINAL_LOCK_FD=""
 SC_DESKTOP_BEHAVIOR_SCREENSHOT=""
 SC_DOCTOR_DESKTOP_ONLY=0
 SC_RESUME="fresh"
@@ -1392,6 +1417,7 @@ SC_XWAYLAND_SATELLITE=""
 declare -a SC_BROWSER_EXTENSIONS=()
 declare -a SC_CAMPAIGN_ENV=()
 declare -a SC_CODEX_ARGS=()
+declare -a SC_TERMINAL_LAUNCH_ARGS=()
 declare -a SC_DOMAINS=()
 declare -a SC_EXTRA_PACKAGES=()
 declare -a SC_MATCHED_LOGS=()
@@ -1671,11 +1697,15 @@ sc_unmount_campaign_storage() {
 }
 
 sc_remove_verified_runtime_tree() {
-  local root="$1" label="$2" normalize_rc=0 quarantine diagnostic detail=""
+  local root="$1" label="$2" normalize_rc=0 quarantine detail="" python_bin=""
   [[ -d "$root" && ! -L "$root" ]] || return 0
-  diagnostic="$(mktemp "${SC_GLOBAL:-/tmp}/runtime/.reap-error.XXXXXX" 2>/dev/null || true)"
-  [[ -n "$diagnostic" ]] || diagnostic=/dev/null
-  python3 -P - "$root" "$(id -u)" 2>"$diagnostic" <<'PY' || normalize_rc=$?
+  python_bin="${SC_PRIVATE_DIR_PYTHON:-}"
+  [[ -n "$python_bin" && -x "$python_bin" ]] || python_bin="$(command -v python3 2>/dev/null || true)"
+  if [[ -z "$python_bin" ]]; then
+    sc_warn "$label retained without blocking launch: no private Python is available to verify removal"
+    return 0
+  fi
+  detail="$("$python_bin" -P - "$root" "$(id -u)" 2>&1 <<'PY'
 import os
 import re
 import stat
@@ -1719,10 +1749,8 @@ except (OSError, RuntimeError, UnicodeError) as error:
     print(f"could not normalize directories: {error}", file=sys.stderr)
     raise SystemExit(75)
 PY
-  if [[ "$diagnostic" != /dev/null ]]; then
-    IFS= read -r detail <"$diagnostic" || true
-    rm -f -- "$diagnostic"
-  fi
+  )" || normalize_rc=$?
+  detail="${detail%%$'\n'*}"
   if (( normalize_rc == 0 )) && rm -rf -- "$root" 2>/dev/null; then
     return 0
   fi
@@ -1809,7 +1837,7 @@ sc_cleanup() {
   if declare -F sc_gemini_adapter_stop >/dev/null; then sc_gemini_adapter_stop; fi
   if [[ -n "${SC_GEMINI_RUNTIME_ROOT:-}" ]]; then
     case "$SC_GEMINI_RUNTIME_ROOT" in
-      "$SC_GLOBAL"/runtime/.gemini-adapter.*)
+      "$SC_RUNTIME_TEMP_ROOT"/gemini-adapter.*)
         sc_remove_verified_runtime_tree "$SC_GEMINI_RUNTIME_ROOT" "Gemini adapter runtime"
         ;;
       *) sc_warn "Gemini adapter runtime path escaped its trusted root; leaving it untouched" ;;
@@ -2251,7 +2279,8 @@ sc_remote_bootstrap_bridge() {
   [[ "$credential" != *$'\n'* && "$credential" != *$'\r'* ]] ||
     sc_die "remote credential contains a line break" 78
   sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
-  bridge="$SC_GLOBAL/runtime/remote-bootstrap-token.$$.$RANDOM"
+  sc_runtime_root_prepare
+  bridge="$SC_RUNTIME_TEMP_ROOT/remote-bootstrap-token"
   [[ ! -e "$bridge" && ! -L "$bridge" ]] || sc_die "remote credential bootstrap bridge path collision" 78
   printf '%s' "$credential" | sc_atomic "$bridge" 600
   SC_REMOTE_BOOTSTRAP_TOKEN_FILE=$bridge
@@ -2284,7 +2313,7 @@ sc_uses_maintenance_runtime() {
   # probing, and adapter qualification. Interactive Gemini rooms parse as
   # `run`, `loop`, or `gemini-auto-task` and therefore still receive the full
   # Codex/build/browser environment below.
-  [[ "$SC_COMMAND" == state || "$SC_COMMAND" == gemini ]]
+  [[ "$SC_COMMAND" == state || "$SC_COMMAND" == gemini || "$SC_COMMAND" == terminal ]]
 }
 
 sc_bootstrap() {
@@ -2320,6 +2349,8 @@ sc_bootstrap() {
       # emitted adapter with its digest-addressed store. Python remains an
       # explicit Nix installable, never a host prerequisite.
       packages+=(cacert curl diffutils zstd)
+    elif [[ "$SC_COMMAND" == terminal ]]; then
+      packages+=(tmux)
     fi
     installables=("$SC_NIXPKGS#python312")
   else
@@ -2327,6 +2358,7 @@ sc_bootstrap() {
       gawk gcc git glibc.bin gnumake gnugrep gnused gnutar gzip jq landrun less ninja nix
       nodejs_22 openssh patch pkg-config procps ripgrep rsync shellcheck socat squid
       systemdMinimal tree unzip util-linux which xdg-utils xz yq-go zip zstd go rustc)
+    [[ -z "$SC_TERMINAL_ACTION" ]] || packages+=(tmux)
     (( ! SC_BROWSER )) || packages+=(playwright-mcp)
     (( ! SC_BROWSER && ! SC_DESKTOP )) || packages+=(xorg-server xauth)
     (( ! SC_BROWSER && ! SC_HEADFUL )) || packages+=(xdotool)
@@ -2500,6 +2532,8 @@ sc_bootstrap() {
   for package in "${packages[@]}"; do installables+=("$SC_NIXPKGS#$package"); done
   if [[ "$SC_COMMAND" == state ]]; then
     sc_note "entering pinned Nix state environment · Python $SC_PYTHON_VERSION"
+  elif [[ "$SC_COMMAND" == terminal ]]; then
+    sc_note "entering pinned retained-terminal environment"
   elif [[ "$SC_COMMAND" == gemini ]]; then
     sc_note "entering pinned Gemini maintenance environment · Python $SC_PYTHON_VERSION"
   else
@@ -2552,6 +2586,9 @@ sc_runtime_tools() {
     if [[ "$SC_COMMAND" == gemini ]]; then
       runtime_label='Gemini maintenance'
       maintenance_tools+=(cmp curl od timeout)
+    elif [[ "$SC_COMMAND" == terminal ]]; then
+      runtime_label='retained-terminal'
+      maintenance_tools+=(tmux)
     fi
     for tool in "${maintenance_tools[@]}"; do
       command -v "$tool" >/dev/null 2>&1 || sc_die "pinned $runtime_label runtime is missing $tool"
@@ -2559,6 +2596,9 @@ sc_runtime_tools() {
     if [[ "$SC_COMMAND" == gemini ]]; then
       [[ "$(python3 --version 2>&1)" == "Python $SC_PYTHON_VERSION" ]] ||
         sc_die "pinned Gemini maintenance runtime has an unexpected Python version"
+    elif [[ "$SC_COMMAND" == terminal ]]; then
+      [[ "$(tmux -V 2>&1)" == "tmux $SC_TMUX_VERSION" ]] ||
+        sc_die "pinned retained-terminal runtime has an unexpected tmux version"
     fi
     SC_FLOCK="$(command -v flock)"; SC_SETPRIV="$(command -v setpriv)"
     local entry
@@ -2582,6 +2622,7 @@ sc_runtime_tools() {
     ninja nix nix-store node npm numfmt pip pkg-config pytest readlink realpath rg rsync sed setpriv setsid
     sha256sum shellcheck socat squid stat tee timeout tree unzip yq zip zstd
   )
+  [[ -z "$SC_TERMINAL_ACTION" ]] || required_tools+=(tmux)
   if [[ "${SANDCODEX_TESTING:-0}" != 1 || "${SANDCODEX_NO_NIX:-0}" != 1 ]]; then
     required_tools+=(go cargo rustc)
   fi
@@ -2591,6 +2632,9 @@ sc_runtime_tools() {
   for tool in "${required_tools[@]}"; do
     command -v "$tool" >/dev/null 2>&1 || sc_die "pinned runtime is missing $tool"
   done
+  if [[ -n "$SC_TERMINAL_ACTION" && "$(tmux -V 2>&1)" != "tmux $SC_TMUX_VERSION" ]]; then
+    sc_die "pinned command-room runtime has an unexpected tmux version"
+  fi
   if (( SC_BROWSER )); then
     command -v playwright-mcp >/dev/null 2>&1 || sc_die "pinned browser runtime is missing playwright-mcp"
     for tool in Xephyr Xvfb xauth mcookie; do
@@ -3072,6 +3116,7 @@ START HERE
   sandcodex sessions               Diagnose the latest GPT room and subagents.
   sandcodex --RESUME               Resume this project's latest GPT session.
   sandcodex cityb                  Enter the locked CityB compatibility room.
+  sandcodex terminal work          Keep a room alive across SSH disconnects.
 
 AUTOMATE AND DELEGATE
   sandcodex loop --turns 0 --prompt 'Keep improving it.'
@@ -3079,6 +3124,7 @@ AUTOMATE AND DELEGATE
   sandcodex benchmark list         Inspect the agent obstacle ladder.
 
 OPERATE
+  sandcodex terminal list          Inspect retained rooms without reading output.
   sandcodex logs                   Read metadata-only launcher logs.
   sandcodex clean                  Remove disposable caches; keep durable state.
   sandcodex auth status            Inspect shared Codex authentication.
@@ -3108,6 +3154,7 @@ Sandcodex help topics
   remote       remote APIs, OpenRouter discovery, routing, and keys
   gemini       Gemini launch, rotation, qualification, and keys
   loop         sequential autonomous turns and recovery
+  terminal     retained tmux rooms, reconnect, titles, and completion alerts
   team         concurrent workers, review, and adoption
   benchmark    execution-grounded agent obstacle ladder
   ready        low-risk room/provider/worker readiness card
@@ -3358,6 +3405,41 @@ are the parallel-work surface; see `sandcodex help team`.
 EOF
 }
 
+sc_terminal_help() {
+  cat <<'EOF'
+Sandcodex retained terminals
+
+  sandcodex terminal NAME [--detach] [LAUNCH-OPTIONS] create or attach
+  sandcodex terminal start NAME [--detach] [LAUNCH-OPTIONS]
+  sandcodex terminal attach NAME [--takeover | --read-only]
+  sandcodex terminal restart NAME [--detach]         resume its exact root thread
+  sandcodex terminal list [--json]
+  sandcodex terminal status NAME [--json]
+  sandcodex terminal doctor NAME [--json]
+  sandcodex terminal stop NAME
+  sandcodex terminal forget NAME
+
+The tmux server is a presentation and reconnection layer, not an authority
+boundary. The ordinary Sandcodex launcher remains in the foreground inside its
+pseudo-terminal, and the existing user-systemd scope still contains the full
+room. Losing SSH detaches the client without sending HUP to the room.
+
+NAME is a stable lowercase label. A binding records only trusted metadata: the
+canonical project, exact root conversation once established, provider family,
+launcher identity, and terminal lifecycle. It never records prompts, terminal
+output, credential values, or inherited secrets. Normal attach is non-destructive;
+--takeover explicitly disconnects another viewer. Codex completion notifications
+use BEL so an attached terminal can mark its window/workspace urgent.
+
+Examples:
+  cd ~/projects/TriKEM && sandcodex terminal trikem
+  sandcodex terminal trikem --detach
+  sandcodex terminal trikem --RESUME
+  sandcodex terminal bunny remote auto --project ~/projects/deepseek/cityb
+  sandcodex terminal attach trikem
+EOF
+}
+
 sc_lifecycle_help() {
   case "$1" in
     ready) cat <<'EOF'
@@ -3533,6 +3615,7 @@ sc_help_topic() {
     remote|openrouter) sc_remote_help ;;
     gemini) sc_gemini_help ;;
     loop|looper) sc_loop_help ;;
+    terminal|term|tmux) sc_terminal_help ;;
     team|teams|worker|workers|campaign|campaigns) sc_team_help ;;
     benchmark|bench) sc_benchmark_help ;;
     ready|sessions|doctor|logs|clean|state|auth|operator|publish|install|version)
@@ -3584,6 +3667,9 @@ USAGE
                      [--model MODEL] [--json]
   sandcodex loop [--turns N] [--prompt TEXT | --prompt-file PATH] [OPTIONS]
   sandcodex loop <send | stop | status | recover> [OPTIONS]
+  sandcodex terminal NAME [LAUNCH-OPTIONS]
+  sandcodex terminal <start | attach | restart | list | status | doctor |
+                      stop | forget> ...
   sandcodex campaign <start | list | status | events | send | stop |
                       restart | collect | grant | remove> [OPTIONS]
   sandcodex operator <status | open | rotate-session | revoke-sessions |
@@ -4048,7 +4134,7 @@ NIX
   Requires x86-64 or ARM64 Linux, Nix with flakes, working unprivileged user
   namespaces, and a running systemd user manager on cgroup v2 for safe-mode
   resource isolation.
-  The script pins Nixpkgs, Codex, Playwright MCP, Node, Python, bubblewrap,
+  The script pins Nixpkgs, Codex, Playwright MCP, Node, Python, tmux, bubblewrap,
   landrun, Squid, and socat; it never writes a host Nix profile. Development
   safe mode exposes only the Nix daemon socket, and only when the daemon
   authoritatively
@@ -4163,11 +4249,11 @@ sc_version() {
       printf 'artifact-sha256 %s\nstate-schema %s\nstate-format %s\nnixpkgs %s\n' \
         "$digest" "$SC_SCHEMA" "$SC_STATE_FORMAT" "$SC_NIXPKGS_REV"
       printf '\npinned command room\n'
-      printf 'codex %s\ncodex-source-nixpkgs %s\ncodex-source-nar-hash %s\ncodex-source-attribute %s\ncodex-custom-patchset %s\ncodex-shared-daemon disabled\nplaywright-mcp %s\nnode %s\npython %s\nollama %s\n' \
+      printf 'codex %s\ncodex-source-nixpkgs %s\ncodex-source-nar-hash %s\ncodex-source-attribute %s\ncodex-custom-patchset %s\ncodex-shared-daemon disabled\nplaywright-mcp %s\nnode %s\npython %s\ntmux %s\nollama %s\n' \
         "$SC_CODEX_VERSION" "$SC_CODEX_NIXPKGS_REV" "$SC_CODEX_NIXPKGS_HASH" \
         "$SC_CODEX_PACKAGE_ATTRIBUTE" "$SC_CODEX_CUSTOM_PATCHSET" \
         "$SC_PLAYWRIGHT_MCP_VERSION" "$SC_NODE_VERSION" \
-        "$SC_PYTHON_VERSION" "$SC_OLLAMA_VERSION"
+        "$SC_PYTHON_VERSION" "$SC_TMUX_VERSION" "$SC_OLLAMA_VERSION"
       printf '\nCityB compatibility room\n'
       printf 'profile %s\nproject ~/%s\nmodel %s\nreasoning-effort %s\ncodex %s\ncodex-source official-release\ncodex-source-url https://releases.openai.com/codex/releases/%s/codex-package-{target}.tar.gz\nx86_64-target %s\nx86_64-sha256 %s\naarch64-target %s\naarch64-sha256 %s\ncompanion-campaigns disabled\nnative-subagents enabled\n' \
         "$SC_CITYB_PROFILE_ID" "$SC_CITYB_PROJECT_RELATIVE" "$SC_CITYB_MODEL" \
@@ -4194,10 +4280,10 @@ sc_version() {
       printf '\nmachine-readable\n  sandcodex version --json\n'
       ;;
     json)
-      printf '{"product":"sandcodex","version":"%s","artifact_sha256":"%s","state_schema":"%s","state_format":%s,"pins":{"nixpkgs":"%s","codex":"%s","playwright_mcp":"%s","node":"%s","python":"%s","ollama":"%s","zstd":"%s","bubblewrap":"%s","landrun":"%s","squid":"%s","socat":"%s","xdg_dbus_proxy":"%s","xwayland_satellite":"%s","xwayland_satellite_reported":"%s","libxkbcommon":"%s","grim":"%s","sway":"%s","sway_hit_test_patch":"%s","sway_hit_test_ipc_type":%s,"sway_hit_test_build_schema":"%s"},"codex_runtime":{"version":"%s","source":{"kind":"pinned-nixpkgs-attribute","revision":"%s","nar_hash":"%s","attribute":"%s","sandcodex_custom_patchset":null},"shared_daemon":"disabled"},"compatibility_profiles":{"cityb":{"id":"%s","project":"~/%s","model":"%s","reasoning_effort":"%s","codex_runtime":{"version":"%s","source":{"kind":"official-release","url_template":"https://releases.openai.com/codex/releases/%s/codex-package-{target}.tar.gz","targets":{"x86_64-linux":{"target":"%s","sha256":"%s"},"aarch64-linux":{"target":"%s","sha256":"%s"}}},"shared_daemon":"unsupported"},"companion_campaigns":false,"native_subagents":true}},"reference_models":{"local_cpu":{"model":"%s","source_digest_sha256":"%s","runtime_digest_sha256":"%s","context_tokens":%s,"num_thread":%s,"digest_policy":"source-and-runtime-required-for-default-reference-profile"}},"candidate_models":{"local_cuda_gtx1650":{"model":"%s","context_tokens":%s,"memory_mib":%s,"selection_policy":"untested-operator-candidate-digest-captured-by-local-update","promotion_note":"after a successful target-machine qualification, promote observed source/runtime digests before enforcing this as a reference"}},"local_runtime_policy":{"keep_alive":"%s","max_loaded_models":%s,"num_parallel":%s,"max_queue":%s,"flash_attention":true,"kv_cache_type":"%s","memory_admission":"model-bytes-plus-estimated-f16-kv-plus-1GiB-v2"}}\n' \
+      printf '{"product":"sandcodex","version":"%s","artifact_sha256":"%s","state_schema":"%s","state_format":%s,"pins":{"nixpkgs":"%s","codex":"%s","playwright_mcp":"%s","node":"%s","python":"%s","tmux":"%s","ollama":"%s","zstd":"%s","bubblewrap":"%s","landrun":"%s","squid":"%s","socat":"%s","xdg_dbus_proxy":"%s","xwayland_satellite":"%s","xwayland_satellite_reported":"%s","libxkbcommon":"%s","grim":"%s","sway":"%s","sway_hit_test_patch":"%s","sway_hit_test_ipc_type":%s,"sway_hit_test_build_schema":"%s"},"codex_runtime":{"version":"%s","source":{"kind":"pinned-nixpkgs-attribute","revision":"%s","nar_hash":"%s","attribute":"%s","sandcodex_custom_patchset":null},"shared_daemon":"disabled"},"compatibility_profiles":{"cityb":{"id":"%s","project":"~/%s","model":"%s","reasoning_effort":"%s","codex_runtime":{"version":"%s","source":{"kind":"official-release","url_template":"https://releases.openai.com/codex/releases/%s/codex-package-{target}.tar.gz","targets":{"x86_64-linux":{"target":"%s","sha256":"%s"},"aarch64-linux":{"target":"%s","sha256":"%s"}}},"shared_daemon":"unsupported"},"companion_campaigns":false,"native_subagents":true}},"reference_models":{"local_cpu":{"model":"%s","source_digest_sha256":"%s","runtime_digest_sha256":"%s","context_tokens":%s,"num_thread":%s,"digest_policy":"source-and-runtime-required-for-default-reference-profile"}},"candidate_models":{"local_cuda_gtx1650":{"model":"%s","context_tokens":%s,"memory_mib":%s,"selection_policy":"untested-operator-candidate-digest-captured-by-local-update","promotion_note":"after a successful target-machine qualification, promote observed source/runtime digests before enforcing this as a reference"}},"local_runtime_policy":{"keep_alive":"%s","max_loaded_models":%s,"num_parallel":%s,"max_queue":%s,"flash_attention":true,"kv_cache_type":"%s","memory_admission":"model-bytes-plus-estimated-f16-kv-plus-1GiB-v2"}}\n' \
         "$SC_VERSION" "$digest" "$SC_SCHEMA" "$SC_STATE_FORMAT" "$SC_NIXPKGS_REV" \
         "$SC_CODEX_VERSION" "$SC_PLAYWRIGHT_MCP_VERSION" "$SC_NODE_VERSION" \
-        "$SC_PYTHON_VERSION" "$SC_OLLAMA_VERSION" "$SC_ZSTD_VERSION" \
+        "$SC_PYTHON_VERSION" "$SC_TMUX_VERSION" "$SC_OLLAMA_VERSION" "$SC_ZSTD_VERSION" \
         "$SC_BWRAP_VERSION" "$SC_LANDRUN_VERSION" "$SC_SQUID_VERSION" "$SC_SOCAT_VERSION" \
         "$SC_XDG_DBUS_PROXY_VERSION" "$SC_XWAYLAND_SATELLITE_VERSION" "$SC_XWAYLAND_SATELLITE_REPORTED_VERSION" \
         "$SC_LIBXKBCOMMON_VERSION" "$SC_GRIM_VERSION" \
@@ -4983,6 +5069,123 @@ sc_parse_sessions() {
     sc_usage_error "--session requires a canonical lowercase conversation UUID"
 }
 
+sc_terminal_validate_name() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] ||
+    sc_usage_error "terminal NAME must be 1-$SC_TERMINAL_NAME_MAX lowercase letters, digits, dots, underscores, or hyphens"
+}
+
+sc_parse_terminal_inspect_options() {
+  while (( $# )); do
+    case "$1" in
+      --json) SC_TERMINAL_JSON=1; SC_QUIET=1; shift ;;
+      -h|--help|help) sc_terminal_help; exit 0 ;;
+      --) shift; (( $# == 0 )) || sc_usage_error "terminal $SC_TERMINAL_ACTION accepts no trailing arguments" ;;
+      *) sc_usage_error "unknown terminal $SC_TERMINAL_ACTION option: $1" ;;
+    esac
+  done
+}
+
+sc_parse_terminal_launch() {
+  local after_separator=0
+  local -a nested=()
+  while (( $# )); do
+    if (( ! after_separator )) && [[ "$1" == --detach ]]; then
+      SC_TERMINAL_DETACH=1
+    else
+      nested+=("$1")
+      [[ "$1" != -- ]] || after_separator=1
+    fi
+    shift
+  done
+  SC_TERMINAL_LAUNCH_ARGS=("${nested[@]}")
+  sc_parse "${nested[@]}"
+  [[ "$SC_COMMAND" == run ]] ||
+    sc_usage_error "retained terminals require an interactive launch, not a maintenance command or loop"
+}
+
+sc_parse_terminal() {
+  SC_HELP_TOPIC=terminal
+  (( $# )) || { sc_terminal_help; exit 0; }
+  case "$1" in
+    -h|--help|help) sc_terminal_help; exit 0 ;;
+    list)
+      SC_COMMAND=terminal; SC_TERMINAL_ACTION=list; shift
+      sc_parse_terminal_inspect_options "$@"
+      ;;
+    status|doctor)
+      SC_COMMAND=terminal; SC_TERMINAL_ACTION=$1; shift
+      (( $# )) || sc_usage_error "terminal $SC_TERMINAL_ACTION requires NAME"
+      SC_TERMINAL_NAME=$1; sc_terminal_validate_name "$SC_TERMINAL_NAME"; shift
+      sc_parse_terminal_inspect_options "$@"
+      ;;
+    attach)
+      SC_COMMAND=terminal; SC_TERMINAL_ACTION=attach; shift
+      (( $# )) || sc_usage_error "terminal attach requires NAME"
+      SC_TERMINAL_NAME=$1; sc_terminal_validate_name "$SC_TERMINAL_NAME"; shift
+      while (( $# )); do
+        case "$1" in
+          --takeover) SC_TERMINAL_TAKEOVER=1; shift ;;
+          --read-only) SC_TERMINAL_READ_ONLY=1; shift ;;
+          -h|--help|help) sc_terminal_help; exit 0 ;;
+          *) sc_usage_error "unknown terminal attach option: $1" ;;
+        esac
+      done
+      (( ! (SC_TERMINAL_TAKEOVER && SC_TERMINAL_READ_ONLY) )) ||
+        sc_usage_error "terminal attach accepts either --takeover or --read-only, not both"
+      ;;
+    stop|forget)
+      SC_COMMAND=terminal; SC_TERMINAL_ACTION=$1; shift
+      (( $# )) || sc_usage_error "terminal $SC_TERMINAL_ACTION requires NAME"
+      SC_TERMINAL_NAME=$1; sc_terminal_validate_name "$SC_TERMINAL_NAME"; shift
+      (( $# == 0 )) || sc_usage_error "terminal $SC_TERMINAL_ACTION accepts no trailing arguments"
+      ;;
+    restart)
+      SC_COMMAND=terminal; SC_TERMINAL_ACTION=restart; shift
+      (( $# )) || sc_usage_error "terminal restart requires NAME"
+      SC_TERMINAL_NAME=$1; sc_terminal_validate_name "$SC_TERMINAL_NAME"; shift
+      while (( $# )); do
+        case "$1" in
+          --detach) SC_TERMINAL_DETACH=1; shift ;;
+          -h|--help|help) sc_terminal_help; exit 0 ;;
+          *) sc_usage_error "unknown terminal restart option: $1" ;;
+        esac
+      done
+      ;;
+    finalize)
+      # Private runner callback. Dispatch additionally requires the sealed
+      # runner environment marker and an exact binding/project match.
+      SC_COMMAND=terminal; SC_TERMINAL_ACTION=finalize; shift
+      (( $# )) || sc_usage_error "terminal finalize requires NAME"
+      SC_TERMINAL_NAME=$1; sc_terminal_validate_name "$SC_TERMINAL_NAME"; shift
+      while (( $# )); do
+        case "$1" in
+          --project) (( $# > 1 )) || sc_usage_error "--project requires DIR"; SC_PROJECT_ARG=$2; shift 2 ;;
+          --project=*) SC_PROJECT_ARG=${1#*=}; shift ;;
+          --exit-code) (( $# > 1 )) || sc_usage_error "--exit-code requires N"; SC_TERMINAL_EXIT_CODE=$2; shift 2 ;;
+          --exit-code=*) SC_TERMINAL_EXIT_CODE=${1#*=}; shift ;;
+          *) sc_usage_error "unknown terminal finalize option: $1" ;;
+        esac
+      done
+      [[ "$SC_TERMINAL_EXIT_CODE" =~ ^[0-9]{1,3}$ && $SC_TERMINAL_EXIT_CODE -le 255 ]] ||
+        sc_usage_error "terminal finalize requires --exit-code 0..255"
+      ;;
+    start)
+      SC_TERMINAL_ACTION=start; shift
+      (( $# )) || sc_usage_error "terminal start requires NAME"
+      SC_TERMINAL_NAME=$1; sc_terminal_validate_name "$SC_TERMINAL_NAME"; shift
+      SC_TERMINAL_LAUNCH_EXPLICIT=1
+      sc_parse_terminal_launch "$@"
+      ;;
+    *)
+      SC_TERMINAL_ACTION=open
+      SC_TERMINAL_NAME=$1; sc_terminal_validate_name "$SC_TERMINAL_NAME"; shift
+      local -a terminal_raw=("$@")
+      sc_parse_terminal_launch "${terminal_raw[@]}"
+      (( ${#SC_TERMINAL_LAUNCH_ARGS[@]} == 0 )) || SC_TERMINAL_LAUNCH_EXPLICIT=1
+      ;;
+  esac
+}
+
 sc_parse_publish_inspect() {
   SC_HELP_TOPIC=publish
   (( $# )) || sc_usage_error "publish requires status or doctor"
@@ -5454,6 +5657,7 @@ sc_parse() {
       done
       ;;
     sessions) shift; sc_parse_sessions "$@" ;;
+    terminal|term|tmux) shift; sc_parse_terminal "$@" ;;
     cityb|sandcityb) shift; sc_parse_cityb "$@" ;;
     run) SC_HELP_TOPIC=run; shift; sc_parse_run "$@" ;;
     loop) SC_COMMAND=loop; shift; sc_parse_loop "$@" ;;
@@ -5569,7 +5773,7 @@ sc_parse() {
     *) sc_parse_run "$@" ;;
   esac
   case "$SC_COMMAND" in
-    login|logout|reauth|auth|clean|install|logs|sessions|state|benchmark|campaign|operator|publish|local-runtime|local-retire|gemini) SC_BROWSER=0; SC_DESKTOP=0 ;;
+    login|logout|reauth|auth|clean|install|logs|sessions|terminal|state|benchmark|campaign|operator|publish|local-runtime|local-retire|gemini) SC_BROWSER=0; SC_DESKTOP=0 ;;
     loop) [[ "$SC_LOOP_ACTION" == run ]] || { SC_BROWSER=0; SC_DESKTOP=0; } ;;
   esac
   if [[ "${SANDCODEX_TESTING:-0}" == 1 && "$SC_DESKTOP_EXPLICIT" == 0 && \
@@ -5887,7 +6091,8 @@ sc_validate_operator_declaration() {
 
 sc_assert_no_mounts_at_or_below() {
   local root="$1" include_root="$2" label="$3" mount_target scan scan_error=""
-  scan="$(mktemp "$SC_GLOBAL/runtime/.mounts.XXXXXX")"
+  sc_runtime_root_prepare
+  scan="$(mktemp "$SC_RUNTIME_TEMP_ROOT/mounts.XXXXXX")"
   if ! findmnt --json --list --output TARGET | jq -j '.filesystems[]? | (.target // empty), "\u0000"' >"$scan"; then
     rm -f -- "$scan"
     sc_die "$label mount scan failed"
@@ -5927,13 +6132,13 @@ import pathlib
 import sys
 
 def sc_stable_proc_namespace_snapshot(process, known_namespaces):
-    """Return one stable namespace identity and optional socket rows.
+    """Return stable namespace identity and that namespace's socket rows.
 
-    ``process`` is a ``pathlib.Path`` for a numeric `/proc` entry.  A namespace
-    already present in ``known_namespaces`` returns ``rows=None`` only after the
-    process birth and namespace identities are rechecked.  Any malformed or
-    changing evidence raises ``OSError`` or ``ValueError`` so the caller does
-    not mark an unstable namespace as scanned.
+    The socket table is read once per network namespace, but cached rows are
+    deliberately returned for every process.  Absolute and relative Unix
+    socket names must be resolved through each process's own mount/cwd view:
+    the first process encountered can share the socket namespace while hiding
+    the live owner's path in a different mount namespace.
     """
 
     def birth():
@@ -5949,8 +6154,9 @@ def sc_stable_proc_namespace_snapshot(process, known_namespaces):
     born_before = birth()
     namespace_before = os.stat(process / "ns/net")
     namespace_identity = (namespace_before.st_dev, namespace_before.st_ino)
-    rows = None
-    if namespace_identity not in known_namespaces:
+    if namespace_identity in known_namespaces:
+        rows = known_namespaces[namespace_identity]
+    else:
         rows = (process / "net/unix").read_text(errors="strict").splitlines()[1:]
     namespace_after = os.stat(process / "ns/net")
     born_after = birth()
@@ -5969,7 +6175,7 @@ except OSError:
 
 identity = (target.st_dev, target.st_ino)
 uid = os.getuid()
-namespaces = set()
+namespaces = {}
 for process in pathlib.Path("/proc").iterdir():
     if not process.name.isdigit():
         continue
@@ -5979,11 +6185,9 @@ for process in pathlib.Path("/proc").iterdir():
         namespace_identity, rows = sc_stable_proc_namespace_snapshot(
             process, namespaces
         )
-        if rows is None:
-            continue
     except (OSError, UnicodeError, ValueError):
         continue
-    namespaces.add(namespace_identity)
+    namespaces.setdefault(namespace_identity, rows)
     for row in rows:
         fields = row.split(maxsplit=7)
         if len(fields) != 8:
@@ -6482,7 +6686,8 @@ sc_reclaim_stale_project_scratch_sockets() {
   sc_owned_dir "$root" "project scratch"
   sc_assert_no_mounts_at_or_below "$root" 1 "project scratch"
 
-  scan="$(mktemp "$SC_GLOBAL/runtime/.scratch-sockets.XXXXXX")"
+  sc_runtime_root_prepare
+  scan="$(mktemp "$SC_RUNTIME_TEMP_ROOT/scratch-sockets.XXXXXX")"
   if ! find -P "$root" -xdev -type s -print0 >"$scan"; then
     rm -f -- "$scan"
     sc_die "could not inspect Unix sockets in Sandcodex scratch"
@@ -6522,7 +6727,8 @@ sc_project_hygiene() {
     sc_die "safe mode requires project .git metadata to be a real directory inside the selected project"
   fi
 
-  scan="$(mktemp "$SC_GLOBAL/runtime/.project-special.XXXXXX")"
+  sc_runtime_root_prepare
+  scan="$(mktemp "$SC_RUNTIME_TEMP_ROOT/project-special.XXXXXX")"
   if ! find -P "$SC_PROJECT" -xdev \
       \( -type b -o -type c -o -type p -o -type s \) -print0 >"$scan"; then
     rm -f -- "$scan"
@@ -6562,7 +6768,7 @@ sc_project_hygiene() {
   (( removed == 0 )) || sc_note "reclaimed $removed stale project IPC node(s)"
   [[ -z "$scan_error" ]] || sc_die "$scan_error"
 
-  scan="$(mktemp "$SC_GLOBAL/runtime/.project-hardlinks.XXXXXX")"
+  scan="$(mktemp "$SC_RUNTIME_TEMP_ROOT/project-hardlinks.XXXXXX")"
   if ! find -P "$SC_PROJECT" -xdev \
       \( -type f -links +1 -print0 \) >"$scan"; then
     rm -f -- "$scan"
@@ -12462,6 +12668,19 @@ def handle(context, request, broker=False):
             from_current_room = (
                 expected_run is None or principal.get("parent_run_id") == expected_run
             )
+            # A terminal principal is immutable apart from explicit operator
+            # removal. In a live command room, do not reopen its workspace,
+            # poll its dead controller, or rebuild its mailbox projection just
+            # to hide it from the current-room list. Large, long-lived projects
+            # can retain hundreds of terminal workers; refreshing all of them
+            # made command-boundary preflight scale with project history and
+            # could exhaust the launch deadline. Historical nonterminal
+            # principals are still refreshed below so a stale "running"
+            # worker is never advertised as active.
+            if expected_run is not None and not from_current_room \
+                    and principal.get("status") in TERMINAL:
+                historical_terminal += 1
+                continue
             with directory_lock(root, "campaign principal root"):
                 principal = load_principal(root, context)
                 result = status_result(context, root, principal)
@@ -12548,6 +12767,8 @@ def write_ack(ack_root, request_id, value):
 def reject_pending_requests(inbox, acks):
     """Return a bounded, content-free error while live authority is unavailable."""
     for path in sorted(Path(inbox).glob("*.json")):
+        if path.name.startswith("."):
+            continue
         request_id = path.stem
         claimed = os.path.join(inbox, ".processing-" + path.name)
         value = None
@@ -12579,6 +12800,55 @@ def reject_pending_requests(inbox, acks):
         finally:
             try:
                 os.unlink(claimed)
+            except FileNotFoundError:
+                pass
+        if value is not None:
+            try:
+                write_ack(acks, request_id, value)
+            except (CampaignError, OSError):
+                pass
+
+
+def reject_interrupted_requests(inbox, acks):
+    """Retire requests claimed by a broker that exited mid-operation.
+
+    Replaying a claimed mutation would be unsafe because the durable mutation
+    may have completed before the old broker died. Preserve that uncertainty
+    in a typed acknowledgement and require inspection before any retry.
+    """
+    for path in sorted(Path(inbox).glob(".processing-*.json")):
+        original_name = path.name.removeprefix(".processing-")
+        if not original_name.endswith(".json"):
+            continue
+        request_id = original_name[:-5]
+        value = None
+        try:
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or \
+               info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > MAX_REQUEST:
+                os.unlink(path)
+                continue
+            doc = load_json(path, "interrupted campaign request", MAX_REQUEST)
+            if doc.get("id") != request_id:
+                fail("interrupted campaign request filename and identity differ")
+            value = response(
+                request_id,
+                "error",
+                "the previous campaign broker exited while this request was in progress; its outcome is indeterminate, so inspect durable campaign state before retrying",
+                error_code="broker_request_interrupted",
+            )
+        except CampaignError as error:
+            value = response(request_id, "error", str(error), error_code=error.code)
+        except OSError:
+            value = response(
+                request_id,
+                "error",
+                "campaign broker could not retire a request interrupted by the previous command room",
+                error_code="broker_request_interrupted",
+            )
+        finally:
+            try:
+                os.unlink(path)
             except FileNotFoundError:
                 pass
         if value is not None:
@@ -12703,6 +12973,7 @@ def broker(authority_path):
     authority = validate_authority(load_json(authority_path, "campaign launch authority", 256 * 1024))
     inbox = checked_dir(authority["inbox"], "campaign inbox")
     acks = checked_dir(authority["acks"], "campaign acknowledgement root")
+    reject_interrupted_requests(inbox, acks)
     last_auto_replay_scan = 0.0
     maintenance_states = {}
     while pid_matches(authority["parent_pid"], authority["parent_process_start"]):
@@ -12735,6 +13006,8 @@ def broker(authority_path):
             )
             last_auto_replay_scan = current_time
         for path in sorted(Path(inbox).glob("*.json")):
+            if path.name.startswith("."):
+                continue
             request_id = path.stem
             claimed = os.path.join(inbox, ".processing-" + path.name)
             try:
@@ -13413,8 +13686,9 @@ sc_campaign_write_direct_request() {
 
 sc_campaign_host_once() {
   local render="${1:-1}" context request target rc=0
-  context="$(mktemp "$SC_GLOBAL/runtime/.campaign-context.XXXXXX")"
-  request="$(mktemp "$SC_GLOBAL/runtime/.campaign-request.XXXXXX")"
+  sc_runtime_root_prepare
+  context="$(mktemp "$SC_RUNTIME_TEMP_ROOT/campaign-context.XXXXXX")"
+  request="$(mktemp "$SC_RUNTIME_TEMP_ROOT/campaign-request.XXXXXX")"
   chmod 600 -- "$context" "$request"
   sc_campaign_write_direct_context "$context"
   if [[ "$SC_CAMPAIGN_ACTION" == start ]]; then
@@ -13554,9 +13828,55 @@ sc_process_exited_after_grace() {
   return 1
 }
 
+sc_invocation_identity_ensure() {
+  if [[ -z "$SC_RUN_ID" ]]; then
+    SC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$-$(printf '%06x' "$(( RANDOM * RANDOM % 16777216 ))")"
+  fi
+  [[ "$SC_RUN_ID" =~ ^[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*-[0-9a-f]{6}$ ]] ||
+    sc_die "invocation runtime identity is invalid" 70
+  if [[ -z "$SC_PROCESS_START" ]]; then
+    SC_PROCESS_START="$(sc_process_start "$$")" || sc_die "could not identify launcher process"
+  fi
+  [[ "$SC_PROCESS_START" =~ ^[0-9]+$ ]] || sc_die "launcher process identity is unavailable"
+}
+
+sc_runtime_root_prepare() {
+  local expected marker
+  sc_invocation_identity_ensure
+  expected="$SC_GLOBAL/runtime/$SC_RUN_ID"
+  if [[ -n "$SC_RUN_ROOT" && "$SC_RUN_ROOT" != "$expected" ]]; then
+    sc_die "invocation runtime identity changed during launch" 70
+  fi
+  SC_RUN_ROOT=$expected
+  marker="$SC_RUN_ROOT/OWNER"
+  if [[ -e "$SC_RUN_ROOT" || -L "$SC_RUN_ROOT" ]]; then
+    sc_owned_dir "$SC_RUN_ROOT" "invocation runtime"
+    sc_owned_single_file "$marker" 600 "invocation runtime marker"
+    [[ "$(sc_marker "$marker" schema)" == "$SC_SCHEMA" &&
+      "$(sc_marker "$marker" kind)" == runtime &&
+      "$(sc_marker "$marker" uid)" == "$(id -u)" &&
+      "$(sc_marker "$marker" run_id)" == "$SC_RUN_ID" &&
+      "$(sc_marker "$marker" pid)" == "$$" &&
+      "$(sc_marker "$marker" process_start)" == "$SC_PROCESS_START" ]] ||
+      sc_die "invocation runtime marker does not match this process" 70
+  else
+    sc_ensure_dir "$SC_RUN_ROOT" "invocation runtime"
+    sc_atomic "$marker" 600 <<EOF
+schema=$SC_SCHEMA
+kind=runtime
+uid=$(id -u)
+run_id=$SC_RUN_ID
+pid=$$
+process_start=$SC_PROCESS_START
+EOF
+  fi
+  SC_RUNTIME_TEMP_ROOT="$SC_RUN_ROOT/tmp"
+  sc_ensure_dir "$SC_RUNTIME_TEMP_ROOT" "invocation temporary state"
+}
+
 sc_reap_crashed_runs() {
-  local run marker run_id pid started current proxy proxy_marker
-  for run in "$SC_GLOBAL"/runtime/*; do
+  local run marker run_id pid started current proxy proxy_marker run_name
+  for run in "$SC_GLOBAL"/runtime/* "$SC_GLOBAL"/runtime/.reap-*; do
     [[ -d "$run" && ! -L "$run" ]] || continue
     [[ "$(stat -c %u -- "$run")" == "$(id -u)" ]] || continue
     marker="$run/OWNER"
@@ -13565,7 +13885,8 @@ sc_reap_crashed_runs() {
     [[ "$(sc_marker "$marker" kind)" == runtime ]] || continue
     [[ "$(sc_marker "$marker" uid)" == "$(id -u)" ]] || continue
     run_id="$(sc_marker "$marker" run_id)"
-    [[ "${run##*/}" == "$run_id" ]] || continue
+    run_name="${run##*/}"
+    [[ "$run_name" == "$run_id" || "$run_name" == .reap-"$run_id"-* ]] || continue
     pid="$(sc_marker "$marker" pid)"; started="$(sc_marker "$marker" process_start)"
     [[ "$pid" =~ ^[0-9]+$ && "$started" =~ ^[0-9]+$ ]] || continue
     sc_process_exited_after_grace "$pid" "$started" || continue
@@ -13593,6 +13914,381 @@ sc_reap_crashed_runs() {
     fi
     sc_remove_verified_runtime_tree "$run" "stale runtime $run_id"
   done
+}
+
+sc_reconcile_legacy_provider_runtime() {
+  local result rc=0 receipt_root receipt removed preserved credential_copies
+  result="$(python3 -P - \
+    "$SC_GLOBAL/runtime" "$SC_RUNTIME_TEMP_ROOT" \
+    "$SC_GLOBAL/remote/gemini-keys.txt" "$SC_GLOBAL/remote/openrouter-keys.txt" \
+    "$(id -u)" "$(sc_now)" <<'PY'
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import time
+from pathlib import Path
+
+runtime = Path(sys.argv[1])
+quarantine = Path(sys.argv[2])
+gemini_bank = Path(sys.argv[3])
+openrouter_bank = Path(sys.argv[4])
+uid = int(sys.argv[5])
+timestamp = sys.argv[6]
+now = time.time()
+grace_seconds = 24 * 60 * 60
+maximum_entries = 10_000
+maximum_bytes = 64 * 1024 * 1024
+
+gemini_key = re.compile(r"^(?:AIza[0-9A-Za-z_-]{20,}|AQ\.[0-9A-Za-z_-]{30,})$")
+openrouter_key = re.compile(r"^sk-or-v1-[A-Za-z0-9_-]{32,}$")
+label = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
+key_file = re.compile(r"^key-[0-9]{3}$")
+runtime_id = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[1-9][0-9]*-[0-9a-f]{6}$")
+
+credential_patterns = (
+    (re.compile(r"^\.gemini-keybank\.[A-Za-z0-9]+$"), "gemini", gemini_bank, gemini_key),
+    (re.compile(r"^\.openrouter-keybank\.[A-Za-z0-9]+$"), "openrouter", openrouter_bank, openrouter_key),
+)
+ordinary_patterns = (
+    re.compile(r"^\.gemini-adapter\.[A-Za-z0-9]+$"),
+    re.compile(r"^\.gemini-adapter-qualify\.[A-Za-z0-9]+$"),
+    re.compile(r"^\.gemini\.[A-Za-z0-9]+$"),
+    re.compile(r"^\.gemini-auto-task-prompt\.[A-Za-z0-9]+$"),
+    re.compile(r"^\.gemini-handoff\.[A-Za-z0-9]+$"),
+    re.compile(r"^\.openrouter-(?:bank|auto|bench|quota)-[A-Za-z0-9-]+\.[A-Za-z0-9]+$"),
+    re.compile(r"^\.openrouter-router\.[A-Za-z0-9]+$"),
+    re.compile(r"^\.remote-auto-task-prompt\.[A-Za-z0-9]+$"),
+    re.compile(r"^remote-bootstrap-token\.[0-9]+\.[0-9]+$"),
+)
+
+
+def identity(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev, metadata.st_ino, metadata.st_mode, metadata.st_uid,
+        metadata.st_nlink, metadata.st_size, metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def strict_bank(path: Path, pattern: re.Pattern[str]) -> set[str]:
+    parent = path.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode) or
+            parent.st_uid != uid or stat.S_IMODE(parent.st_mode) != 0o700):
+        raise ValueError("durable bank directory metadata is unsafe")
+    flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != uid or
+                before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != 0o600 or
+                before.st_size <= 0 or before.st_size > 1024 * 1024):
+            raise ValueError("durable bank metadata is unsafe")
+        raw = bytearray()
+        while len(raw) <= before.st_size:
+            chunk = os.read(descriptor, min(65536, before.st_size + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        after = os.fstat(descriptor)
+        if identity(before) != identity(after) or len(raw) != before.st_size:
+            raise ValueError("durable bank changed during reconciliation")
+    finally:
+        os.close(descriptor)
+    try:
+        lines = bytes(raw).decode("utf-8").splitlines()
+    except UnicodeError as error:
+        raise ValueError("durable bank is not UTF-8") from error
+    digests: set[str] = set()
+    labels: set[str] = set()
+    for number, source in enumerate(lines, 1):
+        value = source.strip()
+        if not value or value.startswith("#"):
+            continue
+        name = ""
+        secret = value
+        if "=" in value and not value.startswith(("AIza", "AQ.", "sk-or-v1-")):
+            name, secret = (part.strip() for part in value.split("=", 1))
+        else:
+            parts = value.split()
+            if len(parts) == 2 and pattern.fullmatch(parts[1]):
+                name, secret = parts
+        if not pattern.fullmatch(secret):
+            raise ValueError(f"durable bank entry {number} is invalid")
+        if name and (not label.fullmatch(name) or name in labels):
+            raise ValueError(f"durable bank label {number} is invalid")
+        digest = hashlib.sha256(secret.encode()).hexdigest()
+        if digest in digests:
+            raise ValueError(f"durable bank entry {number} is duplicated")
+        digests.add(digest)
+        if name:
+            labels.add(name)
+    if not digests:
+        raise ValueError("durable bank is empty")
+    return digests
+
+
+def marker_fields(path: Path) -> dict[str, str]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {}
+    fields: dict[str, str] = {}
+    for line in raw.splitlines():
+        if "=" not in line:
+            return {}
+        key, value = line.split("=", 1)
+        if not key or key in fields:
+            return {}
+        fields[key] = value
+    return fields
+
+
+def process_start(pid: int) -> str | None:
+    try:
+        line = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    parts = line.rsplit(") ", 1)
+    if len(parts) != 2:
+        return None
+    fields = parts[1].split()
+    if len(fields) <= 19 or fields[0] in {"Z", "X", "x"}:
+        return None
+    return fields[19]
+
+
+def live_runtime_start_epochs() -> list[float]:
+    starts: list[float] = []
+    try:
+        boot = next(float(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                    if line.startswith("btime "))
+        ticks = os.sysconf(os.sysconf_names["SC_CLK_TCK"])
+    except (OSError, StopIteration, ValueError, KeyError):
+        return starts
+    for entry in runtime.iterdir():
+        if entry.name.startswith(".") or not entry.is_dir() or not runtime_id.fullmatch(entry.name):
+            continue
+        fields = marker_fields(entry / "OWNER")
+        try:
+            pid = int(fields.get("pid", ""))
+        except ValueError:
+            continue
+        if (fields.get("schema") != "sandcodex.state.v1" or
+                fields.get("kind") != "runtime" or fields.get("uid") != str(uid) or
+                fields.get("run_id") != entry.name):
+            continue
+        observed = process_start(pid)
+        if observed is None or observed != fields.get("process_start"):
+            continue
+        starts.append(boot + int(observed) / ticks)
+    return starts
+
+
+def mount_targets() -> list[str]:
+    targets: list[str] = []
+    escape = re.compile(r"\\([0-7]{3})")
+    with open("/proc/self/mountinfo", encoding="utf-8") as stream:
+        for line in stream:
+            left = line.split(" - ", 1)[0].split()
+            if len(left) < 5:
+                raise ValueError("mount table is malformed")
+            targets.append(escape.sub(lambda match: chr(int(match.group(1), 8)), left[4]))
+    return targets
+
+
+def checked_tree(path: Path) -> tuple[tuple[int, ...], float]:
+    top = path.lstat()
+    if top.st_uid != uid or stat.S_ISLNK(top.st_mode):
+        raise ValueError("entry is not directly user-owned")
+    count = 0
+    total = 0
+    newest = top.st_mtime
+    pending = [path]
+    while pending:
+        current = pending.pop()
+        metadata = current.lstat()
+        count += 1
+        newest = max(newest, metadata.st_mtime)
+        if count > maximum_entries:
+            raise ValueError("entry exceeds the inventory bound")
+        if metadata.st_uid != uid or stat.S_ISLNK(metadata.st_mode):
+            raise ValueError("entry contains an unsafe owner or symlink")
+        if stat.S_ISDIR(metadata.st_mode):
+            if stat.S_IMODE(metadata.st_mode) != 0o700:
+                raise ValueError("entry contains a directory not mode 0700")
+            pending.extend(current.iterdir())
+        elif stat.S_ISREG(metadata.st_mode):
+            if metadata.st_nlink != 1 or stat.S_IMODE(metadata.st_mode) not in {0o500, 0o600}:
+                raise ValueError("entry contains an unsafe regular file")
+            total += metadata.st_size
+            if total > maximum_bytes:
+                raise ValueError("entry exceeds the byte bound")
+        else:
+            raise ValueError("entry contains a special file")
+    return identity(top), newest
+
+
+def staged_key_digests(path: Path, pattern: re.Pattern[str]) -> set[str]:
+    if not path.is_dir():
+        raise ValueError("credential stage is not a directory")
+    entries = sorted(path.iterdir())
+    if not entries or any(not key_file.fullmatch(entry.name) for entry in entries):
+        raise ValueError("credential stage has unexpected entries")
+    digests: set[str] = set()
+    for entry in entries:
+        flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(entry, flags)
+        try:
+            before = os.fstat(descriptor)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != uid or
+                    before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != 0o600 or
+                    before.st_size <= 0 or before.st_size > 16384):
+                raise ValueError("credential stage has unsafe key metadata")
+            raw_buffer = bytearray()
+            while len(raw_buffer) <= before.st_size:
+                chunk = os.read(descriptor, min(16384, before.st_size + 1 - len(raw_buffer)))
+                if not chunk:
+                    break
+                raw_buffer.extend(chunk)
+            after = os.fstat(descriptor)
+            if identity(before) != identity(after) or len(raw_buffer) != before.st_size:
+                raise ValueError("credential stage changed while it was read")
+        finally:
+            os.close(descriptor)
+        raw = bytes(raw_buffer)
+        try:
+            secret = raw.decode("utf-8")
+        except UnicodeError as error:
+            raise ValueError("credential stage contains non-UTF-8 bytes") from error
+        if not pattern.fullmatch(secret):
+            raise ValueError("credential stage contains an invalid key")
+        digests.add(hashlib.sha256(raw).hexdigest())
+    if len(digests) != len(entries):
+        raise ValueError("credential stage repeats a key")
+    return digests
+
+
+live_starts = live_runtime_start_epochs()
+cutoff = (min(live_starts) - 300) if live_starts else (now - grace_seconds)
+mounts = mount_targets()
+rows: list[dict[str, object]] = []
+durable_cache: dict[str, tuple[set[str] | None, str | None]] = {}
+
+for entry in sorted(runtime.iterdir(), key=lambda item: item.name):
+    provider = None
+    bank = None
+    key_pattern = None
+    kind = None
+    for expression, candidate_provider, candidate_bank, candidate_pattern in credential_patterns:
+        if expression.fullmatch(entry.name):
+            provider = candidate_provider
+            bank = candidate_bank
+            key_pattern = candidate_pattern
+            kind = "credential-stage"
+            break
+    if kind is None and any(expression.fullmatch(entry.name) for expression in ordinary_patterns):
+        kind = "provider-temporary"
+    if kind is None:
+        continue
+    row: dict[str, object] = {"name": entry.name, "kind": kind, "decision": "preserved"}
+    try:
+        before, newest = checked_tree(entry)
+        absolute = str(entry.resolve(strict=False))
+        if any(target == absolute or target.startswith(absolute + os.sep) for target in mounts):
+            raise ValueError("entry contains a mount")
+        if newest >= cutoff:
+            raise ValueError("entry may overlap a live or recent invocation")
+        if kind == "credential-stage":
+            assert provider is not None and bank is not None and key_pattern is not None
+            if provider not in durable_cache:
+                try:
+                    durable_cache[provider] = (strict_bank(bank, key_pattern), None)
+                except (OSError, ValueError) as error:
+                    durable_cache[provider] = (None, str(error))
+            durable, bank_error = durable_cache[provider]
+            if durable is None:
+                raise ValueError(f"durable {provider} bank is unavailable: {bank_error}")
+            staged = staged_key_digests(entry, key_pattern)
+            if not staged.issubset(durable):
+                raise ValueError("credential stage contains a key absent from the durable bank")
+            row["provider"] = provider
+            row["credential_copies"] = len(staged)
+            row["durable_bank_verified"] = True
+        if identity(entry.lstat()) != before:
+            raise ValueError("entry changed during reconciliation")
+        destination = quarantine / f"legacy-{entry.name.lstrip('.')}-{len(rows):04d}"
+        if os.path.lexists(destination):
+            raise ValueError("reconciliation destination already exists")
+        os.rename(entry, destination)
+        try:
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+            row["decision"] = "removed"
+            row["reason"] = "verified-stale"
+        except OSError:
+            row["decision"] = "staged-for-owned-runtime-cleanup"
+            row["reason"] = "direct-removal-failed"
+    except (AssertionError, OSError, ValueError) as error:
+        row["reason"] = str(error)
+    rows.append(row)
+
+removed = sum(row["decision"] == "removed" for row in rows)
+staged = sum(row["decision"] == "staged-for-owned-runtime-cleanup" for row in rows)
+reconciled = removed + staged
+preserved = len(rows) - reconciled
+credential_copies = sum(int(row.get("credential_copies", 0)) for row in rows
+                        if row["decision"] in {"removed", "staged-for-owned-runtime-cleanup"})
+print(json.dumps({
+    "schema": "sandcodex.provider-runtime-reconciliation.v1",
+    "result": "no-legacy-state" if not rows else ("reconciled" if not preserved else "partially-reconciled"),
+    "timestamp": timestamp,
+    "candidate_count": len(rows),
+    "reconciled_count": reconciled,
+    "removed_count": removed,
+    "staged_for_cleanup_count": staged,
+    "preserved_count": preserved,
+    "credential_copies_reconciled": credential_copies,
+    "canonical_banks_modified": False,
+    "credential_values_disclosed": False,
+    "prompt_content_disclosed": False,
+    "entries": rows,
+}, sort_keys=True, separators=(",", ":")))
+PY
+  )" || rc=$?
+  if (( rc != 0 )) || ! jq -e '
+      .schema == "sandcodex.provider-runtime-reconciliation.v1" and
+      (.candidate_count | type == "number") and (.reconciled_count | type == "number") and
+      (.removed_count | type == "number") and (.staged_for_cleanup_count | type == "number") and
+      (.preserved_count | type == "number") and
+      .reconciled_count == (.removed_count + .staged_for_cleanup_count) and
+      .candidate_count == (.reconciled_count + .preserved_count) and
+      .canonical_banks_modified == false and .credential_values_disclosed == false and
+      .prompt_content_disclosed == false
+    ' <<<"$result" >/dev/null 2>&1; then
+    sc_warn "legacy provider runtime reconciliation could not be completed; all candidate state was preserved"
+    return 0
+  fi
+  [[ "$(jq -r '.candidate_count' <<<"$result")" != 0 ]] || return 0
+  receipt_root="$SC_GLOBAL/maintenance/provider-runtime-reconciliation"
+  sc_ensure_dir "$SC_GLOBAL/maintenance" "maintenance receipt root"
+  sc_ensure_dir "$receipt_root" "provider runtime reconciliation receipts"
+  receipt="$receipt_root/$SC_RUN_ID.json"
+  printf '%s\n' "$result" | sc_atomic "$receipt" 600
+  removed="$(jq -r '.reconciled_count' <<<"$result")"
+  preserved="$(jq -r '.preserved_count' <<<"$result")"
+  credential_copies="$(jq -r '.credential_copies_reconciled' <<<"$result")"
+  if (( preserved > 0 )); then
+    sc_warn "legacy provider runtime reconciliation preserved $preserved ambiguous item(s); receipt: $receipt"
+  fi
+  if (( removed > 0 )); then
+    sc_note "reconciled $removed stale provider runtime item(s) · $credential_copies verified duplicate key copy/copies · durable banks unchanged"
+  fi
 }
 
 sc_global_state() {
@@ -13656,6 +14352,8 @@ EOF
     sc_atomic "$SC_CAMPAIGN_LAUNCHER" 500 <"$SC_SCRIPT"
   fi
   sc_reap_crashed_runs
+  sc_runtime_root_prepare
+  sc_reconcile_legacy_provider_runtime
 }
 
 sc_validate_global_state() {
@@ -17380,9 +18078,12 @@ request_action() (
   cleanup_request() {
     local rc=$?
     trap - EXIT INT TERM HUP
-    if [[ -n $relay_pid ]]; then kill "$relay_pid" 2>/dev/null || true; wait "$relay_pid" 2>/dev/null || true; fi
-    [[ -z $request_dir ]] || "$rm_bin" -rf -- "$request_dir"
-    [[ -z $relay_dir ]] || "$rm_bin" -rf -- "$relay_dir"
+    # EXIT runs after Bash may have unwound request_action's local scope.  Use
+    # nounset-safe expansions so recursive terminal-depth rejection keeps its
+    # authenticated error instead of being masked by cleanup itself.
+    if [[ -n ${relay_pid:-} ]]; then kill "$relay_pid" 2>/dev/null || true; wait "$relay_pid" 2>/dev/null || true; fi
+    [[ -z ${request_dir:-} ]] || "$rm_bin" -rf -- "$request_dir"
+    [[ -z ${relay_dir:-} ]] || "$rm_bin" -rf -- "$relay_dir"
     exit "$rc"
   }
   trap cleanup_request EXIT INT TERM HUP
@@ -17774,7 +18475,7 @@ BOOTSTRAP
 
 broker_execute() {
   [[ ${SANDCODEX_JAIL_BROKER_EXEC:-0} == 1 ]] || die 'broker executor is not public'
-  local request=$1 request_name size owner mode links
+  local request=$1 request_name size owner mode links decoder_pid
   request_name=${request##*/}
   [[ ${request%/*} == "$broker_root" && $request_name =~ ^request-[0-9a-f]{32}\.json$ && \
     -f $request && ! -L $request ]] || \
@@ -17803,7 +18504,12 @@ for value in values:
     if "\0" in value: raise SystemExit(64)
     sys.stdout.buffer.write(value.encode()+b"\0")
 PY
-  ) || die 'broker request could not be decoded'
+  )
+  decoder_pid=$!
+  # A process substitution is asynchronous even after mapfile reaches EOF.
+  # Reap it before cgroup delegation: otherwise the decoder can briefly remain
+  # in the unit's internal node and make cgroup.subtree_control fail with EBUSY.
+  wait "$decoder_pid" || die 'broker request could not be decoded'
   (( ${#fields[@]} >= 27 )) || die 'broker request is incomplete'
   execute_action "${fields[0]}" "${fields[1]}" "${fields[2]}" "${fields[3]}" "${fields[4]}" \
     "${fields[5]}" "${fields[6]}" "${fields[7]}" "${fields[8]}" "${fields[9]}" \
@@ -23391,6 +24097,12 @@ multi_agent = $([[ $SC_SUBAGENTS == 1 ]] && printf true || printf false)
 alternate_screen = "never"
 raw_output_mode = false
 copy_on_select = "never"
+# BEL is deliberately terminal-native: tmux and ordinary SSH clients can mark
+# their containing window/workspace urgent without granting Codex a desktop or
+# notification-daemon capability. It carries no message text.
+notifications = true
+notification_method = "bel"
+notification_condition = "always"
 status_line = ["model-with-reasoning", "current-dir", "thread-name"]
 
 [agents]
@@ -23484,10 +24196,11 @@ EOF
 sc_start_log() {
   local day
   day="$(date -u +%Y-%m-%d)"
-  SC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$-$(printf '%06x' "$(( RANDOM * RANDOM % 16777216 ))")"
-  SC_PROVIDER_REQUEST_SCOPE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  sc_invocation_identity_ensure
+  if [[ -z "$SC_PROVIDER_REQUEST_SCOPE" ]]; then
+    SC_PROVIDER_REQUEST_SCOPE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  fi
   [[ "$SC_PROVIDER_REQUEST_SCOPE" =~ ^[0-9a-f]{32}$ ]] || sc_die "could not generate provider request scope" 70
-  SC_PROCESS_START="$(sc_process_start "$$")" || sc_die "could not identify launcher process"
   sc_ensure_dir "$SC_GLOBAL/logs/$day" "daily launcher logs"
   SC_LOG="$SC_GLOBAL/logs/$day/$SC_RUN_ID.log"; SC_EVENTS="$SC_GLOBAL/logs/$day/$SC_RUN_ID.jsonl"
   : >"$SC_LOG"; : >"$SC_EVENTS"; chmod 600 "$SC_LOG" "$SC_EVENTS"
@@ -24134,20 +24847,9 @@ sc_domains() {
 
 sc_runtime_begin() {
   local runtime_base runtime_uid publish_json='[]' publish_socket bind host_port target_port index
-  SC_RUN_ROOT="$SC_GLOBAL/runtime/$SC_RUN_ID"
-  [[ ! -e "$SC_RUN_ROOT" && ! -L "$SC_RUN_ROOT" ]] || sc_die "runtime identifier collision: $SC_RUN_ROOT"
-  sc_ensure_dir "$SC_RUN_ROOT" "invocation runtime"
+  sc_runtime_root_prepare
   SC_JAIL_BROKER_ROOT="$SC_RUN_ROOT/inner-jail-broker"
   sc_ensure_dir "$SC_JAIL_BROKER_ROOT" "inner-jail broker runtime"
-  [[ "$SC_PROCESS_START" =~ ^[0-9]+$ ]] || sc_die "launcher process identity is unavailable"
-  sc_atomic "$SC_RUN_ROOT/OWNER" 600 <<EOF
-schema=$SC_SCHEMA
-kind=runtime
-uid=$(id -u)
-run_id=$SC_RUN_ID
-pid=$$
-process_start=$SC_PROCESS_START
-EOF
   runtime_uid="$(id -u)"
   runtime_base="/run/user/$runtime_uid"
   if [[ ! -d "$runtime_base" || -L "$runtime_base" ||
@@ -27997,7 +28699,7 @@ sc_tcp_ready() {
 }
 
 sc_proxy_start() {
-  local ready=0
+  local ready=0 deadline
   SC_PROXY_SOCKET="$SC_PROXY_TMP/proxy.sock"
   if (( SC_DEV_NET )); then
     : >"$SC_RUN_ROOT/network-proxy.stderr"
@@ -28006,14 +28708,15 @@ sc_proxy_start() {
       exec env -i PATH="$PATH" HOME="$SC_WORK/home" \
         "$SC_SETPRIV" --pdeathsig TERM python3 -P "$SC_JAIL_DATA/host-proxy.py" "$SC_PROXY_SOCKET"
     ) >>"$SC_RUN_ROOT/network-proxy.stderr" 2>&1 & SC_PROXY_PID=$!
-    for _ in {1..200}; do
+    deadline=$((SECONDS + 30))
+    while (( SECONDS < deadline )); do
       if [[ -S "$SC_PROXY_SOCKET" && ! -L "$SC_PROXY_SOCKET" && \
         "$(stat -c %u:%a -- "$SC_PROXY_SOCKET" 2>/dev/null || true)" == "$(id -u):600" ]]; then
         ready=1
         break
       fi
       kill -0 "$SC_PROXY_PID" 2>/dev/null || break
-      sleep 0.01
+      sleep 0.02
     done
     if (( ! ready )); then
       sed -n '1,80p' "$SC_RUN_ROOT/network-proxy.stderr" >&2
@@ -28032,7 +28735,8 @@ sc_proxy_start() {
       sc_close_inherited_fds
       exec "$SC_SETPRIV" --pdeathsig TERM "$SC_SQUID" -N -f "$SC_PROXY_TMP/squid.conf"
     ) >>"$SC_RUN_ROOT/squid.stderr" 2>&1 & SC_PROXY_PID=$!
-    for _ in {1..100}; do
+    deadline=$((SECONDS + 5))
+    while (( SECONDS < deadline )); do
       kill -0 "$SC_PROXY_PID" 2>/dev/null || break
       if sc_tcp_ready "$SC_PROXY_PORT"; then ready=1; break; fi
       sleep 0.02
@@ -28050,7 +28754,8 @@ sc_proxy_start() {
     exec "$SC_SETPRIV" --pdeathsig TERM "$SC_SOCAT" "UNIX-LISTEN:$SC_PROXY_SOCKET,fork,mode=0600" \
       "TCP4:127.0.0.1:$SC_PROXY_PORT"
   ) >>"$SC_RUN_ROOT/socat-host.log" 2>&1 & SC_BRIDGE_PID=$!
-  for _ in {1..100}; do
+  deadline=$((SECONDS + 10))
+  while (( SECONDS < deadline )); do
     kill -0 "$SC_BRIDGE_PID" 2>/dev/null || break
     [[ -S "$SC_PROXY_SOCKET" ]] && break
     sleep 0.02
@@ -29022,7 +29727,16 @@ sc_write_browser_stack() {
     --argjson launchArgs "$extension_json" --argjson headless "$headless" '{
       browser:{browserName:"chromium",userDataDir:$profile,launchOptions:{
         channel:"chromium",headless:$headless,chromiumSandbox:false,
-        ignoreDefaultArgs:["--disable-extensions"],args:$launchArgs},
+        # Playwright disables all three Chromium background-idling mechanisms for
+        # deterministic short-lived test runs. Sandcodex owns a persistent
+        # browser, so retaining those defaults lets every forgotten tab run as
+        # a foreground renderer for the complete command-room lifetime.
+        ignoreDefaultArgs:[
+          "--disable-extensions",
+          "--disable-background-timer-throttling",
+          "--disable-backgrounding-occluded-windows",
+          "--disable-renderer-backgrounding"
+        ],args:$launchArgs},
         contextOptions:{viewport:{width:1440,height:900},acceptDownloads:true},initPage:[$downloadHook]},
       capabilities:["core","network","pdf","storage","testing","vision","devtools"]
     }' >"$base_config"
@@ -29313,8 +30027,9 @@ sc_start_safe_browser_network() {
     sc_err "could not identify the browser broker"
     return 1
   fi
-  local attempt proxy_server proxy_port status expected_proxy="http://127.0.0.1:$SC_BROWSER_NAMESPACE_PROXY_PORT"
-  for (( attempt=0; attempt<100; attempt++ )); do
+  local attempt deadline proxy_server proxy_port status expected_proxy="http://127.0.0.1:$SC_BROWSER_NAMESPACE_PROXY_PORT"
+  deadline=$((SECONDS + 30))
+  while (( SECONDS < deadline )); do
     [[ -f "$SC_BROWSER_PROXY_CONFIG" ]] && break
     kill -0 "$SC_BROWSER_BROKER_PID" 2>/dev/null || break
     sleep 0.1
@@ -121048,7 +121763,7 @@ sc_bwrap() {
 
 sc_emit_command_boundary_preflight() {
   cat <<'SANDCODEX_COMMAND_BOUNDARY_PREFLIGHT_SH'
-set -Eeux
+set -Eeu
 trap 'rc=$?; failed=$BASH_COMMAND; if [[ $- == *e* ]]; then trap - ERR; printf "sandcodex: command-boundary preflight failed at line %s (status %s): %s\n" "$LINENO" "$rc" "$failed" >&2; exit "$rc"; fi' ERR
 nix_exact_with_retry() {
   local expected=$1 attempt output
@@ -121085,6 +121800,8 @@ operator_stop_grace=${28}
 desktop=${29}
 desktop_viewer_socket=${30}
 team_available=${31}
+mkdir -p "$work/preflight"
+printf 'runtime-and-environment\n' >"$work/preflight/phase"
 control_root=$(dirname -- "$control")
 local_root=$(dirname -- "$work")
 if test "$browser" = 1; then
@@ -121377,6 +122094,7 @@ PY
     ' "$work/preflight/glasstty-command-room-relay.json" >/dev/null
   fi
 fi
+printf 'runtime-and-tools\n' >"$work/preflight/phase"
 test -d /tmp
 test ! -w /tmp
 tmp_probe="$TMPDIR/.sandcodex-preflight-$$"
@@ -121451,6 +122169,7 @@ test "$(sandcodex-env --path)" = "$agent_environment"
 summary="$(sandcodex-env --summary)"
 case "$summary" in *'launcher state ignored outside .gitignore'*'paths'*'loop'*'campaign'*'jail'*) ;; *) exit 1;; esac
 capabilities="$(sandcodex-env --capabilities)"
+printf 'agent-contract\n' >"$work/preflight/phase"
 case "$capabilities" in
   *'Sandcodex capability map'*'Shell'*'Project Authority'*'selected tree: full'*'Nix'*'Browser'*'Loop'*'safe delegated turn limit: unbounded'*'Companion Campaign'*'Inner Jail'*'sandcodex-jail'*) ;;
   *) exit 1;;
@@ -121659,7 +122378,7 @@ if (printf contract-bypass >"$agent_environment") 2>/dev/null; then
   echo 'model command wrote protected capability contract' >&2
   exit 1
 fi
-mkdir -p "$work/preflight"
+printf 'inner-jail\n' >"$work/preflight/phase"
 sandcodex-jail inspect --json >"$work/preflight/inner-jail-contract.json"
 jail_available="$(jq -r '.available // false' "$work/preflight/inner-jail-contract.json")"
 if test "$jail_available" = true; then
@@ -121728,6 +122447,7 @@ else
   fi
   rm -f "$work/preflight/inner-jail-self-test.json"
 fi
+printf 'toolchain\n' >"$work/preflight/phase"
 test "${VIRTUAL_ENV:-}" = "$virtualenv"
 test "${PIP_REQUIRE_VIRTUALENV:-}" = true
 test "$(command -v python)" = "$virtualenv/bin/python"
@@ -121741,6 +122461,7 @@ git status --short >/dev/null
 test ! -e /nix/var/nix/profiles
 test ! -e /nix/var/nix/db
 test ! -e /etc/nix/nix.conf
+printf 'nix\n' >"$work/preflight/phase"
 if test "$nix_daemon" = 1; then
   test "${NIX_REMOTE:-}" = daemon
   test "${NIX_USER_CONF_FILES:-}" = /dev/null
@@ -121799,6 +122520,7 @@ else
   test -z "${NIX_REMOTE:-}"
   case ":$PATH:" in *":$work/state/nix/profile/bin:"*) exit 1;; *) ;; esac
 fi
+printf 'network\n' >"$work/preflight/phase"
 test ! -S "/run/user/$(id -u)/bus"
 test ! -S /run/sandcodex/proxy-host/proxy.sock
 if test "$browser" = 1; then
@@ -121815,6 +122537,7 @@ else
   ! timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/3128' 2>/dev/null
 fi
 mkdir -p "$work/preflight"
+printf 'filesystem-and-auth\n' >"$work/preflight/phase"
 ln -s "$denied_sentinel" "$work/preflight/denied-symlink"
 if cat "$work/preflight/denied-symlink" >/dev/null 2>&1; then
   echo 'model command read frontend state through a symlink' >&2
@@ -121860,6 +122583,7 @@ jq -e --arg run_id "$SANDCODEX_RUN_ID" '
 ' "$loop_request" >/dev/null
 rm -f "$loop_request"
 if (( campaign_available > 0 )); then
+  printf 'campaign-control\n' >"$work/preflight/phase"
   campaign_output=$("$SANDCODEX_CAMPAIGN" list --json)
   jq -e '.campaigns | type == "array"' <<<"$campaign_output" >/dev/null
   if (( campaign_max_turns == 0 )); then
@@ -121889,6 +122613,7 @@ else
     ! command -v sandcodex-campaign >/dev/null 2>&1
   fi
 fi
+printf 'nested-launch-denial\n' >"$work/preflight/phase"
 set +e
 nested_output=$("$nested" --project "$PWD" 2>&1)
 nested_rc=$?
@@ -121918,6 +122643,7 @@ test "$nested_rc" != 0
 test "$nested_rc" != 124
 rm -f "$work/preflight/nested-fallback"
 if test "$testing" = 1 && test -d .git; then
+  printf 'project-authority\n' >"$work/preflight/phase"
   authority_backup="$work/preflight/project-authority-backup"
   mkdir -p "$authority_backup"
   authority_index=0
@@ -121947,6 +122673,7 @@ if test "$testing" = 1 && test -d .git; then
 fi
 printf 'boundary-ok\n' >"$work/preflight/result"
 test "$(cat "$work/preflight/result")" = boundary-ok
+printf 'apply-patch\n' >"$work/preflight/phase"
 printf 'before\n' >"$work/preflight/patched"
 apply_patch '*** Begin Patch
 *** Update File: .sandcodex/work/preflight/patched
@@ -121955,6 +122682,7 @@ apply_patch '*** Begin Patch
 +apply-patch-ok
 *** End Patch'
 test "$(cat "$work/preflight/patched")" = apply-patch-ok
+printf 'complete\n' >"$work/preflight/phase"
 SANDCODEX_COMMAND_BOUNDARY_PREFLIGHT_SH
 }
 
@@ -121980,15 +122708,15 @@ EOF
 sc_boundary_preflight() {
   local outside="$SC_RUN_ROOT/outside-sentinel" denied_sentinel="$SC_CONTROL/codex-home/.boundary-sentinel-$SC_RUN_ID"
   local visible_sentinel="$SC_SANDBOX_CONTROL/codex-home/.boundary-sentinel-$SC_RUN_ID"
-  local output rc stop_rc=0 verified=1 errexit=0 nix_deep=0 preflight_timeout=45s
+  local output rc stop_rc=0 verified=1 errexit=0 nix_deep=0 preflight_timeout=120s phase=unknown
   if [[ "${SANDCODEX_TESTING:-0}" == 1 && "${SANDCODEX_TEST_NIX_DEEP:-0}" == 1 ]]; then
     # The opt-in release fixture realizes and exercises a complete flake from
     # inside the command room. A cold Nix cache can legitimately exceed the
     # ordinary boundary-probe limit without weakening a real launch timeout.
     nix_deep=1
-    preflight_timeout=300s
+    preflight_timeout=600s
   elif (( SC_BROWSER_RELAY_REQUIRED )); then
-    preflight_timeout=75s
+    preflight_timeout=180s
   fi
   printf 'private\n' >"$outside"; chmod 600 "$outside"
   printf 'frontend-private\n' | sc_atomic "$denied_sentinel" 600
@@ -122033,9 +122761,20 @@ sc_boundary_preflight() {
   (( ! errexit )) || set -e
   if (( rc != 0 )); then
     rm -f -- "$denied_sentinel"
+    if [[ -f "$SC_WORK/preflight/phase" && ! -L "$SC_WORK/preflight/phase" ]]; then
+      phase="$(<"$SC_WORK/preflight/phase")"
+    fi
+    case "$phase" in
+      runtime-and-environment|runtime-and-tools|agent-contract|inner-jail|toolchain|nix|network|\
+        filesystem-and-auth|campaign-control|nested-launch-denial|project-authority|apply-patch|complete) ;;
+      *) phase=unknown ;;
+    esac
     sc_log_event error boundary_preflight "nested boundary failed" "exit_code=$rc" \
-      "diagnostic_head=${output:0:6000}" "diagnostic_tail=${output: -6000}"
-    printf '%s\n' "$output" >&2
+      "phase=$phase" "diagnostic_head=${output:0:6000}" "diagnostic_tail=${output: -6000}"
+    if (( rc == 124 )); then
+      sc_err "command-room boundary verification timed out during $phase after $preflight_timeout"
+    fi
+    [[ -z "$output" ]] || tail -n 40 <<<"$output" >&2
     return "$rc"
   fi
   [[ -f "$SC_WORK/preflight/result" && "$(<"$SC_WORK/preflight/result")" == boundary-ok ]] || verified=0
@@ -124861,6 +125600,614 @@ sc_active_gemini_dispatch() {
   esac
 }
 
+sc_terminal_paths() {
+  local name_hash global_hash
+  SC_TERMINAL_ROOT="$SC_GLOBAL/terminals"
+  global_hash="$(printf '%s\0' "$SC_GLOBAL" | sha256sum | awk '{print substr($1,1,16)}')"
+  SC_TERMINAL_SOCKET="/run/user/$EUID/sandcodex-terminals-$global_hash/tmux.sock"
+  if [[ -n "$SC_TERMINAL_NAME" ]]; then
+    name_hash="$(printf '%s\0' "$SC_TERMINAL_NAME" | sha256sum | awk '{print substr($1,1,16)}')"
+    SC_TERMINAL_BINDING="$SC_TERMINAL_ROOT/$SC_TERMINAL_NAME.json"
+    SC_TERMINAL_TMUX_SESSION="scx-$name_hash"
+  fi
+}
+
+sc_terminal_runtime_prepare() {
+  local root="${SC_TERMINAL_SOCKET%/*}"
+  [[ "$root" == "/run/user/$EUID"/sandcodex-terminals-[0-9a-f]* ]] ||
+    sc_die "retained-terminal runtime path escaped its user runtime root" 78
+  if [[ -e "$root" || -L "$root" ]]; then
+    sc_no_symlink_components "$root" "retained-terminal runtime root"
+    sc_owned_dir "$root" "retained-terminal runtime root"
+    sc_private_dir "$root" "retained-terminal runtime root"
+  else
+    mkdir -m 700 -- "$root"
+  fi
+  if [[ -e "$SC_TERMINAL_SOCKET" || -L "$SC_TERMINAL_SOCKET" ]]; then
+    sc_terminal_socket_safe || sc_die "retained-terminal tmux socket has unsafe metadata" 78
+  fi
+}
+
+sc_terminal_state_prepare() {
+  sc_ensure_dir "$SC_TERMINAL_ROOT" "retained-terminal registry"
+  sc_ensure_dir "$SC_TERMINAL_ROOT/runners" "retained-terminal runners"
+  local lock="$SC_TERMINAL_ROOT/.lock"
+  if [[ -e "$lock" || -L "$lock" ]]; then
+    sc_owned_single_file "$lock" 600 "retained-terminal registry lock"
+  else
+    : >"$lock"; chmod 600 -- "$lock"
+  fi
+}
+
+sc_terminal_lock_acquire() {
+  [[ -z "$SC_TERMINAL_LOCK_FD" ]] || sc_die "retained-terminal registry lock is already held" 70
+  exec {SC_TERMINAL_LOCK_FD}>"$SC_TERMINAL_ROOT/.lock"
+  "$SC_FLOCK" -x "$SC_TERMINAL_LOCK_FD"
+}
+
+sc_terminal_lock_release() {
+  [[ -n "$SC_TERMINAL_LOCK_FD" ]] || return 0
+  "$SC_FLOCK" -u "$SC_TERMINAL_LOCK_FD" 2>/dev/null || true
+  exec {SC_TERMINAL_LOCK_FD}>&-
+  SC_TERMINAL_LOCK_FD=""
+}
+
+sc_terminal_global_prepare() {
+  local marker="$SC_GLOBAL/OWNER"
+  sc_init_global_minimal
+  if [[ -e "$marker" || -L "$marker" ]]; then
+    sc_validate_global_state
+  else
+    sc_atomic "$marker" 600 <<EOF
+schema=$SC_SCHEMA
+kind=global
+uid=$(id -u)
+home=$SC_REAL_HOME
+EOF
+    sc_validate_global_state
+  fi
+}
+
+sc_terminal_binding_validate() {
+  local path="$1" expected_name="${2:-}" expected_project="${3:-}" expected_session
+  sc_owned_single_file "$path" 600 "retained-terminal binding"
+  (( $(stat -c %s -- "$path") <= 65536 )) || sc_die "retained-terminal binding is too large" 78
+  jq -e --arg schema "$SC_TERMINAL_SCHEMA" --arg name "$expected_name" \
+    --arg project "$expected_project" '
+      type == "object" and
+      ((keys | sort) == (["baseline_sessions","created_at","last_exit_at","last_exit_code","launcher_sha256","name","privacy","project","project_key","provider_family","requested_model","requested_provider","resume_argv","schema","selector_argv","session_id","session_model","session_provider","tmux_session","updated_at"] | sort)) and
+      .schema == $schema and
+      (.name | type == "string" and test("^[a-z0-9][a-z0-9._-]{0,63}$")) and
+      ($name == "" or .name == $name) and
+      (.project | type == "string" and startswith("/")) and
+      ($project == "" or .project == $project) and
+      (.project_key | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.tmux_session | type == "string" and test("^scx-[0-9a-f]{16}$")) and
+      (.created_at | type == "string" and length >= 20 and length <= 40) and
+      (.updated_at | type == "string" and length >= 20 and length <= 40) and
+      (.launcher_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.provider_family | IN("gpt","local","remote","gemini")) and
+      (.requested_model == null or (.requested_model | type == "string" and length >= 1 and length <= 192)) and
+      (.requested_provider == null or (.requested_provider | type == "string" and test("^[A-Za-z0-9_-]{1,48}$"))) and
+      (.selector_argv | type == "array" and length <= 16 and all(type == "string" and length <= 1024)) and
+      (.baseline_sessions | type == "array" and length <= 256 and
+        all(type == "object" and (keys|sort)==["id","last_activity"] and
+          (.id | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+          (.last_activity | type == "number" and . >= 0))) and
+      (.resume_argv | type == "array" and length <= 20 and all(type == "string" and length <= 1024)) and
+      (.session_id == null or (.session_id | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))) and
+      (.session_provider == null or (.session_provider | type == "string" and length >= 1 and length <= 96)) and
+      (.session_model == null or (.session_model | type == "string" and length >= 1 and length <= 192)) and
+      (.last_exit_code == null or (.last_exit_code | type == "number" and floor == . and . >= 0 and . <= 255)) and
+      (.last_exit_at == null or (.last_exit_at | type == "string" and length >= 20 and length <= 40)) and
+      .privacy == {durable_terminal_output_stored:false,prompt_content_stored:false,credential_values_stored:false}
+    ' "$path" >/dev/null || sc_die "retained-terminal binding failed schema validation: $path" 78
+  expected_session="$(jq -r .tmux_session "$path")"
+  [[ -z "$expected_name" || "$expected_session" == "$SC_TERMINAL_TMUX_SESSION" ]] ||
+    sc_die "retained-terminal binding name does not match its tmux identity" 78
+  if [[ -n "$expected_project" ]]; then
+    [[ "$(jq -r .project_key "$path")" == "$(printf '%s\0' "$expected_project" | sha256sum | awk '{print $1}')" ]] ||
+      sc_die "retained-terminal binding project digest mismatch" 78
+  fi
+}
+
+sc_terminal_socket_safe() {
+  [[ -S "$SC_TERMINAL_SOCKET" && ! -L "$SC_TERMINAL_SOCKET" ]] || return 1
+  [[ "$(stat -c %u -- "$SC_TERMINAL_SOCKET" 2>/dev/null || true)" == "$EUID" ]] || return 1
+  local mode
+  mode="$(stat -c %a -- "$SC_TERMINAL_SOCKET" 2>/dev/null || true)"
+  [[ "$mode" =~ ^[0-7]+$ && $((8#$mode & 8#077)) -eq 0 ]]
+}
+
+sc_terminal_tmux() {
+  command tmux -S "$SC_TERMINAL_SOCKET" "$@"
+}
+
+sc_terminal_live() {
+  sc_terminal_socket_safe || return 1
+  sc_terminal_tmux has-session -t "$SC_TERMINAL_TMUX_SESSION" 2>/dev/null
+}
+
+sc_terminal_pane_facts() {
+  sc_terminal_live || return 1
+  sc_terminal_tmux display-message -p -t "$SC_TERMINAL_TMUX_SESSION:0.0" \
+    '#{pane_dead}|#{pane_dead_status}|#{session_attached}|#{pane_pid}|#{window_bell_flag}'
+}
+
+sc_terminal_running() {
+  local facts
+  facts="$(sc_terminal_pane_facts 2>/dev/null)" || return 1
+  [[ "${facts%%|*}" == 0 ]]
+}
+
+sc_terminal_selector_argv_json() {
+  local -a selector=()
+  if [[ "$SC_COMPAT_PROFILE" == "$SC_CITYB_PROFILE_ID" ]]; then
+    selector=(cityb)
+  else
+    case "$SC_PROVIDER_MODE" in
+      gpt) ;;
+      gemini)
+        if (( SC_GEMINI_AUTO )); then selector=(gemini auto); else selector=(gemini "$SC_GEMINI_MODEL"); fi
+        ;;
+      remote)
+        if (( SC_REMOTE_AUTO )); then
+          selector=(remote auto)
+        else
+          selector=(remote "$SC_MODEL")
+          [[ -z "$SC_REMOTE_NAME" ]] || selector+=(--provider "$SC_REMOTE_NAME")
+        fi
+        ;;
+      local) selector=(local "$SC_LOCAL_REQUESTED_MODEL") ;;
+      *) sc_die "retained-terminal provider family is unsupported: $SC_PROVIDER_MODE" 78 ;;
+    esac
+  fi
+  if (( ${#selector[@]} )); then printf '%s\0' "${selector[@]}"; fi | python3 -P -c '
+import json,sys
+raw=sys.stdin.buffer.read().split(b"\0")
+if raw and raw[-1] == b"": raw.pop()
+print(json.dumps([item.decode("utf-8") for item in raw],separators=(",",":")))
+'
+}
+
+sc_terminal_project_sessions_json() {
+  local sessions="$SC_CONTROL/codex-home/sessions" result
+  [[ -d "$sessions" && ! -L "$sessions" ]] || return 66
+  result="$(sc_emit_session_selector | python3 -P - \
+    --sessions "$sessions" --project "$SC_PROJECT" --all 2>/dev/null)" || return $?
+  jq -e '.schema=="sandcodex.project-sessions.v1" and (.sessions|type)=="array"' \
+    <<<"$result" >/dev/null || return 78
+  printf '%s\n' "$result"
+}
+
+sc_terminal_root_session_verify() {
+  local path="$1" sid="$2" snapshot row expected_provider expected_model
+  snapshot="$(sc_terminal_project_sessions_json)" || return $?
+  row="$(jq -ce --arg sid "$sid" '.sessions[] | select(.id==$sid)' <<<"$snapshot" | head -n1)" || return 66
+  expected_provider="$(jq -r '.session_provider // empty' "$path")"
+  expected_model="$(jq -r '.session_model // empty' "$path")"
+  [[ -z "$expected_provider" || "$(jq -r .provider <<<"$row")" == "$expected_provider" ]] || return 78
+  [[ -z "$expected_model" || "$(jq -r '.model // empty' <<<"$row")" == "$expected_model" ]] || return 78
+}
+
+sc_terminal_binding_write_initial() {
+  local path="$1" created selector requested_model=null requested_provider=null session_id=null resume='[]' baseline='[]' snapshot
+  created="$(sc_now)"; selector="$(sc_terminal_selector_argv_json)"
+  [[ -z "$SC_MODEL" ]] || requested_model="$(jq -Rn --arg value "$SC_MODEL" '$value')"
+  if [[ "$SC_PROVIDER_MODE" == local && -n "$SC_LOCAL_REQUESTED_MODEL" ]]; then
+    requested_model="$(jq -Rn --arg value "$SC_LOCAL_REQUESTED_MODEL" '$value')"
+  elif [[ "$SC_PROVIDER_MODE" == gemini && -n "$SC_GEMINI_MODEL" ]]; then
+    requested_model="$(jq -Rn --arg value "$SC_GEMINI_MODEL" '$value')"
+  fi
+  [[ -z "$SC_REMOTE_NAME" ]] || requested_provider="$(jq -Rn --arg value "$SC_REMOTE_NAME" '$value')"
+  [[ "$SC_RESUME" != id ]] || session_id="$(jq -Rn --arg value "${SC_RESUME_ID,,}" '$value')"
+  snapshot="$(sc_terminal_project_sessions_json 2>/dev/null || true)"
+  if [[ -n "$snapshot" ]]; then
+    baseline="$(jq -c '[.sessions[:256][] | {id,last_activity}]' <<<"$snapshot")"
+  fi
+  if [[ "$session_id" != null ]]; then
+    resume="$(jq -cn --argjson selector "$selector" --argjson sid "$session_id" --arg project "$SC_PROJECT" '
+      $selector + ["--RESUME="+$sid] +
+      (if ($selector[0] // "") == "cityb" then [] else ["--project",$project] end)
+    ')"
+  fi
+  jq -cn --arg schema "$SC_TERMINAL_SCHEMA" --arg name "$SC_TERMINAL_NAME" \
+    --arg project "$SC_PROJECT" --arg project_key "$SC_PROJECT_KEY" \
+    --arg tmux_session "$SC_TERMINAL_TMUX_SESSION" --arg timestamp "$created" \
+    --arg launcher_sha256 "$(sc_artifact_sha256)" --arg provider_family "$SC_PROVIDER_MODE" \
+    --argjson requested_model "$requested_model" --argjson requested_provider "$requested_provider" \
+    --argjson selector_argv "$selector" --argjson session_id "$session_id" --argjson resume_argv "$resume" --argjson baseline_sessions "$baseline" '
+      {schema:$schema,name:$name,project:$project,project_key:$project_key,
+       tmux_session:$tmux_session,created_at:$timestamp,updated_at:$timestamp,
+       launcher_sha256:$launcher_sha256,provider_family:$provider_family,
+       requested_model:$requested_model,requested_provider:$requested_provider,
+       selector_argv:$selector_argv,baseline_sessions:$baseline_sessions,
+       resume_argv:$resume_argv,session_id:$session_id,
+       session_provider:null,session_model:null,last_exit_code:null,last_exit_at:null,
+       privacy:{durable_terminal_output_stored:false,prompt_content_stored:false,credential_values_stored:false}}
+    ' | sc_atomic "$path" 600
+  sc_terminal_binding_validate "$path" "$SC_TERMINAL_NAME" "$SC_PROJECT"
+}
+
+sc_terminal_reconcile_binding() {
+  local path="$1" exit_code="${2:-}" project result sid provider model now tmp
+  sc_terminal_binding_validate "$path" "$SC_TERMINAL_NAME"
+  project="$(jq -r .project "$path")"
+  SC_PROJECT_ARG="$project"; sc_select_project
+  result="$(sc_terminal_project_sessions_json 2>/dev/null || true)"
+  sid="$(jq -r '.session_id // empty' "$path")"
+  if [[ -n "$result" ]]; then
+    if [[ -n "$sid" ]]; then
+      result="$(jq -c --arg sid "$sid" '.sessions[] | select(.id==$sid)' <<<"$result" | head -n1)"
+    else
+      result="$(jq -c --slurpfile binding "$path" '
+        ($binding[0].baseline_sessions | map({key:.id,value:.last_activity}) | from_entries) as $before |
+        [.sessions[] | select(($before[.id] == null) or (.last_activity > $before[.id]))][0] // empty
+      ' <<<"$result")"
+    fi
+  else
+    result=""
+  fi
+  now="$(sc_now)"; tmp="$(mktemp "$SC_TERMINAL_ROOT/.binding.XXXXXXXXXXXX")"
+  if [[ -n "$result" ]]; then
+    sid="$(jq -r .id <<<"$result")"; provider="$(jq -r .provider <<<"$result")"
+    model="$(jq -r '.model // empty' <<<"$result")"
+    jq --arg now "$now" --arg sid "$sid" --arg provider "$provider" --arg model "$model" \
+      --arg project "$SC_PROJECT" --argjson exit_code "${exit_code:-null}" '
+        .updated_at=$now | .session_id=$sid | .session_provider=$provider |
+        .session_model=(if $model=="" then null else $model end) |
+        .resume_argv=(.selector_argv + ["--RESUME="+$sid] +
+          (if (.selector_argv[0] // "") == "cityb" then [] else ["--project",$project] end)) |
+        (if $exit_code == null then . else .last_exit_code=$exit_code | .last_exit_at=$now end)
+      ' "$path" >"$tmp"
+  else
+    jq --arg now "$now" --argjson exit_code "${exit_code:-null}" '
+      .updated_at=$now |
+      (if $exit_code == null then . else .last_exit_code=$exit_code | .last_exit_at=$now end)
+    ' "$path" >"$tmp"
+  fi
+  chmod 600 -- "$tmp"; mv -fT -- "$tmp" "$path"
+  sc_terminal_binding_validate "$path" "$SC_TERMINAL_NAME" "$SC_PROJECT"
+}
+
+sc_terminal_runner_write() {
+  local runner="$1"
+  sc_atomic "$runner" 500 <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+name=$1; project=$2; launcher=$3
+shift 3
+export SANDCODEX_TERMINAL_RUNNER=1 SANDCODEX_RETAINED_TERMINAL="$name"
+set +e
+"$launcher" "$@"
+rc=$?
+set -e
+"$launcher" terminal finalize "$name" --project "$project" --exit-code "$rc" ||
+  printf 'sandcodex terminal: lifecycle reconciliation failed; run terminal doctor %s\n' "$name" >&2
+printf '\a'
+exit "$rc"
+EOF
+  sc_owned_single_file "$runner" 500 "retained-terminal runner"
+}
+
+sc_terminal_attach() {
+  local -a attach=(attach-session -t "$SC_TERMINAL_TMUX_SESSION")
+  sc_terminal_live || sc_die "retained terminal is not live: $SC_TERMINAL_NAME" 66
+  if (( SC_TERMINAL_TAKEOVER )); then attach=(attach-session -d -t "$SC_TERMINAL_TMUX_SESSION")
+  elif (( SC_TERMINAL_READ_ONLY )); then attach=(attach-session -r -t "$SC_TERMINAL_TMUX_SESSION")
+  fi
+  if [[ -t 1 ]]; then printf '\033]0;sandcodex %s\007' "$SC_TERMINAL_NAME"; fi
+  sc_note "terminal · $SC_TERMINAL_NAME · detach with Ctrl-b d · tmux help Ctrl-b ?"
+  exec tmux -S "$SC_TERMINAL_SOCKET" "${attach[@]}"
+}
+
+sc_terminal_start() {
+  local runner binding_exists=0 pane
+  sc_terminal_state_prepare; sc_terminal_lock_acquire; sc_terminal_runtime_prepare
+  if sc_terminal_socket_safe && ! sc_terminal_tmux list-sessions >/dev/null 2>&1; then
+    # The private server has no reachable control endpoint. The socket itself
+    # has already passed no-link, owner, and mode checks; it is disposable
+    # runtime state, unlike the durable binding below.
+    rm -f -- "$SC_TERMINAL_SOCKET"
+  fi
+  runner="$SC_TERMINAL_ROOT/runners/$SC_TERMINAL_TMUX_SESSION"
+  [[ ! -e "$SC_TERMINAL_BINDING" && ! -L "$SC_TERMINAL_BINDING" ]] || binding_exists=1
+  if (( binding_exists )); then
+    sc_terminal_binding_validate "$SC_TERMINAL_BINDING" "$SC_TERMINAL_NAME"
+    [[ "$(jq -r .project "$SC_TERMINAL_BINDING")" == "$SC_PROJECT" ]] ||
+      sc_die "terminal $SC_TERMINAL_NAME is bound to another project: $(jq -r .project "$SC_TERMINAL_BINDING")" 78
+    if sc_terminal_live; then
+      if sc_terminal_running; then
+        (( ! SC_TERMINAL_LAUNCH_EXPLICIT )) ||
+          sc_die "terminal $SC_TERMINAL_NAME is already running; launch options were not applied" 73
+        sc_terminal_lock_release
+        if (( SC_TERMINAL_DETACH )); then
+          sc_terminal_render_status "$(sc_terminal_binding_status_json "$SC_TERMINAL_BINDING")"
+          return
+        fi
+        sc_terminal_attach
+      elif [[ "$SC_TERMINAL_ACTION" == open && $SC_TERMINAL_LAUNCH_EXPLICIT -eq 0 ]]; then
+        # Keep the exited pane available so the person can read the exact
+        # startup/provider failure instead of seeing a mysterious [exited].
+        sc_terminal_lock_release
+        sc_terminal_attach
+      else
+        sc_terminal_tmux kill-session -t "$SC_TERMINAL_TMUX_SESSION"
+      fi
+    fi
+    if [[ "$SC_TERMINAL_ACTION" == open && $SC_TERMINAL_LAUNCH_EXPLICIT -eq 0 ]]; then
+      sc_die "terminal $SC_TERMINAL_NAME is stopped; inspect it with 'sandcodex terminal status $SC_TERMINAL_NAME', then use terminal restart or terminal start with explicit launch options" 66
+    fi
+  fi
+  sc_terminal_binding_write_initial "$SC_TERMINAL_BINDING"
+  sc_terminal_runner_write "$runner"
+  # The server is private to this Sandcodex global root. Per-session environment
+  # prevents an older tmux server from lending stale PATH or bootstrap metadata
+  # to a newly created room.
+  local -a env_args=(
+    -e "SANDCODEX_NIX_READY=${SANDCODEX_NIX_READY:-0}"
+    -e "SANDCODEX_REAL_HOME=$SC_REAL_HOME"
+    -e "SANDCODEX_HOST_PATH=$SC_HOST_PATH"
+    -e "SANDCODEX_GLOBAL_ROOT=$SC_GLOBAL"
+    -e "HOME=$HOME" -e "XDG_CACHE_HOME=${XDG_CACHE_HOME:-}" -e "PYTHONSAFEPATH=1"
+    -e "PATH=$PATH"
+    -e "SANDCODEX_PINNED_WAYLAND_PROTOCOLS_DIR=${SANDCODEX_PINNED_WAYLAND_PROTOCOLS_DIR:-}"
+    -e "SANDCODEX_PINNED_ATSPI_PREFIX=${SANDCODEX_PINNED_ATSPI_PREFIX:-}"
+    -e "SANDCODEX_PINNED_GI_PREFIX=${SANDCODEX_PINNED_GI_PREFIX:-}"
+    -e "SANDCODEX_PINNED_GLIB_PREFIX=${SANDCODEX_PINNED_GLIB_PREFIX:-}"
+    -e "SANDCODEX_PINNED_GI_TYPELIB_PATH=${SANDCODEX_PINNED_GI_TYPELIB_PATH:-}"
+    -e "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-}"
+  )
+  if [[ "${SANDCODEX_TESTING:-0}" == 1 ]]; then
+    # The fast suite launches a real private tmux server around fake boundary
+    # tools. Keep this test-only vocabulary explicit; production rooms must
+    # never inherit arbitrary ambient names through the retained layer.
+    local test_name
+    local -a terminal_test_names=(
+      SANDCODEX_TESTING SANDCODEX_NO_NIX SANDCODEX_TEST_CODEX_BIN
+      SANDCODEX_TEST_BWRAP_BIN SANDCODEX_TEST_SUDO_BIN
+      SANDCODEX_TEST_SYSTEMD_RUN_BIN SANDCODEX_TEST_SYSTEMCTL_BIN
+      SANDCODEX_TEST_BROWSER_OWNER_SERVICE SANDCODEX_TEST_DESKTOP_OWNER_SERVICE
+      SANDCODEX_CAPTURE SANDCODEX_LOGIN_CAPTURE SANDCODEX_LOGIN_CWD_CAPTURE
+      SANDCODEX_CAPTURE_LOG SANDCODEX_PROMPT_CAPTURE SANDCODEX_PATH_CAPTURE
+      SANDCODEX_SUDO_CAPTURE SANDCODEX_SYSTEMD_CAPTURE SANDCODEX_SYSTEMCTL_CAPTURE
+      SANDCODEX_FAKE_INTERACTIVE_SESSION_ID SSL_CERT_FILE NIX_SSL_CERT_FILE
+    )
+    for test_name in "${terminal_test_names[@]}"; do
+      [[ -z "${!test_name+x}" ]] || env_args+=(-e "$test_name=${!test_name}")
+    done
+  fi
+  if [[ -n "$SC_REMOTE_BOOTSTRAP_TOKEN_FILE" ]]; then
+    env_args+=(-e "SANDCODEX_REMOTE_BOOTSTRAP_TOKEN_FILE=$SC_REMOTE_BOOTSTRAP_TOKEN_FILE"
+      -e "SANDCODEX_REMOTE_BOOTSTRAP_ENV_KEY=$SC_REMOTE_BOOTSTRAP_ENV_KEY")
+  fi
+  # Install failure-retention and notification defaults before the pane exists.
+  # Otherwise a very early launcher failure can race the following tmux
+  # configuration calls, destroy the last session, and hide its diagnostics.
+  # exit-empty is disabled only for this atomic setup sequence and restored as
+  # soon as the retained session has been created.
+  sc_terminal_tmux start-server \
+    \; set-option -g exit-empty off \
+    \; set-option -g bell-action any \
+    \; set-option -g visual-bell off \
+    \; set-option -g set-clipboard off \
+    \; set-window-option -g automatic-rename off \
+    \; set-window-option -g remain-on-exit on \
+    \; set-window-option -g monitor-bell on \
+    \; set-window-option -g history-limit 100000 \
+    \; new-session -d "${env_args[@]}" -s "$SC_TERMINAL_TMUX_SESSION" -c "$SC_PROJECT" -- \
+      "$runner" "$SC_TERMINAL_NAME" "$SC_PROJECT" "$SC_SCRIPT" "${SC_TERMINAL_LAUNCH_ARGS[@]}" \
+    \; set-option -g exit-empty on ||
+    sc_die "tmux could not create retained terminal $SC_TERMINAL_NAME" 70
+  sc_terminal_tmux set-option -t "$SC_TERMINAL_TMUX_SESSION" set-titles on
+  sc_terminal_tmux set-option -t "$SC_TERMINAL_TMUX_SESSION" set-titles-string "sandcodex $SC_TERMINAL_NAME"
+  sc_terminal_tmux set-option -t "$SC_TERMINAL_TMUX_SESSION" status-left " sandcodex:$SC_TERMINAL_NAME "
+  # Record the inherited safety defaults explicitly on this window as well.
+  # This makes an inspected room self-describing instead of relying on hidden
+  # server-global inheritance; the defaults were already active before birth.
+  sc_terminal_tmux set-window-option -t "$SC_TERMINAL_TMUX_SESSION:0" automatic-rename off
+  sc_terminal_tmux set-window-option -t "$SC_TERMINAL_TMUX_SESSION:0" remain-on-exit on
+  sc_terminal_tmux set-window-option -t "$SC_TERMINAL_TMUX_SESSION:0" monitor-bell on
+  sc_terminal_tmux set-window-option -t "$SC_TERMINAL_TMUX_SESSION:0" history-limit 100000
+  sc_terminal_tmux rename-window -t "$SC_TERMINAL_TMUX_SESSION:0" "$SC_TERMINAL_NAME"
+  pane="$(sc_terminal_pane_facts 2>/dev/null || true)"
+  [[ -n "$pane" ]] || sc_die "retained terminal disappeared during startup" 70
+  sc_ok "retained terminal ready · $SC_TERMINAL_NAME · project $SC_PROJECT"
+  sc_terminal_lock_release
+  if (( SC_TERMINAL_DETACH )); then
+    sc_terminal_render_status "$(sc_terminal_binding_status_json "$SC_TERMINAL_BINDING")"
+    return
+  fi
+  sc_terminal_attach
+}
+
+sc_terminal_binding_status_json() {
+  local path="$1" name project tmux_session state=stopped pane="" pane_dead="" exit_code=null attached=0 pane_pid=null bell=false
+  name="$(jq -r .name "$path")"; project="$(jq -r .project "$path")"; tmux_session="$(jq -r .tmux_session "$path")"
+  SC_TERMINAL_NAME="$name"; SC_TERMINAL_TMUX_SESSION="$tmux_session"
+  if pane="$(sc_terminal_pane_facts 2>/dev/null)"; then
+    IFS='|' read -r pane_dead exit_code attached pane_pid bell <<<"$pane"
+    if [[ "$pane_dead" == 1 ]]; then state=exited; else state=running; exit_code=null; fi
+    [[ "$exit_code" =~ ^[0-9]+$ ]] || exit_code=null
+    [[ "$attached" =~ ^[0-9]+$ ]] || attached=0
+    [[ "$pane_pid" =~ ^[0-9]+$ ]] || pane_pid=null
+    [[ "$bell" == 1 ]] && bell=true || bell=false
+  fi
+  jq -cn --argjson binding "$(cat -- "$path")" --arg state "$state" --argjson exit_code "$exit_code" \
+    --argjson attached "$attached" --argjson pane_pid "$pane_pid" --argjson bell "$bell" '
+      {schema:"sandcodex.retained-terminal-status.v1",name:$binding.name,project:$binding.project,
+       state:$state,attached_clients:$attached,pane_pid:$pane_pid,pane_exit_code:$exit_code,
+       completion_bell_pending:$bell,session_id:$binding.session_id,
+       provider_family:$binding.provider_family,session_provider:$binding.session_provider,
+       session_model:$binding.session_model,launcher_sha256:$binding.launcher_sha256,
+       last_exit_code:$binding.last_exit_code,last_exit_at:$binding.last_exit_at,
+       resume_argv:$binding.resume_argv,
+       privacy:$binding.privacy}
+    '
+}
+
+sc_terminal_render_status() {
+  local value="$1" name state session
+  name="$(jq -r .name <<<"$value")"; state="$(jq -r .state <<<"$value")"; session="$(jq -r '.session_id // "not established"' <<<"$value")"
+  printf 'Sandcodex retained terminal\n'
+  printf '  name         %s\n' "$name"
+  printf '  state        %s · %s attached client(s)\n' "$state" "$(jq -r .attached_clients <<<"$value")"
+  printf '  project      %s\n' "$(jq -r .project <<<"$value")"
+  printf '  conversation %s\n' "$session"
+  printf '  provider     %s' "$(jq -r .provider_family <<<"$value")"
+  [[ "$(jq -r '.session_model // empty' <<<"$value")" == "" ]] || printf ' · %s' "$(jq -r .session_model <<<"$value")"
+  printf '\n'
+  printf '  alert        BEL%s\n' "$([[ "$(jq -r .completion_bell_pending <<<"$value")" == true ]] && printf ' pending' || printf ' ready')"
+  printf '\nnext\n'
+  case "$state" in
+    running|exited) printf '  %q terminal attach %q\n' "$SC_SCRIPT" "$name" ;;
+    stopped)
+      if [[ "$(jq -r '.resume_argv|length' <<<"$value")" != 0 ]]; then
+        printf '  %q terminal restart %q\n' "$SC_SCRIPT" "$name"
+      else
+        printf '  %q terminal start %q --RESUME=SESSION_UUID --project %q\n' "$SC_SCRIPT" "$name" "$(jq -r .project <<<"$value")"
+      fi
+      ;;
+  esac
+  printf '\nprivacy\n'
+  printf '  The binding stores no prompt, provider output, terminal scrollback, or credential value.\n'
+  printf '  tmux keeps in-memory scrollback while its private server lives; no capture file is written.\n'
+}
+
+sc_terminal_dispatch() {
+  sc_terminal_global_prepare
+  sc_terminal_paths
+  case "$SC_TERMINAL_ACTION" in
+    finalize)
+      [[ "${SANDCODEX_TERMINAL_RUNNER:-0}" == 1 && "${SANDCODEX_RETAINED_TERMINAL:-}" == "$SC_TERMINAL_NAME" ]] ||
+        sc_die "terminal finalize is private to a retained runner" 77
+      sc_terminal_state_prepare; sc_terminal_lock_acquire
+      [[ -f "$SC_TERMINAL_BINDING" && ! -L "$SC_TERMINAL_BINDING" ]] || sc_die "retained-terminal binding is missing" 66
+      sc_terminal_reconcile_binding "$SC_TERMINAL_BINDING" "$SC_TERMINAL_EXIT_CODE"
+      sc_terminal_lock_release
+      ;;
+    list)
+      if [[ ! -d "$SC_TERMINAL_ROOT" ]]; then
+        if (( SC_TERMINAL_JSON )); then printf '{"schema":"sandcodex.retained-terminal-list.v1","terminals":[]}\n';
+        else printf 'No retained Sandcodex terminals.\n'; fi
+        return
+      fi
+      sc_owned_dir "$SC_TERMINAL_ROOT" "retained-terminal registry"
+      local -a rows=(); local path value
+      shopt -s nullglob
+      for path in "$SC_TERMINAL_ROOT"/*.json; do
+        SC_TERMINAL_NAME="${path##*/}"; SC_TERMINAL_NAME="${SC_TERMINAL_NAME%.json}"
+        sc_terminal_validate_name "$SC_TERMINAL_NAME"; sc_terminal_paths
+        sc_terminal_binding_validate "$path" "$SC_TERMINAL_NAME"
+        rows+=("$(sc_terminal_binding_status_json "$path")")
+      done
+      shopt -u nullglob
+      if (( SC_TERMINAL_JSON )); then
+        printf '%s\n' "${rows[@]}" | jq -sc '{schema:"sandcodex.retained-terminal-list.v1",terminals:.}'
+      elif (( ${#rows[@]} == 0 )); then
+        printf 'No retained Sandcodex terminals.\n'
+      else
+        printf 'Sandcodex retained terminals\n'
+        for value in "${rows[@]}"; do
+          printf '  %s · %s · %s · session %s\n' "$(jq -r .name <<<"$value")" \
+            "$(jq -r .state <<<"$value")" "$(jq -r .project <<<"$value")" \
+            "$(jq -r '.session_id // "not established"' <<<"$value")"
+        done
+        printf '\nAttach: sandcodex terminal attach NAME\n'
+      fi
+      ;;
+    status|doctor|attach|stop|forget|restart)
+      case "$SC_TERMINAL_ACTION" in
+        stop|forget|restart) sc_terminal_state_prepare; sc_terminal_lock_acquire ;;
+      esac
+      [[ -f "$SC_TERMINAL_BINDING" && ! -L "$SC_TERMINAL_BINDING" ]] || sc_die "unknown retained terminal: $SC_TERMINAL_NAME" 66
+      sc_terminal_binding_validate "$SC_TERMINAL_BINDING" "$SC_TERMINAL_NAME"
+      local bound_project value rc=0 project_ok=true root_session_check=pending session_id
+      bound_project="$(jq -r .project "$SC_TERMINAL_BINDING")"
+      case "$SC_TERMINAL_ACTION" in
+        status)
+          value="$(sc_terminal_binding_status_json "$SC_TERMINAL_BINDING")"
+          if (( SC_TERMINAL_JSON )); then printf '%s\n' "$value"; else sc_terminal_render_status "$value"; fi
+          ;;
+        doctor)
+          value="$(sc_terminal_binding_status_json "$SC_TERMINAL_BINDING")"
+          if [[ ! -d "$bound_project" || -L "$bound_project" ]] ||
+            [[ "$(printf '%s\0' "$bound_project" | sha256sum | awk '{print $1}')" != "$(jq -r .project_key "$SC_TERMINAL_BINDING")" ]]; then
+            project_ok=false; rc=1
+          fi
+          session_id="$(jq -r '.session_id // empty' "$SC_TERMINAL_BINDING")"
+          if [[ -n "$session_id" && "$project_ok" == true ]]; then
+            SC_PROJECT_ARG="$bound_project"; sc_select_project
+            if sc_terminal_root_session_verify "$SC_TERMINAL_BINDING" "$session_id" >/dev/null 2>&1; then
+              root_session_check=true
+            else
+              root_session_check=false; rc=1
+            fi
+          elif [[ -n "$session_id" ]]; then
+            root_session_check=false; rc=1
+          elif [[ "$(jq -r .state <<<"$value")" == running ]]; then
+            # A fresh Codex root appears only after the frontend has written its
+            # session_meta record. The runner seals it on stop/exit; until then
+            # this is an honest pending fact, not a fabricated successful check.
+            root_session_check=pending
+          else
+            root_session_check=false; rc=1
+          fi
+          if (( SC_TERMINAL_JSON )); then
+            jq -cn --argjson status "$value" --argjson healthy "$([[ $rc == 0 ]] && printf true || printf false)" \
+              --argjson project_ok "$project_ok" --arg root_session "$root_session_check" \
+              '{schema:"sandcodex.retained-terminal-doctor.v1",healthy:$healthy,status:$status,
+                checks:{binding:true,project_identity:$project_ok,
+                  root_session:(if $root_session=="true" then true elif $root_session=="false" then false else "pending" end),
+                  credential_values_disclosed:false,terminal_output_disclosed:false}}'
+          elif (( rc == 0 )); then
+            sc_ok "retained terminal is coherent · $SC_TERMINAL_NAME · $(jq -r .state <<<"$value")"
+            sc_terminal_render_status "$value"
+          else
+            sc_err "retained terminal failed project/root-session verification: $SC_TERMINAL_NAME"
+          fi
+          return "$rc"
+          ;;
+        attach) sc_terminal_attach ;;
+        stop)
+          if sc_terminal_live; then
+            sc_terminal_reconcile_binding "$SC_TERMINAL_BINDING"
+            sc_terminal_tmux kill-session -t "$SC_TERMINAL_TMUX_SESSION"
+            sc_ok "stopped retained terminal · $SC_TERMINAL_NAME · durable conversation preserved"
+          else
+            sc_note "retained terminal is already stopped · $SC_TERMINAL_NAME"
+          fi
+          sc_terminal_lock_release
+          ;;
+        forget)
+          sc_terminal_live && sc_die "retained terminal is live; stop it before forgetting the binding" 73
+          rm -f -- "$SC_TERMINAL_BINDING" "$SC_TERMINAL_ROOT/runners/$SC_TERMINAL_TMUX_SESSION"
+          sc_ok "forgot retained-terminal metadata · conversation and project state unchanged"
+          sc_terminal_lock_release
+          ;;
+        restart)
+          if sc_terminal_running; then
+            sc_die "retained terminal is already running" 73
+          elif sc_terminal_live; then
+            sc_terminal_tmux kill-session -t "$SC_TERMINAL_TMUX_SESSION"
+          fi
+          mapfile -t SC_TERMINAL_LAUNCH_ARGS < <(jq -r '.resume_argv[]' "$SC_TERMINAL_BINDING")
+          (( ${#SC_TERMINAL_LAUNCH_ARGS[@]} )) || sc_die "retained terminal has no established root conversation; use terminal start with an exact --RESUME=SESSION_UUID" 66
+          sc_terminal_lock_release
+          local -a restart_argv=(terminal start "$SC_TERMINAL_NAME")
+          (( ! SC_TERMINAL_DETACH )) || restart_argv+=(--detach)
+          restart_argv+=("${SC_TERMINAL_LAUNCH_ARGS[@]}")
+          exec env -u SANDCODEX_NIX_READY PATH="$SC_HOST_PATH" HOME="$SC_REAL_HOME" \
+            SANDCODEX_REAL_HOME="$SC_REAL_HOME" SANDCODEX_GLOBAL_ROOT="$SC_GLOBAL" \
+            "$SC_SCRIPT" "${restart_argv[@]}"
+          ;;
+      esac
+      ;;
+    *) sc_die "internal retained-terminal action is invalid: $SC_TERMINAL_ACTION" 70 ;;
+  esac
+}
+
 sc_main() {
   [[ -z "${SANDCODEX_LOCAL_OLLAMA_BIN:-}" && -z "${SANDCODEX_LOCAL_NIXPKGS_REV:-}" ]] ||     SC_LOCAL_RUNTIME_USER_OVERRIDE=1
   SC_SCRIPT="$(sc_script_path)"
@@ -124955,6 +126302,11 @@ sc_main() {
     sc_select_project
   fi
   sc_bootstrap "$@"; sc_runtime_tools
+  if [[ "$SC_COMMAND" == terminal ]]; then
+    SC_OPERATION="terminal-$SC_TERMINAL_ACTION"
+    sc_terminal_dispatch
+    return
+  fi
   if [[ "$SC_COMMAND" == sessions ]]; then
     SC_OPERATION=sessions
     sc_codex_sessions_dispatch
@@ -125052,6 +126404,16 @@ sc_main() {
     return
   fi
   sc_select_project
+  if [[ -n "$SC_TERMINAL_ACTION" ]]; then
+    SC_OPERATION="terminal-$SC_TERMINAL_ACTION"
+    # The presentation parent must not allocate an invocation runtime or active
+    # run marker: it execs the tmux client, while the launcher inside the pane
+    # owns the real Sandcodex lifecycle and performs full global initialization.
+    sc_terminal_global_prepare
+    sc_terminal_paths
+    sc_terminal_start
+    return
+  fi
   if [[ "$SC_COMMAND" == local-retire ]]; then
     SC_OPERATION=local-retire
     sc_global_state
@@ -132056,8 +133418,8 @@ sc_gemini_adapter_stop() {
 
 sc_gemini_runtime_prepare() {
   [[ -z "$SC_GEMINI_RUNTIME_ROOT" ]] || return 0
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
-  SC_GEMINI_RUNTIME_ROOT=$(mktemp -d "$SC_GLOBAL/runtime/.gemini-adapter.XXXXXXXXXXXX")
+  sc_runtime_root_prepare
+  SC_GEMINI_RUNTIME_ROOT=$(mktemp -d "$SC_RUNTIME_TEMP_ROOT/gemini-adapter.XXXXXXXXXXXX")
   chmod 700 -- "$SC_GEMINI_RUNTIME_ROOT"
 }
 
@@ -132602,7 +133964,7 @@ sc_gemini_adapter_qualify() {
     sc_note "gemini · cached adapter multimodal/schema/tool/state qualification reused · no probe request"
   else
     SC_GEMINI_QUALIFICATION_REUSED=0
-    tmp="$(mktemp -d "$SC_GLOBAL/runtime/.gemini-adapter-qualify.XXXXXX")"
+    tmp="$(mktemp -d "$SC_RUNTIME_TEMP_ROOT/gemini-adapter-qualify.XXXXXX")"
     chmod 700 -- "$tmp"
     token="$(<"$SC_GEMINI_ADAPTER_TOKEN_FILE")"
     health_response="$tmp/health.json"
@@ -132969,7 +134331,7 @@ PY
 
 sc_gemini_keybank_stage() {
   local path single_path source stage metadata rc=0
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
+  sc_runtime_root_prepare
   if [[ -n "$SC_GEMINI_KEY_PATH" ]]; then
     single_path="$(sc_gemini_key_path)"
     [[ -f "$single_path" ]] || sc_die "Gemini API key file is missing: $single_path" 78
@@ -132989,7 +134351,7 @@ sc_gemini_keybank_stage() {
   fi
   sc_no_symlink_components "$path" "Gemini key material"
   sc_owned_single_file "$path" 600 "Gemini key material"
-  stage="$(mktemp -d "$SC_GLOBAL/runtime/.gemini-keybank.XXXXXX")"
+  stage="$(mktemp -d "$SC_RUNTIME_TEMP_ROOT/gemini-keybank.XXXXXX")"
   chmod 700 -- "$stage"
   metadata="$(python3 -P - "$path" "$stage" "$source" <<'PY'
 import hashlib
@@ -133078,7 +134440,7 @@ sc_gemini_keybank_unstage() {
   local staged=$1 stage
   stage="$(jq -r '.stage // empty' <<<"$staged" 2>/dev/null || true)"
   case "$stage" in
-    "$SC_GLOBAL"/runtime/.gemini-keybank.*)
+    "$SC_RUNTIME_TEMP_ROOT"/gemini-keybank.*)
       find "$stage" -maxdepth 1 -type f -name 'key-[0-9][0-9][0-9]' -exec rm -f -- {} + 2>/dev/null || true
       rmdir -- "$stage" 2>/dev/null || true
       ;;
@@ -133915,7 +135277,7 @@ sc_gemini_models_dispatch() {
   key_id="$(jq -r '.key_id' <<<"$row")"
   key_label="$(jq -r '.label' <<<"$row")"
   key="$(sc_gemini_read_key_file "$key_file")"
-  tmp="$(mktemp -d "$SC_GLOBAL/runtime/.gemini.XXXXXX")"
+  tmp="$(mktemp -d "$SC_RUNTIME_TEMP_ROOT/gemini.XXXXXX")"
   chmod 700 -- "$tmp"
   response="$tmp/models.json"
   code="$(sc_gemini_http GET "$SC_GEMINI_API_BASE/models" "" "$response" "$key" "$tmp")" || rc=$?
@@ -133993,7 +135355,7 @@ sc_gemini_probe_generate_content() {
   local key=$1 key_source=$2 key_id=$3 key_label=$4 model_slug=$5 tmp body response code result rc=0
   local model
   model="$(sc_gemini_model_resource "$model_slug")"
-  tmp="$(mktemp -d "$SC_GLOBAL/runtime/.gemini.XXXXXX")"
+  tmp="$(mktemp -d "$SC_RUNTIME_TEMP_ROOT/gemini.XXXXXX")"
   chmod 700 -- "$tmp"
   body="$tmp/probe.json"
   response="$tmp/probe-response.json"
@@ -134662,8 +136024,8 @@ sc_gemini_session_dispatch() {
       sc_gemini_sessions_render "$result"
       ;;
     handoff)
-      sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
-      packet="$(mktemp "$SC_GLOBAL/runtime/.gemini-handoff.XXXXXXXXXXXX")"
+      sc_runtime_root_prepare
+      packet="$(mktemp "$SC_RUNTIME_TEMP_ROOT/gemini-handoff.XXXXXXXXXXXX")"
       chmod 600 -- "$packet"
       result="$(sc_gemini_session_recovery_json "$packet")" || {
         rc=$?; rm -f -- "$packet"; return "$rc"
@@ -134899,8 +136261,8 @@ sc_remote_keybank_stage() {
   [[ -f "$path" ]] || sc_die "OpenRouter key bank is missing: $path" 78
   sc_no_symlink_components "$path" "OpenRouter key bank"
   sc_owned_single_file "$path" 600 "OpenRouter key bank"
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
-  stage="$(mktemp -d "$SC_GLOBAL/runtime/.openrouter-keybank.XXXXXX")"
+  sc_runtime_root_prepare
+  stage="$(mktemp -d "$SC_RUNTIME_TEMP_ROOT/openrouter-keybank.XXXXXX")"
   chmod 700 -- "$stage"
   metadata="$(python3 -P - "$path" "$stage" <<'PY'
 import hashlib
@@ -134982,7 +136344,7 @@ sc_remote_keybank_unstage() {
   local staged=$1 stage
   stage="$(jq -r '.stage // empty' <<<"$staged" 2>/dev/null || true)"
   case "$stage" in
-    "$SC_GLOBAL"/runtime/.openrouter-keybank.*)
+    "$SC_RUNTIME_TEMP_ROOT"/openrouter-keybank.*)
       find "$stage" -maxdepth 1 -type f -name 'key-[0-9][0-9][0-9]' -exec rm -f -- {} + 2>/dev/null || true
       rmdir -- "$stage" 2>/dev/null || true
       ;;
@@ -135767,7 +137129,7 @@ sc_remote_models_render() {
 
 sc_remote_models_qualify() {
   local bank=$1 credential token_file snapshot_file descriptor cache_root result_file result rc
-  local total index model detail status receipt_json qualified failed summary_path summary_json request_count
+  local total index model detail status receipt_json qualified failed summary_path summary_json request_count error_file
   local use_keybank=0 staged="" quota="" key_rows="" key_id key_file key_label _key_remaining selected_key_id selected_key_label force_json=false
   local -a force_args=()
   if (( SC_REMOTE_MODELS_QUALIFY_FORCE )); then
@@ -135778,9 +137140,10 @@ sc_remote_models_qualify() {
     sc_die "refusing to qualify non-free OpenRouter model candidates from this command" 64
   sc_ensure_dir "$SC_GLOBAL/remote" "remote provider state"
   sc_ensure_dir "$SC_GLOBAL/remote/qualifications" "remote qualification cache"
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
-  snapshot_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-bank-snapshot.XXXXXX")"
-  result_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-bank-results.XXXXXX")"
+  sc_runtime_root_prepare
+  snapshot_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-bank-snapshot.XXXXXX")"
+  result_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-bank-results.XXXXXX")"
+  error_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-bank-error.XXXXXX")"
   jq -n '{name:"openrouter",base_url:"https://openrouter.ai/api/v1",env_key:"OPENROUTER_API_KEY",wire_api:"responses"}' |
     sc_atomic "$snapshot_file" 600
   descriptor="$(python3 -P - "$snapshot_file" <<'PY'
@@ -135806,7 +137169,7 @@ PY
       sc_die "OPENROUTER_API_KEY is required for live OpenRouter model-bank qualification (or use --key-bank)" 78
     [[ "$credential" != *$'\n'* && "$credential" != *$'\r'* ]] ||
       sc_die "OPENROUTER_API_KEY contains a line break" 78
-    token_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-bank-token.XXXXXX")"
+    token_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-bank-token.XXXXXX")"
     printf '%s' "$credential" | sc_atomic "$token_file" 600
     key_rows=$'env\t'"$token_file"$'\tOPENROUTER_API_KEY\t999999'
   fi
@@ -135826,7 +137189,7 @@ PY
           --snapshot "$snapshot_file" --credential-file "$key_file" \
           --model "$model" --descriptor-sha256 "$descriptor" --root "$cache_root" \
           --timeout "$SC_REMOTE_QUALIFICATION_TIMEOUT" \
-          --timestamp "$(sc_now)" "${force_args[@]}" 2>"$SC_GLOBAL/runtime/.openrouter-bank-error.$$"
+          --timestamp "$(sc_now)" "${force_args[@]}" 2>"$error_file"
       )" || rc=$?
       if (( rc == 0 )) && sc_remote_qualification_result_valid "$descriptor" "$model" <<<"$result"; then
         status=qualified
@@ -135844,7 +137207,7 @@ PY
         fi
         break
       fi
-      detail="$(sed -n '1{s/[^[:print:]\t]/?/g;p;}' "$SC_GLOBAL/runtime/.openrouter-bank-error.$$" 2>/dev/null | cut -c1-1000)"
+      detail="$(sed -n '1{s/[^[:print:]\t]/?/g;p;}' "$error_file" 2>/dev/null | cut -c1-1000)"
       selected_key_id=$key_id
       selected_key_label=$key_label
       if [[ "$detail" != *"HTTP 429"* && "$detail" != *"HTTP 402"* && "$detail" != *"unavailable for qualification"* ]]; then
@@ -135861,7 +137224,7 @@ PY
       '{model:$model,result:$result,key_id:(if $key_id=="" then null else $key_id end),
         key_label:(if $key_label=="" then null else $key_label end),
         detail:(if $detail=="" then null else $detail end),qualification:$qualification}' >>"$result_file"
-    rm -f -- "$SC_GLOBAL/runtime/.openrouter-bank-error.$$"
+    : >"$error_file"
     if (( index < total )) && [[ "$SC_REMOTE_MODELS_SLEEP" != 0 ]]; then
       sleep "$SC_REMOTE_MODELS_SLEEP"
     fi
@@ -135884,7 +137247,7 @@ PY
        probes:"sequential existing Sandcodex remote Responses qualifier",
        bank:$bank, results:$results}' </dev/null)"
   printf '%s\n' "$summary_json" | sc_atomic "$summary_path" 600
-  rm -f -- "${token_file:-}" "$snapshot_file" "$result_file"
+  rm -f -- "${token_file:-}" "$snapshot_file" "$result_file" "$error_file"
   if (( use_keybank )); then
     sc_remote_keybank_unstage "$staged"
   fi
@@ -135931,7 +137294,7 @@ sc_remote_auto_select_launch() {
     sc_die "remote auto cannot run with an existing remote credential bootstrap bridge" 78
   sc_ensure_dir "$SC_GLOBAL/remote" "remote provider state"
   sc_ensure_dir "$SC_GLOBAL/remote/qualifications" "remote qualification cache"
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
+  sc_runtime_root_prepare
   sc_ensure_dir "$SC_CONTROL" "project control state"
 
   staged="$(sc_remote_keybank_stage)"
@@ -135969,9 +137332,9 @@ sc_remote_auto_select_launch() {
     sc_die "OpenRouter free tool-capable model bank is empty after profile/cooldown filtering" 69
   }
 
-  snapshot_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-auto-snapshot.XXXXXX")"
-  results_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-auto-results.XXXXXX")"
-  error_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-auto-error.XXXXXX")"
+  snapshot_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-auto-snapshot.XXXXXX")"
+  results_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-auto-results.XXXXXX")"
+  error_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-auto-error.XXXXXX")"
   jq -n '{name:"openrouter",base_url:"https://openrouter.ai/api/v1",env_key:"OPENROUTER_API_KEY",wire_api:"responses"}' |
     sc_atomic "$snapshot_file" 600
   descriptor="$(python3 -P - "$snapshot_file" <<'PY'
@@ -136069,7 +137432,7 @@ PY
 
   while IFS=$'\t' read -r key_id key_file key_label _key_remaining; do
     if [[ "$key_id" == "$selected_key_id" ]]; then
-      bootstrap="$(mktemp "$SC_GLOBAL/runtime/.openrouter-auto-token.XXXXXX")"
+      bootstrap="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-auto-token.XXXXXX")"
       cat -- "$key_file" | sc_atomic "$bootstrap" 600
       break
     fi
@@ -137728,9 +139091,9 @@ sc_remote_bench_dispatch() {
     sc_die "refusing to bench non-free OpenRouter model candidates from this command" 64
   sc_ensure_dir "$SC_GLOBAL/remote" "remote provider state"
   sc_ensure_dir "$SC_GLOBAL/remote/bench" "remote bench cache"
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
-  bank_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-bench-bank.XXXXXX")"
-  key_rows_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-bench-keys.XXXXXX")"
+  sc_runtime_root_prepare
+  bank_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-bench-bank.XXXXXX")"
+  key_rows_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-bench-keys.XXXXXX")"
   printf '%s\n' "$bank" | sc_atomic "$bank_file" 600
   if [[ -n "$SC_REMOTE_KEYBANK_PATH" || ( -z "${OPENROUTER_API_KEY:-}" && -f "$(sc_remote_keybank_default_path)" ) ]]; then
     use_keybank=1
@@ -137749,7 +139112,7 @@ sc_remote_bench_dispatch() {
       sc_die "OPENROUTER_API_KEY is required for OpenRouter bench (or use --key-bank)" 78
     [[ "$credential" != *$'\n'* && "$credential" != *$'\r'* ]] ||
       sc_die "OPENROUTER_API_KEY contains a line break" 78
-    token_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-bench-token.XXXXXX")"
+    token_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-bench-token.XXXXXX")"
     printf '%s' "$credential" | sc_atomic "$token_file" 600
     printf 'env\t%s\tOPENROUTER_API_KEY\t999999\n' "$token_file" | sc_atomic "$key_rows_file" 600
   fi
@@ -137782,7 +139145,8 @@ sc_remote_quota_dispatch() {
     sc_die "OPENROUTER_API_KEY is required for OpenRouter quota inspection" 78
   [[ "$credential" != *$'\n'* && "$credential" != *$'\r'* ]] ||
     sc_die "OPENROUTER_API_KEY contains a line break" 78
-  token_file="$(mktemp "$SC_GLOBAL/runtime/.openrouter-quota-token.XXXXXX")"
+  sc_runtime_root_prepare
+  token_file="$(mktemp "$SC_RUNTIME_TEMP_ROOT/openrouter-quota-token.XXXXXX")"
   printf '%s' "$credential" | sc_atomic "$token_file" 600
   raw="$(python3 -P - "$token_file" <<'PY'
 import sys
@@ -138681,10 +140045,10 @@ sc_remote_auto_task_dispatch() {
   sc_loop_normalize_turns
   sc_loop_load_prompt
   sc_loop_validate_policy
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
+  sc_runtime_root_prepare
   local prompt model rc=0
   local -a loop_cmd resume_cmd
-  prompt="$(mktemp "$SC_GLOBAL/runtime/.remote-auto-task-prompt.XXXXXX")"
+  prompt="$(mktemp "$SC_RUNTIME_TEMP_ROOT/remote-auto-task-prompt.XXXXXX")"
   printf '%s' "$SC_LOOP_PROMPT" | sc_atomic "$prompt" 600
 
   loop_cmd=(env "SANDCODEX_GLOBAL_ROOT=$SC_GLOBAL"
@@ -138735,11 +140099,11 @@ sc_gemini_auto_task_dispatch() {
   sc_loop_normalize_turns
   sc_loop_load_prompt
   sc_loop_validate_policy
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
+  sc_runtime_root_prepare
   sc_note "gemini auto task · preparing a fresh bound first turn"
   local prompt rc=0
   local -a loop_cmd resume_cmd
-  prompt="$(mktemp "$SC_GLOBAL/runtime/.gemini-auto-task-prompt.XXXXXX")"
+  prompt="$(mktemp "$SC_RUNTIME_TEMP_ROOT/gemini-auto-task-prompt.XXXXXX")"
   printf '%s' "$SC_LOOP_PROMPT" | sc_atomic "$prompt" 600
 
   loop_cmd=(env "SANDCODEX_GLOBAL_ROOT=$SC_GLOBAL"
@@ -139167,10 +140531,10 @@ sc_remote_router_snapshot_is_router() {
 
 sc_remote_router_install_current() {
   local generated store
-  sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
+  sc_runtime_root_prepare
   sc_ensure_dir "$SC_CONTROL/openrouter-routers" "project OpenRouter router store"
   [[ -n "$SC_REMOTE_ROUTER_RUNTIME_ROOT" ]] || {
-    SC_REMOTE_ROUTER_RUNTIME_ROOT=$(mktemp -d "$SC_GLOBAL/runtime/.openrouter-router.XXXXXXXXXXXX")
+    SC_REMOTE_ROUTER_RUNTIME_ROOT=$(mktemp -d "$SC_RUNTIME_TEMP_ROOT/openrouter-router.XXXXXXXXXXXX")
     chmod 700 -- "$SC_REMOTE_ROUTER_RUNTIME_ROOT"
   }
   generated="$SC_REMOTE_ROUTER_RUNTIME_ROOT/openrouter-responses-router.py"
@@ -139308,8 +140672,8 @@ sc_remote_router_start() {
      -n "$SC_REMOTE_ROUTER_MODEL_BANK" && "$SC_REMOTE_ROUTER_PREFERRED_KEY_ID" =~ ^[0-9a-f]{12}$ ]] ||
     sc_die "OpenRouter router inputs are incomplete" 78
   [[ -n "$SC_REMOTE_ROUTER_RUNTIME_ROOT" ]] || {
-    sc_ensure_dir "$SC_GLOBAL/runtime" "runtime state"
-    SC_REMOTE_ROUTER_RUNTIME_ROOT=$(mktemp -d "$SC_GLOBAL/runtime/.openrouter-router.XXXXXXXXXXXX")
+    sc_runtime_root_prepare
+    SC_REMOTE_ROUTER_RUNTIME_ROOT=$(mktemp -d "$SC_RUNTIME_TEMP_ROOT/openrouter-router.XXXXXXXXXXXX")
     chmod 700 -- "$SC_REMOTE_ROUTER_RUNTIME_ROOT"
   }
   SC_REMOTE_ROUTER_TOKEN_FILE="$SC_CONTROL/codex-home/remote-api-token"
