@@ -8,7 +8,7 @@ Both are maintained software. Foundation supplies a reusable starting point that
 
 ## When a passing change still leaves a question
 
-The [current source-carried account](../Maintained%20Tools/m16-configuration.nix#L514-L523) describes a revealing problem. A preceding accepted generation still retained a Kodi runtime receipt associated with an older guardian process. The candidate at this boundary, Stage121, therefore aims to bind the running guardian and its receipts to the current immutable program and process, then obtain evidence from an actual cross-output window transition.
+The [current source-carried account](source/Monsternix-m16.md#stage121-source-carried-account) describes a revealing problem. A preceding accepted generation still retained a Kodi runtime receipt associated with an older guardian process. The candidate at this boundary, Stage121, therefore aims to bind the running guardian and its receipts to the current immutable program and process, then obtain evidence from an actual cross-output window transition.
 
 The important distinction is between accepting a system generation, running the intended helper and observing the visible behavior that matters. Those are related findings, not synonyms. This account makes the reason for exact identities and bounded observations intelligible: they help determine which change is actually being observed.
 
@@ -16,11 +16,11 @@ The account is retained source history and a candidate objective, not a fresh ob
 
 ## Continuity is an obligation to users
 
-The same [office account](../Maintained%20Tools/m16-configuration.nix#L1099-L1110) keeps a different service's availability as a hard constraint while the Kodi work proceeds. A cleaner private deployment is deferred until a parallel replacement can establish continuity before a handoff.
+The same [office account](source/Monsternix-m16.md#office-account-and-continuity-obligation) keeps a different service's availability as a hard constraint while the Kodi work proceeds. A cleaner private deployment is deferred until a parallel replacement can establish continuity before a handoff.
 
 This gives the architecture a practical ordering. Completing a more elegant isolation design is not automatically more important than keeping a working family service available. A repair should be bounded to the subsystem that needs it; inherited instructions about one task do not authorize unrelated cleanup.
 
-The [machine constitution](../Maintained%20Tools/m16-configuration.nix#L530-L551) likewise carries distinctions among backup roles, retained recovery windows, source acceptance and permitted disruption. Its value is not that every local decision should become a Foundation default. It shows the kinds of constraints that a successor must understand before simplifying the machine.
+The [machine constitution](source/Monsternix-m16.md#machine-constitution) likewise carries distinctions among backup roles, retained recovery windows, source acceptance and permitted disruption. Its value is not that every local decision should become a Foundation default. It shows the kinds of constraints that a successor must understand before simplifying the machine.
 
 ## What should travel to Foundation?
 
