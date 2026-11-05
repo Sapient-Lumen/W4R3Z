@@ -1,6 +1,6 @@
 # DeriveBSD archival evidence map
 
-This map distinguishes source observations from carried engineering claims. Paths resolve within the proposed preserved layout. Line ranges describe the reviewed supplied files; SHA-256 values pin those bytes. Original ZIP identities are in [ARCHIVE-MANIFEST.json](ARCHIVE-MANIFEST.json).
+This map distinguishes source observations from carried engineering claims. Paths resolve within the proposed preserved layout. Line ranges describe the reviewed supplied files; SHA-256 values pin those bytes. Original ZIP identities are in [archive index](ARCHIVE-INDEX.md) ([download complete manifest](https://raw.githubusercontent.com/Sapient-Lumen/W4R3Z/d81138131e079e14916a7ac8723adfbc84ad896b/OG%20510P/DeriveBSD/ARCHIVE-MANIFEST.json)).
 
 ## Shared project framing
 

@@ -71,6 +71,6 @@ Each version keeps its unchanged original ZIP and its own extracted directory tr
 
 Existing provenance, source snapshots, copyright notices, and license texts remain with their respective versions. The baseline README identifies LGPLv3 for the derived codec and a retained libsais license; readers should consult the carried notices. See the [current owner declaration](../../LEGAL-NOTICE.txt).
 
-The bundled [Shakespeare electronic text](versions/rev0034/contents/bzip4-rev0034/upstream/bzip3-1.5.3-53984ef/examples/shakespeare.txt) carries a separate World Library / Project Gutenberg notice with personal, noncommercial distribution and no-charged-access conditions. Its notice is retained verbatim. Do not assume that this fixture shares the codec’s LGPL terms; consult the carried notice before reuse.
+The bundled Shakespeare electronic text carries its own World Library / Project Gutenberg notice. [Read the notice and conditions](FIXTURE-NOTICE.md) before reuse, or [download the unchanged fixture](https://raw.githubusercontent.com/Sapient-Lumen/W4R3Z/d81138131e079e14916a7ac8723adfbc84ad896b/OG%20510P/bzip4/versions/rev0034/contents/bzip4-rev0034/upstream/bzip3-1.5.3-53984ef/examples/shakespeare.txt). The carried terms concern personal, noncommercial distribution, no charged access, exact-copy and notice-retention conditions, and refund/replacement provisions. They are separate from the codec’s LGPL terms.
 
 [Back to the OG 510P shelf](../README.md)

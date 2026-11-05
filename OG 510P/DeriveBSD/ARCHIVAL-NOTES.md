@@ -24,4 +24,4 @@ No filename beginning with `LICENSE`, `COPYING` or `NOTICE` was found, and a bou
 
 The [current owner declaration](../../LEGAL-NOTICE.txt) is recorded separately from the historical snapshots. Preserve any existing attribution and notices; consult the relevant rights holder before relying on reuse permissions that are not expressly documented.
 
-See [the source map](ARCHIVAL-EVIDENCE.md) and [archive manifest](ARCHIVE-MANIFEST.json).
+See [the source map](ARCHIVAL-EVIDENCE.md) and [archive index](ARCHIVE-INDEX.md) ([download complete manifest](https://raw.githubusercontent.com/Sapient-Lumen/W4R3Z/d81138131e079e14916a7ac8723adfbc84ad896b/OG%20510P/DeriveBSD/ARCHIVE-MANIFEST.json)).

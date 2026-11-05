@@ -98,7 +98,7 @@ The distinctions are especially important for `rev0251` → `r254`, `rev0501-nex
 
 Each `versions/<label>/` directory contains a later editorial README, the unchanged original ZIP with its original filename, and a `contents/` tree that retains every original file-member path. The original wrapper directories in rev0251 and rev0307 remain visible inside `contents/`.
 
-The selection contains **18,040 extracted files**. Original ZIP hashes, sizes, file counts and path mappings are listed in [ARCHIVE-MANIFEST.json](ARCHIVE-MANIFEST.json). Byte verification establishes that the preserved copies match the supplied archives; it does not authenticate the authorship, dates, correctness or engineering claims of those archives.
+The selection contains **18,040 extracted files**. Original ZIP hashes, sizes and file counts are summarized in [archive index](ARCHIVE-INDEX.md). Complete member path mappings are retained in the [downloadable manifest](https://raw.githubusercontent.com/Sapient-Lumen/W4R3Z/d81138131e079e14916a7ac8723adfbc84ad896b/OG%20510P/DeriveBSD/ARCHIVE-MANIFEST.json). Byte verification establishes that the preserved copies match the supplied archives; it does not authenticate the authorship, dates, correctness or engineering claims of those archives.
 
 ### Reading this as an archive
 

@@ -12,7 +12,7 @@ Original upload bytes and extracted member bytes are retained. ZIP member CRCs w
 
 Internal inventory review: No mismatch was found in the limited inventory formats checked; this is not a claim that every internal manifest was validated.
 
-- [Extracted-member inventory](INVENTORY.json)
+- [Inventory reading guide](INVENTORY-GUIDE.md) · [Download complete member inventory](https://raw.githubusercontent.com/Sapient-Lumen/W4R3Z/d81138131e079e14916a7ac8723adfbc84ad896b/OG%20510P/AnonSync/versions/rev1020/INVENTORY.json)
 - [Review scope](INTEGRITY.json)
 - [Original AnonSync-rev1020-2026.08.07.08.13-contentindex-streamingcatalog-boundedrename-variscite-multipart.z01](../../originals/AnonSync-rev1020-2026.08.07.08.13-contentindex-streamingcatalog-boundedrename-variscite-multipart.z01)
 - [Original AnonSync-rev1020-2026.08.07.08.13-contentindex-streamingcatalog-boundedrename-variscite-multipart.z02](../../originals/AnonSync-rev1020-2026.08.07.08.13-contentindex-streamingcatalog-boundedrename-variscite-multipart.z02)

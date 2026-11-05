@@ -33,6 +33,6 @@ This is conditional adapter behavior, not a requirement for scheduled polling or
 
 This curation used static inspection and byte-integrity checks. It did not execute uploaded programs, checkers, bytecode, shell scripts or historical work orders. “Passed,” “validated,” and similar wording inside the source remains a carried project claim unless separately identified as a fresh curatorial check.
 
-The recovered archival notes record that no repository-wide license grant was identified in a bounded earlier review. Public visibility does not establish reuse rights or full privacy clearance; see [archival notes](../../ARCHIVAL-NOTES.md) and the [preservation manifest](../../ARCHIVE-MANIFEST.json).
+The recovered archival notes record that no repository-wide license grant was identified in a bounded earlier review. Public visibility does not establish reuse rights or full privacy clearance; see [archival notes](../../ARCHIVAL-NOTES.md) and the [archive index](../../ARCHIVE-INDEX.md) ([download complete manifest](https://raw.githubusercontent.com/Sapient-Lumen/W4R3Z/d81138131e079e14916a7ac8723adfbc84ad896b/OG%20510P/DeriveBSD/ARCHIVE-MANIFEST.json)).
 
 [Back to selected DeriveBSD history](../../README.md)
