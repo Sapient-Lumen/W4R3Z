@@ -50,6 +50,9 @@ These are judgments about form, distinctness and the needs of a collection, not 
 
 ## Retelling and invention remain separate
 
+The [early selection notes](versions/snapshot-1771735262/files/Scratchpad.txt) identify the grain-bearing brothers as a Jerusalem legend, the circulating grapes as a Desert Fathers story of Macarius, and *The Rabbi's Gift* as Francis Dorff's story, popularized by M. Scott Peck. These are the archive's recorded attributions; reading the notes beside the retellings helps distinguish inherited material from the collection's own scenes and interpretation.
+
+
 [AI-Parables.txt](versions/rev0515/files/AI-Parables.txt) is explicitly labeled original. In its opening *The Bowl That Came Back Empty*, a baker initially takes a missing bowl as a sign that his kindness is unappreciated, then learns to recognize effort and neighborliness that cannot be measured by the weight of the gift. The invented scene shares the collected shelf's interest in objects, mistaken judgment and changed attention. It does not borrow the evidential authority of a reported human life.
 
 Keeping the two shelves distinct makes both more legible. A sourced retelling can be compared with its recorded source; an original can be judged for the world and moral possibility it invents. Neither needs to masquerade as the other. The source notes preserve the route back to attribution, while the texts preserve the collection's own cadence, compression and interpretation.

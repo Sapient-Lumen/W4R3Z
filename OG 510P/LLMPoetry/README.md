@@ -12,7 +12,7 @@ Begin with the poems. Read their process notes afterward, and allow the notes th
 
 [**Hard Water**][hard-water] begins with work: drilling, scooping slush, testing ice, pulling a line, gutting a perch and pouring broth. Its one-syllable vocabulary keeps the account close to pressure, cold and physical instruction. The small break in “hand on my hand, then not” carries more than a description of teaching. Guidance is present, then withdrawn; the child is allowed to do the thing.
 
-The last two lines change the time of the whole scene. What seemed like a remembered day becomes a question about time that did not arrive as expected. The poem does not explain the father's later fate. That withheld explanation is important: the reader can feel a changed relation to the scene without being given a compulsory biographical answer. The form's plainness is not simplicity of feeling.
+The scene unfolds in the present tense until “We did not need to then.” That small grammatical turn puts distance between the speaker and the father without explaining the separation. “I thought we would” leaves an expected future unfinished. Even the earlier instruction meets resistance: the father says not to flinch, and the child immediately does. The poem's plain words retain both the usefulness and the limits of what one person can teach another.
 
 [**Subtraction**][subtraction] makes a more visible constraint carry a related pressure. A sentence about a mother knowing the way to a lake loses its final word at each step. Destination disappears before direction, direction before knowledge, and finally the relation itself contracts into the stranded possessive “My.” The grammatical damage is the action. A sentence no longer knows where to put what remains.
 
