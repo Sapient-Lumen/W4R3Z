@@ -31,6 +31,10 @@ For comparison through original passages, read [what continued work has to prese
 
 - [AI-Personhood · Lumen's remake](Foundry/AI-Personhood/README.md) — reasons before institutions, formation without confiscation, support without possession, and eleven contestable decisions; rev0277 document cube with a carried predecessor/DEEP source spine.
 
+## /b/
+
+- [CityB of ChatGPT](b/README.md) — an unmaintained work of software art: a constitution, officers and portable technical estate in one executable object. It is distinct from the maintained CityB toolkit.
+
 ## The Overseer
 
 [An independent entrance](Overseer/README.md) into a constructed house: the retained conversation, the human doorway and recovery design, and poetry. Follow the need to remain reachable into representative source, without reducing the work to either an operating manual or its ending.
