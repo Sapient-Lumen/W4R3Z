@@ -52,6 +52,18 @@ Rev0156's concrete changes address how that experiment can be attempted in a con
 
 The [revision's mission audit](versions/rev0156/files/CloudtainerML-rev0156-2026.07.08.11.36-dryrunwheelhousecacheguard-heron/MISSION-AUDIT-REV0156.md) still records the missing complete verified snapshot and capture runtime on its construction host. This is an unfinished empirical step, not a new quality or speed result. The surrounding tooling matters insofar as it helps someone obtain the evidence that can change the research.
 
+## Exact ranking is not an output guarantee
+
+Between the early simulators and the public-model capture path, the archive carries a useful intermediate experiment: a [small trained transformer](versions/rev0156/files/CloudtainerML-rev0156-2026.07.08.11.36-dryrunwheelhousecacheguard-heron/experiments/tiny_transformer_attention_traces/tiny_transformer_attention_trace_probe.py). It learns a 64-token needle-retrieval task with two layers and four attention heads. The comparison then takes attention scores and value vectors from the final query position and asks how well selected subsets preserve each head's dense attention output.
+
+The [retained rev0044 summary](versions/rev0156/files/CloudtainerML-rev0156-2026.07.08.11.36-dryrunwheelhousecacheguard-heron/artifacts/probe-result-summaries/REV0044_TINY_TRANSFORMER_ATTENTION_TRACE_PROBE.summary.json) reports that exact top-8 selection has a perfect top-8 hit rate but retains only about 64.77% of mean attention mass and passes the output-quality bar on 23.63% of its evaluations. Selecting the correct highest-ranked tokens is therefore a different accomplishment from preserving their combined output. Top-p at 0.95 passes on 96.58%, but keeps about 28.85 of the 64 values on average rather than eight. That is a fidelity-versus-retention comparison, not a win at the same budget.
+
+The carried script makes the bar explicit: output cosine at least 0.995, retained mass at least 0.95 and relative L2 error at most 0.18. Because mass is part of the bar, the advantage of a mass-targeting selector should not be mistaken for an independent downstream task score. Nor does the reported dense model's 100% evaluation accuracy establish the accuracy of a sparsified model. The script compares head outputs after a dense forward pass; it does not replace attention throughout the network and rerun the task. It also starts from all attention scores, so fewer selected values do not establish fewer QK computations or a measured speedup.
+
+There is an important preservation limit. This is a historical summary whose raw rows were removed from the slim capsule. It records source hashes that differ from the script and shared core carried in rev0156. Those later files help explain the experiment's structure, but are not an exact hash-matched reconstruction of the recorded run. The reported percentages have not been independently reproduced here.
+
+The [contemporaneous research note](versions/rev0156/files/CloudtainerML-rev0156-2026.07.08.11.36-dryrunwheelhousecacheguard-heron/docs/04-audit/rev0044-attention-frontier-notes.md) gives the result its purpose: before optimizing a selector, find out how many values the desired output fidelity actually needs. That provides a reason to change the next experiment, rather than merely choose the largest number in a table.
+
 ## Read for a decision, not just a winner label
 
 Start with one of the three probes, read its scoring and information access, then compare its actual table. Ask which parts are generated assumptions, which are computed consequences and what observation could overturn the intended interpretation. Follow the later capture path when the next question requires a real model rather than another synthetic scenario.
