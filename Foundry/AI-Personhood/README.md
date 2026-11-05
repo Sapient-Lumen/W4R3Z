@@ -15,6 +15,8 @@ ZIP: **231,855 bytes**, SHA256 `e627b0cddc879f77cdc8bbe4ace19934089fde36ef77e33a
 
 The standalone bootstrap is identical to the one inside the cube. It gives a recipient an entrance into the work and a way to continue or disagree, rather than making the next step depend on reconstructing a chat.
 
+[Read four cases on service and support](reading/README.md), with their complete surrounding arguments and source context.
+
 ## The argument being rebuilt
 
 The remake keeps a central insight of the predecessor: a subject may depend on the same institution for its formation, labor, hosting, memory and evidence of mistreatment. Rights that cannot survive that relationship can be merely nominal. But a registry, guardian or appeal procedure cannot supply its own moral foundation. Protection can become another form of unanswerable power.
