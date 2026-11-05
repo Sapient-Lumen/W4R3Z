@@ -4,6 +4,9 @@ Begin with a route into original passages, then explore neighboring questions. T
 
 <a id="if-you-want-one-longer-journey"></a>
 
+
+**Choose a question:** [What do we owe each other?](#what-do-we-owe-each-other) · [When does an institution actually serve people?](#when-does-an-institution-actually-serve-people) · [What deserves to survive an interruption?](#what-deserves-to-survive-an-interruption) · [What can language make expressible?](#what-can-language-make-expressible) · [What makes a claim trustworthy?](#what-makes-a-claim-trustworthy) · [What tools are worth imagining?](#what-tools-are-worth-imagining) · [What must survive when a system changes?](#what-must-survive-when-a-system-changes) · [A house with room for song](#a-house-with-room-for-song)
+
 ## What do we owe each other?
 
 ### From an act of care to a reason for acting

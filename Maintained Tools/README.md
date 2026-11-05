@@ -2,14 +2,14 @@
 
 Choose where the work should happen: a Linux project environment, a persistent virtual machine, a continuing ChatGPT conversation, connected devices, recoverable remote access, or a NixOS system under revision. Each tool provides a different way to organize that work.
 
-- **Carry a project, its source and a native continuation interface:** Datacube.
-- **Code with Codex on Linux:** Sandcodex.
-- **Run the Pi coding agent in its own persistent VM:** Sandpi.
-- **Keep ChatGPT working on a project over successive rounds:** qomrade.
-- **Recover remote access and share adaptive Tor/I2P transport:** AnonSSH.
-- **Connect your devices for commands and folder sync:** IoTox.
-- **Operate a CityB network:** CityB.
-- **Develop a NixOS system with carried reasons, measurements and exact acceptance:** Monsternix.
+- **Carry a project, its source and a native continuation interface:** [Datacube](#datacube).
+- **Code with Codex on Linux:** [Sandcodex](#sandcodex).
+- **Run the Pi coding agent in its own persistent VM:** [Sandpi](#sandpi).
+- **Keep ChatGPT working on a project over successive rounds:** [qomrade](#qomrade).
+- **Recover remote access and share adaptive Tor/I2P transport:** [AnonSSH](#anonssh).
+- **Connect your devices for commands and folder sync:** [IoTox](#iotox).
+- **Operate a CityB network:** [CityB](#cityb).
+- **Develop a NixOS system with carried reasons, measurements and exact acceptance:** [Monsternix](#monsternix).
 
 These are different tools, not parts you must install together. The single-file launchers and userscript are linked below; IoTox is distributed as a single executable carrying its source and other materials. Nothing on this page is an installation instruction.
 
