@@ -1,6 +1,6 @@
 # Monsternix: supplied-source identity and review scope
 
-The current source is the portable Foundation configuration supplied in the [3 October 2026 update](../../updates/2026-10-03.json). Original source notices and component terms remain applicable. h0p3 intends continued development.
+The source reviewed here was the portable Foundation configuration supplied in the [3 October 2026 update](../../updates/2026-10-03.json). Original source notices and component terms remain applicable. h0p3 intends continued development.
 
 ## Exact source read on 20 October 2026
 
