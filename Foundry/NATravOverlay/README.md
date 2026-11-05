@@ -4,7 +4,7 @@
 
 NATravOverlay is a persistent node for exchanging authenticated observations, retaining delivery obligations and carrying out narrowly authorized work. Its useful question is not only “can these machines connect?” but “what survived, who authorized the next step, and what actually happened?” A connection, a custodian's acceptance and a final application's receipt answer different questions.
 
-**Current rev0613:** [Complete-source ZIP](https://github.com/Sapient-Lumen/W4R3Z/releases/download/NATravOverlay-rev0613/NATravOverlay-rev0613-COMPLETE-SOURCE.1.zip) · [Matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/NATravOverlay-rev0613/BOOTSTRAPROSE.md) · [Read the bootstrap](BOOTSTRAPROSE.md) · [Release](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/NATravOverlay-rev0613)
+**Current rev0613:** [Complete-source ZIP](NATravOverlay-rev0613-COMPLETE-SOURCE.1.zip) · [Matching bootstrap](BOOTSTRAPROSE.md)
 
 The public runtime is named **natravcube**. The supplied complete-source package includes the build output `node/bin/natrav-overlay`; that difference is a rename and packaging distinction, not a missing predecessor. This drop provides the current source, executable, documentation and retained evidence together. Its executable is a compiled runtime, while source custody is supplied by the ZIP. It should not be confused with the newer binary Datacubes that embed an extractable project inside their executable.
 

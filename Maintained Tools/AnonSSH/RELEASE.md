@@ -1,6 +1,6 @@
 # AnonSSH 0.2.0: downloads, source and provenance
 
-[Portable x86-64 Linux executable and supporting files](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/anonssh-v0.2.0-9831b007cd47) · [Introduction](README.md) · [Project source](source/) · [Version-pinned third-party source index](SOURCE-INDEX.md)
+[Portable x86-64 Linux executable and supporting files](anonssh) · [Introduction](README.md) · [Project source](source/) · [Version-pinned third-party source index](SOURCE-INDEX.md)
 
 ## Portable distribution
 
@@ -15,7 +15,7 @@ The `anonssh` download is the supplied static x86-64 Linux executable, including
 
 ## Source access without a large duplicate archive
 
-Project code and documentation are browsable under [source/](source/). The complete 721-file project build tree, including all 636 binary RouterInfos, is separately available as the compact `anonssh-project-source-9831b007cd47-public.zip` release asset (1,282,767 bytes). These RouterInfo bytes remain in both that archive and the portable executable; they are not duplicated as hundreds of individual Git files. [SOURCE-INDEX.md](SOURCE-INDEX.md) names exact upstream versions, revisions, download locations, build expressions and patches; its machine-readable companion retains hash kinds explicitly. The 219 MB aggregate source archive is **not** distributed here. Source access is provided through the indexed upstream locations and the project/build modifications in this repository instead.
+Project code and documentation are browsable under [source/](source/). The complete 721-file project build tree, including all 636 binary RouterInfos, is separately available as the compact `anonssh-project-source-9831b007cd47-public.zip` file (1,282,767 bytes). These RouterInfo bytes remain in both that archive and the portable executable; they are not duplicated as hundreds of individual Git files. [SOURCE-INDEX.md](SOURCE-INDEX.md) names exact upstream versions, revisions, download locations, build expressions and patches; its machine-readable companion retains hash kinds explicitly. The 219 MB aggregate source archive is **not** distributed here. Source access is provided through the indexed upstream locations and the project/build modifications in this repository instead.
 
 The small `anonssh-source-supplement-20261020.zip` contains the exact pinned libxcrypt 4.5.2 release source, its supplied Nix recipe/local patch and applicable licensing files, plus the identified upstream libevent patch. The downloaded patch's raw hash differs from Nix fetchpatch's normalized-output hash; the supplement distinguishes them. It does not change the portable executable.
 

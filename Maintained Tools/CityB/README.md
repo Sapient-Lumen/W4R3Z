@@ -12,7 +12,7 @@ They share a Rust workspace and protocol material. The kit includes the correspo
 
 ## Download
 
-- [CityB 0.1.0 Linux x86-64 operator kit and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/cityb-0.1.0-26dbecfd)
+- [CityB 0.1.0 Linux x86-64 operator kit](CityB-operator-kit-0.1.0-x86_64-linux-unsigned-revised.zip) · [SHA-256 checksums](CityB-0.1.0-SHA256SUMS)
 
 This distribution kit is **unsigned**. Its checksums help detect changed bytes, but they do not authenticate the publisher. That is a separate question from the signed governance archives CityB is designed to evaluate. The ZIP and both included checksum manifests were verified for this release; the programs were not executed as part of this update.
 

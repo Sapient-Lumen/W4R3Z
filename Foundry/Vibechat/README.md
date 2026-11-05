@@ -4,7 +4,7 @@
 
 Vibechat brings a local identity, friends, conversations, attachments and recovery into a portable HTML work. It also carries its client, cryptographic worker, native Waystation, build material and development record. The recipient gets both an application to inspect and a workshop from which to continue it, rather than a hosted interface whose implementation disappears behind the service.
 
-**Current rev0136 / Fathom:** [Vibechat.html](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/Vibechat.html) · [Matching BOOTSTRAPROSE.md](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/BOOTSTRAPROSE.md) · [Current evidence supplement](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/Vibechat-rev0136-evidence.zip) · [Release](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/Vibechat-rev0136)
+**Current rev0136 / Fathom:** [Vibechat.html](Vibechat.html) · [Matching BOOTSTRAPROSE.md](BOOTSTRAPROSE.md) · [Current evidence supplement](Vibechat-rev0136-evidence.zip)
 
 ## A conversation has more than a connection
 

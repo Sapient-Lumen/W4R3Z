@@ -52,6 +52,6 @@ The [PACT replay-pack verifier](versions/rev0821/files/EvidenceVault-rev0821/sou
 
 That is a concrete illustration, not a full PACT implementation: the source explicitly says so, uses assertions for several checks, and signs payload-type plus a NUL plus payload rather than production DSSE PAE. Those prototype choices should not be confused with production DSSE interoperability.
 
-The [complete original ZIP](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/evidencevault-rev0821) preserves the supplied curated corpus, including material beyond the browsable selections. “Complete” refers to that supplied archive, not every upstream project: the [source index](versions/rev0821/files/EvidenceVault-rev0821/SOURCE_INDEX.md) distinguishes retained roots from curated artifacts and references. Original component rights and notices remain applicable and are retained.
+The [complete original ZIP](versions/rev0821/EvidenceVault-rev0821-2026.05.24.02.18-release-artifact-embedded-revision-anchor-verifier-hardening.zip) preserves the supplied curated corpus, including material beyond the browsable selections. “Complete” refers to that supplied archive, not every upstream project: the [source index](versions/rev0821/files/EvidenceVault-rev0821/SOURCE_INDEX.md) distinguishes retained roots from curated artifacts and references. Original component rights and notices remain applicable and are retained.
 
 [Edition contents and download](versions/rev0821/README.md) · [Original identities](PROVENANCE.json) · [Back to OG 510P](../README.md)

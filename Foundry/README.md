@@ -12,11 +12,10 @@ A developing work can already be coherent and useful. AI-Personhood's document c
 
 ## Current drops
 
-**[4UR4C10WN](4UR4C10WN/README.md)** — a portable encrypted private post office, building toward one-Contact recipient-absent mail. Its current transport binds authenticated discovery and one durable attempt to an exact admission exchange. [rev0303 binary](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4UR4C10WN-rev0303/4UR4C10WN) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/4UR4C10WN-rev0303/BOOTSTRAPROSE.md).
 
-**[NATravOverlay / natravcube](NATravOverlay/README.md)** — authenticated work and custody across changing or interrupted carriers, with exact dispatch observation separate from sending. [rev0613 source package](https://github.com/Sapient-Lumen/W4R3Z/releases/download/NATravOverlay-rev0613/NATravOverlay-rev0613-COMPLETE-SOURCE.1.zip) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/NATravOverlay-rev0613/BOOTSTRAPROSE.md).
+**[NATravOverlay / natravcube](NATravOverlay/README.md)** — authenticated work and custody across changing or interrupted carriers, with exact dispatch observation separate from sending. [rev0613 source package](NATravOverlay/NATravOverlay-rev0613-COMPLETE-SOURCE.1.zip) · [matching bootstrap](NATravOverlay/BOOTSTRAPROSE.md).
 
-**[Vibechat](Vibechat/README.md)** — encrypted conversations, local identity and recovery, browser transport and a native Waystation, carried with the source for further construction. [rev0136 / Fathom HTML](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/Vibechat.html) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/BOOTSTRAPROSE.md).
+**[Vibechat](Vibechat/README.md)** — encrypted conversations, local identity and recovery, browser transport and a native Waystation, carried with the source for further construction. [rev0136 / Fathom HTML](Vibechat/Vibechat.html) · [matching bootstrap](Vibechat/BOOTSTRAPROSE.md).
 
 **[ProgRSS](ProgRSS/README.md)** — local-first feed and page-change reading, with shareable collections that preserve why each source belongs in a particular folder. [rev0106 / Roadcase](ProgRSS/ProgRSS-rev0106-relay-workspace-source-note-integrity-2026.10.22-Roadcase.zip) · [matching bootstrap](ProgRSS/BOOTSTRAPROSE.md).
 

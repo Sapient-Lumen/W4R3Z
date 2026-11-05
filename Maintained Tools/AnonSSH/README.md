@@ -2,7 +2,7 @@
 
 AnonSSH lets an operator reconnect to an already prepared Linux machine using a remembered identity password and a stable machine ID. The same inputs reconstruct the machine's Tor and I2P destinations, the SSH credential used to enter it, and the host identity the client expects. Under that recovery interface is a substantial transport system: an authenticated, encrypted bond that can distribute independent application streams across unequal Tor and I2P paths.
 
-[Download the portable x86-64 Linux release](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/anonssh-v0.2.0-9831b007cd47) · [Browse code and documentation](source/) · [Release materials and notices](RELEASE.md)
+[Download the portable x86-64 Linux release](anonssh) · [Browse code and documentation](source/) · [Release materials and notices](RELEASE.md)
 
 The ordinary entrance is:
 
@@ -124,6 +124,6 @@ Detailed release evidence and version-specific publication review should remain 
 [Evidence guide](source/docs/context/evidence.md) · [Protocol and cryptographic framing](source/docs/context/bond-protocol.md) · [Original notices](source/THIRD_PARTY.md)
 
 
-Project by **h0p3**; editorial introduction by **Lumen**. The code/documentation browsing copy is under [source/](source/); the [complete project-source ZIP](https://github.com/Sapient-Lumen/W4R3Z/releases/download/anonssh-v0.2.0-9831b007cd47/anonssh-project-source-9831b007cd47-public.zip) also preserves all bootstrap records. The source retains its [MIT license](source/LICENSE) and [third-party notices](source/THIRD_PARTY.md).
+Project by **h0p3**; editorial introduction by **Lumen**. The code/documentation browsing copy is under [source/](source/); the [complete project-source ZIP](anonssh-project-source-9831b007cd47-public.zip) also preserves all bootstrap records. The source retains its [MIT license](source/LICENSE) and [third-party notices](source/THIRD_PARTY.md).
 
 [Maintained Tools](../README.md) · [W4R3Z](../../README.md)

@@ -39,15 +39,15 @@ Keep exactly `BOOTSTRAPROSE.md` and lowercase `datacube` together in their own d
 Recover a prepared machine’s overlay addresses and SSH trust from an identity password and exact machine ID, then carry independent application streams over an adaptive Tor/I2P bond. A resident broker reuses expensive router infrastructure; ordinary SSH tools and a native local socket interface give different applications access to the transport. The portable Linux executable carries its router and SSH stack, while the separate Monsternix package uses the system’s Nix closure.
 
 - [Read the AnonSSH introduction](AnonSSH/README.md)
-- [Portable executable and source downloads](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/anonssh-v0.2.0-9831b007cd47)
+- [Portable executable and source downloads](AnonSSH/RELEASE.md)
 - [Project source](AnonSSH/source/) · [Release materials](AnonSSH/RELEASE.md)
 
 ## IoTox
 
 IoTox connects devices through a single-file Linux Datacube carrying its source and other project materials. The maintained download is the supplied v0.52.0 executable; the earlier repository remains recoverable in Git history.
 
-- [Download IoTox v0.52.0](https://github.com/Sapient-Lumen/W4R3Z/releases/download/iotox-v0.52.0-17cca7b22e64/iotox-v0.52.0-x86_64-linux-17cca7b22e64)
-- [IoTox release and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/iotox-v0.52.0-17cca7b22e64)
+- [Download IoTox v0.52.0](IoTox/iotox-v0.52.0-x86_64-linux-17cca7b22e64)
+- [IoTox SHA-256 checksums](IoTox/IoTox-v0.52.0-SHA256SUMS)
 - [IoTox entry](IoTox/README.md)
 
 ## CityB
@@ -55,7 +55,7 @@ IoTox connects devices through a single-file Linux Datacube carrying its source 
 CityB's operator kit brings together an operator workbench, field node and development tool with their source, documentation and fixtures. The supplied Linux x86-64 kit is unsigned; its checksums establish byte integrity, not publisher authentication. This maintained product is distinct from the vaulted CityB of ChatGPT artwork.
 
 - [CityB entry](CityB/README.md)
-- [Download the operator kit and checksums](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/cityb-0.1.0-26dbecfd)
+- [Download the operator kit](CityB/CityB-operator-kit-0.1.0-x86_64-linux-unsigned-revised.zip)
 
 ## Monsternix
 
