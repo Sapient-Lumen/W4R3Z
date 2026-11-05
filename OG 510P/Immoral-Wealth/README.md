@@ -6,7 +6,7 @@ A person can own something and still have little freedom. A house may consume ev
 
 Immoral-Wealth begins with this difference between possessing an asset and possessing independence. It asks what ordinary people can actually keep, use, defend or leave with. At the other end of the distribution, it asks when wealth ceases to be a large personal holding and becomes the power to set other people's terms.
 
-The [core argument](versions/rev0302/files/docs/10-framework/immoral-wealth-inequality.md) does not demand identical fortunes. It allows unequal rewards, enterprise and substantial affluence. Its moral boundary is crossed when wealth becomes a durable system of dependence below, command above and inherited closure between generations. The later [charter](versions/rev0381/files/Immoral-Wealth-rev0381/docs/00-meta/charter.md) makes the paired ambition especially clear: ordinary independence should be widely available; durable private governing power should not.
+The [core argument](versions/rev0302/files/docs/10-framework/immoral-wealth-inequality.md) does not demand identical fortunes. It allows unequal rewards, enterprise and substantial affluence. Its concerns include dependence at the bottom, private governing power at the top, and entry closed by inherited advantage. These need not all appear together: the framework can reject a wealth order in which concentrated owners repeatedly shape the rules in their own favor, even when its distributional averages look respectable. The later [charter](versions/rev0381/files/Immoral-Wealth-rev0381/docs/00-meta/charter.md) makes the paired ambition especially clear: ordinary independence should be widely available; durable private governing power should not.
 
 That is why the work is about more than income. A flow of earnings matters, but assets and liabilities shape the ability to survive an interruption, move, retrain, begin a business or refuse a bad offer. Some assets also carry votes, control of land or infrastructure, influence over institutions, and claims on other people's future work. A distribution of wealth is partly a distribution of options and authority.
 
@@ -46,6 +46,12 @@ These numbers are normative proposals. Descriptive inequality research does not 
 Even on its own terms, reaching the numbers would not settle the question. A household total may conceal an adult without title or safe exit. Pension beneficiaries may hold financial claims while a narrow managerial group controls the votes. Rising house values may enrich existing owners while closing entry to others. National improvement may leave particular groups excluded.
 
 The work consequently refuses to let a good average compensate for a decisive failure of independence or control. This makes the framework more demanding than a target chart, although it also leaves a difficult question: how should imperfect reforms be compared when several urgent goods compete?
+
+## Who carries the losses?
+
+The [loss-bearing argument](versions/rev0381/files/Immoral-Wealth-rev0381/docs/10-framework/downside-discipline-and-loss-bearing.md) does not treat every public backstop as illegitimate. Protecting deposits, wages and payment systems can be necessary without protecting every investor's existing claim. It asks who bears the first loss, what the public receives for assuming risk, and whether a rescue makes dominant firms harder to challenge. Restored confidence alone does not settle whether the burden was fairly shared.
+
+The later [mission audit](versions/rev0381/files/Immoral-Wealth-rev0381/reports/mission-heart-truth-surface-and-semantic-evidence-reset-rev0371.md) extends that question beyond financial accounts. Portfolios can grow while ecological assets are depleted or costs fall on people elsewhere. It identifies ecological solvency and exported harms as underdeveloped parts of the research, not completed findings. A favorable domestic balance sheet cannot settle every question about how wealth was produced or who bears its costs.
 
 ## Why no single instrument can carry the program
 
