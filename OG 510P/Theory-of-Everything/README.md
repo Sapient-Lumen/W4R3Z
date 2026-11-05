@@ -12,6 +12,14 @@ The organizing idea is a bridge. A bridge should explain what travels between tw
 2. Compare [the later family readout](versions/rev0199/files/Theory-of-Everything-rev0199-2026.03.24.05.48-topotree-ledgermirror-humanparity/README.md). It preserves active but unresolved routes and asks whether apparently new explanatory structure is actually imported from elsewhere.
 3. Read [the Family-C/OAQEC revision introduction](versions/rev0378/files/Theory-of-Everything-rev0378-2026.06.18.22.09-familyc-oaqecdiamond-referenceamplification-choirefactor/README.md) when ready for a technical example. Its contrast between restricted state control and arbitrary-reference recovery is presented with explicit remaining physical-scaling and source-join burdens. This guide does not independently verify the mathematics.
 
+## A sharper recovery question
+
+The [rev0378 update](versions/rev0378/files/Theory-of-Everything-rev0378-2026.06.18.22.09-familyc-oaqecdiamond-referenceamplification-choirefactor/README.md) gives the bridge-first method a concrete pressure point. Suppose a proposed recovery looks accurate when a system is checked on its own. Does it also preserve the system's correlations with a reference that was left outside the recovery? The archive treats those as different demands: a reassuring bound on individual states need not automatically establish the stronger guarantee for arbitrary references.
+
+Its reported transpose–dephasing example is designed to separate those demands, while an erasure-channel example supplies a positive control. The revision then asks how the required bound scales as the code space grows. This makes a proposed bridge accountable to an explicit domain, error measure and remaining physical assumptions, rather than allowing a small number from one setting to stand in for every recovery question.
+
+These are the revision's mathematical claims and test constructions, not a proof audit by this guide. The update says physical scaling and the relevant source join remain open; it does not promote a route or establish a theory of everything. Those unpaid steps are part of the research, not a footnote to a finished result.
+
 ## The newest delivery has a different shape
 
 [Rev0397’s bootstrap prose](versions/rev0397/files/BOOTSTRAPROSE.md) accompanies an executable carrier rather than the earlier browsable source tree. Both received members are preserved. The carrier was not run or represented as an inspected source edition, and its continuation commands are not required to read the earlier research.
