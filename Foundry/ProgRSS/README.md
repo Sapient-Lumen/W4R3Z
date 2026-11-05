@@ -6,7 +6,7 @@ A neighborhood group could assemble council announcements, local reporting and w
 
 The current Foundry artifact is the rev0106 Relay workspace Source Note integrity Roadcase. It contains the Chromium and Firefox extension trees, the Python CLI and local Node, fixtures, contracts and release evidence. Its retained product version is 0.80.0, while the current candidate revision is rev0106. That distinction matters: the archive is a continuing whole-product source package, not a claim that every historical release description is the latest authority.
 
-**Current rev0106 / Roadcase:** [Whole-product ZIP](https://github.com/Sapient-Lumen/W4R3Z/releases/download/ProgRSS-rev0106/ProgRSS-rev0106-relay-workspace-source-note-integrity-2026.10.22-Roadcase.zip) · [Matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/ProgRSS-rev0106/BOOTSTRAPROSE.md) · [Read the bootstrap](BOOTSTRAPROSE.md) · [Release](https://github.com/Sapient-Lumen/W4R3Z/releases/tag/ProgRSS-rev0106)
+**Current rev0106 / Roadcase:** [Whole-product ZIP](ProgRSS-rev0106-relay-workspace-source-note-integrity-2026.10.22-Roadcase.zip) · [Matching bootstrap](BOOTSTRAPROSE.md)
 
 ## Reading without losing the route
 
