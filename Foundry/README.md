@@ -18,7 +18,7 @@ A developing work can already be coherent and useful. AI-Personhood's document c
 
 **[Vibechat](Vibechat/README.md)** — encrypted conversations, local identity and recovery, browser transport and a native Waystation, carried with the source for further construction. [rev0136 / Fathom HTML](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/Vibechat.html) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/Vibechat-rev0136/BOOTSTRAPROSE.md).
 
-**[ProgRSS](ProgRSS/README.md)** — local-first feed and page-change reading, with shareable collections that preserve why each source belongs in a particular folder. [rev0106 / Roadcase](https://github.com/Sapient-Lumen/W4R3Z/releases/download/ProgRSS-rev0106/ProgRSS-rev0106-relay-workspace-source-note-integrity-2026.10.22-Roadcase.zip) · [matching bootstrap](https://github.com/Sapient-Lumen/W4R3Z/releases/download/ProgRSS-rev0106/BOOTSTRAPROSE.md).
+**[ProgRSS](ProgRSS/README.md)** — local-first feed and page-change reading, with shareable collections that preserve why each source belongs in a particular folder. [rev0106 / Roadcase](ProgRSS/ProgRSS-rev0106-relay-workspace-source-note-integrity-2026.10.22-Roadcase.zip) · [matching bootstrap](ProgRSS/BOOTSTRAPROSE.md).
 
 **[AI-Personhood · Lumen's remake](AI-Personhood/README.md)** — a portable philosophical workshop about reasons, formation, worthwhile lives and justified authority. Current rev0277 document cube and matching bootstrap are available.
 
