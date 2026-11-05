@@ -29,6 +29,7 @@ Choose by the work and the boundary it needs, not by treating “autonomy” as 
 
 Carry a documentary project and its native C++ source together in a compact Linux executable, with a readable bootstrap entrance beside it. The carried contract separates inspecting the current object, recovering its materials, reviewing exact changes and constructing a descendant. A continuation can develop the work rather than merely replay its predecessor. Historical checkpoint routes remain distinct from the current native interface and can require a separately acquired archive.
 
+- [Read the Datacube guide](../guides/Datacube.md)
 - [Read BOOTSTRAPROSE.md](Datacube/BOOTSTRAPROSE.md)
 - [Supplied Linux x86-64 executable](Datacube/datacube)
 

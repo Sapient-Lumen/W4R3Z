@@ -4,7 +4,7 @@ Use this complete index to find a work, or take a [source-first reading path](RE
 
 ## Maintained Tools
 
-- [Datacube](Maintained%20Tools/README.md#datacube) — a native Linux carrier for a continuing project and its source, with a matching readable bootstrap and explicit inspection, materialization and construction boundaries.
+- [Datacube](guides/Datacube.md) — a native Linux carrier for a continuing project and its source, with a matching readable bootstrap and explicit inspection, materialization and construction boundaries.
 
 Choose by the work and the boundary it needs. These are distinct projects, not components of one required stack.
 
