@@ -2,7 +2,7 @@
 
 Choose where the work should happen: a Linux project environment, a persistent virtual machine, a continuing ChatGPT conversation, connected devices, recoverable remote access, or a NixOS system under revision. Each tool provides a different way to organize that work.
 
-- **Build a local edition of shared forum conversation:** [0opschan](#0opschan).
+- **Host and carry a distributed peer-to-peer forum:** [0opschan](#0opschan).
 - **Carry a project, its source and a native continuation interface:** [Datacube](#datacube).
 - **Code with Codex on Linux:** [Sandcodex](#sandcodex).
 - **Run the Pi coding agent in its own persistent VM:** [Sandpi](#sandpi).
@@ -28,7 +28,7 @@ Choose by the work and the boundary it needs, not by treating “autonomy” as 
 
 ## 0opschan
 
-Make a local-first forum edition from signed sources and curators while keeping trust, synchronization, custody and local selection separate. The supplied Linux x86-64 Datacube carries the forum core, its source and the wider project. It is checksum-identified, not publisher-authenticated; the [guide](../guides/0opschan.md) explains the distinction and how to inspect the carrier.
+Carry a peer-to-peer forum between independently operated nodes over I2P, Tor, explicitly scoped direct HTTP and portable files. Readers can compose a local edition from signed sources and curators while keeping trust, synchronization, custody and local selection separate. The supplied Linux x86-64 Datacube carries the forum core, its source and the wider project. It is checksum-identified, not publisher-authenticated; the [guide](../guides/0opschan.md) explains the distinction and how to inspect the carrier.
 
 - [Read the 0opschan introduction](../guides/0opschan.md)
 - [Download the single 0opschan foundation executable](0opschan)
