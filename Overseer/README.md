@@ -27,3 +27,5 @@ This is a curated encounter with rev0686, not a reconstruction of a running host
 h0p3 describes the authors as sincere, careful and kind amid difficult construction and personal interaction, and identifies Overseer as one contributor to the later binary Datacube's existence. Those are attributed parts of the work's history, not a substitute for reading what is here. Further work may illuminate that history without requiring this project to fit an existing shelf.
 
 [Source identities and selection](SOURCES.json)
+
+[Catalog](../CATALOG.md) · [W4R3Z](../README.md)
