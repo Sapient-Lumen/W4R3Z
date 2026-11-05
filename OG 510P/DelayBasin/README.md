@@ -8,6 +8,12 @@ DelayBasin studies how to make that continuation public and portable. It builds 
 
 The [founding charter preserved here](https://github.com/Sapient-Lumen/W4R3Z/blob/main/OG%20510P/DelayBasin/versions/rev0016/contents/docs/00-meta/charter.md) joins practical archive engineering to an ambitious intellectual project: understanding how human–LLM work acquires continuity under partial observability. It makes room for mechanism, disagreement, and risky speculation together. The method is meant to become inspectable enough to criticize and revise, not merely familiar enough to repeat.
 
+## Why delay, and why a basin?
+
+DelayBasin is also an inquiry into the systems doing the continuing. Its [exosomatic delay-embedding hypothesis](versions/rev0016/contents/docs/30-speculation/exosomatic-delay-embedding.md) treats the archive as an external history of coordinates: enough of a project's trajectory might be reconstructed from its revisions, decisions and handoffs for a later contributor to continue. The name borrows from dynamical systems and basins of attraction, but the analogy is a research proposal, not a theorem about a human–model collaboration.
+
+The original hypothesis names its own possible defeats: an unstructured transcript might work just as well; removing registries or prompt history might make no difference; or the human might have to reteach the project rather than the archive doing the relevant work. It does not claim exact recovery of a model's internal state or erase the roles of the human, promptcraft and model family. A fruitful continuation is not proof that this particular mechanism produced it.
+
 ## More than remembering
 
 DelayBasin’s most useful distinction separates three things commonly collapsed into “memory.”
@@ -66,7 +72,11 @@ The [last supplied addendum, rev0389](https://github.com/Sapient-Lumen/W4R3Z/blo
 
 The report also finds useful imperfections. One responder partially absorbs a decoy mission. One expected scoring point cannot actually be derived from the compact stimulus. Even the project name gives a supposedly sparse baseline clues about the subject. These are discoveries about the design of continuation tests, not just marks on a scorecard.
 
-The addendum classifies the result as operator-attested multi-model semantic replay; it preserves scores and findings rather than the raw responses. Both late snapshots retain rev0374 as their internal canonical head. Read rev0389 alongside the substantial rev0388 archive, not as its replacement.
+The addendum classifies the result as operator-attested multi-model concordance replay. Its richer trace was a bounded excerpt, and responder separation rests on the operator's attestation. The addendum preserves scores and findings, not the raw responses. Both late snapshots retain rev0374 as their internal canonical head. Read rev0389 alongside the substantial rev0388 archive, not as its replacement.
+
+## A note on citations in the preserved archives
+
+The bibliographies remain as supplied, including attribution errors. In the preserved rev0016 and rev0264 bibliographies, REF-0005 names Berenz et al.; [the cited paper](https://arxiv.org/abs/2512.21113v1) is by Gregory Duthé, Nikolaos Evangelou, Wei Liu, Ioannis G. Kevrekidis and Eleni Chatzi. REF-0008 names Constante-Amores et al.; [its cited paper](https://arxiv.org/abs/2602.18679v1) is by Anthony Bao, Jeffrey Lai and William Gilpin. REF-0003 uses “Wang et al.” for [a single-author paper](https://arxiv.org/abs/2512.07092v1) by Zhixiang Wang. These corrections do not change the original files or establish the papers' application to DelayBasin's hypothesis.
 
 ## Why read it?
 
