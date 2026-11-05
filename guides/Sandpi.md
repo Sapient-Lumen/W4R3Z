@@ -60,7 +60,7 @@ Sandpi and [Sandcodex](Sandcodex.md) offer different working environments. Sandp
 
 In ordinary Sandpi VM mode, Pi runs as guest root. It can change its guest environment, write the shared project and use the available provider credentials. The credential broker retains canonical refresh state on the host, but access tokens and API keys supplied to Pi are available to guest root. Sandpi does not impose a guest network filter or a room-wide spending firewall. Inbound port publication is explicit and saved as a machine setting.
 
-When sharing Codex OAuth credentials with the supplied Sandcodex, avoid overlapping refresh windows. Sandpi documents a reconciliation race, and the current [Sandcodex reconciliation path](../Maintained%20Tools/sandcodex#L23899-L23928) can promote a frontend copy without checking that its original canonical generation is still current. This matters for the combined setup, not every use of either tool; the [inspection record](review/Sandpi-2026-10-20.md) retains the source-level finding.
+When sharing Codex OAuth credentials with the supplied Sandcodex, avoid overlapping refresh windows. Sandpi documents a reconciliation race, and the current [Sandcodex reconciliation path](Sandcodex-source-extract.md#authentication-reconciliation) can promote a frontend copy without checking that its original canonical generation is still current. This matters for the combined setup, not every use of either tool; the [inspection record](review/Sandpi-2026-10-20.md) retains the source-level finding.
 
 The separate uppercase `--BARE-METAL` mode means actual host-root execution, not a stronger name for the VM. It is an explicit mode, never a fallback after VM failure.
 
