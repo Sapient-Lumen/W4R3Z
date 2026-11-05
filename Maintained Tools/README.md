@@ -2,6 +2,7 @@
 
 Choose where the work should happen: a Linux project environment, a persistent virtual machine, a continuing ChatGPT conversation, connected devices, recoverable remote access, or a NixOS system under revision. Each tool provides a different way to organize that work.
 
+- **Build a local edition of shared forum conversation:** [0opschan](#0opschan).
 - **Carry a project, its source and a native continuation interface:** [Datacube](#datacube).
 - **Code with Codex on Linux:** [Sandcodex](#sandcodex).
 - **Run the Pi coding agent in its own persistent VM:** [Sandpi](#sandpi).
@@ -24,6 +25,13 @@ These are different tools, not parts you must install together. The single-file 
 **Sandpi supplies a persistent machine for Pi.** A named NixOS VM retains packages and agent state, while Pi owns its conversation tree and the host project remains a live writable share. These are three different kinds of persistence: restoring the guest disk does not roll back the shared project. The [Sandpi guide](../guides/Sandpi.md) follows that distinction through project identity, package reuse, terminal/RPC entry and native settlement loops.
 
 Choose by the work and the boundary it needs, not by treating “autonomy” as one interchangeable feature. More turns, a useful development room and a persistent machine can each matter, but they solve different problems. A portable launcher is also different from a backup of its live state.
+
+## 0opschan
+
+Make a local-first forum edition from signed sources and curators while keeping trust, synchronization, custody and local selection separate. The supplied Linux x86-64 Datacube carries the forum core, its source and the wider project. It is checksum-identified, not publisher-authenticated; the [guide](../guides/0opschan.md) explains the distinction and how to inspect the carrier.
+
+- [Read the 0opschan introduction](../guides/0opschan.md)
+- [Download the single 0opschan foundation executable](0opschan)
 
 ## Datacube
 

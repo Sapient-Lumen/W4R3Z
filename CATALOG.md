@@ -4,6 +4,8 @@ Use this complete index to find a work, or take a [source-first reading path](RE
 
 ## Maintained Tools
 
+- [0opschan](guides/0opschan.md) — a local-first forum with signed, composable curator choices and separate local control of synchronization, custody and edition selection.
+
 - [Datacube](guides/Datacube.md) — a native Linux carrier for a continuing project and its source, with a matching readable bootstrap and explicit inspection, materialization and construction boundaries.
 
 Choose by the work and the boundary it needs. These are distinct projects, not components of one required stack.
