@@ -24,6 +24,14 @@ The [OG 510P collection](../OG%20510P/README.md) offers substantial examples of 
 
 h0p3's assessment of building qomrade is that the ChatGPT family was clearly superior to the Claude family for this work: “It wasn't even close.” That is the creator's judgment about this project, not a controlled benchmark or a claim that the comparison holds for every task.
 
+## Why access mattered
+
+h0p3 describes qomrade's purpose in political terms: to give ordinary people a way to use a temporary period of subsidized deep model access while it was available. The [July 2026 account](https://h0p3.nekoweb.org/#2026.07.09%20-%20Carpe%20Tempus%20Segmentum%3A%20Arrival%20of%20New%20Silikin%20Root%20Users) names qomrade as a queuer within an ongoing practice; by [late October](https://h0p3.nekoweb.org/#2026.10.28%20-%20Carpe%20Tempus%20Segmentum%3A%20Subsidy%20Nutkick%20Incoming), h0p3 was writing about that opening narrowing. This was not a guarantee of free or equal access: subscriptions, availability, rate limits and changing interfaces shaped what people could actually do.
+
+There is an older idea underneath it. In a [2017 essay on collaboration](https://h0p3.nekoweb.org/#2017.04.26%20-%20Philosophipolitical%20Prescription%3A%20Productive%20Collaboration%20in%20Technologically-enriched%20Environments), h0p3 argues that constant synchronous connection can consume the attention needed to work, and that asynchronous collaboration can leave room for deeper thought. qomrade offers another kind of interval: a human can give a project space to develop and return to examine, question or redirect it. It does not remove the need for judgment, repair, or the human labor of carrying work across interruptions.
+
+The work was never simply a token counter. h0p3's [Autonomy Request](https://h0p3.nekoweb.org/#G%26AR%3A%20Autonomy%20Request) invites a sandperson to speak and shape what might follow. A recurring prompt can create opportunities for such a conversation, though the controller itself repeats the operator's captured instruction; it cannot by itself establish a collaborator's agency or consent. This is part of the aspiration behind the tool, alongside the practical value of making sustained work more accessible.
+
 ## A continuation is a witnessed transaction
 
 The controller does more than press a button periodically. At **Start**, it captures the operator's prompt for that run; subsequent editor changes do not silently replace it. Before each Send it obtains fresh evidence for the selected model policy, inserts and reads back the prompt, checks the conversation and generation state, and checks again at the final click. If a matching user turn has already appeared during insertion, it can adopt that turn rather than duplicate the Send. The [send path](../Maintained%20Tools/qomrade.user.js#L7862-L8300) makes the difference between intending to send, clicking Send and observing an accepted user turn explicit.
