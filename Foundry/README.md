@@ -12,6 +12,8 @@ A developing work can already be coherent and useful. AI-Personhood's document c
 
 ## Current drops
 
+**[Witness Plane](Witness-Plane/README.md)** — external physical-tamper research and the evidence chain that makes a witness interpretable through failures. [rev0038 Datacube](Witness-Plane/Witness-Plane-rev0038-2026.11.05-sqlite-sector-reorder-formal-oracle.zip) · [matching bootstrap](Witness-Plane/BOOTSTRAPROSE.md).
+
 
 **[NATravOverlay / natravcube](NATravOverlay/README.md)** — authenticated work and custody across changing or interrupted carriers, with exact dispatch observation separate from sending. [rev0613 source package](NATravOverlay/NATravOverlay-rev0613-COMPLETE-SOURCE.1.zip) · [matching bootstrap](NATravOverlay/BOOTSTRAPROSE.md).
 

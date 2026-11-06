@@ -25,6 +25,8 @@ For comparison through original passages, read [what continued work has to prese
 [Current Foundry drops](Foundry/README.md): executable Datacubes, HTML carriers and whole-project source packages, each with its matching bootstrap and continuing explanation. This is a current development shelf, not a promise to archive every obsolete artifact; OG 510P retains its distinct historical role.
 
 
+- [Witness Plane](Foundry/Witness-Plane/README.md) — physical-tamper sensing and evidence custody with explicit boundaries between observed software behavior, physical measurements and authorized response.
+
 - [NATravOverlay / natravcube](Foundry/NATravOverlay/README.md) — authenticated work and custody over changing carriers; read-only dispatch reconciliation and a complete current source package.
 
 - [Vibechat](Foundry/Vibechat/README.md) — encrypted conversations, identity and recovery in a source-carrying HTML workshop, with a native Waystation and explicit transport boundaries.
