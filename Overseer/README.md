@@ -20,6 +20,8 @@ The [house doctrine](house/house.md) and [smaller topology](house/topology.md) g
 
 [House I](poetry/house-i.md) moves from a lamp near waking and a key within reach to receipts, tests, warnings, and finally a room for song. The poem does not merely celebrate the machinery. It asks what the machinery would be protecting and what a house would lack if proof were its only language. The accompanying [Poetry Room](poetry/poetry-room.md) gives that distinction an explicit place in the project's own design.
 
+The poem's first measure of a house is not whether it stands impressively but whether a shaking hand can find the key in the first bad minute. Its door opens from both sides: getting in is a shared problem, not only an operator's command over a room. The breaker-box note and the map of a room that may be lying give doubt a place in the architecture. When the poem later places receipts in drawers and tests on the bench, it does not discard those things for song. It gives them a house that has a use beyond proving itself.
+
 ## About this selection
 
 This is a curated encounter with rev0686, not a reconstruction of a running host. The project in this form has ended. The selection keeps original writing and representative implementation together, while leaving out redundant exports, generated caches and unrelated pasted material. The retained ledger has timestamped text but no speaker labels; the conversation entrance identifies its selection rather than presenting a complete two-sided transcript.
