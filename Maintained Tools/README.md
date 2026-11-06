@@ -8,6 +8,7 @@ Choose where the work should happen: a Linux project environment, a persistent v
 - **Run the Pi coding agent in its own persistent VM:** [Sandpi](#sandpi).
 - **Keep ChatGPT working on a project over successive rounds:** [qomrade](#qomrade).
 - **Recover remote access and share adaptive Tor/I2P transport:** [AnonSSH](#anonssh).
+- **Connect authenticated peers across NATs:** [NATrav](#natrav).
 - **Connect your devices for commands and folder sync:** [IoTox](#iotox).
 - **Operate a CityB network:** [CityB](#cityb).
 - **Develop a NixOS system with carried reasons, measurements and exact acceptance:** [Monsternix](#monsternix).
@@ -42,6 +43,12 @@ Carry a documentary project and its native C++ source together in a compact Linu
 - [Supplied Linux x86-64 executable](Datacube/datacube)
 
 Keep exactly `BOOTSTRAPROSE.md` and lowercase `datacube` together in their own directory. The supplied linked-pair contract expects both files to be regular, non-symlink files with mode `0555`; Git tracks executable status but does not preserve those exact read-only permissions. After downloading or checking out the pair, set those two files to `0555` before using the linked interface. Do not rename the executable to match the capitalized shelf title. The supplied bytes are unchanged; the interface account above comes from the carried contract, not a new execution test.
+
+## NATrav
+
+Connect authenticated peers across difficult NATs with direct and relay paths, explicitly governed mapping controls and a self-carrying Linux executable. NATrav's connectivity engine is distinct from NATravOverlay's work and custody layer. The supplied v0.52.0 executable is distributed in two parts that reconstruct the original bytes; see the entry for requirements, checksums and limitations.
+
+- [NATrav introduction and downloads](NATrav/README.md)
 
 ## AnonSSH
 

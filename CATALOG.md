@@ -10,6 +10,7 @@ Use this complete index to find a work, or take a [source-first reading path](RE
 
 Choose by the work and the boundary it needs. These are distinct projects, not components of one required stack.
 
+- [NATrav](Maintained%20Tools/NATrav/README.md) — authenticated peer connectivity across NATs with direct and relay paths, explicit mapping controls and a self-carrying Linux executable.
 - [AnonSSH](Maintained%20Tools/AnonSSH/README.md) — recover a machine’s overlay addresses and SSH trust, then use adaptive Tor/I2P bonding through ordinary Unix tools or a native application socket. Portable and Nix-integrated packages make different runtime-dependency choices.
 - [CityB](Maintained%20Tools/CityB/README.md) — distribute and evaluate governed archives across unreliable routes. Carriers help discover candidate bytes; they do not themselves authorize a state change. The operator kit joins a workbench, a field node and a development tool with source and fixtures.
 - [IoTox](Maintained%20Tools/IoTox/README.md) — a single-file Linux Datacube for connecting self-owned devices, carrying its source and other project materials inside the maintained executable. The earlier source-tree edition remains in Git history.
