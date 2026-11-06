@@ -4,7 +4,11 @@
 
 NATrav is a Rust connectivity engine for peers behind network address translation. It combines authenticated direct connections with relay options and explicit mapping controls, while keeping connection policy, evidence and authority over network actions distinct. It is a sibling of [NATravOverlay](../../Foundry/NATravOverlay/README.md), not another name for the overlay: NATrav owns connectivity policy; the overlay addresses the higher-level work and custody exchanged between peers.
 
-**Current supplied executable:** NATrav v0.52.0, Linux x86-64. The original 14,649,566-byte executable is supplied here as [part 00](natrav-v0.52.0-x86_64-linux-0b6c7f8c881c.part00) and [part 01](natrav-v0.52.0-x86_64-linux-0b6c7f8c881c.part01). The upload interface could not accept the entire binary in one request; joining the two parts restores the exact supplied file. No source or binary bytes have been edited.
+**Current supplied executable:** NATrav v0.52.0, Linux x86-64. The original 14,649,566-byte executable is supplied here as [part 00](natrav-v0.52.0-x86_64-linux-0b6c7f8c881c.part00) and [part 01](natrav-v0.52.0-x86_64-linux-0b6c7f8c881c.part01). Joining the two parts restores the exact supplied file. No source or binary bytes have been edited.
+
+## Why this download is split
+
+The split is a distribution workaround for the OpenAI ChatGPT GitHub connector used to publish this copy, not a property or requirement of NATrav. The 14,649,566-byte executable becomes 19,532,756 bytes when base64-encoded for that upload. The attempted single request was rejected with `MCP request exceeds the 16 MiB limit`. OpenAI operates the ChatGPT integration through which this limit was encountered; this observation does not identify the particular team or explain the policy behind the limit. It does not establish a GitHub file-size limit: a direct GitHub upload was not tested. The two parts are a way to preserve and distribute the supplied executable despite that observed boundary.
 
 ## Reassemble and verify
 
